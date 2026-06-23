@@ -9,7 +9,6 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    environmentMatchGlobs: [['tests/integration/**', 'node']],
   },
   resolve: { alias: { '@': resolve(__dirname, 'src') } },
 });
