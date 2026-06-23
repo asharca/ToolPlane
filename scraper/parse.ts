@@ -11,6 +11,8 @@ export interface ParsedServerCard {
   stars: number;
 }
 
+export type ParsedCard = ParsedServerCard;
+
 export function parseStars(text: string): number {
   const t = text.trim().toLowerCase().replace(/,/g, '');
   if (!t) return 0;
@@ -24,10 +26,12 @@ const STAR_TOKEN = /^\d[\d.,]*\s*[km]?$/i;
 function parseCard(
   $: CheerioAPI,
   a: ReturnType<CheerioAPI>,
-): ParsedServerCard | null {
+  prefix: string,
+): ParsedCard | null {
   const href = a.attr('href') ?? '';
-  const slug = href.replace(/^\/server\//, '').replace(/\/+$/, '');
-  // Skip pagination links (/server/page/N) and the bare /server link.
+  if (!href.startsWith(prefix)) return null;
+  const slug = href.slice(prefix.length).replace(/\/+$/, '');
+  // Skip pagination links (".../page/N") and the bare listing link.
   if (!slug || slug.includes('/')) return null;
   const name = a.find('h3').first().text().trim();
   if (!name) return null;
@@ -51,22 +55,26 @@ function parseCard(
   };
 }
 
-export function parseServerCard(html: string): ParsedServerCard | null {
+export function parseListing(html: string, prefix: string): ParsedCard[] {
   const $ = cheerio.load(html);
-  const a = $('a[href^="/server/"]').first();
-  return a.length ? parseCard($, a) : null;
-}
-
-export function parseServerListing(html: string): ParsedServerCard[] {
-  const $ = cheerio.load(html);
-  const out: ParsedServerCard[] = [];
+  const out: ParsedCard[] = [];
   const seen = new Set<string>();
-  $('a[href^="/server/"]').each((_i, el) => {
-    const card = parseCard($, $(el));
+  $(`a[href^="${prefix}"]`).each((_i, el) => {
+    const card = parseCard($, $(el), prefix);
     if (card && !seen.has(card.slug)) {
       seen.add(card.slug);
       out.push(card);
     }
   });
   return out;
+}
+
+export function parseServerCard(html: string): ParsedServerCard | null {
+  const $ = cheerio.load(html);
+  const a = $('a[href^="/server/"]').first();
+  return a.length ? parseCard($, a, '/server/') : null;
+}
+
+export function parseServerListing(html: string): ParsedServerCard[] {
+  return parseListing(html, '/server/');
 }
