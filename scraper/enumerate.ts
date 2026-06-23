@@ -1,4 +1,4 @@
-import { fetchHtml } from './http';
+import { fetchRenderedHtml } from './browser';
 import { parseServerListing, type ParsedServerCard } from './parse';
 
 export function serverPagePath(page: number): string {
@@ -8,6 +8,6 @@ export function serverPagePath(page: number): string {
 export async function enumerateServerPage(
   page: number,
 ): Promise<ParsedServerCard[]> {
-  const html = await fetchHtml(serverPagePath(page));
+  const html = await fetchRenderedHtml(serverPagePath(page));
   return parseServerListing(html);
 }
