@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('next-themes', () => ({
-  useTheme: () => ({ resolvedTheme: 'light', setTheme: vi.fn() }),
-}));
-
 vi.mock('@/lib/auth/current-user', () => ({
   getCurrentUser: vi.fn().mockResolvedValue(null),
 }));
@@ -12,27 +8,27 @@ vi.mock('@/lib/auth/current-user', () => ({
 import { Header } from '@/components/layout/Header';
 
 describe('Header', () => {
-  it('renders logo, nav links, and theme toggle when logged out', async () => {
+  it('renders logo, nav, and CTAs when logged out', async () => {
     render(await Header());
 
-    expect(screen.getByRole('link', { name: 'MCPMarket' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /MCP\s*Market/ })).toHaveAttribute(
       'href',
       '/',
     );
-    expect(screen.getByRole('link', { name: 'Sell Skills' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'MCP Servers' })).toHaveAttribute(
       'href',
-      '/sell',
+      '/server',
+    );
+    expect(screen.getByRole('link', { name: 'Agent Skills' })).toHaveAttribute(
+      'href',
+      '/tools/skills',
     );
     expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
       'href',
       '/login',
     );
-    expect(screen.getByRole('link', { name: 'Connect' })).toHaveAttribute(
-      'href',
-      '/hub',
-    );
     expect(
-      screen.getByRole('button', { name: /toggle theme/i }),
-    ).toBeInTheDocument();
+      screen.getByRole('link', { name: /Power Your Agents/ }),
+    ).toHaveAttribute('href', '/hub');
   });
 });

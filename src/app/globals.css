@@ -84,3 +84,36 @@
     border-color: hsl(var(--border));
   }
 }
+
+/* Faint grid backdrop behind the hero, fading out toward the edges. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, hsl(var(--border) / 0.6) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--border) / 0.6) 1px, transparent 1px);
+  background-size: 72px 72px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 80%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 80%);
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.animate-caret {
+  animation: caret-blink 1.1s step-end infinite;
+}
+
+/* Hide scrollbar for the horizontal category strip. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

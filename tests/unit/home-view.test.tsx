@@ -32,7 +32,13 @@ const data = {
 
 describe('HomeView', () => {
   it('renders the hero and all six sections with their cards', () => {
-    render(<HomeView {...data} />);
+    render(
+      <HomeView
+        {...data}
+        categories={[{ slug: 'developer-tools', name: 'Developer Tools' }]}
+        serverCount={783}
+      />,
+    );
 
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
 
@@ -42,7 +48,7 @@ describe('HomeView', () => {
       'Top MCP Servers',
       'Latest MCP Servers',
       'MCP Clients',
-      'Top Agent Skills',
+      'Agent Skills',
     ]) {
       expect(
         screen.getByRole('heading', { name: heading }),
@@ -52,5 +58,6 @@ describe('HomeView', () => {
     expect(screen.getByText('Official One')).toBeInTheDocument();
     expect(screen.getByText('Client One')).toBeInTheDocument();
     expect(screen.getByText('Skill One')).toBeInTheDocument();
+    expect(screen.getByText('783')).toBeInTheDocument();
   });
 });
