@@ -106,3 +106,30 @@ export function parseHomeFlagged(html: string): {
 
   return { official, featured };
 }
+
+export interface ParsedServerDetail {
+  categories: { name: string; slug: string }[];
+  isOfficial: boolean;
+  githubUrl: string | null;
+}
+
+export function parseServerDetail(html: string): ParsedServerDetail {
+  const $ = cheerio.load(html);
+  const categories: { name: string; slug: string }[] = [];
+  const seen = new Set<string>();
+  $('a[href^="/categories/"]').each((_i, el) => {
+    const href = $(el).attr('href') ?? '';
+    const slug = href.replace(/^\/categories\//, '').replace(/\/+$/, '');
+    const name = $(el).text().trim().replace(/\s+/g, ' ');
+    if (!slug || slug.includes('/')) return; // skip the /categories index link
+    if (!name || /view more/i.test(name)) return;
+    if (seen.has(slug)) return;
+    seen.add(slug);
+    categories.push({ name, slug });
+  });
+  const isOfficial = categories.some(
+    (c) => c.slug === 'official' || /^official$/i.test(c.name),
+  );
+  const githubUrl = $('a[href*="github.com"]').first().attr('href') ?? null;
+  return { categories, isOfficial, githubUrl };
+}

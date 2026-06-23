@@ -84,6 +84,24 @@ export async function upsertSkill(card: ParsedServerCard): Promise<void> {
   });
 }
 
+export async function enrichServer(
+  slug: string,
+  detail: { categories: { name: string; slug: string }[]; isOfficial: boolean },
+): Promise<void> {
+  await db.server.update({
+    where: { slug },
+    data: {
+      ...(detail.isOfficial ? { isOfficial: true } : {}),
+      categories: {
+        connectOrCreate: detail.categories.map((c) => ({
+          where: { slug: c.slug },
+          create: { slug: c.slug, name: c.name },
+        })),
+      },
+    },
+  });
+}
+
 export async function setCheckpoint(
   job: string,
   lastSlug: string,
