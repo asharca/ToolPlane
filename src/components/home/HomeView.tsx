@@ -4,6 +4,7 @@ import type { HomeSections } from '@/lib/queries/home';
 import { ServerCard } from '@/components/cards/ServerCard';
 import { ClientCard } from '@/components/cards/ClientCard';
 import { SkillCard } from '@/components/cards/SkillCard';
+import { FaqSection } from '@/components/home/FaqSection';
 
 function SectionGrid({
   title,
@@ -106,6 +107,8 @@ export function HomeView({
           <SkillCard key={k.slug} skill={k} />
         ))}
       </SectionGrid>
+
+      <FaqSection />
     </div>
   );
 }
