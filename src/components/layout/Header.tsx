@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { getCurrentUser } from '@/lib/auth/current-user';
 
-export function Header() {
+export async function Header() {
+  const user = await getCurrentUser();
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-[57px] max-w-screen-xl items-center justify-between px-4">
@@ -19,6 +22,21 @@ export function Header() {
           >
             Sell Skills
           </Link>
+          {user ? (
+            <Link
+              href="/account"
+              className="hidden px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+            >
+              Account
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              className="hidden px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+            >
+              Sign in
+            </Link>
+          )}
           <Link
             href="/hub"
             className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"

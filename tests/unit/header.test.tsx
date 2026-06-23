@@ -5,11 +5,15 @@ vi.mock('next-themes', () => ({
   useTheme: () => ({ resolvedTheme: 'light', setTheme: vi.fn() }),
 }));
 
+vi.mock('@/lib/auth/current-user', () => ({
+  getCurrentUser: vi.fn().mockResolvedValue(null),
+}));
+
 import { Header } from '@/components/layout/Header';
 
 describe('Header', () => {
-  it('renders logo, nav links, and theme toggle', () => {
-    render(<Header />);
+  it('renders logo, nav links, and theme toggle when logged out', async () => {
+    render(await Header());
 
     expect(screen.getByRole('link', { name: 'MCPMarket' })).toHaveAttribute(
       'href',
@@ -18,6 +22,10 @@ describe('Header', () => {
     expect(screen.getByRole('link', { name: 'Sell Skills' })).toHaveAttribute(
       'href',
       '/sell',
+    );
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/login',
     );
     expect(screen.getByRole('link', { name: 'Connect' })).toHaveAttribute(
       'href',

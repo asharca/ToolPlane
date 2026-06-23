@@ -13,5 +13,10 @@ export default defineConfig({
     // so concurrent upserts of the same row don't race the unique constraint.
     fileParallelism: false,
   },
-  resolve: { alias: { '@': resolve(__dirname, 'src') } },
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src'),
+      'server-only': resolve(__dirname, 'tests/stubs/server-only.ts'),
+    },
+  },
 });
