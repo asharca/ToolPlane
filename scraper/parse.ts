@@ -78,3 +78,31 @@ export function parseServerCard(html: string): ParsedServerCard | null {
 export function parseServerListing(html: string): ParsedServerCard[] {
   return parseListing(html, '/server/');
 }
+
+// Walk the home page in document order, bucketing server cards under the most
+// recent matching section heading. Used to flag Official / Featured servers.
+export function parseHomeFlagged(html: string): {
+  official: ParsedCard[];
+  featured: ParsedCard[];
+} {
+  const $ = cheerio.load(html);
+  const official: ParsedCard[] = [];
+  const featured: ParsedCard[] = [];
+  let bucket: ParsedCard[] | null = null;
+
+  $('h2, a[href^="/server/"]').each((_i, el) => {
+    const node = $(el);
+    if (node.is('h2')) {
+      const t = node.text().trim();
+      if (/official mcp servers/i.test(t)) bucket = official;
+      else if (/featured mcp servers/i.test(t)) bucket = featured;
+      else bucket = null;
+      return;
+    }
+    if (!bucket) return;
+    const card = parseCard($, node, '/server/');
+    if (card && !bucket.some((c) => c.slug === card.slug)) bucket.push(card);
+  });
+
+  return { official, featured };
+}
