@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Server {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  author      String?
+  description String?
+  iconUrl     String?
+  stars       Int        @default(0)
+  isOfficial  Boolean    @default(false)
+  isFeatured  Boolean    @default(false)
+  installCfg  Json?
+  readme      String?
+  categories  Category[] @relation("ServerCategories")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Client {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  author      String?
+  description String?
+  iconUrl     String?
+  stars       Int        @default(0)
+  categories  Category[] @relation("ClientCategories")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Skill {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  author      String?
+  description String?
+  iconUrl     String?
+  score       Int        @default(0)
+  categories  Category[] @relation("SkillCategories")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Category {
+  id      String   @id @default(cuid())
+  slug    String   @unique
+  name    String
+  servers Server[] @relation("ServerCategories")
+  clients Client[] @relation("ClientCategories")
+  skills  Skill[]  @relation("SkillCategories")
+}
+
+model DailySnapshot {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  date       DateTime @db.Date
+  rank       Int
+  score      Int
+  @@unique([entityType, entityId, date])
+}
+
+model ScrapeCheckpoint {
+  id        String   @id @default(cuid())
+  job       String   @unique
+  lastSlug  String?
+  doneCount Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
