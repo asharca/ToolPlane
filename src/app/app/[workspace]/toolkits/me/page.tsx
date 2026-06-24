@@ -94,7 +94,7 @@ export default async function MyToolkitPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner noun="toolkit" />
+            <ReadyToConnectBanner noun="toolkit" endpoint={endpoint} name="My Toolkit" />
 
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">

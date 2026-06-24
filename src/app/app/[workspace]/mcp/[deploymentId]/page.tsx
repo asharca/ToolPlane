@@ -1,7 +1,7 @@
-import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { Plug, BarChart3 } from 'lucide-react';
+import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
@@ -11,6 +11,7 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
+import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 import {
@@ -94,9 +95,12 @@ export default async function DeploymentInspectorPage({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link href={`${base}?tab=overview#identity`} className={actionButton}>
-              Connect
-            </Link>
+            <ConnectDialog
+              endpoint={endpoint}
+              name={dep.server.name}
+              label="Connect"
+              variant="outline"
+            />
             {running ? (
               <>
                 <form action={restartDeploymentAction}>
@@ -131,7 +135,7 @@ export default async function DeploymentInspectorPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner noun="server" />
+            <ReadyToConnectBanner noun="server" endpoint={endpoint} name={dep.server.name} />
 
             <section
               id="identity"

@@ -1,9 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, X } from 'lucide-react';
+import { X } from 'lucide-react';
+import { ConnectDialog } from './ConnectDialog';
 
-export function ReadyToConnectBanner({ noun }: { noun: 'server' | 'toolkit' }) {
+export function ReadyToConnectBanner({
+  noun,
+  endpoint,
+  name,
+}: {
+  noun: 'server' | 'toolkit';
+  endpoint: string;
+  name: string;
+}) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
 
@@ -19,13 +28,7 @@ export function ReadyToConnectBanner({ noun }: { noun: 'server' | 'toolkit' }) {
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-        >
-          <ArrowRight className="size-3.5" />
-          Connect with…
-        </button>
+        <ConnectDialog endpoint={endpoint} name={name} variant="banner" />
         <button
           type="button"
           aria-label="Dismiss"
