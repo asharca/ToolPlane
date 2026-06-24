@@ -53,7 +53,7 @@ export default async function Page({
       <div className="mt-6">
         {!user ? (
           <Link
-            href="/login"
+            href={`/login?next=${encodeURIComponent(`/server/${server.slug}`)}`}
             className="inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
           >
             Sign in to add to Hub
@@ -102,6 +102,29 @@ export default async function Page({
           ))}
         </div>
       ) : null}
+
+      <section className="mt-10 rounded-lg border border-border bg-card p-5">
+        <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
+          Connect via the Hub
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Deploy {server.name} to a workspace, then reach it over JSON-RPC
+          through the MCP Market gateway with your API token.
+        </p>
+        <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
+{`POST /api/v1/mcp/<deployment-id>/rpc
+Authorization: Bearer <your-api-token>
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}`}
+        </pre>
+        <Link
+          href="/hub"
+          className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          Open the Hub
+        </Link>
+      </section>
     </article>
   );
 }
