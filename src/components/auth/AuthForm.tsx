@@ -23,12 +23,15 @@ function SubmitButton({ label }: { label: string }) {
 export function AuthForm({
   mode,
   action,
+  next,
 }: {
   mode: 'login' | 'signup';
   action: Action;
+  next?: string;
 }) {
   const [state, formAction] = useActionState<AuthState, FormData>(action, {});
   const isSignup = mode === 'signup';
+  const crossLinkQuery = next ? `?next=${encodeURIComponent(next)}` : '';
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
@@ -42,6 +45,7 @@ export function AuthForm({
       </p>
 
       <form action={formAction} className="space-y-4">
+        {next ? <input type="hidden" name="next" value={next} /> : null}
         {isSignup && (
           <div className="space-y-1.5">
             <label htmlFor="name" className="text-sm font-medium text-foreground">
@@ -99,14 +103,20 @@ export function AuthForm({
         {isSignup ? (
           <>
             Already have an account?{' '}
-            <Link href="/login" className="font-medium text-foreground underline">
+            <Link
+              href={`/login${crossLinkQuery}`}
+              className="font-medium text-foreground underline"
+            >
               Sign in
             </Link>
           </>
         ) : (
           <>
             Don&apos;t have an account?{' '}
-            <Link href="/signup" className="font-medium text-foreground underline">
+            <Link
+              href={`/signup${crossLinkQuery}`}
+              className="font-medium text-foreground underline"
+            >
               Sign up
             </Link>
           </>

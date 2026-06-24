@@ -11,6 +11,15 @@ export type AuthState = { error?: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Only allow same-origin relative redirects (avoids open-redirect via ?next=).
+function safeNext(value: FormDataEntryValue | null): string {
+  const next = String(value ?? '');
+  if (next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\')) {
+    return next;
+  }
+  return '/account';
+}
+
 export async function signupAction(
   _prev: AuthState,
   formData: FormData,
@@ -30,7 +39,7 @@ export async function signupAction(
     data: { email, name: name || null, passwordHash: await hashPassword(password) },
   });
   await createSession(user.id);
-  redirect('/account');
+  redirect(safeNext(formData.get('next')));
 }
 
 export async function loginAction(
@@ -45,7 +54,7 @@ export async function loginAction(
     return { error: 'Invalid email or password.' };
 
   await createSession(user.id);
-  redirect('/account');
+  redirect(safeNext(formData.get('next')));
 }
 
 export async function logoutAction(): Promise<void> {

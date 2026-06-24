@@ -7,7 +7,25 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Sign in | MCP Market' };
 
-export default async function Page() {
-  if (await getCurrentUser()) redirect('/account');
-  return <AuthForm mode="login" action={loginAction} />;
+function safeNext(value: string | string[] | undefined): string | undefined {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (
+    next &&
+    next.startsWith('/') &&
+    !next.startsWith('//') &&
+    !next.startsWith('/\\')
+  ) {
+    return next;
+  }
+  return undefined;
+}
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
+  const next = safeNext((await searchParams).next);
+  if (await getCurrentUser()) redirect(next ?? '/account');
+  return <AuthForm mode="login" action={loginAction} next={next} />;
 }

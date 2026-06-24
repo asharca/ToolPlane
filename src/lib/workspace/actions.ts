@@ -151,3 +151,33 @@ export async function deleteWorkspaceAction(formData: FormData) {
   await db.workspace.delete({ where: { id: ctx.ws.id } });
   redirect('/app');
 }
+
+function slugifyName(input: string): string {
+  const base = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'workspace';
+}
+
+export async function createWorkspaceAction(formData: FormData) {
+  const user = await getCurrentUser();
+  if (!user) return;
+  const name = String(formData.get('name') ?? '').trim() || 'New workspace';
+
+  const base = slugifyName(name);
+  let slug = base;
+  for (let i = 1; await db.workspace.findUnique({ where: { slug } }); i += 1) {
+    slug = `${base}-${i}`;
+  }
+
+  const ws = await db.workspace.create({
+    data: {
+      slug,
+      name,
+      ownerId: user.id,
+      members: { create: { userId: user.id, role: 'owner' } },
+    },
+  });
+  redirect(`/app/${ws.slug}/mcp`);
+}

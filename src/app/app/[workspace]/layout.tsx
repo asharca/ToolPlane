@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
-import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import {
+  getWorkspaceForUser,
+  listWorkspacesForUser,
+} from '@/lib/workspace/queries';
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
 
 export const dynamic = 'force-dynamic';
@@ -14,16 +17,18 @@ export default async function WorkspaceLayout({
 }) {
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/app/${slug}/mcp`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const workspaces = await listWorkspacesForUser(user.id);
 
   return (
-    <div className="flex min-h-dvh bg-white text-zinc-900">
+    <div className="flex min-h-dvh bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <DashboardSidebar
         slug={ws.slug}
         workspaceName={ws.name}
         userLabel={user.name ?? user.email}
+        workspaces={workspaces}
       />
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
