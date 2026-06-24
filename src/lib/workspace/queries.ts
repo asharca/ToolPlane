@@ -59,3 +59,23 @@ export async function getDeployments(workspaceId: string) {
     },
   });
 }
+
+export async function getWorkspaceMembers(workspaceId: string) {
+  return db.membership.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: 'asc' },
+    include: { user: { select: { email: true, name: true } } },
+  });
+}
+
+export async function getInstalledSkills(workspaceId: string) {
+  return db.installedSkill.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      skill: {
+        select: { slug: true, name: true, iconUrl: true, description: true },
+      },
+    },
+  });
+}

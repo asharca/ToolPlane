@@ -7,35 +7,35 @@ datasource db {
 }
 
 model Server {
-  id          String     @id @default(cuid())
-  slug        String     @unique
+  id          String       @id @default(cuid())
+  slug        String       @unique
   name        String
   author      String?
   description String?
   iconUrl     String?
-  stars       Int        @default(0)
-  isOfficial  Boolean    @default(false)
-  isFeatured  Boolean    @default(false)
+  stars       Int          @default(0)
+  isOfficial  Boolean      @default(false)
+  isFeatured  Boolean      @default(false)
   installCfg  Json?
   readme      String?
-  categories  Category[] @relation("ServerCategories")
-  hubUsers    User[]     @relation("UserHubServers")
+  categories  Category[]   @relation("ServerCategories")
+  hubUsers    User[]       @relation("UserHubServers")
   deployments Deployment[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  name         String?
-  passwordHash String
-  apiTokens    ApiToken[]
-  hubServers   Server[]   @relation("UserHubServers")
+  id              String       @id @default(cuid())
+  email           String       @unique
+  name            String?
+  passwordHash    String
+  apiTokens       ApiToken[]
+  hubServers      Server[]     @relation("UserHubServers")
   ownedWorkspaces Workspace[]  @relation("WorkspaceOwner")
   memberships     Membership[]
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 }
 
 model ApiToken {
@@ -65,16 +65,17 @@ model Client {
 }
 
 model Skill {
-  id          String     @id @default(cuid())
-  slug        String     @unique
+  id          String           @id @default(cuid())
+  slug        String           @unique
   name        String
   author      String?
   description String?
   iconUrl     String?
-  score       Int        @default(0)
-  categories  Category[] @relation("SkillCategories")
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  score       Int              @default(0)
+  categories  Category[]       @relation("SkillCategories")
+  installs    InstalledSkill[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 }
 
 model Category {
@@ -93,6 +94,7 @@ model DailySnapshot {
   date       DateTime @db.Date
   rank       Int
   score      Int
+
   @@unique([entityType, entityId, date])
 }
 
@@ -105,15 +107,16 @@ model ScrapeCheckpoint {
 }
 
 model Workspace {
-  id          String       @id @default(cuid())
-  slug        String       @unique
-  name        String
-  ownerId     String
-  owner       User         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members     Membership[]
-  deployments Deployment[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id              String           @id @default(cuid())
+  slug            String           @unique
+  name            String
+  ownerId         String
+  owner           User             @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members         Membership[]
+  deployments     Deployment[]
+  installedSkills InstalledSkill[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model Membership {
@@ -139,4 +142,15 @@ model Deployment {
   updatedAt   DateTime  @updatedAt
 
   @@unique([workspaceId, serverId])
+}
+
+model InstalledSkill {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillId     String
+  skill       Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, skillId])
 }
