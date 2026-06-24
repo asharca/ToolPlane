@@ -115,6 +115,7 @@ model Workspace {
   members         Membership[]
   deployments     Deployment[]
   installedSkills InstalledSkill[]
+  requestLogs     RequestLog[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 }
@@ -153,4 +154,18 @@ model InstalledSkill {
   createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, skillId])
+}
+
+model RequestLog {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deploymentId String?
+  method       String
+  path         String
+  statusCode   Int
+  durationMs   Int
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
 }

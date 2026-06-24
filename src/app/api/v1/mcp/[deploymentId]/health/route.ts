@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { db } from '@/lib/db';
 import { livePort, liveStatus } from '@/lib/process/supervisor';
+import { logRequest } from '@/lib/observability/log';
 
-// Gateway health proxy: forwards to the live stub process for a deployment,
-// proving the supervised process is actually reachable.
+// Gateway health proxy: forwards to the live stub process for a deployment
+// and records the request for observability.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
+  const start = Date.now();
   const { deploymentId } = await params;
   const user = await getCurrentUser();
   if (!user) {
@@ -22,7 +24,7 @@ export async function GET(
         OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, workspaceId: true },
   });
   if (!dep) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -30,17 +32,30 @@ export async function GET(
 
   const port = livePort(deploymentId);
   const status = liveStatus(deploymentId) ?? dep.status;
+  let statusCode = 200;
+  let payload: Record<string, unknown> = { status, reachable: false };
+
   if (!port) {
-    return NextResponse.json({ status, reachable: false });
+    statusCode = 503;
+  } else {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      payload = { status, reachable: true, upstream: await res.json() };
+    } catch {
+      statusCode = 502;
+    }
   }
 
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(1500),
-    });
-    const body = await res.json();
-    return NextResponse.json({ status, reachable: true, upstream: body });
-  } catch {
-    return NextResponse.json({ status, reachable: false });
-  }
+  await logRequest({
+    workspaceId: dep.workspaceId,
+    deploymentId,
+    method: 'GET',
+    path: `/mcp/${deploymentId}/health`,
+    statusCode,
+    durationMs: Date.now() - start,
+  });
+
+  return NextResponse.json(payload, { status: statusCode });
 }
