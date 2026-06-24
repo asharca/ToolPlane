@@ -123,7 +123,7 @@ export function DashboardSidebar({
 
       <div className="space-y-2 border-t border-zinc-200 p-3 dark:border-zinc-800">
         <Link
-          href={`${base}/seller`}
+          href={`${base}/seller/overview`}
           onClick={onClose}
           className="flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
         >

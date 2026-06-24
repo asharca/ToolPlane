@@ -61,5 +61,9 @@ export async function getObservability(workspaceId: string, hours = 24) {
     errors: v.errors,
   }));
 
-  return { total, errors, avgMs, series, recent: logs.slice(0, 12) };
+  const sortedMs = logs.map((l) => l.durationMs).sort((a, b) => a - b);
+  const p95Ms =
+    total === 0 ? 0 : sortedMs[Math.min(total - 1, Math.ceil(total * 0.95) - 1)];
+
+  return { total, errors, avgMs, p95Ms, series, recent: logs.slice(0, 12) };
 }
