@@ -19,21 +19,33 @@ function SectionGrid({
   title,
   viewAllHref,
   viewAllLabel,
+  badge,
   children,
 }: {
   title: string;
   viewAllHref: string;
   viewAllLabel: string;
+  badge?: { label: string; href: string };
   children: ReactNode;
 }) {
   const [first, ...rest] = title.split(' ');
   return (
     <section className="py-8">
       <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="font-mono text-xl font-bold tracking-tight sm:text-2xl">
-          <span className="text-muted-foreground">{first}</span>{' '}
-          <span className="text-foreground">{rest.join(' ')}</span>
-        </h2>
+        <div className="flex min-w-0 items-center gap-3">
+          <h2 className="font-mono text-xl font-bold tracking-tight sm:text-2xl">
+            <span className="text-muted-foreground">{first}</span>{' '}
+            <span className="text-foreground">{rest.join(' ')}</span>
+          </h2>
+          {badge ? (
+            <Link
+              href={badge.href}
+              className="hidden shrink-0 items-center border border-border px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground hover:text-foreground sm:inline-flex"
+            >
+              {badge.label}
+            </Link>
+          ) : null}
+        </div>
         <Link
           href={viewAllHref}
           className="inline-flex h-9 shrink-0 items-center gap-1.5 border border-border px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
@@ -191,6 +203,7 @@ export function HomeView({
         title="Top Agent Skills"
         viewAllHref="/tools/skills"
         viewAllLabel="View all skills"
+        badge={{ label: 'What are Agent Skills?', href: '/tools/skills' }}
       >
         {topSkills.map((k) => (
           <SkillCard key={k.slug} skill={k} />
