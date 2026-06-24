@@ -1,17 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/current-user';
-import { verifyApiToken } from '@/lib/auth/tokens';
+import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { livePort } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
-
-// Resolve the caller from a Bearer API token (for external MCP clients) or
-// fall back to the dashboard session cookie.
-async function resolveUser(req: Request) {
-  const viaToken = await verifyApiToken(req.headers.get('authorization'));
-  if (viaToken) return viaToken;
-  return getCurrentUser();
-}
 
 // Gateway: proxy a real MCP JSON-RPC request to the live deployment process
 // and record it for observability. POST a JSON-RPC 2.0 envelope, e.g.
@@ -23,7 +14,7 @@ export async function POST(
   const start = Date.now();
   const { deploymentId } = await params;
 
-  const user = await resolveUser(req);
+  const user = await resolveRequestUser(req);
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
