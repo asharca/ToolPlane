@@ -116,6 +116,7 @@ model Workspace {
   deployments     Deployment[]
   installedSkills InstalledSkill[]
   requestLogs     RequestLog[]
+  toolkits        Toolkit[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 }
@@ -141,6 +142,7 @@ model Deployment {
   status      String    @default("provisioning")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  toolkitLinks ToolkitServer[]
 
   @@unique([workspaceId, serverId])
 }
@@ -152,6 +154,7 @@ model InstalledSkill {
   skillId     String
   skill       Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
+  toolkitLinks ToolkitSkill[]
 
   @@unique([workspaceId, skillId])
 }
@@ -168,4 +171,40 @@ model RequestLog {
   createdAt    DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
+}
+
+model Toolkit {
+  id          String          @id @default(cuid())
+  workspaceId String
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  visibility  String          @default("private")
+  enabled     Boolean         @default(true)
+  servers     ToolkitServer[]
+  skills      ToolkitSkill[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([workspaceId, slug])
+}
+
+model ToolkitServer {
+  id           String     @id @default(cuid())
+  toolkitId    String
+  toolkit      Toolkit    @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
+  deploymentId String
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@unique([toolkitId, deploymentId])
+}
+
+model ToolkitSkill {
+  id               String         @id @default(cuid())
+  toolkitId        String
+  toolkit          Toolkit        @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
+  installedSkillId String
+  installedSkill   InstalledSkill @relation(fields: [installedSkillId], references: [id], onDelete: Cascade)
+
+  @@unique([toolkitId, installedSkillId])
 }
