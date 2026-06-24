@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:e2e": "node e2e/dashboard.e2e.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
