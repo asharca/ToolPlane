@@ -48,7 +48,7 @@ describe('HomeView', () => {
       'Top MCP Servers',
       'Latest MCP Servers',
       'MCP Clients',
-      'Agent Skills',
+      'Top Agent Skills',
     ]) {
       expect(
         screen.getByRole('heading', { name: heading }),

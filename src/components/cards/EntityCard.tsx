@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Star } from 'lucide-react';
+import { Star, ArrowUpRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 export interface EntityCardProps {
@@ -8,6 +8,7 @@ export interface EntityCardProps {
   description?: string | null;
   author?: string | null;
   iconUrl?: string | null;
+  category?: string | null;
   stat?: ReactNode;
 }
 
@@ -18,10 +19,10 @@ export function formatCount(n: number): string {
 
 export function StarStat({ value }: { value: number }) {
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-      <Star className="size-3.5" />
+    <div className="flex items-center font-mono text-xs text-muted-foreground">
+      <Star className="mr-1 h-3 w-3 fill-muted-foreground/30 text-muted-foreground" />
       {formatCount(value)}
-    </span>
+    </div>
   );
 }
 
@@ -31,6 +32,7 @@ export function EntityCard({
   description,
   author,
   iconUrl,
+  category,
   stat,
 }: EntityCardProps) {
   return (
@@ -52,22 +54,30 @@ export function EntityCard({
               ) : (
                 <div className="size-5 shrink-0 rounded-full bg-muted" />
               )}
-              {author ? (
-                <span className="truncate text-xs text-muted-foreground">
-                  {author}
-                </span>
-              ) : null}
+              <h3 className="line-clamp-1 font-mono text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
+                {name}
+              </h3>
             </div>
-            {stat ? <div className="shrink-0">{stat}</div> : null}
+            <ArrowUpRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-foreground/60" />
           </div>
 
-          <h3 className="line-clamp-1 font-mono text-base font-semibold text-foreground">
-            {name}
-          </h3>
           {description ? (
             <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
               {description}
             </p>
+          ) : null}
+
+          {category || stat ? (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                {category ? (
+                  <span className="inline-flex max-w-full items-center truncate rounded-lg border border-border px-1.5 py-0 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {category}
+                  </span>
+                ) : null}
+              </div>
+              {stat ? <div className="shrink-0">{stat}</div> : null}
+            </div>
           ) : null}
         </div>
       </div>

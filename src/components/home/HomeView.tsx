@@ -188,7 +188,7 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="Agent Skills"
+        title="Top Agent Skills"
         viewAllHref="/tools/skills"
         viewAllLabel="View all skills"
       >

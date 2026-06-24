@@ -16,6 +16,7 @@ describe('entity cards', () => {
           author: 'mendableai',
           iconUrl: null,
           stars: 1500,
+          categories: [{ name: 'Web Scraping' }],
         }}
       />,
     );
@@ -26,7 +27,7 @@ describe('entity cards', () => {
     );
     expect(screen.getByText('Firecrawl')).toBeInTheDocument();
     expect(screen.getByText('Web scraping for LLMs')).toBeInTheDocument();
-    expect(screen.getByText('mendableai')).toBeInTheDocument();
+    expect(screen.getByText('Web Scraping')).toBeInTheDocument();
     expect(screen.getByText('1.5k')).toBeInTheDocument();
   });
 

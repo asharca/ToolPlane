@@ -4,7 +4,7 @@ import { EntityCard, StarStat } from './EntityCard';
 type SkillCardData = Pick<
   Skill,
   'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'score'
->;
+> & { categories?: { name: string }[] };
 
 export function SkillCard({ skill }: { skill: SkillCardData }) {
   return (
@@ -14,6 +14,7 @@ export function SkillCard({ skill }: { skill: SkillCardData }) {
       description={skill.description}
       author={skill.author}
       iconUrl={skill.iconUrl}
+      category={skill.categories?.[0]?.name ?? null}
       stat={<StarStat value={skill.score} />}
     />
   );
