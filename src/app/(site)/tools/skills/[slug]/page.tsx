@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
 import { getSkill } from '@/lib/queries/skills';
@@ -48,6 +49,36 @@ export default async function Page({
           {skill.description}
         </p>
       ) : null}
+
+      {skill.categories.length > 0 ? (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {skill.categories.map((category) => (
+            <Link
+              key={category.id}
+              href={`/categories/${category.slug}`}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
+            >
+              {category.name}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      <section className="mt-10 rounded-lg border border-border bg-card p-5">
+        <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
+          Install this skill
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Install {skill.name} into a workspace from the Hub, then export it as a
+          ready-to-use <code className="font-mono">SKILL.md</code> for your agent.
+        </p>
+        <Link
+          href="/hub"
+          className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          Open the Hub
+        </Link>
+      </section>
     </article>
   );
 }
