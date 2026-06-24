@@ -2,9 +2,15 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
+import { liveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
-import { removeDeploymentAction } from '@/lib/workspace/actions';
+import {
+  removeDeploymentAction,
+  startDeploymentAction,
+  stopDeploymentAction,
+  restartDeploymentAction,
+} from '@/lib/workspace/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +21,20 @@ function formatDate(d: Date): string {
     year: 'numeric',
   });
 }
+
+// Reconcile DB status with the live process table: if the DB still says a
+// deployment is up but no supervised process exists (e.g. after a server
+// restart), surface it as stopped rather than lying.
+function displayStatus(id: string, dbStatus: string): string {
+  const live = liveStatus(id);
+  if (live) return live;
+  return dbStatus === 'running' || dbStatus === 'provisioning'
+    ? 'stopped'
+    : dbStatus;
+}
+
+const rowButton =
+  'text-xs text-zinc-500 transition-colors hover:text-zinc-900';
 
 export default async function McpServersPage({
   params,
@@ -67,51 +87,77 @@ export default async function McpServersPage({
                   <th className="px-4 py-3 font-medium">Server</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Created</th>
-                  <th className="px-4 py-3" />
+                  <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {deployments.map((d) => (
-                  <tr key={d.id} className="transition-colors hover:bg-zinc-50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        {d.server.iconUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={d.server.iconUrl}
-                            alt=""
-                            width={20}
-                            height={20}
-                            className="size-5 rounded object-cover"
-                          />
-                        ) : (
-                          <span className="size-5 rounded bg-zinc-200" />
-                        )}
-                        <Link
-                          href={`/server/${d.server.slug}`}
-                          className="font-medium text-zinc-900 hover:underline"
-                        >
-                          {d.server.name}
-                        </Link>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={d.status} />
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500">
-                      {formatDate(d.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <form action={removeDeploymentAction}>
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="deploymentId" value={d.id} />
-                        <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
-                          Remove
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
+                {deployments.map((d) => {
+                  const status = displayStatus(d.id, d.status);
+                  const isUp = status === 'running' || status === 'provisioning';
+                  return (
+                    <tr key={d.id} className="transition-colors hover:bg-zinc-50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {d.server.iconUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={d.server.iconUrl}
+                              alt=""
+                              width={20}
+                              height={20}
+                              className="size-5 rounded object-cover"
+                            />
+                          ) : (
+                            <span className="size-5 rounded bg-zinc-200" />
+                          )}
+                          <Link
+                            href={`/server/${d.server.slug}`}
+                            className="font-medium text-zinc-900 hover:underline"
+                          >
+                            {d.server.name}
+                          </Link>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={status} />
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500">
+                        {formatDate(d.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-3">
+                          {isUp ? (
+                            <>
+                              <form action={stopDeploymentAction}>
+                                <input type="hidden" name="workspace" value={slug} />
+                                <input type="hidden" name="deploymentId" value={d.id} />
+                                <button className={rowButton}>Stop</button>
+                              </form>
+                              <form action={restartDeploymentAction}>
+                                <input type="hidden" name="workspace" value={slug} />
+                                <input type="hidden" name="deploymentId" value={d.id} />
+                                <button className={rowButton}>Restart</button>
+                              </form>
+                            </>
+                          ) : (
+                            <form action={startDeploymentAction}>
+                              <input type="hidden" name="workspace" value={slug} />
+                              <input type="hidden" name="deploymentId" value={d.id} />
+                              <button className={rowButton}>Start</button>
+                            </form>
+                          )}
+                          <form action={removeDeploymentAction}>
+                            <input type="hidden" name="workspace" value={slug} />
+                            <input type="hidden" name="deploymentId" value={d.id} />
+                            <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
+                              Remove
+                            </button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

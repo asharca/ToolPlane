@@ -5,6 +5,12 @@ import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import {
+  startProcess,
+  stopProcess,
+  restartProcess,
+  killProcess,
+} from '@/lib/process/supervisor';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -14,6 +20,13 @@ async function authorizedWorkspace(slug: string) {
   return { user, ws };
 }
 
+async function deploymentInWorkspace(deploymentId: string, workspaceId: string) {
+  return db.deployment.findFirst({
+    where: { id: deploymentId, workspaceId },
+    include: { server: { select: { name: true } } },
+  });
+}
+
 export async function deployServerAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const serverId = String(formData.get('serverId') ?? '');
@@ -21,11 +34,17 @@ export async function deployServerAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  await db.deployment.upsert({
+  const server = await db.server.findUnique({
+    where: { id: serverId },
+    select: { name: true },
+  });
+  const dep = await db.deployment.upsert({
     where: { workspaceId_serverId: { workspaceId: ctx.ws.id, serverId } },
     update: {},
-    create: { workspaceId: ctx.ws.id, serverId, status: 'running' },
+    create: { workspaceId: ctx.ws.id, serverId, status: 'provisioning' },
   });
+  await startProcess(dep.id, server?.name ?? 'mcp');
+
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/new`);
 }
@@ -37,9 +56,49 @@ export async function removeDeploymentAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
+  killProcess(deploymentId);
   await db.deployment.deleteMany({
     where: { id: deploymentId, workspaceId: ctx.ws.id },
   });
+  revalidatePath(`/app/${slug}/mcp`);
+}
+
+export async function startDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!dep) return;
+
+  await startProcess(dep.id, dep.server.name);
+  revalidatePath(`/app/${slug}/mcp`);
+}
+
+export async function stopDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!dep) return;
+
+  await stopProcess(deploymentId);
+  revalidatePath(`/app/${slug}/mcp`);
+}
+
+export async function restartDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!dep) return;
+
+  await restartProcess(dep.id, dep.server.name);
   revalidatePath(`/app/${slug}/mcp`);
 }
 
