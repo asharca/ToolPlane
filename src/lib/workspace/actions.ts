@@ -10,6 +10,7 @@ import {
   stopProcess,
   restartProcess,
   killProcess,
+  killMany,
 } from '@/lib/process/supervisor';
 
 async function authorizedWorkspace(slug: string) {
@@ -147,6 +148,14 @@ export async function deleteWorkspaceAction(formData: FormData) {
   if (!slug) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || ctx.ws.ownerId !== ctx.user.id) return;
+
+  // Tear down any running processes before deleting the workspace so we do
+  // not leak orphaned child processes.
+  const deployments = await db.deployment.findMany({
+    where: { workspaceId: ctx.ws.id },
+    select: { id: true },
+  });
+  killMany(deployments.map((d) => d.id));
 
   await db.workspace.delete({ where: { id: ctx.ws.id } });
   redirect('/app');

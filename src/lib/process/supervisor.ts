@@ -22,7 +22,7 @@ function store(): Store {
   return g.__mcpSupervisor;
 }
 
-const STUB = path.join(process.cwd(), 'scripts', 'mcp-stub-server.mjs');
+const SERVER = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 
 async function persist(deploymentId: string, status: string) {
   try {
@@ -45,7 +45,7 @@ export async function startProcess(deploymentId: string, name: string): Promise<
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) return;
 
-  const child = spawn(process.execPath, [STUB], {
+  const child = spawn(process.execPath, [SERVER], {
     env: { ...process.env, MCP_PORT: '0', MCP_NAME: name },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -111,4 +111,10 @@ export function killProcess(deploymentId: string): void {
     if (e.child.exitCode === null) e.child.kill('SIGKILL');
   }
   store().delete(deploymentId);
+}
+
+// Kill every supervised process for a set of deployments (e.g. when a
+// workspace is deleted) so no child processes are left orphaned.
+export function killMany(deploymentIds: string[]): void {
+  for (const id of deploymentIds) killProcess(id);
 }

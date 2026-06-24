@@ -34,7 +34,7 @@ function displayStatus(id: string, dbStatus: string): string {
 }
 
 const rowButton =
-  'text-xs text-zinc-500 transition-colors hover:text-zinc-900';
+  'text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
 export default async function McpServersPage({
   params,
@@ -55,7 +55,7 @@ export default async function McpServersPage({
         actions={
           <Link
             href={`/app/${slug}/mcp/new`}
-            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             Browse MCPs
           </Link>
@@ -63,26 +63,30 @@ export default async function McpServersPage({
       />
       <div className="px-8 py-6">
         <div className="mb-6 flex items-center justify-between">
-          <p className="text-sm text-zinc-500">Servers deployed to your org.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Servers deployed to your org.
+          </p>
           <span className="text-sm text-zinc-400">
             {deployments.length} server{deployments.length === 1 ? '' : 's'}
           </span>
         </div>
 
         {deployments.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 py-20 text-center">
-            <p className="text-sm text-zinc-500">No servers deployed yet.</p>
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 py-20 text-center dark:border-zinc-700">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              No servers deployed yet.
+            </p>
             <Link
               href={`/app/${slug}/mcp/new`}
-              className="mt-4 inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+              className="mt-4 inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             >
               Browse MCPs
             </Link>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-zinc-200">
+          <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   <th className="px-4 py-3 font-medium">Server</th>
                   <th className="px-4 py-3 font-medium">Status</th>
@@ -90,12 +94,15 @@ export default async function McpServersPage({
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {deployments.map((d) => {
                   const status = displayStatus(d.id, d.status);
                   const isUp = status === 'running' || status === 'provisioning';
                   return (
-                    <tr key={d.id} className="transition-colors hover:bg-zinc-50">
+                    <tr
+                      key={d.id}
+                      className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           {d.server.iconUrl ? (
@@ -108,11 +115,11 @@ export default async function McpServersPage({
                               className="size-5 rounded object-cover"
                             />
                           ) : (
-                            <span className="size-5 rounded bg-zinc-200" />
+                            <span className="size-5 rounded bg-zinc-200 dark:bg-zinc-700" />
                           )}
                           <Link
-                            href={`/server/${d.server.slug}`}
-                            className="font-medium text-zinc-900 hover:underline"
+                            href={`/app/${slug}/mcp/${d.id}`}
+                            className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                           >
                             {d.server.name}
                           </Link>
@@ -121,11 +128,14 @@ export default async function McpServersPage({
                       <td className="px-4 py-3">
                         <StatusBadge status={status} />
                       </td>
-                      <td className="px-4 py-3 text-zinc-500">
+                      <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
                         {formatDate(d.createdAt)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-3">
+                          <Link href={`/app/${slug}/mcp/${d.id}`} className={rowButton}>
+                            Inspect
+                          </Link>
                           {isUp ? (
                             <>
                               <form action={stopDeploymentAction}>
