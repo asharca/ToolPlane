@@ -10,6 +10,7 @@ export interface EntityCardProps {
   iconUrl?: string | null;
   category?: string | null;
   stat?: ReactNode;
+  rank?: number;
 }
 
 export function formatCount(n: number): string {
@@ -34,11 +35,20 @@ export function EntityCard({
   iconUrl,
   category,
   stat,
+  rank,
 }: EntityCardProps) {
   return (
     <Link href={href} className="group block">
       <div className="relative h-full rounded-lg border border-border bg-card transition-colors duration-200 hover:border-foreground/20 hover:bg-accent/50">
         <div className="p-5">
+          {typeof rank === 'number' ? (
+            <div className="mb-3">
+              <span className="inline-flex items-center rounded border border-border px-1.5 py-0.5 font-mono text-[11px] font-medium text-muted-foreground">
+                #{rank}
+              </span>
+            </div>
+          ) : null}
+
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2.5">
               {iconUrl ? (

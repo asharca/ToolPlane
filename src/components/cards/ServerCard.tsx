@@ -6,7 +6,13 @@ type ServerCardData = Pick<
   'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'stars'
 > & { categories?: { name: string }[] };
 
-export function ServerCard({ server }: { server: ServerCardData }) {
+export function ServerCard({
+  server,
+  rank,
+}: {
+  server: ServerCardData;
+  rank?: number;
+}) {
   return (
     <EntityCard
       href={`/server/${server.slug}`}
@@ -16,6 +22,7 @@ export function ServerCard({ server }: { server: ServerCardData }) {
       iconUrl={server.iconUrl}
       category={server.categories?.[0]?.name ?? null}
       stat={<StarStat value={server.stars} />}
+      rank={rank}
     />
   );
 }
