@@ -92,7 +92,7 @@ export default async function SkillsPage({
                           <span className="size-5 rounded bg-zinc-200 dark:bg-zinc-700" />
                         )}
                         <Link
-                          href={`/tools/skills/${s.skill.slug}`}
+                          href={`/app/${slug}/skills/${s.id}`}
                           className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                         >
                           {s.skill.name}
@@ -104,6 +104,12 @@ export default async function SkillsPage({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-4">
+                        <Link
+                          href={`/app/${slug}/skills/${s.id}`}
+                          className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                        >
+                          Use
+                        </Link>
                         <a
                           href={`/api/v1/skills/${s.id}/download`}
                           className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
