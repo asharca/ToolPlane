@@ -109,7 +109,7 @@ export function HomeView({
             <span className="text-muted-foreground">Updated just now</span>
           </div>
 
-          <h1 className="mx-auto max-w-4xl text-balance font-mono text-4xl font-bold tracking-tight sm:text-6xl">
+          <h1 className="mx-auto max-w-4xl text-balance font-mono text-5xl font-bold tracking-tight sm:text-7xl">
             <span className="sr-only">
               Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools
             </span>
