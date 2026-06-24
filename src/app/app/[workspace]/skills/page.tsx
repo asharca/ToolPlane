@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { Plus } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -15,6 +16,27 @@ function fmt(d: Date) {
   });
 }
 
+const STEPS = [
+  {
+    n: '01',
+    title: 'Create or import',
+    body: 'Write a skill from scratch, or pull one from a GitHub repo.',
+  },
+  {
+    n: '02',
+    title: 'Refine in place',
+    body: 'Iterate and refine. Every save is versioned, so it’s safe to experiment.',
+  },
+  {
+    n: '03',
+    title: 'Sync everywhere',
+    body: 'Skills stay in sync across every client and toolkit. Update once, ship everywhere.',
+  },
+];
+
+const addSkillButton =
+  'inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200';
+
 export default async function SkillsPage({
   params,
 }: {
@@ -29,37 +51,54 @@ export default async function SkillsPage({
 
   return (
     <>
-      <DashboardHeader
-        title="Skills"
-        actions={
-          <Link
-            href={`/app/${slug}/skills/new`}
-            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-          >
-            Browse Skills
-          </Link>
-        }
-      />
+      <DashboardHeader title="Skills" />
       <div className="px-8 py-6">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Agent skills installed in your workspace.
+            Instructions and assets your agent loads on demand. Author or sync
+            from GitHub.
           </p>
-          <span className="text-sm text-zinc-400">
-            {skills.length} skill{skills.length === 1 ? '' : 's'}
-          </span>
+          <Link href={`/app/${slug}/skills/new`} className={addSkillButton}>
+            <Plus className="size-4" />
+            Add skill
+          </Link>
         </div>
+
         {skills.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 py-20 text-center dark:border-zinc-700">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              No skills installed yet.
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-8 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              Create. Refine. Sync.
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              Skills add focused capabilities to your agent.
             </p>
-            <Link
-              href={`/app/${slug}/skills/new`}
-              className="mt-4 inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              Browse Skills
-            </Link>
+            <div className="mt-6 grid gap-6 sm:grid-cols-3">
+              {STEPS.map((step) => (
+                <div key={step.n}>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                    Step {step.n}
+                  </p>
+                  <p className="mt-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    {step.title}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    {step.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-7 flex flex-wrap items-center gap-3">
+              <Link href={`/app/${slug}/skills/new`} className={addSkillButton}>
+                <Plus className="size-4" />
+                Add skill
+              </Link>
+              <Link
+                href="/tools/skills"
+                className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Browse directory
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -67,7 +106,7 @@ export default async function SkillsPage({
               <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   <th className="px-4 py-3 font-medium">Skill</th>
-                  <th className="px-4 py-3 font-medium">Installed</th>
+                  <th className="px-4 py-3 font-medium">Added</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
