@@ -1,0 +1,62 @@
+'use client';
+
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { Menu } from 'lucide-react';
+import { DashboardSidebar } from './DashboardSidebar';
+import { DashboardLogo } from './DashboardLogo';
+
+type Workspace = { id: string; slug: string; name: string };
+
+export function DashboardChrome({
+  slug,
+  workspaceName,
+  userLabel,
+  workspaces,
+  children,
+}: {
+  slug: string;
+  workspaceName: string;
+  userLabel: string;
+  workspaces: Workspace[];
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex min-h-dvh bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      {open ? (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+        />
+      ) : null}
+
+      <DashboardSidebar
+        slug={slug}
+        workspaceName={workspaceName}
+        userLabel={userLabel}
+        workspaces={workspaces}
+        mobileOpen={open}
+        onClose={() => setOpen(false)}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex h-14 items-center gap-3 border-b border-zinc-200 px-4 lg:hidden dark:border-zinc-800">
+          <button
+            type="button"
+            aria-label="Open menu"
+            onClick={() => setOpen(true)}
+            className="inline-flex size-9 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            <Menu className="size-5" />
+          </button>
+          <DashboardLogo />
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}

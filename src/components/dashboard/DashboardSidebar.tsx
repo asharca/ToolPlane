@@ -57,24 +57,32 @@ export function DashboardSidebar({
   workspaceName,
   userLabel,
   workspaces,
+  mobileOpen = false,
+  onClose,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  mobileOpen?: boolean;
+  onClose?: () => void;
 }) {
   const pathname = usePathname() ?? '';
   const base = `/app/${slug}`;
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/60">
+    <aside
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 transition-transform duration-200 lg:static lg:z-auto lg:translate-x-0 lg:bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900 lg:dark:bg-zinc-900/60 ${
+        mobileOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}
+    >
       <div className="px-5 py-5">
-        <Link href={base + '/mcp'}>
+        <Link href={base + '/mcp'} onClick={onClose}>
           <DashboardLogo />
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-6 px-3 py-2">
+      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-2">
         {SECTIONS.map((section) => (
           <div key={section.title}>
             <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -90,6 +98,7 @@ export function DashboardSidebar({
                   <li key={item.segment}>
                     <Link
                       href={href}
+                      onClick={onClose}
                       className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors ${
                         active
                           ? 'bg-zinc-200/70 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
@@ -115,6 +124,7 @@ export function DashboardSidebar({
       <div className="space-y-2 border-t border-zinc-200 p-3 dark:border-zinc-800">
         <Link
           href={`${base}/seller`}
+          onClick={onClose}
           className="flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
         >
           <Store className="size-4" />

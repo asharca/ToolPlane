@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { callTool, createRpcHandler, TOOLS } from '../../scripts/mcp-tools.mjs';
+// .mjs module without types — load with permissive signatures for tests.
+import * as mcp from '../../scripts/mcp-tools.mjs';
+
+const callTool = mcp.callTool as (name: string, args?: Record<string, unknown>) => any;
+const createRpcHandler = mcp.createRpcHandler as (
+  opts?: { name?: string; version?: string },
+) => (msg: unknown) => any;
+const TOOLS = mcp.TOOLS as Array<{ name: string }>;
 
 describe('MCP tool dispatch', () => {
   it('exposes the expected tool catalog', () => {

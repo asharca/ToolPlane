@@ -4,7 +4,16 @@ import userEvent from '@testing-library/user-event';
 
 import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 
-const tools = [
+type PlaygroundTool = {
+  name: string;
+  description?: string;
+  inputSchema?: {
+    properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[];
+  };
+};
+
+const tools: PlaygroundTool[] = [
   {
     name: 'echo',
     description: 'Echo back the provided message.',

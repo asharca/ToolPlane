@@ -4,7 +4,7 @@ import {
   getWorkspaceForUser,
   listWorkspacesForUser,
 } from '@/lib/workspace/queries';
-import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
+import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,14 +23,13 @@ export default async function WorkspaceLayout({
   const workspaces = await listWorkspacesForUser(user.id);
 
   return (
-    <div className="flex min-h-dvh bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-      <DashboardSidebar
-        slug={ws.slug}
-        workspaceName={ws.name}
-        userLabel={user.name ?? user.email}
-        workspaces={workspaces}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
-    </div>
+    <DashboardChrome
+      slug={ws.slug}
+      workspaceName={ws.name}
+      userLabel={user.name ?? user.email}
+      workspaces={workspaces}
+    >
+      {children}
+    </DashboardChrome>
   );
 }
