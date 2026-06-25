@@ -24,6 +24,7 @@ const childEnv = { ...process.env };
 delete childEnv.MCP_COMMAND;
 delete childEnv.MCP_ARGS;
 delete childEnv.MCP_PORT;
+delete childEnv.MCP_NAME;
 
 const child = spawn(COMMAND, ARGS, { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
 child.on('error', (err) => {

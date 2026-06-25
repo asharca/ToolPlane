@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { Plus, X, Trash2, AlertTriangle } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
 
@@ -22,6 +22,7 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
   const [source, setSource] = useState('npm');
   const [name, setName] = useState('');
   const [env, setEnv] = useState<EnvRow[]>([]);
+  const [pending, startTransition] = useTransition();
 
   const slugPreview =
     name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mcp-server';
@@ -57,7 +58,17 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
               </span>
             </div>
 
-            <form action={deployCustomServerAction} className="space-y-5">
+            <form
+              action={(fd) =>
+                startTransition(async () => {
+                  await deployCustomServerAction(fd);
+                  setOpen(false);
+                  setName('');
+                  setEnv([]);
+                })
+              }
+              className="space-y-5"
+            >
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="source" value={source} />
               <input type="hidden" name="env" value={JSON.stringify(env)} />
@@ -164,9 +175,10 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"
+                  disabled={pending}
+                  className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
                 >
-                  Deploy
+                  {pending ? 'Deploying…' : 'Deploy'}
                 </button>
               </div>
             </form>
