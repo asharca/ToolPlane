@@ -46,3 +46,39 @@ Installed from MCP Market. Replace these starter instructions with the
 concrete procedure your agent should follow for ${skill.name}.
 `;
 }
+
+type CustomSkillData = {
+  slug?: string | null;
+  name?: string | null;
+  description?: string | null;
+  content?: string | null;
+  userInvocable?: boolean;
+  agentInvocable?: boolean;
+  effort?: string | null;
+};
+
+export function buildCustomSkillMarkdown(s: CustomSkillData): string {
+  const slug = (s.slug || s.name || 'skill').trim();
+  const description = (s.description || `${s.name ?? slug} agent skill.`).trim();
+  const body = (s.content ?? '').trim() || `# ${s.name ?? slug}\n\n${description}`;
+  return [
+    '---',
+    `name: ${slug}`,
+    `description: ${yamlString(description)}`,
+    `user-invocable: ${s.userInvocable !== false}`,
+    `agent-invocable: ${s.agentInvocable !== false}`,
+    `effort: ${s.effort || 'default'}`,
+    '---',
+    '',
+    body,
+    '',
+  ].join('\n');
+}
+
+export function buildInstalledSkillMarkdown(installed: {
+  skillId: string | null;
+  skill: { slug: string; name: string; description?: string | null; author?: string | null } | null;
+} & CustomSkillData): string {
+  if (installed.skillId && installed.skill) return buildSkillMarkdown(installed.skill);
+  return buildCustomSkillMarkdown(installed);
+}
