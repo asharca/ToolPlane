@@ -6,6 +6,7 @@ import { listToolkits } from '@/lib/toolkits/queries';
 import { getAgent, listProviders, listConversations, getConversation } from '@/lib/agents/queries';
 import { liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
@@ -76,7 +77,7 @@ export default async function AgentDetailPage({
           }))}
           skills={skills.map((s) => ({
             id: s.id,
-            label: s.skill.name,
+            label: skillLabel(s).name,
             checked: selectedSkills.has(s.id),
           }))}
           toolkits={toolkits.map((t) => ({

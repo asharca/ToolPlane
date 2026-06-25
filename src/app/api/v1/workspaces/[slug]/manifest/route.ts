@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { liveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
 
 // Export a workspace "toolkit" manifest: every deployed MCP server (with its
 // gateway endpoint) and installed skill, as a single JSON document an agent
@@ -51,8 +52,8 @@ export async function GET(
       endpoint: `/api/v1/mcp/${d.id}/rpc`,
     })),
     skills: ws.installedSkills.map((i) => ({
-      name: i.skill.name,
-      slug: i.skill.slug,
+      name: skillLabel(i).name,
+      slug: skillLabel(i).slug,
       download: `/api/v1/skills/${i.id}/download`,
     })),
   };

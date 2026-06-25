@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { liveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
 
 // Export a single toolkit manifest: only the MCP servers and skills the user
 // assembled into this toolkit, as one JSON document an agent config consumes.
@@ -72,8 +73,8 @@ export async function GET(
       endpoint: `/api/v1/mcp/${s.deployment.id}/rpc`,
     })),
     skills: toolkit.skills.map((s) => ({
-      name: s.installedSkill.skill.name,
-      slug: s.installedSkill.skill.slug,
+      name: skillLabel(s.installedSkill).name,
+      slug: skillLabel(s.installedSkill).slug,
       download: `/api/v1/skills/${s.installedSkill.id}/download`,
     })),
   };

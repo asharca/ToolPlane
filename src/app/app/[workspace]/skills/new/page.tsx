@@ -28,7 +28,7 @@ export default async function BrowseSkillsPage({
     }),
     getInstalledSkills(ws.id),
   ]);
-  const installedIds = new Set(installed.map((i) => i.skillId));
+  const installedIds = new Set(installed.map((i) => i.skillId).filter((id): id is string => id !== null));
 
   return (
     <>

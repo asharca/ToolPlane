@@ -1,6 +1,7 @@
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
-import { buildSkillMarkdown } from '@/lib/skills/artifact';
+import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import { logRequest } from '@/lib/observability/log';
 
 // Serve a real, downloadable SKILL.md for an installed skill. Auth via the
@@ -40,12 +41,13 @@ export async function GET(
     });
   }
 
-  const markdown = buildSkillMarkdown(install.skill);
+  const markdown = buildInstalledSkillMarkdown(install);
+  const slug = skillLabel(install).slug;
 
   await logRequest({
     workspaceId: install.workspace.id,
     method: 'GET',
-    path: `/skills/${install.skill.slug}/download`,
+    path: `/skills/${slug}/download`,
     statusCode: 200,
     durationMs: Date.now() - start,
   });
@@ -54,7 +56,7 @@ export async function GET(
     status: 200,
     headers: {
       'content-type': 'text/markdown; charset=utf-8',
-      'content-disposition': `attachment; filename="${install.skill.slug}.SKILL.md"`,
+      'content-disposition': `attachment; filename="${slug}.SKILL.md"`,
     },
   });
 }

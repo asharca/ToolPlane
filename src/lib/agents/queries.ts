@@ -1,13 +1,17 @@
 import 'server-only';
 import { db } from '@/lib/db';
 
+const INSTALLED_SKILL_INCLUDE = {
+  include: {
+    skill: true,
+  },
+} as const;
+
 const TOOL_INCLUDE = {
   servers: { select: { deploymentId: true } },
   skills: {
     select: {
-      installedSkill: {
-        select: { id: true, skill: { select: { slug: true, name: true, description: true, author: true } } },
-      },
+      installedSkill: INSTALLED_SKILL_INCLUDE,
     },
   },
   toolkits: {
@@ -19,9 +23,7 @@ const TOOL_INCLUDE = {
           servers: { select: { deploymentId: true } },
           skills: {
             select: {
-              installedSkill: {
-                select: { id: true, skill: { select: { slug: true, name: true, description: true, author: true } } },
-              },
+              installedSkill: INSTALLED_SKILL_INCLUDE,
             },
           },
         },

@@ -4,7 +4,8 @@ import { ArrowLeft, Download } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
-import { buildSkillMarkdown } from '@/lib/skills/artifact';
+import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 
@@ -31,12 +32,13 @@ export default async function SkillInspectorPage({
   });
   if (!install) notFound();
 
-  const markdown = buildSkillMarkdown(install.skill);
+  const label = skillLabel(install);
+  const markdown = buildInstalledSkillMarkdown(install);
 
   return (
     <>
       <DashboardHeader
-        title={install.skill.name}
+        title={label.name}
         actions={
           <Link
             href={`/app/${slug}/skills`}
@@ -48,9 +50,9 @@ export default async function SkillInspectorPage({
         }
       />
       <div className="mx-auto max-w-3xl space-y-8 px-8 py-6">
-        {install.skill.description ? (
+        {install.description ? (
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            {install.skill.description}
+            {install.description}
           </p>
         ) : null}
 
@@ -62,7 +64,7 @@ export default async function SkillInspectorPage({
             <li>Download or copy the SKILL.md below.</li>
             <li>
               Drop it into your agent&apos;s skills directory (e.g.{' '}
-              <code className="font-mono">~/.claude/skills/{install.skill.slug}/SKILL.md</code>
+              <code className="font-mono">~/.claude/skills/{label.slug}/SKILL.md</code>
               ).
             </li>
             <li>Your agent loads it automatically when the task matches.</li>

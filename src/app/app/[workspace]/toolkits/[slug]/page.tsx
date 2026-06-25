@@ -11,6 +11,7 @@ import {
 } from '@/lib/toolkits/queries';
 import { liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
@@ -185,7 +186,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <Brain className="size-4 text-zinc-500" />
                         </span>
-                        {s.installedSkill.skill.name}
+                        {skillLabel(s.installedSkill).name}
                       </Link>
                     </li>
                   ))}
@@ -314,7 +315,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <Brain className="size-4 text-zinc-500" />
                         </span>
-                        {s.installedSkill.skill.name}
+                        {skillLabel(s.installedSkill).name}
                       </span>
                       <form action={removeSkillFromToolkitAction}>
                         <input type="hidden" name="workspace" value={wsSlug} />
@@ -366,7 +367,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <Brain className="size-4 text-zinc-400" />
                         </span>
-                        {s.skill.name}
+                        {skillLabel(s).name}
                       </span>
                       <form action={addSkillToToolkitAction}>
                         <input type="hidden" name="workspace" value={wsSlug} />

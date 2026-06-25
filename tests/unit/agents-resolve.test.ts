@@ -2,7 +2,18 @@ import { describe, it, expect } from 'vitest';
 import { resolveAgentTools } from '@/lib/agents/resolve';
 
 const skill = (id: string) => ({
-  installedSkill: { id, skill: { slug: id, name: id, description: null, author: null } },
+  installedSkill: {
+    id,
+    skillId: id,
+    skill: { slug: id, name: id, description: null, author: null },
+    name: null,
+    slug: null,
+    description: null,
+    content: null,
+    userInvocable: true,
+    agentInvocable: true,
+    effort: null,
+  },
 });
 
 describe('resolveAgentTools', () => {
@@ -20,7 +31,7 @@ describe('resolveAgentTools', () => {
       ],
     });
     expect(deploymentIds.sort()).toEqual(['d1', 'd2']);
-    expect(skills.map((s) => s.slug).sort()).toEqual(['s1', 's2']);
+    expect(skills.map((s) => s.skill?.slug).sort()).toEqual(['s1', 's2']);
   });
 
   it('returns empty arrays when nothing is attached', () => {
@@ -28,5 +39,13 @@ describe('resolveAgentTools', () => {
       deploymentIds: [],
       skills: [],
     });
+  });
+
+  it('filters out skills where agentInvocable is false', () => {
+    const s1 = skill('s1');
+    const s2 = { installedSkill: { ...skill('s2').installedSkill, agentInvocable: false } };
+    const { skills } = resolveAgentTools({ servers: [], skills: [s1, s2], toolkits: [] });
+    expect(skills).toHaveLength(1);
+    expect(skills[0].skill?.slug).toBe('s1');
   });
 });

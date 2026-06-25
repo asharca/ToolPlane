@@ -1,16 +1,15 @@
 import 'server-only';
-import { buildSkillMarkdown } from '@/lib/skills/artifact';
-import type { SkillMeta } from './resolve';
+import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
+import { skillLabel } from '@/lib/workspace/skill-label';
+import type { SkillForPrompt } from './resolve';
 
-export function assembleSystemPrompt(
-  systemPrompt: string | null | undefined,
-  skills: SkillMeta[],
-): string {
+export function assembleSystemPrompt(systemPrompt: string | null | undefined, skills: SkillForPrompt[]): string {
   const sections: string[] = [];
   const base = systemPrompt?.trim();
   if (base) sections.push(base);
-  for (const skill of skills) {
-    sections.push(`# Skill: ${skill.name}\n\n${buildSkillMarkdown(skill)}`);
+  for (const s of skills) {
+    const label = skillLabel({ skillId: s.skillId, skill: s.skill, name: s.name ?? null, slug: s.slug ?? null, source: null });
+    sections.push(`# Skill: ${label.name}\n\n${buildInstalledSkillMarkdown(s)}`);
   }
   return sections.join('\n\n---\n\n');
 }

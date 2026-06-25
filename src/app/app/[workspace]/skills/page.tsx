@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { uninstallSkillAction } from '@/lib/workspace/actions';
 
@@ -25,7 +26,7 @@ const STEPS = [
   {
     n: '02',
     title: 'Refine in place',
-    body: 'Iterate and refine. Every save is versioned, so it’s safe to experiment.',
+    body: "Iterate and refine. Every save is versioned, so it's safe to experiment.",
   },
   {
     n: '03',
@@ -111,61 +112,65 @@ export default async function SkillsPage({
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {skills.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        {s.skill.iconUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={s.skill.iconUrl}
-                            alt=""
-                            width={20}
-                            height={20}
-                            className="size-5 rounded object-cover"
-                          />
-                        ) : (
-                          <span className="size-5 rounded bg-zinc-200 dark:bg-zinc-700" />
-                        )}
-                        <Link
-                          href={`/app/${slug}/skills/${s.id}`}
-                          className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
-                        >
-                          {s.skill.name}
-                        </Link>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
-                      {fmt(s.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-4">
-                        <Link
-                          href={`/app/${slug}/skills/${s.id}`}
-                          className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                        >
-                          Use
-                        </Link>
-                        <a
-                          href={`/api/v1/skills/${s.id}/download`}
-                          className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                        >
-                          Download SKILL.md
-                        </a>
-                        <form action={uninstallSkillAction}>
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input type="hidden" name="installId" value={s.id} />
-                          <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
-                            Uninstall
-                          </button>
-                        </form>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {skills.map((s) => {
+                  const label = skillLabel(s);
+                  return (
+                    <tr
+                      key={s.id}
+                      className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {s.skill?.iconUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={s.skill.iconUrl}
+                              alt=""
+                              width={20}
+                              height={20}
+                              className="size-5 rounded object-cover"
+                            />
+                          ) : (
+                            <span className="size-5 rounded bg-zinc-200 dark:bg-zinc-700" />
+                          )}
+                          <Link
+                            href={`/app/${slug}/skills/${s.id}`}
+                            className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                          >
+                            {label.name}
+                          </Link>
+                          {label.source !== 'catalog' && s.status === 'draft' ? <span className="ml-2 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] uppercase text-zinc-500 dark:border-zinc-700">Draft</span> : null}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
+                        {fmt(s.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-4">
+                          <Link
+                            href={`/app/${slug}/skills/${s.id}`}
+                            className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                          >
+                            Use
+                          </Link>
+                          <a
+                            href={`/api/v1/skills/${s.id}/download`}
+                            className="text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                          >
+                            Download SKILL.md
+                          </a>
+                          <form action={uninstallSkillAction}>
+                            <input type="hidden" name="workspace" value={slug} />
+                            <input type="hidden" name="installId" value={s.id} />
+                            <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
+                              Uninstall
+                            </button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
