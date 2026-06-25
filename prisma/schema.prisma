@@ -137,8 +137,12 @@ model Deployment {
   id           String          @id @default(cuid())
   workspaceId  String
   workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  serverId     String
-  server       Server          @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String?
+  server       Server?         @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name         String?
+  source       String?
+  sourceRef    String?
+  installCfg   Json?
   status       String          @default("provisioning")
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
