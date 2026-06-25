@@ -21,6 +21,7 @@ import {
   removeDeploymentAction,
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,6 +66,8 @@ export default async function DeploymentInspectorPage({
   if (!dep) notFound();
 
   const label = deploymentLabel(dep);
+  const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string> };
+  const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
 
   const status = liveStatus(deploymentId) ?? dep.status;
   const running = status === 'running';
@@ -195,11 +198,7 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'variables' ? (
-          <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              This server has no configurable variables.
-            </p>
-          </div>
+          <VariablesEditor slug={slug} deploymentId={deploymentId} initial={envRows} />
         ) : null}
 
         {current === 'tools' ? (
