@@ -79,3 +79,25 @@ export async function getInstalledSkills(workspaceId: string) {
     },
   });
 }
+
+const BROWSE_PAGE_SIZE = 25;
+
+export async function getBrowseServers(page: number) {
+  const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
+  const [featured, total, all] = await Promise.all([
+    db.server.findMany({
+      where: { isFeatured: true },
+      orderBy: { stars: 'desc' },
+      take: 12,
+      select: { id: true, name: true, description: true, iconUrl: true },
+    }),
+    db.server.count(),
+    db.server.findMany({
+      orderBy: { stars: 'desc' },
+      skip,
+      take: BROWSE_PAGE_SIZE,
+      select: { id: true, name: true, description: true, iconUrl: true },
+    }),
+  ]);
+  return { featured, all, total, pageSize: BROWSE_PAGE_SIZE };
+}
