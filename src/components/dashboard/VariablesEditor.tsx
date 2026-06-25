@@ -1,13 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { setDeploymentEnvAction } from '@/lib/workspace/actions';
 
-type Row = { key: string; value: string };
+type Row = { id: number; key: string; value: string };
 
-export function VariablesEditor({ slug, deploymentId, initial }: { slug: string; deploymentId: string; initial: Row[] }) {
-  const [rows, setRows] = useState<Row[]>(initial.length ? initial : [{ key: '', value: '' }]);
+export function VariablesEditor({ slug, deploymentId, initial }: { slug: string; deploymentId: string; initial: { key: string; value: string }[] }) {
+  const [rows, setRows] = useState<Row[]>(() =>
+    (initial.length ? initial : [{ key: '', value: '' }]).map((r, i) => ({ id: i, ...r })),
+  );
+  const nextId = useRef(rows.length);
 
   return (
     <form action={setDeploymentEnvAction} className="space-y-4 rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
@@ -17,11 +20,11 @@ export function VariablesEditor({ slug, deploymentId, initial }: { slug: string;
       </div>
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
-      <input type="hidden" name="env" value={JSON.stringify(rows.filter((r) => r.key))} />
+      <input type="hidden" name="env" value={JSON.stringify(rows.filter((r) => r.key).map(({ key, value }) => ({ key, value })))} />
 
       <div className="space-y-2">
         {rows.map((row, i) => (
-          <div key={i} className="flex gap-2">
+          <div key={row.id} className="flex gap-2">
             <input
               value={row.key}
               onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
@@ -43,7 +46,7 @@ export function VariablesEditor({ slug, deploymentId, initial }: { slug: string;
       </div>
 
       <div className="flex items-center justify-between">
-        <button type="button" onClick={() => setRows((rs) => [...rs, { key: '', value: '' }])} className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+        <button type="button" onClick={() => setRows((rs) => [...rs, { id: nextId.current++, key: '', value: '' }])} className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           <Plus className="size-3.5" /> Add variable
         </button>
         <button type="submit" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Save</button>
