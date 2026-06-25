@@ -153,14 +153,25 @@ model Deployment {
 }
 
 model InstalledSkill {
-  id           String         @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  skillId      String
-  skill        Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  createdAt    DateTime       @default(now())
-  toolkitLinks ToolkitSkill[]
-  agentLinks   AgentSkill[]
+  id             String         @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillId        String?
+  skill          Skill?         @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  name           String?
+  slug           String?
+  description    String?
+  content        String?
+  source         String?
+  sourceRef      String?
+  status         String         @default("published")
+  userInvocable  Boolean        @default(true)
+  agentInvocable Boolean        @default(true)
+  effort         String         @default("default")
+  files          Json?
+  createdAt      DateTime       @default(now())
+  toolkitLinks   ToolkitSkill[]
+  agentLinks     AgentSkill[]
 
   @@unique([workspaceId, skillId])
 }
