@@ -1,29 +1,35 @@
 import { z } from 'zod';
 
 const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
-const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/;
+const DOCKER_IMAGE = /^[a-z0-9]+([._/-][a-z0-9]+)*(:[\w.-]+)?$/;
 
-const schema = z.object({
-  source: z.literal('npm'),
-  packageRef: z.string().trim().min(1).regex(NPM_NAME, 'invalid npm package name'),
-  name: z.string().trim().min(1, 'name is required').max(80),
-  env: z
-    .array(z.object({ key: z.string().regex(ENV_KEY, 'invalid env var name'), value: z.string() }))
-    .default([]),
-  args: z.string().default(''),
-});
+const schema = z
+  .object({
+    source: z.enum(['npm', 'pypi', 'github', 'docker']),
+    ref: z.string().trim().min(1),
+    name: z.string().trim().min(1, 'name is required').max(80),
+    startCommand: z.string().trim().default(''),
+  })
+  .superRefine((v, ctx) => {
+    const ok =
+      v.source === 'npm' ? NPM_NAME.test(v.ref)
+      : v.source === 'pypi' ? PYPI_NAME.test(v.ref)
+      : v.source === 'github' ? GITHUB_URL.test(v.ref)
+      : DOCKER_IMAGE.test(v.ref);
+    if (!ok) ctx.addIssue({ code: 'custom', path: ['ref'], message: `invalid ${v.source} reference` });
+  });
 
 export type ParsedCustomMcp = {
-  source: 'npm';
-  packageRef: string;
+  source: 'npm' | 'pypi' | 'github' | 'docker';
+  ref: string;
   name: string;
-  installCfg: { env: Record<string, string>; args: string[] };
+  installCfg: { startCommand: string } | null;
 };
 
 export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
   const v = schema.parse(raw);
-  const env: Record<string, string> = {};
-  for (const row of v.env) env[row.key] = row.value;
-  const args = v.args.split(/\s+/).filter(Boolean);
-  return { source: v.source, packageRef: v.packageRef, name: v.name, installCfg: { env, args } };
+  const installCfg = v.source === 'docker' && v.startCommand ? { startCommand: v.startCommand } : null;
+  return { source: v.source, ref: v.ref, name: v.name, installCfg };
 }

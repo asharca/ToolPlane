@@ -1,32 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
 
-const base = { source: 'npm', packageRef: '@scope/server', name: 'My Server', env: [], args: '' };
-
 describe('parseCustomMcpInput', () => {
-  it('normalizes a valid npm input', () => {
-    const out = parseCustomMcpInput({
-      ...base,
-      env: [{ key: 'API_KEY', value: 'abc' }],
-      args: '--port 3000  --verbose',
-    });
-    expect(out).toEqual({
-      source: 'npm',
-      packageRef: '@scope/server',
-      name: 'My Server',
-      installCfg: { env: { API_KEY: 'abc' }, args: ['--port', '3000', '--verbose'] },
+  it('npm package', () => {
+    expect(parseCustomMcpInput({ source: 'npm', ref: '@scope/server', name: 'S' })).toEqual({
+      source: 'npm', ref: '@scope/server', name: 'S', installCfg: null,
     });
   });
-
-  it('rejects an invalid npm package name', () => {
-    expect(() => parseCustomMcpInput({ ...base, packageRef: 'Bad Name!' })).toThrow();
+  it('pypi package', () => {
+    expect(parseCustomMcpInput({ source: 'pypi', ref: 'mcp-server-fetch', name: 'F' }).source).toBe('pypi');
   });
-
-  it('rejects an invalid env var key', () => {
-    expect(() => parseCustomMcpInput({ ...base, env: [{ key: '1BAD', value: 'x' }] })).toThrow();
+  it('github url accepted', () => {
+    expect(parseCustomMcpInput({ source: 'github', ref: 'https://github.com/org/repo', name: 'G' }).ref).toBe('https://github.com/org/repo');
   });
-
-  it('rejects an empty name', () => {
-    expect(() => parseCustomMcpInput({ ...base, name: '   ' })).toThrow();
+  it('docker image + startCommand stored in installCfg', () => {
+    expect(parseCustomMcpInput({ source: 'docker', ref: 'mcp/slack', name: 'D', startCommand: 'node a.js' }).installCfg).toEqual({ startCommand: 'node a.js' });
+  });
+  it('rejects non-github url for github source', () => {
+    expect(() => parseCustomMcpInput({ source: 'github', ref: 'https://evil.com/x/y', name: 'G' })).toThrow();
+  });
+  it('rejects bad npm name', () => {
+    expect(() => parseCustomMcpInput({ source: 'npm', ref: 'Bad Name!', name: 'S' })).toThrow();
+  });
+  it('rejects empty name', () => {
+    expect(() => parseCustomMcpInput({ source: 'npm', ref: 'x', name: '  ' })).toThrow();
+  });
+  it('rejects unknown source', () => {
+    expect(() => parseCustomMcpInput({ source: 'brew', ref: 'x', name: 'S' })).toThrow();
   });
 });
