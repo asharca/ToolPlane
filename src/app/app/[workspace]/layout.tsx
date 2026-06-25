@@ -17,7 +17,7 @@ export default async function WorkspaceLayout({
 }) {
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect(`/login?next=${encodeURIComponent(`/app/${slug}/mcp`)}`);
+  if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/mcp`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const workspaces = await listWorkspacesForUser(user.id);

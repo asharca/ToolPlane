@@ -19,13 +19,6 @@ async function main(): Promise<void> {
     },
   });
 
-  const server = await db.server.findFirst({ orderBy: { stars: 'desc' } });
-  if (server) {
-    await db.user.update({
-      where: { id: user.id },
-      data: { hubServers: { connect: { id: server.id } } },
-    });
-  }
 
   const token = generateToken();
   await db.apiToken.create({

@@ -53,7 +53,7 @@ export default async function DeploymentInspectorPage({
   const current = TABS.some((t) => t.key === tab) ? tab! : 'overview';
 
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 

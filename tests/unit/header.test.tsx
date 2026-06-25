@@ -25,10 +25,7 @@ describe('Header', () => {
     );
     expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
       'href',
-      '/login',
+      '/app/login',
     );
-    expect(
-      screen.getByRole('link', { name: /Power Your Agents/ }),
-    ).toHaveAttribute('href', '/hub');
   });
 });

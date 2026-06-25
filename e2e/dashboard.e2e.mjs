@@ -28,12 +28,12 @@ page.setDefaultTimeout(20000);
 
 try {
   await step('sign up a fresh user', async () => {
-    await page.goto('/signup');
+    await page.goto('/app/signup');
     await page.fill('input[name="name"]', 'E2E User');
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="password"]', password);
     await page.getByRole('button', { name: 'Sign up' }).click();
-    await page.waitForURL('**/account', { timeout: 20000 });
+    await page.waitForURL('**/app/**/mcp', { timeout: 20000 });
   });
 
   let slug = '';

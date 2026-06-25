@@ -4,8 +4,6 @@ import { Star, ChevronRight } from 'lucide-react';
 import { getServer, getRelatedServers } from '@/lib/queries/servers';
 import { getRelatedSkills } from '@/lib/queries/skills';
 import { getCurrentUser } from '@/lib/auth/current-user';
-import { isInHub } from '@/lib/hub/queries';
-import { addToHubAction, removeFromHubAction } from '@/lib/hub/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,7 +56,6 @@ export default async function Page({
   if (!server) notFound();
 
   const user = await getCurrentUser();
-  const inHub = user ? await isInHub(user.id, server.id) : false;
   const categoryIds = server.categories.map((c) => c.id);
   const [related, relatedSkills] = await Promise.all([
     getRelatedServers(server.id, categoryIds, 4),
@@ -137,7 +134,7 @@ export default async function Page({
 
           <section className="mt-8 rounded-lg border border-border bg-card p-5">
             <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
-              Connect via the Hub
+              Deploy &amp; connect
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Deploy {server.name} to a workspace, then reach it over JSON-RPC
@@ -157,33 +154,18 @@ Content-Type: application/json
           <div className="rounded-lg border border-border bg-card p-4">
             {!user ? (
               <Link
-                href={`/login?next=${encodeURIComponent(`/server/${server.slug}`)}`}
+                href={`/app/login?next=${encodeURIComponent(`/server/${server.slug}`)}`}
                 className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 Sign in to run on MCP Market
               </Link>
-            ) : inHub ? (
-              <form action={removeFromHubAction}>
-                <input type="hidden" name="serverId" value={server.id} />
-                <input type="hidden" name="slug" value={server.slug} />
-                <button
-                  type="submit"
-                  className="flex h-10 w-full items-center justify-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-                >
-                  Remove from Hub
-                </button>
-              </form>
             ) : (
-              <form action={addToHubAction}>
-                <input type="hidden" name="serverId" value={server.id} />
-                <input type="hidden" name="slug" value={server.slug} />
-                <button
-                  type="submit"
-                  className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  Add to Hub
-                </button>
-              </form>
+              <Link
+                href="/app"
+                className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                Open dashboard
+              </Link>
             )}
             <p className="mt-2 text-center text-xs text-muted-foreground">
               One-click cloud hosting

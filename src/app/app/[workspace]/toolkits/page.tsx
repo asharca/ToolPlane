@@ -25,7 +25,7 @@ export default async function ToolkitsPage({
 }) {
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 

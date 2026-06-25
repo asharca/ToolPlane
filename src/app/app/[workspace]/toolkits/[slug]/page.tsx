@@ -34,7 +34,7 @@ export default async function ToolkitDetailPage({
   const { tab } = await searchParams;
 
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(wsSlug, user.id);
   if (!ws) redirect('/app');
 

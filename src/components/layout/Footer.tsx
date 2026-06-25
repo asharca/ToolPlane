@@ -10,7 +10,6 @@ const BROWSE: FooterLink[] = [
   { label: 'MCP Servers', href: '/server' },
   { label: 'MCP Clients', href: '/client' },
   { label: 'Agent Skills', href: '/tools/skills' },
-  { label: 'MCP Market Hub', href: '/hub' },
   { label: 'Categories', href: '/categories' },
   { label: 'What is an MCP server?', href: '/what-is-an-mcp-server' },
   { label: 'Model Context Protocol', href: 'https://modelcontextprotocol.io' },

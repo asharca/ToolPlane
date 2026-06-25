@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronDown, Zap } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { Logo } from './Logo';
 
@@ -41,17 +41,10 @@ export async function Header() {
               Sell Skills
             </Link>
             <Link
-              href={user ? '/account' : '/login'}
-              className="hidden px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+              href={user ? '/app' : '/app/login'}
+              className="inline-flex h-9 items-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              {user ? 'Account' : 'Sign in'}
-            </Link>
-            <Link
-              href="/hub"
-              className="inline-flex h-9 items-center gap-1.5 border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              <Zap className="size-4" />
-              Power Your Agents
+              {user ? 'Dashboard' : 'Sign in'}
             </Link>
           </div>
         </div>

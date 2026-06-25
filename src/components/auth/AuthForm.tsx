@@ -104,7 +104,7 @@ export function AuthForm({
           <>
             Already have an account?{' '}
             <Link
-              href={`/login${crossLinkQuery}`}
+              href={`/app/login${crossLinkQuery}`}
               className="font-medium text-foreground underline"
             >
               Sign in
@@ -114,7 +114,7 @@ export function AuthForm({
           <>
             Don&apos;t have an account?{' '}
             <Link
-              href={`/signup${crossLinkQuery}`}
+              href={`/app/signup${crossLinkQuery}`}
               className="font-medium text-foreground underline"
             >
               Sign up

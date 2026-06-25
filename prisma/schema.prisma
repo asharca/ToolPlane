@@ -19,7 +19,6 @@ model Server {
   installCfg  Json?
   readme      String?
   categories  Category[]   @relation("ServerCategories")
-  hubUsers    User[]       @relation("UserHubServers")
   deployments Deployment[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -31,7 +30,6 @@ model User {
   name            String?
   passwordHash    String
   apiTokens       ApiToken[]
-  hubServers      Server[]     @relation("UserHubServers")
   ownedWorkspaces Workspace[]  @relation("WorkspaceOwner")
   memberships     Membership[]
   createdAt       DateTime     @default(now())

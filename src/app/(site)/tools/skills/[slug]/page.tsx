@@ -69,14 +69,14 @@ export default async function Page({
           Install this skill
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Install {skill.name} into a workspace from the Hub, then export it as a
+          Install {skill.name} into a workspace, then export it as a
           ready-to-use <code className="font-mono">SKILL.md</code> for your agent.
         </p>
         <Link
-          href="/hub"
+          href="/app"
           className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
         >
-          Open the Hub
+          Open dashboard
         </Link>
       </section>
     </article>

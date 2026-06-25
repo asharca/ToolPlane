@@ -1,8 +1,8 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import {
   renameWorkspaceAction,
   deleteWorkspaceAction,
@@ -20,47 +20,16 @@ export default async function SettingsPage({
 }) {
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const isOwner = ws.ownerId === user.id;
-
-  const base = `/app/${slug}/settings`;
-  const subnav = [
-    { label: 'General', href: base, active: true },
-    { label: 'API Tokens', href: '/account', active: false },
-    { label: 'Integrations', href: base, active: false, muted: true },
-    { label: 'Billing', href: base, active: false, muted: true },
-  ];
 
   return (
     <>
       <DashboardHeader title="Settings" />
       <div className="max-w-2xl space-y-8 px-8 py-6">
-        <nav className="flex items-center gap-6 border-b border-zinc-200 dark:border-zinc-800">
-          {subnav.map((t) =>
-            t.muted ? (
-              <span
-                key={t.label}
-                className="cursor-default border-b-2 border-transparent pb-2.5 text-sm text-zinc-300 dark:text-zinc-600"
-              >
-                {t.label}
-              </span>
-            ) : (
-              <Link
-                key={t.label}
-                href={t.href}
-                className={`-mb-px border-b-2 pb-2.5 text-sm transition-colors ${
-                  t.active
-                    ? 'border-zinc-900 font-medium text-zinc-900 dark:border-zinc-100 dark:text-zinc-100'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
-                }`}
-              >
-                {t.label}
-              </Link>
-            ),
-          )}
-        </nav>
+        <SettingsTabs slug={slug} />
 
         <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
           <div className="border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">

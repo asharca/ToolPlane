@@ -17,7 +17,7 @@ export default async function SkillInspectorPage({
 }) {
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 

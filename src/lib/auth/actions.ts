@@ -31,7 +31,7 @@ export async function signupAction(
     data: { email, name: name || null, passwordHash: await hashPassword(password) },
   });
   await createSession(user.id);
-  redirect(safeRelativePath(formData.get('next')) ?? '/account');
+  redirect(safeRelativePath(formData.get('next')) ?? '/app');
 }
 
 export async function loginAction(
@@ -46,7 +46,7 @@ export async function loginAction(
     return { error: 'Invalid email or password.' };
 
   await createSession(user.id);
-  redirect(safeRelativePath(formData.get('next')) ?? '/account');
+  redirect(safeRelativePath(formData.get('next')) ?? '/app');
 }
 
 export async function logoutAction(): Promise<void> {
@@ -65,7 +65,7 @@ export async function createTokenAction(
 
   const name = String(formData.get('name') ?? '').trim();
   const { token } = await createApiToken(userId, name);
-  revalidatePath('/account');
+  revalidatePath(`/app/${String(formData.get('workspace') ?? '')}/settings/tokens`);
   return { token };
 }
 
@@ -74,5 +74,5 @@ export async function revokeTokenAction(formData: FormData): Promise<void> {
   if (!userId) return;
   const id = String(formData.get('id') ?? '');
   if (id) await revokeApiToken(userId, id);
-  revalidatePath('/account');
+  revalidatePath(`/app/${String(formData.get('workspace') ?? '')}/settings/tokens`);
 }
