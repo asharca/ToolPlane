@@ -25,7 +25,7 @@ export function AgentChat({
   ready: boolean;
 }) {
   const [text, setText] = useState('');
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/v1/agents/${agentId}/chat`,
       body: { conversationId },
@@ -100,6 +100,15 @@ export function AgentChat({
           ))}
           {busy ? <p className="text-sm text-zinc-400">…</p> : null}
         </div>
+
+        {error ? (
+          <p
+            role="alert"
+            className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
+          >
+            {error.message}
+          </p>
+        ) : null}
 
         <form
           onSubmit={(e) => {

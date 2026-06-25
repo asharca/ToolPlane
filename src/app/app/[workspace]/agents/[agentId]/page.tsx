@@ -86,7 +86,8 @@ export default async function AgentDetailPage({
   } else {
     const conversations = await listConversations(agentId);
     const activeId = c ?? conversations[0]?.id ?? null;
-    const conv = activeId ? await getConversation(activeId, ws.id) : null;
+    const loaded = activeId ? await getConversation(activeId, ws.id) : null;
+    const conv = loaded && loaded.agentId === agentId ? loaded : null;
     const initialMessages: UIMessage[] = (conv?.messages ?? []).map((m) => ({
       id: m.id,
       role: m.role as UIMessage['role'],
@@ -97,7 +98,7 @@ export default async function AgentDetailPage({
       <AgentChat
         slug={slug}
         agentId={agentId}
-        conversationId={activeId}
+        conversationId={conv?.id ?? null}
         initialMessages={initialMessages}
         conversations={conversations.map((cv) => ({
           id: cv.id,
