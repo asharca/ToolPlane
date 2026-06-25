@@ -42,9 +42,6 @@ export async function POST(
     : null;
 
   const last = messages[messages.length - 1];
-  if (conversationId && last?.role === 'user') {
-    await appendMessage(conversationId, 'user', last.parts as never);
-  }
 
   const { deploymentIds, skills } = resolveAgentTools(agent);
   const tools = await buildToolSet(deploymentIds);
@@ -64,10 +61,14 @@ export async function POST(
 
   return result.toUIMessageStreamResponse({
     originalMessages: messages,
-    onFinish: async ({ responseMessage }) => {
-      if (conversationId) {
-        await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+    onFinish: async ({ responseMessage, isAborted }) => {
+      // Persist the exchange only on a completed turn, so a failed/aborted
+      // stream never leaves an orphaned user message with no reply.
+      if (!conversationId || isAborted) return;
+      if (last?.role === 'user') {
+        await appendMessage(conversationId, 'user', last.parts as never);
       }
+      await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
     },
   });
 }
