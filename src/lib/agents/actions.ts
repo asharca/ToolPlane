@@ -16,6 +16,7 @@ import {
   createConversation,
 } from '@/lib/agents/mutations';
 import { modelsEndpoint, modelsHeaders, parseModelList } from '@/lib/agents/models-fetch';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -115,8 +116,10 @@ export async function updateAgentAction(
 
   const providerId = String(formData.get('providerId') ?? '') || null;
   const model = String(formData.get('model') ?? '') || null;
-  const maxStepsRaw = Number(formData.get('maxSteps') ?? 8);
-  const maxSteps = Number.isFinite(maxStepsRaw) ? Math.min(20, Math.max(1, maxStepsRaw)) : 8;
+  const maxStepsRaw = Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default);
+  const maxSteps = Number.isFinite(maxStepsRaw)
+    ? Math.min(AGENT_STEP_BOUNDS.max, Math.max(AGENT_STEP_BOUNDS.min, maxStepsRaw))
+    : AGENT_STEP_BOUNDS.default;
 
   await updateAgent(ctx.ws.id, agentId, {
     name: String(formData.get('name') ?? '').trim() || 'New agent',

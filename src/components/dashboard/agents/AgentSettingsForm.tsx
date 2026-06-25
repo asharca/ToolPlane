@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { updateAgentAction, type ActionState } from '@/lib/agents/actions';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 
 type Provider = { id: string; name: string; models: string[] };
 type Option = { id: string; label: string; checked: boolean; running?: boolean };
@@ -85,7 +86,7 @@ export function AgentSettingsForm({
         </label>
         <label className="space-y-1 text-sm font-medium text-zinc-700 dark:text-zinc-300">
           Max tool steps
-          <input name="maxSteps" type="number" min={1} max={20} defaultValue={maxSteps} className={input} />
+          <input name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} defaultValue={maxSteps} className={input} />
         </label>
       </div>
       {selectedProvider && models.length === 0 ? (
