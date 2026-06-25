@@ -64,7 +64,7 @@ export function AgentSettingsForm({
           Provider
           <select
             name="providerId"
-            value={selectedProvider}
+            defaultValue={providerId ?? ''}
             onChange={(e) => setSelectedProvider(e.target.value)}
             className={input}
           >
