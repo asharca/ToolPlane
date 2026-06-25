@@ -12,6 +12,7 @@ import {
   killProcess,
   killMany,
 } from '@/lib/process/supervisor';
+import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -44,7 +45,7 @@ export async function deployServerAction(formData: FormData) {
     update: {},
     create: { workspaceId: ctx.ws.id, serverId, status: 'provisioning' },
   });
-  await startProcess(dep.id, server?.name ?? 'mcp');
+  await startProcess(dep.id, { kind: 'builtin', name: server?.name ?? 'mcp' });
 
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/new`);
@@ -73,7 +74,7 @@ export async function startDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await startProcess(dep.id, dep.server.name);
+  await startProcess(dep.id, resolveSpawnSpec(dep));
   revalidatePath(`/app/${slug}/mcp`);
 }
 
@@ -99,7 +100,7 @@ export async function restartDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await restartProcess(dep.id, dep.server.name);
+  await restartProcess(dep.id, resolveSpawnSpec(dep));
   revalidatePath(`/app/${slug}/mcp`);
 }
 
