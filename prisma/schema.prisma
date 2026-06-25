@@ -115,6 +115,8 @@ model Workspace {
   installedSkills InstalledSkill[]
   requestLogs     RequestLog[]
   toolkits        Toolkit[]
+  modelProviders  ModelProvider[]
+  agents          Agent[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 }
@@ -132,27 +134,29 @@ model Membership {
 }
 
 model Deployment {
-  id          String    @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  serverId    String
-  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  status      String    @default("provisioning")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String          @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  serverId     String
+  server       Server          @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  status       String          @default("provisioning")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
   toolkitLinks ToolkitServer[]
+  agentLinks   AgentServer[]
 
   @@unique([workspaceId, serverId])
 }
 
 model InstalledSkill {
-  id          String    @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  skillId     String
-  skill       Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
+  id           String         @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillId      String
+  skill        Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdAt    DateTime       @default(now())
   toolkitLinks ToolkitSkill[]
+  agentLinks   AgentSkill[]
 
   @@unique([workspaceId, skillId])
 }
@@ -181,6 +185,7 @@ model Toolkit {
   enabled     Boolean         @default(true)
   servers     ToolkitServer[]
   skills      ToolkitSkill[]
+  agentLinks  AgentToolkit[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -205,4 +210,88 @@ model ToolkitSkill {
   installedSkill   InstalledSkill @relation(fields: [installedSkillId], references: [id], onDelete: Cascade)
 
   @@unique([toolkitId, installedSkillId])
+}
+
+model ModelProvider {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name            String
+  format          String
+  baseUrl         String
+  apiKey          String
+  models          String[]  @default([])
+  modelsFetchedAt DateTime?
+  createdAt       DateTime  @default(now())
+  agents          Agent[]
+
+  @@unique([workspaceId, name])
+}
+
+model Agent {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name          String
+  slug          String
+  systemPrompt  String?
+  providerId    String?
+  provider      ModelProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  model         String?
+  maxSteps      Int            @default(8)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  servers       AgentServer[]
+  skills        AgentSkill[]
+  toolkits      AgentToolkit[]
+  conversations Conversation[]
+
+  @@unique([workspaceId, slug])
+}
+
+model AgentServer {
+  agentId      String
+  deploymentId String
+  agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, deploymentId])
+}
+
+model AgentSkill {
+  agentId          String
+  installedSkillId String
+  agent            Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  installedSkill   InstalledSkill @relation(fields: [installedSkillId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, installedSkillId])
+}
+
+model AgentToolkit {
+  agentId   String
+  toolkitId String
+  agent     Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  toolkit   Toolkit @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, toolkitId])
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  agentId   String
+  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title     String?
+  createdAt DateTime  @default(now())
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  parts          Json
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
 }
