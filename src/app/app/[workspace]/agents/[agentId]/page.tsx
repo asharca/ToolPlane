@@ -5,6 +5,7 @@ import { getWorkspaceForUser, getDeployments, getInstalledSkills } from '@/lib/w
 import { listToolkits } from '@/lib/toolkits/queries';
 import { getAgent, listProviders, listConversations, getConversation } from '@/lib/agents/queries';
 import { liveStatus } from '@/lib/process/supervisor';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
@@ -69,7 +70,7 @@ export default async function AgentDetailPage({
           providers={providers.map((p) => ({ id: p.id, name: p.name, models: p.models }))}
           deployments={deployments.map((d) => ({
             id: d.id,
-            label: d.server.name,
+            label: deploymentLabel(d).name,
             checked: selectedDeps.has(d.id),
             running: liveStatus(d.id) === 'running',
           }))}

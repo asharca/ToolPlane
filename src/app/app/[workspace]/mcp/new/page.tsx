@@ -28,7 +28,9 @@ export default async function BrowseMcpPage({
     }),
     getDeployments(ws.id),
   ]);
-  const deployedIds = new Set(deployed.map((d) => d.serverId));
+  const deployedIds = new Set(
+    deployed.map((d) => d.serverId).filter((id): id is string => id !== null),
+  );
 
   return (
     <>

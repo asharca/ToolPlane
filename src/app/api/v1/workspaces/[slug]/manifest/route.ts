@@ -2,6 +2,7 @@ import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { liveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 
 // Export a workspace "toolkit" manifest: every deployed MCP server (with its
 // gateway endpoint) and installed skill, as a single JSON document an agent
@@ -44,8 +45,8 @@ export async function GET(
     workspace: { slug: ws.slug, name: ws.name },
     generatedAt: new Date().toISOString(),
     servers: ws.deployments.map((d) => ({
-      name: d.server.name,
-      slug: d.server.slug,
+      name: deploymentLabel(d).name,
+      slug: d.server?.slug ?? d.sourceRef ?? d.id,
       status: liveStatus(d.id) ?? d.status,
       endpoint: `/api/v1/mcp/${d.id}/rpc`,
     })),

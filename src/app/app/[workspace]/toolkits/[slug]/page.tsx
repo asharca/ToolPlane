@@ -10,6 +10,7 @@ import {
   getToolkitComposables,
 } from '@/lib/toolkits/queries';
 import { liveStatus } from '@/lib/process/supervisor';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
@@ -144,7 +145,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <ServerIcon className="size-4 text-zinc-500" />
                         </span>
-                        {s.deployment.server.name}
+                        {deploymentLabel(s.deployment).name}
                       </Link>
                       <span className="text-sm text-zinc-400">
                         {toolCounts[i] === null
@@ -220,7 +221,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <ServerIcon className="size-4 text-zinc-500" />
                         </span>
-                        {s.deployment.server.name}
+                        {deploymentLabel(s.deployment).name}
                       </span>
                       <form action={removeServerFromToolkitAction}>
                         <input type="hidden" name="workspace" value={wsSlug} />
@@ -268,7 +269,7 @@ export default async function ToolkitDetailPage({
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
                           <ServerIcon className="size-4 text-zinc-400" />
                         </span>
-                        {d.server.name}
+                        {deploymentLabel(d).name}
                       </span>
                       <form action={addServerToToolkitAction}>
                         <input type="hidden" name="workspace" value={wsSlug} />
