@@ -62,13 +62,11 @@ export async function deployCustomServerAction(formData: FormData) {
   try {
     parsed = parseCustomMcpInput({
       source: String(formData.get('source') ?? 'npm'),
-      packageRef: String(formData.get('packageRef') ?? ''),
+      ref: String(formData.get('ref') ?? ''),
       name: String(formData.get('name') ?? ''),
-      env: JSON.parse(String(formData.get('env') ?? '[]')),
-      args: String(formData.get('args') ?? ''),
+      startCommand: String(formData.get('startCommand') ?? ''),
     });
   } catch {
-    // Invalid input — the slide-over keeps client-side `required` guards.
     return;
   }
 
@@ -78,8 +76,8 @@ export async function deployCustomServerAction(formData: FormData) {
       serverId: null,
       name: parsed.name,
       source: parsed.source,
-      sourceRef: parsed.packageRef,
-      installCfg: parsed.installCfg,
+      sourceRef: parsed.ref,
+      installCfg: parsed.installCfg ?? undefined,
       status: 'provisioning',
     },
   });
@@ -97,6 +95,33 @@ export async function deployCustomServerAction(formData: FormData) {
   );
 
   revalidatePath(`/app/${slug}/mcp`);
+}
+
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export async function setDeploymentEnvAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const dep = await db.deployment.findFirst({
+    where: { id: deploymentId, workspaceId: ctx.ws.id },
+    select: { id: true, installCfg: true },
+  });
+  if (!dep) return;
+
+  const env: Record<string, string> = {};
+  try {
+    const rows = JSON.parse(String(formData.get('env') ?? '[]')) as { key: string; value: string }[];
+    for (const r of rows) if (r.key && ENV_KEY.test(r.key)) env[r.key] = String(r.value ?? '');
+  } catch {
+    return;
+  }
+
+  const cfg = (dep.installCfg ?? {}) as Record<string, unknown>;
+  await db.deployment.update({ where: { id: deploymentId }, data: { installCfg: { ...cfg, env } } });
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
 
 export async function removeDeploymentAction(formData: FormData) {
