@@ -52,7 +52,7 @@ export async function POST(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: body || '{}',
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(30000),
       });
       statusCode = upstream.status;
       const text = await upstream.text();
