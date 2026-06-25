@@ -12,7 +12,6 @@ import {
   restartDeploymentAction,
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { DeployCustomMcpLauncher } from '@/components/dashboard/DeployCustomMcpLauncher';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 
 export const dynamic = 'force-dynamic';
@@ -60,15 +59,12 @@ export default async function McpServersPage({
       <DashboardHeader
         title="MCP Servers"
         actions={
-          <div className="flex items-center gap-2">
-            <DeployCustomMcpLauncher slug={slug} />
-            <Link
-              href={`/app/${slug}/mcp/new`}
-              className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              Browse MCPs
-            </Link>
-          </div>
+          <Link
+            href={`/app/${slug}/mcp/new`}
+            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            Browse MCPs
+          </Link>
         }
       />
       <div className="px-8 py-6">
