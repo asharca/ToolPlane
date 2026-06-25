@@ -11,28 +11,37 @@ export type DeploymentForSpawn = {
   installCfg: unknown;
 };
 
+function splitArgs(s: string | undefined): string[] {
+  return s ? s.split(/\s+/).filter(Boolean) : [];
+}
+
 export function buildSpawnSpec(
   source: string,
   ref: string,
-  args: string[],
+  startCommand?: string,
 ): { command: string; args: string[] } {
-  if (source === 'npm') {
-    return { command: 'npx', args: ['-y', ref, ...args] };
+  switch (source) {
+    case 'npm':
+      return { command: 'npx', args: ['-y', ref] };
+    case 'github':
+      return { command: 'npx', args: ['-y', ref] };
+    case 'pypi':
+      return { command: 'uvx', args: [ref] };
+    case 'docker':
+      return { command: 'docker', args: ['run', '-i', '--rm', ref, ...splitArgs(startCommand)] };
+    default:
+      throw new Error(`Unsupported MCP source: ${source || '(none)'}`);
   }
-  throw new Error(`Unsupported MCP source: ${source || '(none)'}`);
 }
 
-function readCfg(installCfg: unknown): { env: Record<string, string>; args: string[] } {
-  const c = (installCfg ?? {}) as { env?: Record<string, string>; args?: string[] };
-  return { env: c.env ?? {}, args: Array.isArray(c.args) ? c.args : [] };
+function readCfg(installCfg: unknown): { env: Record<string, string>; startCommand?: string } {
+  const c = (installCfg ?? {}) as { env?: Record<string, string>; startCommand?: string };
+  return { env: c.env ?? {}, startCommand: c.startCommand };
 }
 
 export function resolveSpawnSpec(d: DeploymentForSpawn): SpawnSpec {
-  if (d.serverId && d.server) {
-    return { kind: 'builtin', name: d.server.name };
-  }
-  const { env, args } = readCfg(d.installCfg);
-  const ref = d.sourceRef ?? '';
-  const { command, args: cmdArgs } = buildSpawnSpec(d.source ?? '', ref, args);
-  return { kind: 'bridge', name: d.name ?? (ref || 'custom'), command, args: cmdArgs, env };
+  if (d.serverId && d.server) return { kind: 'builtin', name: d.server.name };
+  const { env, startCommand } = readCfg(d.installCfg);
+  const { command, args } = buildSpawnSpec(d.source ?? '', d.sourceRef ?? '', startCommand);
+  return { kind: 'bridge', name: d.name ?? d.sourceRef ?? 'custom', command, args, env };
 }
