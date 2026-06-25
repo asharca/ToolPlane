@@ -11,6 +11,9 @@ import {
   stopDeploymentAction,
   restartDeploymentAction,
 } from '@/lib/workspace/actions';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { DeployCustomMcpLauncher } from '@/components/dashboard/DeployCustomMcpLauncher';
+import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,18 +50,25 @@ export default async function McpServersPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const deployments = await getDeployments(ws.id);
+  const anyProvisioning = deployments.some(
+    (d) => displayStatus(d.id, d.status) === 'provisioning',
+  );
 
   return (
     <>
+      <ProvisioningRefresher active={anyProvisioning} />
       <DashboardHeader
         title="MCP Servers"
         actions={
-          <Link
-            href={`/app/${slug}/mcp/new`}
-            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-          >
-            Browse MCPs
-          </Link>
+          <div className="flex items-center gap-2">
+            <DeployCustomMcpLauncher slug={slug} />
+            <Link
+              href={`/app/${slug}/mcp/new`}
+              className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              Browse MCPs
+            </Link>
+          </div>
         }
       />
       <div className="px-8 py-6">
@@ -105,7 +115,7 @@ export default async function McpServersPage({
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
-                          {d.server.iconUrl ? (
+                          {d.server?.iconUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={d.server.iconUrl}
@@ -121,8 +131,13 @@ export default async function McpServersPage({
                             href={`/app/${slug}/mcp/${d.id}`}
                             className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                           >
-                            {d.server.name}
+                            {deploymentLabel(d).name}
                           </Link>
+                          {deploymentLabel(d).source !== 'catalog' ? (
+                            <span className="inline-flex items-center rounded-md border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium uppercase text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                              {deploymentLabel(d).source}
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td className="px-4 py-3">
