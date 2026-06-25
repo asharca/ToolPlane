@@ -13,6 +13,7 @@ import {
   killMany,
 } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -49,6 +50,53 @@ export async function deployServerAction(formData: FormData) {
 
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/new`);
+}
+
+export async function deployCustomServerAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  if (!slug) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+
+  let parsed;
+  try {
+    parsed = parseCustomMcpInput({
+      source: String(formData.get('source') ?? 'npm'),
+      packageRef: String(formData.get('packageRef') ?? ''),
+      name: String(formData.get('name') ?? ''),
+      env: JSON.parse(String(formData.get('env') ?? '[]')),
+      args: String(formData.get('args') ?? ''),
+    });
+  } catch {
+    // Invalid input — the slide-over keeps client-side `required` guards.
+    return;
+  }
+
+  const dep = await db.deployment.create({
+    data: {
+      workspaceId: ctx.ws.id,
+      serverId: null,
+      name: parsed.name,
+      source: parsed.source,
+      sourceRef: parsed.packageRef,
+      installCfg: parsed.installCfg,
+      status: 'provisioning',
+    },
+  });
+
+  await startProcess(
+    dep.id,
+    resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: dep.name,
+      source: dep.source,
+      sourceRef: dep.sourceRef,
+      installCfg: dep.installCfg,
+    }),
+  );
+
+  revalidatePath(`/app/${slug}/mcp`);
 }
 
 export async function removeDeploymentAction(formData: FormData) {
