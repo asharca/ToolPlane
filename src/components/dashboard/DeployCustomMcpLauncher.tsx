@@ -85,8 +85,9 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
               </div>
 
               <div>
-                <label className={labelCls}>NPM package</label>
+                <label htmlFor="packageRef" className={labelCls}>NPM package</label>
                 <input
+                  id="packageRef"
                   name="packageRef"
                   required
                   placeholder="@modelcontextprotocol/server-everything"
@@ -95,8 +96,9 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
               </div>
 
               <div>
-                <label className={labelCls}>Server name</label>
+                <label htmlFor="server-name" className={labelCls}>Server name</label>
                 <input
+                  id="server-name"
                   name="name"
                   required
                   value={name}
@@ -148,8 +150,8 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
               </div>
 
               <div>
-                <label className={labelCls}>Arguments</label>
-                <input name="args" placeholder="--port 3000" className={`${field} font-mono`} />
+                <label htmlFor="args" className={labelCls}>Arguments</label>
+                <input id="args" name="args" placeholder="--port 3000" className={`${field} font-mono`} />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

@@ -108,6 +108,7 @@ export default async function McpServersPage({
                 {deployments.map((d) => {
                   const status = displayStatus(d.id, d.status);
                   const isUp = status === 'running' || status === 'provisioning';
+                  const label = deploymentLabel(d);
                   return (
                     <tr
                       key={d.id}
@@ -131,11 +132,11 @@ export default async function McpServersPage({
                             href={`/app/${slug}/mcp/${d.id}`}
                             className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                           >
-                            {deploymentLabel(d).name}
+                            {label.name}
                           </Link>
-                          {deploymentLabel(d).source !== 'catalog' ? (
+                          {label.source !== 'catalog' ? (
                             <span className="inline-flex items-center rounded-md border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium uppercase text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                              {deploymentLabel(d).source}
+                              {label.source}
                             </span>
                           ) : null}
                         </div>
