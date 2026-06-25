@@ -25,12 +25,20 @@ export type AgentConfig = {
 };
 
 export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
+  let providerId = cfg.providerId;
+  if (providerId) {
+    const provider = await db.modelProvider.findFirst({
+      where: { id: providerId, workspaceId },
+      select: { id: true },
+    });
+    if (!provider) providerId = null;
+  }
   await db.agent.updateMany({
     where: { id: agentId, workspaceId },
     data: {
       name: cfg.name,
       systemPrompt: cfg.systemPrompt,
-      providerId: cfg.providerId,
+      providerId,
       model: cfg.model,
       maxSteps: cfg.maxSteps,
     },
@@ -44,13 +52,18 @@ export async function setAgentTools(
 ) {
   const agent = await db.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
   if (!agent) return;
+  const [deployments, skills, toolkits] = await Promise.all([
+    db.deployment.findMany({ where: { id: { in: tools.deploymentIds }, workspaceId }, select: { id: true } }),
+    db.installedSkill.findMany({ where: { id: { in: tools.installedSkillIds }, workspaceId }, select: { id: true } }),
+    db.toolkit.findMany({ where: { id: { in: tools.toolkitIds }, workspaceId }, select: { id: true } }),
+  ]);
   await db.$transaction([
     db.agentServer.deleteMany({ where: { agentId } }),
     db.agentSkill.deleteMany({ where: { agentId } }),
     db.agentToolkit.deleteMany({ where: { agentId } }),
-    db.agentServer.createMany({ data: tools.deploymentIds.map((deploymentId) => ({ agentId, deploymentId })) }),
-    db.agentSkill.createMany({ data: tools.installedSkillIds.map((installedSkillId) => ({ agentId, installedSkillId })) }),
-    db.agentToolkit.createMany({ data: tools.toolkitIds.map((toolkitId) => ({ agentId, toolkitId })) }),
+    db.agentServer.createMany({ data: deployments.map((d) => ({ agentId, deploymentId: d.id })) }),
+    db.agentSkill.createMany({ data: skills.map((s) => ({ agentId, installedSkillId: s.id })) }),
+    db.agentToolkit.createMany({ data: toolkits.map((t) => ({ agentId, toolkitId: t.id })) }),
   ]);
 }
 
@@ -76,7 +89,9 @@ export async function setProviderModels(workspaceId: string, providerId: string,
   });
 }
 
-export async function createConversation(agentId: string, title?: string) {
+export async function createConversation(workspaceId: string, agentId: string, title?: string) {
+  const agent = await db.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
+  if (!agent) return null;
   return db.conversation.create({ data: { agentId, title: title ?? null } });
 }
 

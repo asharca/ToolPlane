@@ -139,7 +139,8 @@ export async function createConversationAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const conv = await createConversation(agentId);
+  const conv = await createConversation(ctx.ws.id, agentId);
+  if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   redirect(`/app/${slug}/agents/${agentId}?tab=chat&c=${conv.id}`);
 }

@@ -79,10 +79,51 @@ describe('agents mutations', () => {
 
   it('creates a conversation and appends messages', async () => {
     const a = await createAgent(workspaceId, 'Chat');
-    const conv = await createConversation(a.id);
-    await appendMessage(conv.id, 'user', [{ type: 'text', text: 'hi' }]);
-    const msgs = await db.message.findMany({ where: { conversationId: conv.id } });
+    const conv = await createConversation(workspaceId, a.id);
+    await appendMessage(conv!.id, 'user', [{ type: 'text', text: 'hi' }]);
+    const msgs = await db.message.findMany({ where: { conversationId: conv!.id } });
     expect(msgs).toHaveLength(1);
     expect(msgs[0].role).toBe('user');
+  });
+
+  it('drops cross-workspace tool ids in setAgentTools', async () => {
+    const other = await db.workspace.create({
+      data: { slug: `m-other-${Date.now()}`, name: 'O', ownerId: userId, members: { create: { userId, role: 'owner' } } },
+    });
+    const fserver = await db.server.create({ data: { slug: `fsrv-${Date.now()}`, name: 'F' } });
+    const fdep = await db.deployment.create({ data: { workspaceId: other.id, serverId: fserver.id } });
+    const a = await createAgent(workspaceId, 'Scope');
+    await setAgentTools(workspaceId, a.id, {
+      deploymentIds: [deploymentId, fdep.id], installedSkillIds: [], toolkitIds: [],
+    });
+    const reread = await db.agent.findUnique({ where: { id: a.id }, include: { servers: true } });
+    expect(reread?.servers.map((s) => s.deploymentId)).toEqual([deploymentId]);
+    await db.workspace.delete({ where: { id: other.id } });
+  });
+
+  it('nulls a cross-workspace providerId in updateAgent', async () => {
+    const other = await db.workspace.create({
+      data: { slug: `m-o2-${Date.now()}`, name: 'O2', ownerId: userId, members: { create: { userId, role: 'owner' } } },
+    });
+    const fprov = await db.modelProvider.create({
+      data: { workspaceId: other.id, name: 'FP', format: 'openai', baseUrl: 'https://x/v1', apiKey: 'k' },
+    });
+    const a = await createAgent(workspaceId, 'ProvScope');
+    await updateAgent(workspaceId, a.id, {
+      name: 'ProvScope', systemPrompt: null, providerId: fprov.id, model: null, maxSteps: 8,
+    });
+    const reread = await db.agent.findUnique({ where: { id: a.id } });
+    expect(reread?.providerId).toBeNull();
+    await db.workspace.delete({ where: { id: other.id } });
+  });
+
+  it('refuses to create a conversation on an agent outside the workspace', async () => {
+    const other = await db.workspace.create({
+      data: { slug: `m-o3-${Date.now()}`, name: 'O3', ownerId: userId, members: { create: { userId, role: 'owner' } } },
+    });
+    const fagent = await db.agent.create({ data: { workspaceId: other.id, name: 'FA', slug: 'fa' } });
+    const conv = await createConversation(workspaceId, fagent.id);
+    expect(conv).toBeNull();
+    await db.workspace.delete({ where: { id: other.id } });
   });
 });
