@@ -1052,6 +1052,8 @@ export function assembleSystemPrompt(systemPrompt: string | null | undefined, sk
   - `src/app/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest/route.ts`: `name: skillLabel(s.installedSkill).name, slug: skillLabel(s.installedSkill).slug`.
   - `src/app/app/[workspace]/agents/[agentId]/page.tsx`: `label: skillLabel(s).name` for the skills map.
   - `src/app/app/[workspace]/toolkits/[slug]/page.tsx`: replace each `*.installedSkill.skill.name` / `*.skill.name` skill read with `skillLabel(...)` (import it).
+  - `src/app/app/[workspace]/skills/new/page.tsx`: `installedIds` is built from `installed.map((i) => i.skillId)` which is now `(string|null)[]`. Filter nulls: `new Set(installed.map((i) => i.skillId).filter((id): id is string => id !== null))`.
+  - `src/app/api/v1/agents/[agentId]/chat/route.ts`: this passes the loaded agent to `resolveAgentTools`. After the Step 1 `resolve.ts` rewrite (which makes `LoadedAgentTools.skills[].installedSkill.skill` nullable), this call should type-check again with no edit. If tsc still errors here, it means the agent-loading query (`lib/agents/queries.ts`) loads `skills.installedSkill` via a narrow `select`; widen it to `include: { skill: true }` (see the Step 5 contingency) and add that file to the commit.
   Each file using `skillLabel` imports it from `@/lib/workspace/skill-label`.
 
 - [ ] **Step 5: Verify** `pnpm exec tsc --noEmit` → **0 errors**. Then `pnpm test` → all pass.
