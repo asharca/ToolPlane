@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Let Tailwind detect the utility classes baked into Streamdown's chat markdown renderer. */
+@source "../../node_modules/streamdown/dist/*.js";
+
 /* next-themes uses a `.dark` class on <html>; make Tailwind's dark: variant follow it. */
 @custom-variant dark (&:is(.dark *));
 

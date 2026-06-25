@@ -5,6 +5,7 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import Link from 'next/link';
 import { Send, Plus } from 'lucide-react';
+import { Streamdown } from 'streamdown';
 import { createConversationAction } from '@/lib/agents/actions';
 
 type Conversation = { id: string; title: string | null; createdAt: string };
@@ -71,33 +72,49 @@ export function AgentChat({
         ) : null}
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          {messages.map((m) => (
-            <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
-              <div
-                className={`inline-block max-w-[80%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
-                  m.role === 'user'
-                    ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-                    : 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-                }`}
-              >
-                {m.parts.map((part, i) => {
-                  if (part.type === 'text') return <span key={i}>{part.text}</span>;
-                  if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
-                    const p = part as { type: string; state?: string; input?: unknown; output?: unknown };
-                    return (
-                      <div key={i} className="my-1 rounded border border-zinc-300 bg-white/60 p-2 font-mono text-[11px] text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
-                        🔧 {p.type.replace(/^tool-/, '')} {p.state ? `(${p.state})` : ''}
-                        {p.output !== undefined ? (
-                          <pre className="mt-1 overflow-x-auto">{JSON.stringify(p.output, null, 2)}</pre>
-                        ) : null}
-                      </div>
-                    );
-                  }
-                  return null;
-                })}
+          {messages.map((m) => {
+            const isUser = m.role === 'user';
+            return (
+              <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                    isUser
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                      : 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
+                  }`}
+                >
+                  {m.parts.map((part, i) => {
+                    if (part.type === 'text') {
+                      return isUser ? (
+                        <span key={i} className="whitespace-pre-wrap">
+                          {part.text}
+                        </span>
+                      ) : (
+                        <Streamdown
+                          key={i}
+                          className="space-y-2 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5"
+                        >
+                          {part.text}
+                        </Streamdown>
+                      );
+                    }
+                    if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
+                      const p = part as { type: string; state?: string; input?: unknown; output?: unknown };
+                      return (
+                        <div key={i} className="my-1 rounded border border-zinc-300 bg-white/60 p-2 font-mono text-[11px] text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
+                          🔧 {p.type.replace(/^tool-/, '')} {p.state ? `(${p.state})` : ''}
+                          {p.output !== undefined ? (
+                            <pre className="mt-1 overflow-x-auto">{JSON.stringify(p.output, null, 2)}</pre>
+                          ) : null}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {busy ? <p className="text-sm text-zinc-400">…</p> : null}
         </div>
 
