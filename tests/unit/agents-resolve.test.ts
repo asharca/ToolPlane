@@ -48,4 +48,40 @@ describe('resolveAgentTools', () => {
     expect(skills).toHaveLength(1);
     expect(skills[0].skill?.slug).toBe('s1');
   });
+
+  it('excludes draft custom skills and includes published ones', () => {
+    const draftSkill = {
+      installedSkill: {
+        id: 'custom-draft',
+        skillId: null,
+        skill: null,
+        name: 'Draft Skill',
+        slug: 'draft-skill',
+        description: null,
+        content: null,
+        userInvocable: true,
+        agentInvocable: true,
+        effort: null,
+        status: 'draft',
+      },
+    };
+    const publishedSkill = {
+      installedSkill: {
+        id: 'custom-published',
+        skillId: null,
+        skill: null,
+        name: 'Published Skill',
+        slug: 'published-skill',
+        description: null,
+        content: null,
+        userInvocable: true,
+        agentInvocable: true,
+        effort: null,
+        status: 'published',
+      },
+    };
+    const { skills } = resolveAgentTools({ servers: [], skills: [draftSkill, publishedSkill], toolkits: [] });
+    expect(skills).toHaveLength(1);
+    expect(skills[0].slug).toBe('published-skill');
+  });
 });

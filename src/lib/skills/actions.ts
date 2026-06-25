@@ -121,11 +121,12 @@ export async function uploadSkillFolderAction(formData: FormData) {
     return;
   }
   if (!Array.isArray(files) || files.length === 0 || files.length > 20) return;
+  if (!files.every((f) => f && typeof f.path === 'string' && typeof f.content === 'string')) return;
   const skillMd = files.find((f) => /(^|\/)SKILL\.md$/i.test(f.path));
-  const extra = files.filter((f) => f !== skillMd).slice(0, 19);
+  const extra = files.filter((f) => f !== skillMd).slice(0, 19).map((f) => ({ path: f.path, content: f.content.slice(0, 256_000) }));
   const nm = name || 'Uploaded skill';
   const created = await db.installedSkill.create({
-    data: { workspaceId: ctx.ws.id, skillId: null, source: 'upload', name: nm, slug: slugify(nm), content: skillMd?.content ?? '', files: extra.length ? extra : undefined, status: 'draft' },
+    data: { workspaceId: ctx.ws.id, skillId: null, source: 'upload', name: nm, slug: slugify(nm), content: (skillMd?.content ?? '').slice(0, 256_000), files: extra.length ? extra : undefined, status: 'draft' },
   });
   redirect(`/app/${slug}/skills/${created.id}`);
 }

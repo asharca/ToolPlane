@@ -7,6 +7,7 @@ export type SkillForPrompt = {
   content?: string | null;
   userInvocable?: boolean;
   agentInvocable?: boolean;
+  status?: string | null;
   effort?: string | null;
 };
 
@@ -27,6 +28,6 @@ export function resolveAgentTools(agent: LoadedAgentTools): { deploymentIds: str
     for (const s of tk.toolkit.servers) depSet.add(s.deploymentId);
     for (const s of tk.toolkit.skills) skillMap.set(s.installedSkill.id, s.installedSkill);
   }
-  const skills = [...skillMap.values()].filter((s) => s.agentInvocable !== false);
+  const skills = [...skillMap.values()].filter((s) => s.agentInvocable !== false && s.status !== 'draft');
   return { deploymentIds: [...depSet], skills };
 }
