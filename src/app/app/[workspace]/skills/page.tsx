@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Plus } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { uninstallSkillAction } from '@/lib/workspace/actions';
+import { AddSkillDialog } from '@/components/dashboard/AddSkillDialog';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,8 +35,6 @@ const STEPS = [
   },
 ];
 
-const addSkillButton =
-  'inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200';
 
 export default async function SkillsPage({
   params,
@@ -59,10 +57,7 @@ export default async function SkillsPage({
             Instructions and assets your agent loads on demand. Author or sync
             from GitHub.
           </p>
-          <Link href={`/app/${slug}/skills/new`} className={addSkillButton}>
-            <Plus className="size-4" />
-            Add skill
-          </Link>
+          <AddSkillDialog slug={slug} />
         </div>
 
         {skills.length === 0 ? (
@@ -89,10 +84,7 @@ export default async function SkillsPage({
               ))}
             </div>
             <div className="mt-7 flex flex-wrap items-center gap-3">
-              <Link href={`/app/${slug}/skills/new`} className={addSkillButton}>
-                <Plus className="size-4" />
-                Add skill
-              </Link>
+              <AddSkillDialog slug={slug} />
               <Link
                 href="/tools/skills"
                 className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
