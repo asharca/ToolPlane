@@ -366,6 +366,20 @@ git commit -m "feat: make Deployment.serverId nullable + add custom source colum
 
 ---
 
+### Task 4b: fix remaining nullable-`server` consumers (discovered during Task 4)
+
+Making `Deployment.server` optional makes `tsc` flag every existing reader of `deployment.server.*`. Tasks 5/9/10 cover `actions.ts`, `mcp/page.tsx`, and the inspector. These **five additional files** also read it and must route name displays through `deploymentLabel` (Task 3), with `slug` falling back for custom installs:
+
+- `src/app/api/v1/workspaces/[slug]/manifest/route.ts` — `name: deploymentLabel(d).name`, `slug: d.server?.slug ?? d.sourceRef ?? d.id`
+- `src/app/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest/route.ts` — `name: deploymentLabel(s.deployment).name`, `slug: s.deployment.server?.slug ?? s.deployment.sourceRef ?? s.deployment.id`
+- `src/app/app/[workspace]/agents/[agentId]/page.tsx` — `label: deploymentLabel(d).name`
+- `src/app/app/[workspace]/mcp/new/page.tsx` — `deployedIds` must drop nulls: `new Set(deployed.map((d) => d.serverId).filter((id): id is string => id !== null))`
+- `src/app/app/[workspace]/toolkits/[slug]/page.tsx` — three reads → `deploymentLabel(...).name`
+
+Each file that uses `deploymentLabel` imports it from `@/lib/workspace/deployment-label`. Verify with `pnpm exec tsc --noEmit` (only the Task 5/9/10 files should still error afterward). Commit: `fix: handle nullable catalog server in manifest/agents/toolkits readers`.
+
+---
+
 ### Task 5: supervisor — `startProcess(deploymentId, spec)` + bridge branch
 
 **Files:**
