@@ -13,8 +13,10 @@
 |---|---|
 | MCP 来源 | npm / PyPI / GitHub / Docker **四个都完整真实运行** |
 | MCP 运行机制 | 复用现有 stdio bridge;仅扩展 `buildSpawnSpec`(npx / uvx / npx git-url / docker run) |
-| MCP env/args | **去掉**(严格对齐真站对话框);Docker 保留 Start Command;env 管理留作 Variables 标签页后续 |
+| MCP env/args | 创建对话框**去掉**(对齐真站);Docker 保留 Start Command;**env 改由检查器 Variables 标签页管理**(真站如此) |
 | MCP 入口 | 移到 `/mcp/new` 的 "Add custom";居中 Dialog 替换右侧抽屉 |
+| MCP 浏览页 | `/mcp/new` 对齐真站:Featured 区 + All MCPs 分页表 + 搜索 + Add custom |
+| MCP 检查器 | 已基本一致(Overview/Variables/Tools/Logs);补齐 **Variables** 标签页的真实 env 配置 |
 | Skill 范围 | 完整:Create new + GitHub 导入 + 文件夹上传 + 草稿/发布 + 属性 + 编辑器 |
 | Skill 数据 | `InstalledSkill.skillId` 改可空 + 自定义字段;自定义 skill 仍是 InstalledSkill(复用绑定/下载) |
 | 交付 | 一个 spec → 一个 plan(用户明确"不拆") |
@@ -25,7 +27,7 @@
 
 ## A1. 运行时:4 来源全部真实
 
-`Deployment` 模型够用(已有 `serverId?` + `source/sourceRef/name/installCfg`)。`installCfg` 重定义为 `{ startCommand?: string }`(仅 Docker 用);**移除 env/args**。
+`Deployment` 模型够用(已有 `serverId?` + `source/sourceRef/name/installCfg`)。`installCfg` 重定义为 `{ env?: Record<string,string>, startCommand?: string }`。**创建对话框不收 env/args**(对齐真站);`env` 改由检查器 Variables 标签页编辑(见 A5),`startCommand` 仅 Docker 用。supervisor 启动时把 `installCfg.env` 注入进程(`resolveSpawnSpec` 已透传 env),改 env 后 Restart 生效。
 
 扩展纯函数 `buildSpawnSpec(source, ref, cfg)` → `{ command, args }`:
 
@@ -55,7 +57,19 @@
 
 ## A4. 回退既有实现(对齐的一部分)
 
-现有 `DeployCustomMcpLauncher`(右侧抽屉、env-rows、args、仅 npm)→ 用新的 4 来源居中 Dialog 组件替换;`spawn-spec.ts` / `custom-mcp.ts` / `deployCustomServerAction` 同步移除 env/args 处理。
+现有 `DeployCustomMcpLauncher`(右侧抽屉、创建表单里的 env-rows + args、仅 npm)→ 用新的 4 来源居中 Dialog 组件替换;`spawn-spec.ts` / `custom-mcp.ts` / `deployCustomServerAction` 从**创建表单**移除 env/args(env 改到 Variables 标签页,见 A5)。
+
+## A5. 检查器 Variables 标签页(真实 env 配置)
+
+真站检查器 Variables 标签页 = 「My Credentials / Your personal API keys for this server」:列出变量(name、`required` 徽章、description)+ 值输入框 + Save。对齐实现:
+
+- 每个 Deployment 在 `installCfg.env`(`Record<string,string>`)里存环境变量值。
+- Variables 标签页:可增删的 KEY/value 行(value 视为密钥,密码框样式)+ Save(`setDeploymentEnvAction`,工作区鉴权)。catalog server 若声明了必填变量(`Server.installCfg.variables`,可选,后续 seed)则预列出 name/required/description;自定义 server 由用户自行加行。
+- Save 后 env 写入 `installCfg.env`;**Restart 后注入新进程**(supervisor 已合并 `spec.env`)。当前 `/mcp/[deploymentId]` 的 Variables 标签页占位文案("no configurable variables")替换为该编辑器。
+
+## A6. `/mcp/new` 浏览页对齐
+
+对齐真站浏览页结构:顶部搜索栏 + **Add custom** 按钮;**Featured** 区(`Server.isFeatured` 卡片网格);**All MCPs** 分页表(Name / Description / Add,每页 ~25,复用现有分页模式);每行/卡片 Add = `deployServerAction`(catalog 部署,不变)。端点 URL 域名沿用克隆自身(`/api/v1/mcp/<id>/rpc`),不强求真站的 `link.mcpmarket.com` 域(§非目标)。
 
 ---
 
@@ -125,8 +139,9 @@
 - GitHub MCP 用 `npx <git-url>`,**仅适配 npm 体系仓库**;非 JS 仓库会运行失败 → error 状态(可接受、文档标注)。
 - Docker/uvx 依赖本机装了 docker/uv,否则 error。
 - Skill 的 GitHub 导入为**一次性**(无自动同步);多文件编辑器仅展示/下载附加文件,主要编辑 SKILL.md。
-- MCP env/密钥管理不在本 spec(留 Variables 标签页)。
+- MCP 端点 URL 沿用克隆自身域(`/api/v1/mcp/<id>/rpc`),不复刻真站的 `link.mcpmarket.com` 网关域。
+- catalog server 的必填变量声明(`Server.installCfg.variables`)为**可选**:本 spec 让 Variables 标签页支持自由增删 env 行即可;预声明的 name/required/description 仅当数据存在时展示(seed 留后续)。
 
 ## 受影响文件(概览)
-- **MCP**:`lib/process/spawn-spec.ts`、`lib/workspace/custom-mcp.ts`、`lib/workspace/actions.ts`、`components/dashboard/DeployCustomMcpLauncher.tsx`(重写为 Dialog)、`mcp/page.tsx`(移除按钮)、`mcp/new/page.tsx`(加 Add custom)。
+- **MCP**:`lib/process/spawn-spec.ts`(4 来源)、`lib/workspace/custom-mcp.ts`(按来源校验、去 env/args)、`lib/workspace/actions.ts`(`deployCustomServerAction` 改造 + 新 `setDeploymentEnvAction`)、`components/dashboard/DeployCustomMcpLauncher.tsx`(重写为 4 来源居中 Dialog)、`components/dashboard/VariablesEditor.tsx`(新,检查器 Variables 标签页)、`mcp/page.tsx`(移除按钮)、`mcp/new/page.tsx`(Featured + All MCPs 分页 + Add custom)、`mcp/[deploymentId]/page.tsx`(Variables 标签页接 VariablesEditor)。
 - **Skill**:`prisma/schema.prisma`(+迁移)、`lib/skills/artifact.ts`、`lib/skills/actions.ts`(新)、`lib/skills/queries.ts`、`lib/agents/resolve.ts`、`lib/agents/system-prompt.ts`、`lib/workspace/queries.ts`(getInstalledSkills)、`components/dashboard/AddSkillDialog.tsx`(新)、`components/dashboard/SkillEditor.tsx`(新)、`skills/page.tsx`、`skills/[installId]/page.tsx`、`skills/new/page.tsx`、`/api/v1/skills/[installId]/download/route.ts`、`agents/[agentId]/page.tsx`、`toolkits/[slug]/page.tsx`、`skillLabel` 工具(新)。
