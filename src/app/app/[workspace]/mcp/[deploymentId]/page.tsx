@@ -20,6 +20,7 @@ import {
   restartDeploymentAction,
   removeDeploymentAction,
 } from '@/lib/workspace/actions';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +64,8 @@ export default async function DeploymentInspectorPage({
   });
   if (!dep) notFound();
 
+  const label = deploymentLabel(dep);
+
   const status = liveStatus(deploymentId) ?? dep.status;
   const running = status === 'running';
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
@@ -78,14 +81,14 @@ export default async function DeploymentInspectorPage({
       <DashboardHeader
         breadcrumb={[
           { label: 'MCP Servers', href: `/app/${slug}/mcp` },
-          { label: dep.server.slug },
+          { label: dep.server?.slug ?? label.name },
         ]}
       />
       <div className="space-y-6 px-8 py-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-2">
             <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-              {dep.server.name}
+              {label.name}
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-500 dark:text-zinc-400">
               <StatusBadge status={status} />
@@ -97,7 +100,7 @@ export default async function DeploymentInspectorPage({
           <div className="flex flex-wrap items-center gap-2">
             <ConnectDialog
               endpoint={endpoint}
-              name={dep.server.name}
+              name={label.name}
               label="Connect"
               variant="outline"
             />
@@ -135,7 +138,7 @@ export default async function DeploymentInspectorPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner noun="server" endpoint={endpoint} name={dep.server.name} />
+            <ReadyToConnectBanner noun="server" endpoint={endpoint} name={label.name} />
 
             <section
               id="identity"
