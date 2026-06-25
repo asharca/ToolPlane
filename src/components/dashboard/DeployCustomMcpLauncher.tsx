@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X, Trash2, AlertTriangle } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
 
@@ -38,8 +39,9 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
         Deploy custom MCP
       </button>
 
-      {open ? (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setOpen(false)}>
+      {open
+        ? createPortal(
+            <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setOpen(false)}>
           <div
             className="h-full w-full max-w-md overflow-y-auto border-l border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
             onClick={(e) => e.stopPropagation()}
@@ -183,8 +185,10 @@ export function DeployCustomMcpLauncher({ slug }: { slug: string }) {
               </div>
             </form>
           </div>
-        </div>
-      ) : null}
+        </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
