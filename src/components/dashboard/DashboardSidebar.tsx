@@ -31,7 +31,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Manage',
     items: [
-      { label: 'Agents', segment: 'agents', icon: Bot, badge: 'Coming soon' },
+      { label: 'Agents', segment: 'agents', icon: Bot },
       { label: 'MCP Servers', segment: 'mcp', icon: Plug },
       { label: 'Skills', segment: 'skills', icon: Brain },
       { label: 'Toolkits', segment: 'toolkits', icon: Wrench },
