@@ -132,9 +132,8 @@ const server = http.createServer((req, res) => {
     }
     try {
       const reply = await callChild(msg.method, msg.params);
-      reply.id = msg.id; // restore the caller's original id
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(reply));
+      res.end(JSON.stringify({ ...reply, id: msg.id })); // restore the caller's original id
     } catch (err) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
