@@ -5,7 +5,7 @@ import { getAgentForRequest } from '@/lib/agents/queries';
 import { appendMessage } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
 import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
-import { buildToolSet } from '@/lib/agents/tools';
+import { buildAgentToolSet } from '@/lib/agents/run';
 import { buildModel } from '@/lib/agents/model';
 
 export const runtime = 'nodejs';
@@ -43,9 +43,13 @@ export async function POST(
 
   const last = messages[messages.length - 1];
 
-  const { deploymentIds, skills } = resolveAgentTools(agent);
-  const tools = await buildToolSet(deploymentIds);
-  const system = assembleSystemPrompt(agent.systemPrompt, skills);
+  const resolved = resolveAgentTools(agent);
+  const tools = await buildAgentToolSet(resolved, {
+    workspaceId: agent.workspaceId,
+    depth: 0,
+    visited: new Set([agentId]),
+  });
+  const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
   const model = buildModel(agent.provider, agent.model);
 
   // v6: convertToModelMessages is async (returns Promise<ModelMessage[]>)

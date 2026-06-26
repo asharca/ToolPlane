@@ -30,6 +30,11 @@ const TOOL_INCLUDE = {
       },
     },
   },
+  subAgents: {
+    select: {
+      child: { select: { id: true, name: true, slug: true, systemPrompt: true } },
+    },
+  },
 } as const;
 
 export async function listProviders(workspaceId: string) {
@@ -63,6 +68,16 @@ export async function getAgentForRequest(agentId: string, userId: string) {
       id: agentId,
       workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
+    include: { provider: true, ...TOOL_INCLUDE },
+  });
+}
+
+// Used by the recursive sub-agent runner: loads a sub-agent scoped to the
+// PARENT's workspace, so an agent can only ever delegate to agents in its own
+// workspace. Each nesting level loads the next fresh (no deep nested includes).
+export async function getAgentForRun(agentId: string, workspaceId: string) {
+  return db.agent.findFirst({
+    where: { id: agentId, workspaceId },
     include: { provider: true, ...TOOL_INCLUDE },
   });
 }

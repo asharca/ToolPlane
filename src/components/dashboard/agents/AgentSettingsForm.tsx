@@ -19,6 +19,7 @@ export function AgentSettingsForm({
   deployments,
   skills,
   toolkits,
+  subAgents,
 }: {
   slug: string;
   agentId: string;
@@ -31,6 +32,7 @@ export function AgentSettingsForm({
   deployments: Option[];
   skills: Option[];
   toolkits: Option[];
+  subAgents: Option[];
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(updateAgentAction, {});
   const [selectedProvider, setSelectedProvider] = useState(providerId ?? '');
@@ -98,6 +100,7 @@ export function AgentSettingsForm({
       <CheckGroup legend="MCP servers" name="deploymentId" options={deployments} />
       <CheckGroup legend="Skills" name="installedSkillId" options={skills} />
       <CheckGroup legend="Toolkits" name="toolkitId" options={toolkits} />
+      <CheckGroup legend="Sub-agents" name="subAgentId" options={subAgents} />
 
       <div className="flex items-center gap-3">
         <button className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">

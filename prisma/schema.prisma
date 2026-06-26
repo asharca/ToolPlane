@@ -282,9 +282,22 @@ model Agent {
   servers       AgentServer[]
   skills        AgentSkill[]
   toolkits      AgentToolkit[]
+  subAgents     AgentSubAgent[] @relation("AgentParent")
+  parentLinks   AgentSubAgent[] @relation("AgentChild")
   conversations Conversation[]
 
   @@unique([workspaceId, slug])
+}
+
+// A directed link letting one agent delegate to another (same workspace) by
+// calling it as a tool. Self-relation: parent → child.
+model AgentSubAgent {
+  parentId String
+  childId  String
+  parent   Agent  @relation("AgentParent", fields: [parentId], references: [id], onDelete: Cascade)
+  child    Agent  @relation("AgentChild", fields: [childId], references: [id], onDelete: Cascade)
+
+  @@id([parentId, childId])
 }
 
 model AgentServer {

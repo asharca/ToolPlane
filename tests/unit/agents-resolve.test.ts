@@ -38,6 +38,7 @@ describe('resolveAgentTools', () => {
     expect(resolveAgentTools({ servers: [], skills: [], toolkits: [] })).toEqual({
       deploymentIds: [],
       skills: [],
+      subAgents: [],
     });
   });
 

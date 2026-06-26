@@ -48,22 +48,34 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
 export async function setAgentTools(
   workspaceId: string,
   agentId: string,
-  tools: { deploymentIds: string[]; installedSkillIds: string[]; toolkitIds: string[] },
+  tools: {
+    deploymentIds: string[];
+    installedSkillIds: string[];
+    toolkitIds: string[];
+    subAgentIds?: string[];
+  },
 ) {
   const agent = await db.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
   if (!agent) return;
-  const [deployments, skills, toolkits] = await Promise.all([
+  const [deployments, skills, toolkits, subAgents] = await Promise.all([
     db.deployment.findMany({ where: { id: { in: tools.deploymentIds }, workspaceId }, select: { id: true } }),
     db.installedSkill.findMany({ where: { id: { in: tools.installedSkillIds }, workspaceId }, select: { id: true } }),
     db.toolkit.findMany({ where: { id: { in: tools.toolkitIds }, workspaceId }, select: { id: true } }),
+    // Same-workspace agents only, never the agent itself (no self-delegation).
+    db.agent.findMany({
+      where: { id: { in: tools.subAgentIds ?? [], not: agentId }, workspaceId },
+      select: { id: true },
+    }),
   ]);
   await db.$transaction([
     db.agentServer.deleteMany({ where: { agentId } }),
     db.agentSkill.deleteMany({ where: { agentId } }),
     db.agentToolkit.deleteMany({ where: { agentId } }),
+    db.agentSubAgent.deleteMany({ where: { parentId: agentId } }),
     db.agentServer.createMany({ data: deployments.map((d) => ({ agentId, deploymentId: d.id })) }),
     db.agentSkill.createMany({ data: skills.map((s) => ({ agentId, installedSkillId: s.id })) }),
     db.agentToolkit.createMany({ data: toolkits.map((t) => ({ agentId, toolkitId: t.id })) }),
+    db.agentSubAgent.createMany({ data: subAgents.map((s) => ({ parentId: agentId, childId: s.id })) }),
   ]);
 }
 

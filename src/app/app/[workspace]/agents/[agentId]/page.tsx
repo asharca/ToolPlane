@@ -3,7 +3,7 @@ import type { UIMessage } from 'ai';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments, getInstalledSkills } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
-import { getAgent, listProviders, listConversations, getConversation } from '@/lib/agents/queries';
+import { getAgent, listAgents, listProviders, listConversations, getConversation } from '@/lib/agents/queries';
 import { liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -48,15 +48,17 @@ export default async function AgentDetailPage({
 
   let content: React.ReactNode;
   if (current === 'settings') {
-    const [providers, deployments, skills, toolkits] = await Promise.all([
+    const [providers, deployments, skills, toolkits, agents] = await Promise.all([
       listProviders(ws.id),
       getDeployments(ws.id),
       getInstalledSkills(ws.id),
       listToolkits(ws.id),
+      listAgents(ws.id),
     ]);
     const selectedDeps = new Set(agent.servers.map((s) => s.deploymentId));
     const selectedSkills = new Set(agent.skills.map((s) => s.installedSkill.id));
     const selectedToolkits = new Set(agent.toolkits.map((t) => t.toolkit.id));
+    const selectedSubAgents = new Set(agent.subAgents.map((s) => s.child.id));
 
     content = (
       <>
@@ -85,6 +87,13 @@ export default async function AgentDetailPage({
             label: t.name,
             checked: selectedToolkits.has(t.id),
           }))}
+          subAgents={agents
+            .filter((a) => a.id !== agentId)
+            .map((a) => ({
+              id: a.id,
+              label: a.name,
+              checked: selectedSubAgents.has(a.id),
+            }))}
         />
         <div className="max-w-2xl px-8 pb-8">
           <div className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
