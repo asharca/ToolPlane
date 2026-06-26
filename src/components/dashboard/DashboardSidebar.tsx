@@ -72,7 +72,7 @@ export function DashboardSidebar({
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 transition-transform duration-200 lg:static lg:z-auto lg:translate-x-0 lg:bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900 lg:dark:bg-zinc-900/60 ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 transition-transform duration-200 lg:sticky lg:top-0 lg:h-dvh lg:self-start lg:z-auto lg:translate-x-0 lg:bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900 lg:dark:bg-zinc-900/60 ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
