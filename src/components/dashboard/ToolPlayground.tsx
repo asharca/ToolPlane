@@ -12,11 +12,27 @@ type Tool = {
   };
 };
 
+function defaultForType(type?: string): unknown {
+  switch (type) {
+    case 'number':
+    case 'integer':
+      return 0;
+    case 'boolean':
+      return false;
+    case 'array':
+      return [];
+    case 'object':
+      return {};
+    default:
+      return '';
+  }
+}
+
 function skeletonArgs(tool: Tool | undefined): string {
   const props = tool?.inputSchema?.properties ?? {};
   const obj: Record<string, unknown> = {};
   for (const [key, def] of Object.entries(props)) {
-    obj[key] = def.type === 'number' ? 0 : '';
+    obj[key] = defaultForType(def.type);
   }
   return JSON.stringify(obj, null, 2);
 }
@@ -116,7 +132,7 @@ export function ToolPlayground({
       ) : null}
 
       <div>
-        <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-zinc-400">
+        <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Arguments (JSON)
         </label>
         <textarea
@@ -149,7 +165,7 @@ export function ToolPlayground({
       ) : null}
       {result !== null ? (
         <div>
-          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-zinc-400">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Result
           </label>
           <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
