@@ -72,6 +72,22 @@ describe('buildPluginInstallScript', () => {
     expect(hooks.hooks.SessionStart[0].matcher).toBe('startup|resume|clear|compact');
   });
 
+  it('wires PostToolUse + PostToolUseFailure telemetry hooks (matcher "Skill")', () => {
+    const hooks = JSON.parse(decodeFile(script, 'hooks/hooks.json'));
+    for (const event of ['PostToolUse', 'PostToolUseFailure']) {
+      const h = hooks.hooks[event][0];
+      expect(h.matcher).toBe('Skill');
+      expect(h.hooks[0].command).toContain('shared/skill-invocation.sh');
+    }
+  });
+
+  it('embeds the skill-invocation telemetry script', () => {
+    expect(script).toContain('skill-invocation.sh');
+    const inv = decodeFile(script, 'shared/skill-invocation.sh');
+    expect(inv).toContain('/api/v1/plugin/skill-invocation');
+    expect(inv).toContain('WORKSPACE="ws"');
+  });
+
   it('uses http_headers for the codex client', () => {
     const codex = buildPluginInstallScript({
       base: BASE,
@@ -98,7 +114,12 @@ describe('buildPluginUninstallScript', () => {
 });
 
 describe('buildSyncScript', () => {
-  const sync = buildSyncScript({ apiBase: BASE, workspaceSlug: 'ws', toolkitSlug: 'tk' });
+  const sync = buildSyncScript({
+    apiBase: BASE,
+    workspaceSlug: 'ws',
+    toolkitSlug: 'tk',
+    client: 'claude-code',
+  });
 
   it('bakes the install-time values and hits the baseline endpoint', () => {
     expect(sync).toContain('API_BASE="http://localhost:3000"');

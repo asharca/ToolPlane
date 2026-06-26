@@ -1,4 +1,5 @@
 import { buildSyncScript } from './sync-script';
+import { buildSkillInvocationScript } from './skill-invocation-script';
 
 export const PLUGIN_CLIENTS = ['claude-code', 'claude', 'codex'] as const;
 export type PluginClient = (typeof PLUGIN_CLIENTS)[number];
@@ -70,6 +71,19 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
       2,
     ) + '\n';
 
+  // SessionStart syncs skills; PostToolUse/PostToolUseFailure (matcher "Skill")
+  // report each skill invocation. Claude Code's matcher filters exclusively, so
+  // the telemetry hook only fires for the Skill tool, not every tool call.
+  const skillHook = {
+    matcher: 'Skill',
+    hooks: [
+      {
+        type: 'command',
+        command: 'bash "${CLAUDE_PLUGIN_ROOT}/shared/skill-invocation.sh"',
+        timeout: 10,
+      },
+    ],
+  };
   const hooksJson =
     JSON.stringify(
       {
@@ -86,13 +100,21 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
               ],
             },
           ],
+          PostToolUse: [skillHook],
+          PostToolUseFailure: [skillHook],
         },
       },
       null,
       2,
     ) + '\n';
 
-  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug });
+  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client });
+  const skillInvocationSh = buildSkillInvocationScript({
+    apiBase: base,
+    workspaceSlug,
+    toolkitSlug,
+    client,
+  });
 
   // String.raw: backslashes (e.g. \"…\") stay literal; only the JS values
   // below are interpolated. The bash uses plain $VAR (no bash ${...}).
@@ -110,7 +132,8 @@ main() {
   printf '%s' '${b64(mcpJson)}' | base64 -d > "$PLUGIN_DIR/.mcp.json"
   printf '%s' '${b64(hooksJson)}' | base64 -d > "$PLUGIN_DIR/hooks/hooks.json"
   printf '%s' '${b64(syncSh)}' | base64 -d > "$PLUGIN_DIR/shared/sync.sh"
-  chmod 755 "$PLUGIN_DIR/shared/sync.sh"
+  printf '%s' '${b64(skillInvocationSh)}' | base64 -d > "$PLUGIN_DIR/shared/skill-invocation.sh"
+  chmod 755 "$PLUGIN_DIR/shared/sync.sh" "$PLUGIN_DIR/shared/skill-invocation.sh"
   : > "$PLUGIN_DIR/skills/.gitkeep"
   echo "  ✓ plugin scaffold ready at $PLUGIN_DIR"
 

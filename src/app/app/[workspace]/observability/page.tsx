@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getObservability } from '@/lib/observability/log';
+import { getPluginTelemetry } from '@/lib/observability/plugin-telemetry';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
 
@@ -44,6 +45,7 @@ function Stat({
 const TABS = [
   { key: 'usage', label: 'Usage' },
   { key: 'audit', label: 'Audit log' },
+  { key: 'plugin', label: 'Plugin' },
 ];
 
 export default async function ObservabilityPage({
@@ -63,6 +65,7 @@ export default async function ObservabilityPage({
   if (!ws) redirect('/app');
 
   const o = await getObservability(ws.id);
+  const pt = current === 'plugin' ? await getPluginTelemetry(ws.id) : null;
   const max = Math.max(1, ...o.series.map((s) => s.total));
   const errorRate = o.total ? (Math.round((o.errors / o.total) * 1000) / 10) : 0;
   const base = `/app/${slug}/observability`;
@@ -164,7 +167,7 @@ export default async function ObservabilityPage({
               )}
             </div>
           </>
-        ) : (
+        ) : current === 'audit' ? (
           <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
             {o.recent.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">
@@ -216,7 +219,142 @@ export default async function ObservabilityPage({
               </table>
             )}
           </div>
-        )}
+        ) : pt ? (
+          <div className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Stat
+                label="Skill calls · 24h"
+                value={compact(pt.skill.total)}
+                sub="across installed plugins"
+              />
+              <Stat
+                label="User / agent"
+                value={`${pt.skill.byUser} / ${pt.skill.byAgent}`}
+                sub="slash vs. autonomous"
+              />
+              <Stat
+                label="Skill errors"
+                value={pt.skill.errors}
+                sub="failed invocations"
+              />
+              <Stat
+                label="Skill syncs"
+                value={pt.sync.applied}
+                sub={`${pt.sync.failures} failed`}
+              />
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <div className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                Recent skill invocations
+              </div>
+              {pt.skill.recent.length === 0 ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  No skill invocations yet. Install a toolkit as an auto-sync
+                  plugin and run one of its skills.
+                </p>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Skill</th>
+                      <th className="px-4 py-3 font-medium">Source</th>
+                      <th className="px-4 py-3 font-medium">Outcome</th>
+                      <th className="px-4 py-3 font-medium">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {pt.skill.recent.map((s) => (
+                      <tr key={s.id}>
+                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-300">
+                          {s.skillSlug}
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.source}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={
+                              s.outcome === 'error'
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                            }
+                          >
+                            {s.outcome}
+                            {s.errorClass ? ` · ${s.errorClass}` : ''}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.createdAt.toLocaleTimeString('en-US', {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <div className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                Recent skill syncs
+              </div>
+              {pt.sync.recent.length === 0 ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  No syncs recorded yet.
+                </p>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Outcome</th>
+                      <th className="px-4 py-3 font-medium">Added</th>
+                      <th className="px-4 py-3 font-medium">Updated</th>
+                      <th className="px-4 py-3 font-medium">Removed</th>
+                      <th className="px-4 py-3 font-medium">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    {pt.sync.recent.map((s) => (
+                      <tr key={s.id}>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={
+                              s.outcome === 'failure'
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                            }
+                          >
+                            {s.outcome === 'failure'
+                              ? `failure${s.reason ? ` · ${s.reason}` : ''}`
+                              : 'applied'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.added}
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.updated}
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.removed}
+                        </td>
+                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
+                          {s.createdAt.toLocaleTimeString('en-US', {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
     </>
   );
