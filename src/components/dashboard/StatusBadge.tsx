@@ -8,7 +8,7 @@ const STYLES: Record<string, { dot: string; label: string }> = {
 export function StatusBadge({ status }: { status: string }) {
   const s = STYLES[status] ?? STYLES.provisioning;
   return (
-    <span className="inline-flex items-center gap-2 text-sm text-zinc-700">
+    <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
       <span className={`size-2 rounded-full ${s.dot}`} />
       {s.label}
     </span>

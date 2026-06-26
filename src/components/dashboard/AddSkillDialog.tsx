@@ -35,19 +35,19 @@ export function AddSkillDialog({ slug }: { slug: string }) {
               <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-950" onClick={(e) => e.stopPropagation()}>
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Add a skill</h2>
-                  <button type="button" onClick={close} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+                  <button type="button" onClick={close} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
                 </div>
 
                 {mode === 'menu' ? (
                   <div className="space-y-2">
                     <button type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
-                      <GitBranch className="size-5 text-zinc-500" /><span><span className="block text-sm font-medium">Import from GitHub</span><span className="block text-xs text-zinc-500">Pull a SKILL.md from a repo.</span></span>
+                      <GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">Import from GitHub</span><span className="block text-xs text-muted-foreground">Pull a SKILL.md from a repo.</span></span>
                     </button>
                     <button type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
-                      <Upload className="size-5 text-zinc-500" /><span><span className="block text-sm font-medium">Upload a folder</span><span className="block text-xs text-zinc-500">Drag in a skill folder.</span></span>
+                      <Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">Upload a folder</span><span className="block text-xs text-muted-foreground">Drag in a skill folder.</span></span>
                     </button>
                     <button type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
-                      <FileText className="size-5 text-zinc-500" /><span><span className="block text-sm font-medium">Create new</span><span className="block text-xs text-zinc-500">Start from a blank SKILL.md.</span></span>
+                      <FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">Create new</span><span className="block text-xs text-muted-foreground">Start from a blank SKILL.md.</span></span>
                     </button>
                   </div>
                 ) : null}
@@ -76,7 +76,7 @@ export function AddSkillDialog({ slug }: { slug: string }) {
                     <input name="name" placeholder="Skill name" className={field} />
                     {/* @ts-expect-error webkitdirectory is a non-standard attribute */}
                     <input type="file" webkitdirectory="" multiple onChange={onPickFolder} className="block w-full text-xs" />
-                    <p className="text-xs text-zinc-500">{files.length} file(s) selected</p>
+                    <p className="text-xs text-muted-foreground">{files.length} file(s) selected</p>
                     <button type="submit" disabled={files.length === 0} className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900">Upload</button>
                   </form>
                 ) : null}

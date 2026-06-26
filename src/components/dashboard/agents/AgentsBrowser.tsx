@@ -53,7 +53,7 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
 
       {agents.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-          <Bot className="mx-auto size-6 text-zinc-400" />
+          <Bot className="mx-auto size-6 text-muted-foreground" />
           <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
             No agents yet. Add a model provider, then create your first agent.
           </p>
@@ -70,7 +70,7 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
                 <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                   {a.providerName ? `${a.providerName} · ${a.model ?? 'no model'}` : 'No model selected'}
                 </p>
-                <p className="mt-2 text-xs text-zinc-400">{a.toolCount} tools attached</p>
+                <p className="mt-2 text-xs text-muted-foreground">{a.toolCount} tools attached</p>
               </Link>
             </li>
           ))}

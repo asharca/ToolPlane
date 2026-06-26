@@ -31,21 +31,21 @@ export function SkillEditor(p: Props) {
             {p.status === 'published' ? 'Unpublish' : 'Publish'}
           </button>
         </form>
-        <span className="rounded-md border border-zinc-200 px-2 py-1 text-xs capitalize text-zinc-500 dark:border-zinc-700">{p.status}</span>
+        <span className="rounded-md border border-zinc-200 px-2 py-1 text-xs capitalize text-muted-foreground dark:border-zinc-700">{p.status}</span>
         <form action={deleteCustomSkillAction} className="ml-auto">
           <input type="hidden" name="workspace" value={p.slug} />
           <input type="hidden" name="installId" value={p.installId} />
-          <button className="h-8 rounded-md border border-zinc-200 px-3 text-xs text-zinc-500 hover:border-red-200 hover:text-red-600 dark:border-zinc-700">Delete</button>
+          <button className="h-8 rounded-md border border-zinc-200 px-3 text-xs text-muted-foreground hover:border-red-200 hover:text-red-600 dark:border-zinc-700">Delete</button>
         </form>
       </div>
 
       <form action={updateSkillAttributesAction} className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <input type="hidden" name="workspace" value={p.slug} />
         <input type="hidden" name="installId" value={p.installId} />
-        <label className="flex flex-col gap-1 text-xs text-zinc-500">Description<input name="description" defaultValue={p.description} className={`${input} w-64`} /></label>
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">Description<input name="description" defaultValue={p.description} className={`${input} w-64`} /></label>
         <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300"><input type="checkbox" name="userInvocable" defaultChecked={p.userInvocable} /> User-invocable</label>
         <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300"><input type="checkbox" name="agentInvocable" defaultChecked={p.agentInvocable} /> Agent-invocable</label>
-        <label className="flex flex-col gap-1 text-xs text-zinc-500">Effort
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">Effort
           <select name="effort" defaultValue={p.effort} className={input}><option value="default">default</option><option value="low">low</option><option value="high">high</option></select>
         </label>
         <button className="h-8 rounded-md border border-zinc-200 px-3 text-xs font-medium dark:border-zinc-700">Save attributes</button>

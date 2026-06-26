@@ -131,7 +131,7 @@ export default async function SkillsPage({
                           >
                             {label.name}
                           </Link>
-                          {label.source !== 'catalog' && s.status === 'draft' ? <span className="ml-2 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] uppercase text-zinc-500 dark:border-zinc-700">Draft</span> : null}
+                          {label.source !== 'catalog' && s.status === 'draft' ? <span className="ml-2 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground dark:border-zinc-700">Draft</span> : null}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
@@ -154,7 +154,7 @@ export default async function SkillsPage({
                           <form action={uninstallSkillAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="installId" value={s.id} />
-                            <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
+                            <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
                               Uninstall
                             </button>
                           </form>

@@ -72,7 +72,7 @@ export default async function SkillInspectorPage({
             ) : null}
 
             <section>
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 How to use
               </h2>
               <ol className="list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
@@ -88,7 +88,7 @@ export default async function SkillInspectorPage({
 
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   SKILL.md
                 </h2>
                 <div className="flex items-center gap-2">

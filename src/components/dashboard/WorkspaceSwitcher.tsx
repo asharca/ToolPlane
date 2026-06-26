@@ -68,7 +68,7 @@ export function WorkspaceSwitcher({
             {userLabel}
           </span>
         </span>
-        <ChevronsUpDown className="size-4 shrink-0 text-zinc-400" />
+        <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
       </button>
 
       {open ? (
@@ -77,7 +77,7 @@ export function WorkspaceSwitcher({
           className="absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
         >
           <div className="max-h-64 overflow-y-auto py-1">
-            <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+            <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Workspaces
             </p>
             {workspaces.map((w) => {

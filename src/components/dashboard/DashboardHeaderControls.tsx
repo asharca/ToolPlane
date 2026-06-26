@@ -133,11 +133,11 @@ export function DashboardHeaderControls() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="relative hidden h-9 w-56 items-center rounded-md border border-zinc-200 bg-zinc-50 pl-8 pr-10 text-left text-sm text-zinc-400 transition-colors hover:bg-zinc-100 sm:flex dark:border-zinc-700 dark:bg-zinc-800/60 dark:hover:bg-zinc-800"
+        className="relative hidden h-9 w-56 items-center rounded-md border border-zinc-200 bg-zinc-50 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-zinc-100 sm:flex dark:border-zinc-700 dark:bg-zinc-800/60 dark:hover:bg-zinc-800"
       >
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         Search
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] text-zinc-400 dark:border-zinc-600 dark:bg-zinc-900">
+        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] text-muted-foreground dark:border-zinc-600 dark:bg-zinc-900">
           ⌘K
         </kbd>
       </button>
@@ -175,7 +175,7 @@ export function DashboardHeaderControls() {
             className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
           >
             <div className="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-700">
-              <Search className="size-4 text-zinc-400" />
+              <Search className="size-4 text-muted-foreground" />
               <input
                 ref={inputRef}
                 value={query}
@@ -187,7 +187,7 @@ export function DashboardHeaderControls() {
             </div>
             <ul className="max-h-80 overflow-y-auto p-1.5">
               {filtered.length === 0 ? (
-                <li className="px-3 py-6 text-center text-sm text-zinc-400">
+                <li className="px-3 py-6 text-center text-sm text-muted-foreground">
                   No results
                 </li>
               ) : (
@@ -205,9 +205,9 @@ export function DashboardHeaderControls() {
                             : 'text-zinc-600 dark:text-zinc-300'
                         }`}
                       >
-                        <Icon className="size-4 shrink-0 text-zinc-400" />
+                        <Icon className="size-4 shrink-0 text-muted-foreground" />
                         <span className="flex-1">{c.label}</span>
-                        <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                           {c.group}
                         </span>
                       </button>

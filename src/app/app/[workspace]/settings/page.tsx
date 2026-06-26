@@ -50,7 +50,7 @@ export default async function SettingsPage({
                 URL slug
               </label>
               <div className="flex items-center rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/60">
-                <span className="px-3 text-sm text-zinc-400">mcpmarket.com/</span>
+                <span className="px-3 text-sm text-muted-foreground">mcpmarket.com/</span>
                 <input
                   defaultValue={ws.slug}
                   readOnly

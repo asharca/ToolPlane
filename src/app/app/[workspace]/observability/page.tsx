@@ -33,7 +33,7 @@ function Stat({
           {value}
         </span>
         {unit ? (
-          <span className="text-sm text-zinc-400">{unit}</span>
+          <span className="text-sm text-muted-foreground">{unit}</span>
         ) : null}
       </div>
       <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{sub}</div>
@@ -123,7 +123,7 @@ export default async function ObservabilityPage({
                 </div>
               </div>
               {o.total === 0 ? (
-                <p className="py-12 text-center text-sm text-zinc-400">
+                <p className="py-12 text-center text-sm text-muted-foreground">
                   No traffic yet. Call a deployment&apos;s gateway endpoint to see
                   activity here.
                 </p>
@@ -154,7 +154,7 @@ export default async function ObservabilityPage({
                             }}
                           />
                         </div>
-                        <span className="mt-1 text-[9px] text-zinc-400">
+                        <span className="mt-1 text-[9px] text-muted-foreground">
                           {s.hour}
                         </span>
                       </div>
@@ -167,7 +167,7 @@ export default async function ObservabilityPage({
         ) : (
           <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
             {o.recent.length === 0 ? (
-              <p className="py-12 text-center text-sm text-zinc-400">
+              <p className="py-12 text-center text-sm text-muted-foreground">
                 No requests logged in the last 24 hours.
               </p>
             ) : (

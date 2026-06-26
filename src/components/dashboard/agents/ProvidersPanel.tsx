@@ -54,7 +54,7 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
       {state.error ? <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p> : null}
       {refreshState.error ? <p className="mt-2 text-sm text-red-600" role="alert">{refreshState.error}</p> : null}
 
-      <p className="mt-2 text-xs text-zinc-400">
+      <p className="mt-2 text-xs text-muted-foreground">
         Base URL must include the version segment (e.g. <code>/v1</code>); models are fetched from <code>{'{baseUrl}/models'}</code>.
       </p>
 

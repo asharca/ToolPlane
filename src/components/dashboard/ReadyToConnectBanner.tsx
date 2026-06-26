@@ -33,7 +33,7 @@ export function ReadyToConnectBanner({
           type="button"
           aria-label="Dismiss"
           onClick={() => setDismissed(true)}
-          className="inline-flex size-8 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-sky-100 hover:text-zinc-900 dark:hover:bg-sky-500/20 dark:hover:text-zinc-100"
+          className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sky-100 hover:text-foreground dark:hover:bg-sky-500/20"
         >
           <X className="size-4" />
         </button>

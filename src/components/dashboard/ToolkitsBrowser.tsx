@@ -71,7 +71,7 @@ export function ToolkitsBrowser({
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 p-3 dark:border-zinc-800">
           <div className="relative w-full max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -79,7 +79,7 @@ export function ToolkitsBrowser({
               className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
           </div>
-          <span className="shrink-0 text-sm text-zinc-400">
+          <span className="shrink-0 text-sm text-muted-foreground">
             {filtered.length} toolkit{filtered.length === 1 ? '' : 's'}
           </span>
         </div>

@@ -102,7 +102,7 @@ export default async function SellerOverviewPage({
         </section>
 
         <section className="mx-auto max-w-3xl">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Your listings ({submissions.length})
           </h2>
           {submissions.length === 0 ? (
@@ -124,7 +124,7 @@ export default async function SellerOverviewPage({
                       {s.name}
                     </Link>
                     {s.categories[0] ? (
-                      <span className="ml-2 text-xs uppercase tracking-wide text-zinc-400">
+                      <span className="ml-2 text-xs uppercase tracking-wide text-muted-foreground">
                         {s.categories[0].name}
                       </span>
                     ) : null}

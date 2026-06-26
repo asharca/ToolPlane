@@ -172,7 +172,7 @@ export function ConnectDialog({
                 type="button"
                 aria-label="Close"
                 onClick={close}
-                className="inline-flex size-8 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
               >
                 <X className="size-4" />
               </button>

@@ -37,7 +37,7 @@ export default async function BrowseSkillsPage({
         actions={
           <Link
             href={`/app/${slug}/skills`}
-            className="text-sm text-zinc-500 transition-colors hover:text-zinc-900"
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             ← Back to skills
           </Link>

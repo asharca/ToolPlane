@@ -14,7 +14,7 @@ const SOURCES = [
 
 const field =
   'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
-const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-zinc-500';
+const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
 
 export function DeployCustomMcpDialog({ slug }: { slug: string }) {
   const [open, setOpen] = useState(false);
@@ -44,7 +44,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
               >
                 <div className="mb-1 flex items-center justify-between">
                   <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Deploy custom MCP</h2>
-                  <button type="button" onClick={() => setOpen(false)} className="text-zinc-400 hover:text-zinc-700">
+                  <button type="button" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
                     <X className="size-5" />
                   </button>
                 </div>
@@ -92,7 +92,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                   <div>
                     <label htmlFor="name" className={labelCls}>Server Name</label>
                     <input id="name" name="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Weather API" className={field} />
-                    <p className="mt-1 font-mono text-xs text-zinc-400">/{slug}/mcp/{slugPreview}</p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">/{slug}/mcp/{slugPreview}</p>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">

@@ -114,11 +114,11 @@ export function AgentSettingsForm({
 function CheckGroup({ legend, name, options }: { legend: string; name: string; options: Option[] }) {
   return (
     <fieldset className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {legend}
       </legend>
       {options.length === 0 ? (
-        <p className="px-1 py-2 text-sm text-zinc-400">Nothing available in this workspace.</p>
+        <p className="px-1 py-2 text-sm text-muted-foreground">Nothing available in this workspace.</p>
       ) : (
         <div className="grid gap-1.5 sm:grid-cols-2">
           {options.map((o) => (

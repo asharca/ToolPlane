@@ -37,8 +37,8 @@ export function AgentChat({
   const busy = status === 'streaming' || status === 'submitted';
 
   return (
-    <div className="grid gap-4 px-8 py-6 lg:grid-cols-[14rem_1fr]">
-      <aside className="space-y-2">
+    <div className="grid gap-4 px-8 py-6 lg:h-[calc(100dvh-8.5rem)] lg:grid-cols-[14rem_minmax(0,1fr)]">
+      <aside className="space-y-2 lg:self-start">
         <form action={createConversationAction}>
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="agentId" value={agentId} />
@@ -71,13 +71,13 @@ export function AgentChat({
           </div>
         ) : null}
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {messages.map((m) => {
             const isUser = m.role === 'user';
             return (
               <div key={m.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  className={`max-w-[85%] min-w-0 break-words rounded-lg px-3 py-2 text-sm ${
                     isUser
                       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
                       : 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
@@ -115,7 +115,7 @@ export function AgentChat({
               </div>
             );
           })}
-          {busy ? <p className="text-sm text-zinc-400">…</p> : null}
+          {busy ? <p className="text-sm text-muted-foreground">…</p> : null}
         </div>
 
         {error ? (

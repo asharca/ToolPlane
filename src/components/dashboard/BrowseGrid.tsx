@@ -27,7 +27,7 @@ export function BrowseGrid({
       {items.map((it) => (
         <div
           key={it.id}
-          className="flex flex-col rounded-lg border border-zinc-200 p-4"
+          className="flex flex-col rounded-lg border border-border p-4"
         >
           <div className="mb-2 flex items-center gap-2.5">
             {it.iconUrl ? (
@@ -42,13 +42,13 @@ export function BrowseGrid({
             ) : (
               <span className="size-5 rounded bg-zinc-200" />
             )}
-            <span className="font-medium text-zinc-900">{it.name}</span>
+            <span className="font-medium text-foreground">{it.name}</span>
           </div>
-          <p className="mb-4 line-clamp-2 flex-1 text-sm text-zinc-500">
+          <p className="mb-4 line-clamp-2 flex-1 text-sm text-muted-foreground">
             {it.description}
           </p>
           {installedIds.has(it.id) ? (
-            <span className="inline-flex h-8 w-fit items-center rounded-md border border-zinc-200 px-3 text-sm text-zinc-400">
+            <span className="inline-flex h-8 w-fit items-center rounded-md border border-border px-3 text-sm text-muted-foreground">
               {installedLabel}
             </span>
           ) : (

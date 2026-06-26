@@ -110,7 +110,7 @@ export function TokenManager({
 
         {tokens.length === 0 ? (
           <div className="flex flex-col items-center gap-1 rounded-md border border-dashed border-zinc-200 py-8 text-center dark:border-zinc-800">
-            <KeyRound className="h-5 w-5 text-zinc-400" />
+            <KeyRound className="h-5 w-5 text-muted-foreground" />
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               No tokens yet
             </p>
