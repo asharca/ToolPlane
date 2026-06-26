@@ -16,6 +16,22 @@ export async function logRequest(entry: {
   }
 }
 
+export async function getDeploymentLogs(deploymentId: string, limit = 100) {
+  return db.requestLog.findMany({
+    where: { deploymentId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      method: true,
+      path: true,
+      statusCode: true,
+      durationMs: true,
+      createdAt: true,
+    },
+  });
+}
+
 export type HourBucket = { hour: string; total: number; errors: number };
 
 export async function getObservability(workspaceId: string, hours = 24) {

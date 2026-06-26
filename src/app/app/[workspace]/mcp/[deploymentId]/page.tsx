@@ -22,6 +22,7 @@ import {
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
+import { getDeploymentLogs } from '@/lib/observability/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +32,24 @@ function fmtDate(d: Date): string {
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+function fmtTime(d: Date): string {
+  return new Date(d).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+// The gateway logs the rpc method (and tool name for tools/call) into the path
+// as `…/rpc#tools/call:toolName`. Parse it back for display.
+function parseCall(path: string): { method: string; tool?: string } {
+  const frag = path.split('#')[1] ?? '';
+  const [method, tool] = frag.split(':');
+  return { method: method || 'request', tool: tool || undefined };
 }
 
 const actionButton =
@@ -72,6 +91,7 @@ export default async function DeploymentInspectorPage({
   const status = liveStatus(deploymentId) ?? dep.status;
   const running = status === 'running';
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
+  const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];
 
   const h = await headers();
   const host = h.get('host') ?? 'localhost:3000';
@@ -177,7 +197,7 @@ export default async function DeploymentInspectorPage({
 
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 px-4 py-4 dark:border-zinc-800">
               <div className="flex items-start gap-3">
-                <BarChart3 className="mt-0.5 size-4 text-zinc-400" />
+                <BarChart3 className="mt-0.5 size-4 text-muted-foreground" />
                 <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                     Track requests, latency, and errors
@@ -204,7 +224,7 @@ export default async function DeploymentInspectorPage({
         {current === 'tools' ? (
           <section>
             <div className="mb-3 flex items-center gap-2">
-              <Plug className="size-4 text-zinc-400" />
+              <Plug className="size-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                 Tools {tools.length > 0 ? `(${tools.length})` : ''}
               </h2>
@@ -223,12 +243,58 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'logs' ? (
-          <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              No logs yet. Request logs appear here once the gateway receives
-              traffic.
-            </p>
-          </div>
+          logs.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                No requests logged yet. Run a tool in the Tools tab, or connect a
+                client, to see call records here.
+              </p>
+            </div>
+          ) : (
+            <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium">Time</th>
+                    <th className="px-4 py-2.5 font-medium">Call</th>
+                    <th className="px-4 py-2.5 font-medium">Status</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Latency</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {logs.map((l) => {
+                    const call = parseCall(l.path);
+                    const ok = l.statusCode < 400;
+                    return (
+                      <tr key={l.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                        <td className="whitespace-nowrap px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+                          {fmtTime(l.createdAt)}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                          {call.method}
+                          {call.tool ? (
+                            <span className="text-zinc-400 dark:text-zinc-500"> · {call.tool}</span>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`font-mono text-xs ${
+                              ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {l.statusCode}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right text-xs text-zinc-500 dark:text-zinc-400">
+                          {l.durationMs}ms
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
         ) : null}
       </div>
     </>

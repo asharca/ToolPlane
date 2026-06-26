@@ -34,8 +34,11 @@ export async function POST(
 
   const body = await req.text();
   let rpcMethod = '';
+  let toolName = '';
   try {
-    rpcMethod = String(JSON.parse(body || '{}')?.method ?? '');
+    const parsed = JSON.parse(body || '{}');
+    rpcMethod = String(parsed?.method ?? '');
+    if (rpcMethod === 'tools/call') toolName = String(parsed?.params?.name ?? '');
   } catch {
     // logged path falls back to the bare rpc path
   }
@@ -67,7 +70,7 @@ export async function POST(
     workspaceId: dep.workspaceId,
     deploymentId,
     method: 'POST',
-    path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}` : ''}`,
+    path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}${toolName ? `:${toolName}` : ''}` : ''}`,
     statusCode,
     durationMs: Date.now() - start,
   });
