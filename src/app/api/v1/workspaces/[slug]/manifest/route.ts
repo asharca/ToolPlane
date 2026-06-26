@@ -1,6 +1,6 @@
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
-import { liveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -48,7 +48,7 @@ export async function GET(
     servers: ws.deployments.map((d) => ({
       name: deploymentLabel(d).name,
       slug: d.server?.slug ?? d.sourceRef ?? d.id,
-      status: liveStatus(d.id) ?? d.status,
+      status: effectiveStatus(d.id, d.status),
       endpoint: `/api/v1/mcp/${d.id}/rpc`,
     })),
     skills: ws.installedSkills.map((i) => ({

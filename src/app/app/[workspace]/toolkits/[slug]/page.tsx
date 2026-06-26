@@ -9,6 +9,7 @@ import {
   getOrCreateDefaultToolkit,
   getToolkitComposables,
 } from '@/lib/toolkits/queries';
+import { getOrCreateToolkitInstallLink } from '@/lib/toolkits/install-link';
 import { liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -57,7 +58,10 @@ export default async function ToolkitDetailPage({
   const h = await headers();
   const host = h.get('host') ?? 'localhost:3000';
   const proto = host.startsWith('localhost') ? 'http' : 'https';
-  const installUrl = `${proto}://${host}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/install`;
+  const installLink = await getOrCreateToolkitInstallLink(toolkit.id, user.id);
+  const installUrl = `${proto}://${host}/install/${installLink.id}`;
+  const uninstallUrl = `${installUrl}/uninstall`;
+  const mcpUrl = `${proto}://${host}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/mcp`;
 
   const base = `/app/${wsSlug}/toolkits/${toolkitSlug}`;
   const tabs = [
@@ -115,6 +119,9 @@ export default async function ToolkitDetailPage({
           <div className="space-y-5">
             <ToolkitInstall
               installUrl={installUrl}
+              uninstallUrl={uninstallUrl}
+              mcpUrl={mcpUrl}
+              toolkitSlug={toolkitSlug}
               serverCount={toolkit.servers.length}
               skillCount={toolkit.skills.length}
             />

@@ -57,6 +57,16 @@ export async function POST(
   const rpcParams = msg.params ?? {};
   const deploymentIds = toolkit.servers.map((s) => s.deploymentId);
 
+  // Per-call audit detail: which deployment/tool was invoked + its args/result,
+  // so a Claude tool call routed through the toolkit shows up in that
+  // deployment's Logs tab (keyed on deploymentId) and carries the tool name in
+  // the audit path — same richness as the single-server gateway. tools/list
+  // spans deployments, so it stays deploymentId-less.
+  let logDeploymentId: string | null = null;
+  let logTool = '';
+  let reqBody: string | null = null;
+  let resBody: string | null = null;
+
   let response: NextResponse;
   if (method === 'initialize') {
     response = NextResponse.json({
@@ -91,18 +101,21 @@ export async function POST(
     const sep = fullName.indexOf(SEP);
     const depId = sep === -1 ? '' : fullName.slice(0, sep);
     const toolName = sep === -1 ? fullName : fullName.slice(sep + SEP.length);
+    const args = (rpcParams.arguments as Record<string, unknown>) ?? {};
+    logTool = toolName;
+    reqBody = JSON.stringify({ name: toolName, arguments: args }).slice(0, 16000);
     if (!deploymentIds.includes(depId)) {
       response = err(id, -32602, `Unknown tool: ${fullName}`);
     } else if (liveStatus(depId) !== 'running') {
+      logDeploymentId = depId;
       response = err(id, -32000, 'tool deployment is not running');
     } else {
-      const result = await mcpRpc(depId, 'tools/call', {
-        name: toolName,
-        arguments: (rpcParams.arguments as Record<string, unknown>) ?? {},
-      });
+      logDeploymentId = depId;
+      const result = await mcpRpc(depId, 'tools/call', { name: toolName, arguments: args });
       response = result
         ? NextResponse.json({ jsonrpc: '2.0', id, result })
         : err(id, -32000, 'tool deployment is unreachable');
+      resBody = JSON.stringify(result ?? null).slice(0, 16000);
     }
   } else if (id === undefined || id === null) {
     return new NextResponse(null, { status: 202 });
@@ -112,10 +125,13 @@ export async function POST(
 
   await logRequest({
     workspaceId: toolkit.workspaceId,
+    deploymentId: logDeploymentId,
     method: 'POST',
-    path: `/workspaces/${slug}/toolkits/${toolkitSlug}/mcp${method ? `#${method}` : ''}`,
+    path: `/workspaces/${slug}/toolkits/${toolkitSlug}/mcp${method ? `#${method}` : ''}${logTool ? `:${logTool}` : ''}`,
     statusCode: 200,
     durationMs: Date.now() - start,
+    requestBody: reqBody,
+    responseBody: resBody,
   });
 
   return response;

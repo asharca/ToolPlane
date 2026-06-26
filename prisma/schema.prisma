@@ -203,10 +203,27 @@ model Toolkit {
   servers     ToolkitServer[]
   skills      ToolkitSkill[]
   agentLinks  AgentToolkit[]
+  installLinks ToolkitInstallLink[]
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
   @@unique([workspaceId, slug])
+}
+
+// Opaque install link for a toolkit (the `/install/<id>` URL). `id` is the
+// unguessable public id → (toolkit, user) mapping; it stores NO token. Each
+// install fetch mints/rotates a single named API token
+// ("MCPmarket plugin - <toolkit> (<client>)"), so the embedded credential is
+// always freshly valid. One link per user per toolkit. The id is a bearer
+// secret — anyone with it can mint the owner's install token.
+model ToolkitInstallLink {
+  id        String   @id
+  toolkitId String
+  toolkit   Toolkit  @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@unique([toolkitId, userId])
 }
 
 model ToolkitServer {

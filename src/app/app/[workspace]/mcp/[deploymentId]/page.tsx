@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
-import { liveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
@@ -89,7 +89,7 @@ export default async function DeploymentInspectorPage({
   const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string> };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
 
-  const status = liveStatus(deploymentId) ?? dep.status;
+  const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
   const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
-import { liveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import {
@@ -24,17 +24,6 @@ function formatDate(d: Date): string {
   });
 }
 
-// Reconcile DB status with the live process table: if the DB still says a
-// deployment is up but no supervised process exists (e.g. after a server
-// restart), surface it as stopped rather than lying.
-function displayStatus(id: string, dbStatus: string): string {
-  const live = liveStatus(id);
-  if (live) return live;
-  return dbStatus === 'running' || dbStatus === 'provisioning'
-    ? 'stopped'
-    : dbStatus;
-}
-
 const rowButton =
   'text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
@@ -50,7 +39,7 @@ export default async function McpServersPage({
   if (!ws) redirect('/app');
   const deployments = await getDeployments(ws.id);
   const anyProvisioning = deployments.some(
-    (d) => displayStatus(d.id, d.status) === 'provisioning',
+    (d) => effectiveStatus(d.id, d.status) === 'provisioning',
   );
 
   return (
@@ -72,7 +61,7 @@ export default async function McpServersPage({
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             Servers deployed to your org.
           </p>
-          <span className="text-sm text-zinc-400">
+          <span className="text-sm text-muted-foreground">
             {deployments.length} server{deployments.length === 1 ? '' : 's'}
           </span>
         </div>
@@ -102,7 +91,7 @@ export default async function McpServersPage({
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {deployments.map((d) => {
-                  const status = displayStatus(d.id, d.status);
+                  const status = effectiveStatus(d.id, d.status);
                   const isUp = status === 'running' || status === 'provisioning';
                   const label = deploymentLabel(d);
                   return (
@@ -171,7 +160,7 @@ export default async function McpServersPage({
                           <form action={removeDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <button className="text-xs text-zinc-400 transition-colors hover:text-red-600">
+                            <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
                               Remove
                             </button>
                           </form>

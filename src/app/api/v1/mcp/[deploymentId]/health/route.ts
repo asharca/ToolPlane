@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { db } from '@/lib/db';
-import { livePort, liveStatus } from '@/lib/process/supervisor';
+import { livePort, effectiveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
 
 // Gateway health proxy: forwards to the live stub process for a deployment
@@ -31,7 +31,7 @@ export async function GET(
   }
 
   const port = livePort(deploymentId);
-  const status = liveStatus(deploymentId) ?? dep.status;
+  const status = effectiveStatus(deploymentId, dep.status);
   let statusCode = 200;
   let payload: Record<string, unknown> = { status, reachable: false };
 

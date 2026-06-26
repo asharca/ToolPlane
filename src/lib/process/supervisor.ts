@@ -38,6 +38,18 @@ export function liveStatus(deploymentId: string): string | null {
   return store().get(deploymentId)?.status ?? null;
 }
 
+// Active states require a live supervised process. When the process table has
+// no entry for a deployment (e.g. after a dev-server restart cleared it), a DB
+// 'running'/'provisioning' is stale — the real status is 'stopped'. Terminal DB
+// states (stopped/error) are accurate as-is. Use this — not `liveStatus(id) ??
+// dbStatus` — wherever a deployment's status is displayed.
+const ACTIVE_STATES = new Set(['running', 'provisioning']);
+export function effectiveStatus(deploymentId: string, dbStatus: string): string {
+  const live = liveStatus(deploymentId);
+  if (live) return live;
+  return ACTIVE_STATES.has(dbStatus) ? 'stopped' : dbStatus;
+}
+
 export function livePort(deploymentId: string): number | null {
   return store().get(deploymentId)?.port ?? null;
 }
