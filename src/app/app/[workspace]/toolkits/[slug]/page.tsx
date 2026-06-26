@@ -14,7 +14,7 @@ import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
+import { ToolkitInstall } from '@/components/dashboard/ToolkitInstall';
 import { TabBar } from '@/components/dashboard/TabBar';
 import {
   addServerToToolkitAction,
@@ -57,7 +57,7 @@ export default async function ToolkitDetailPage({
   const h = await headers();
   const host = h.get('host') ?? 'localhost:3000';
   const proto = host.startsWith('localhost') ? 'http' : 'https';
-  const endpoint = `${proto}://${host}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/manifest`;
+  const installUrl = `${proto}://${host}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/install`;
 
   const base = `/app/${wsSlug}/toolkits/${toolkitSlug}`;
   const tabs = [
@@ -81,11 +81,11 @@ export default async function ToolkitDetailPage({
         ]}
         actions={
           <a
-            href={endpoint}
+            href={installUrl}
             className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             <Download className="size-4" />
-            Install
+            Install script
           </a>
         }
       />
@@ -105,7 +105,7 @@ export default async function ToolkitDetailPage({
             </span>
           </div>
           <code className="block font-mono text-xs text-zinc-400 dark:text-zinc-500">
-            {endpoint}
+            {installUrl}
           </code>
         </div>
 
@@ -113,10 +113,10 @@ export default async function ToolkitDetailPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner
-              noun="toolkit"
-              endpoint={endpoint}
-              name={toolkit.name}
+            <ToolkitInstall
+              installUrl={installUrl}
+              serverCount={toolkit.servers.length}
+              skillCount={toolkit.skills.length}
             />
 
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -124,7 +124,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Connected MCP servers
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {toolkit.servers.length}
                 </span>
               </header>
@@ -144,11 +144,11 @@ export default async function ToolkitDetailPage({
                         className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                       >
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <ServerIcon className="size-4 text-zinc-500" />
+                          <ServerIcon className="size-4 text-muted-foreground" />
                         </span>
                         {deploymentLabel(s.deployment).name}
                       </Link>
-                      <span className="text-sm text-zinc-400">
+                      <span className="text-sm text-muted-foreground">
                         {toolCounts[i] === null
                           ? 'stopped'
                           : `${toolCounts[i]} tools`}
@@ -164,7 +164,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Skills
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {toolkit.skills.length}
                 </span>
               </header>
@@ -184,7 +184,7 @@ export default async function ToolkitDetailPage({
                         className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
                       >
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <Brain className="size-4 text-zinc-500" />
+                          <Brain className="size-4 text-muted-foreground" />
                         </span>
                         {skillLabel(s.installedSkill).name}
                       </Link>
@@ -203,7 +203,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   In this toolkit
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {toolkit.servers.length}
                 </span>
               </header>
@@ -220,7 +220,7 @@ export default async function ToolkitDetailPage({
                     >
                       <span className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <ServerIcon className="size-4 text-zinc-500" />
+                          <ServerIcon className="size-4 text-muted-foreground" />
                         </span>
                         {deploymentLabel(s.deployment).name}
                       </span>
@@ -228,7 +228,7 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="workspace" value={wsSlug} />
                         <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                         <input type="hidden" name="deploymentId" value={s.deployment.id} />
-                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-zinc-400 transition-colors hover:text-red-600">
+                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
                           <X className="size-3.5" />
                           Remove
                         </button>
@@ -244,7 +244,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Available MCP servers
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {composables.deployments.length}
                 </span>
               </header>
@@ -268,7 +268,7 @@ export default async function ToolkitDetailPage({
                     >
                       <span className="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <ServerIcon className="size-4 text-zinc-400" />
+                          <ServerIcon className="size-4 text-muted-foreground" />
                         </span>
                         {deploymentLabel(d).name}
                       </span>
@@ -296,7 +296,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   In this toolkit
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {toolkit.skills.length}
                 </span>
               </header>
@@ -313,7 +313,7 @@ export default async function ToolkitDetailPage({
                     >
                       <span className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <Brain className="size-4 text-zinc-500" />
+                          <Brain className="size-4 text-muted-foreground" />
                         </span>
                         {skillLabel(s.installedSkill).name}
                       </span>
@@ -325,7 +325,7 @@ export default async function ToolkitDetailPage({
                           name="installedSkillId"
                           value={s.installedSkill.id}
                         />
-                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-zinc-400 transition-colors hover:text-red-600">
+                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
                           <X className="size-3.5" />
                           Remove
                         </button>
@@ -341,7 +341,7 @@ export default async function ToolkitDetailPage({
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Available skills
                 </h2>
-                <span className="text-sm text-zinc-400">
+                <span className="text-sm text-muted-foreground">
                   {composables.skills.length}
                 </span>
               </header>
@@ -365,7 +365,7 @@ export default async function ToolkitDetailPage({
                     >
                       <span className="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
                         <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <Brain className="size-4 text-zinc-400" />
+                          <Brain className="size-4 text-muted-foreground" />
                         </span>
                         {skillLabel(s).name}
                       </span>
