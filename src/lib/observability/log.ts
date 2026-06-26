@@ -8,6 +8,8 @@ export async function logRequest(entry: {
   path: string;
   statusCode: number;
   durationMs: number;
+  requestBody?: string | null;
+  responseBody?: string | null;
 }): Promise<void> {
   try {
     await db.requestLog.create({ data: entry });
@@ -27,6 +29,8 @@ export async function getDeploymentLogs(deploymentId: string, limit = 100) {
       path: true,
       statusCode: true,
       durationMs: true,
+      requestBody: true,
+      responseBody: true,
       createdAt: true,
     },
   });

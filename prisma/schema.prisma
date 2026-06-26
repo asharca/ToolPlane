@@ -185,6 +185,8 @@ model RequestLog {
   path         String
   statusCode   Int
   durationMs   Int
+  requestBody  String?
+  responseBody String?
   createdAt    DateTime  @default(now())
 
   @@index([workspaceId, createdAt])

@@ -23,6 +23,7 @@ import {
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { getDeploymentLogs } from '@/lib/observability/log';
+import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
 
 export const dynamic = 'force-dynamic';
 
@@ -251,49 +252,21 @@ export default async function DeploymentInspectorPage({
               </p>
             </div>
           ) : (
-            <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-2.5 font-medium">Time</th>
-                    <th className="px-4 py-2.5 font-medium">Call</th>
-                    <th className="px-4 py-2.5 font-medium">Status</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Latency</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {logs.map((l) => {
-                    const call = parseCall(l.path);
-                    const ok = l.statusCode < 400;
-                    return (
-                      <tr key={l.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                        <td className="whitespace-nowrap px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                          {fmtTime(l.createdAt)}
-                        </td>
-                        <td className="px-4 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                          {call.method}
-                          {call.tool ? (
-                            <span className="text-zinc-400 dark:text-zinc-500"> · {call.tool}</span>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`font-mono text-xs ${
-                              ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
-                            }`}
-                          >
-                            {l.statusCode}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right text-xs text-zinc-500 dark:text-zinc-400">
-                          {l.durationMs}ms
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DeploymentLogs
+              logs={logs.map((l) => {
+                const call = parseCall(l.path);
+                return {
+                  id: l.id,
+                  time: fmtTime(l.createdAt),
+                  method: call.method,
+                  tool: call.tool,
+                  statusCode: l.statusCode,
+                  durationMs: l.durationMs,
+                  request: l.requestBody,
+                  response: l.responseBody,
+                };
+              })}
+            />
           )
         ) : null}
       </div>

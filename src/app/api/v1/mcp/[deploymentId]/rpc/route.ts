@@ -73,6 +73,8 @@ export async function POST(
     path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}${toolName ? `:${toolName}` : ''}` : ''}`,
     statusCode,
     durationMs: Date.now() - start,
+    requestBody: (body || '').slice(0, 16000) || null,
+    responseBody: JSON.stringify(payload).slice(0, 16000),
   });
 
   return NextResponse.json(payload, { status: statusCode });
