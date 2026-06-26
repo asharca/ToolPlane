@@ -44,6 +44,9 @@ next-env.d.ts
 # Playwright e2e failure artifact
 e2e/failure.png
 
+# Playwright MCP browser artifacts
+.playwright-mcp/
+
 # Local scraping comparison artifacts
 .compare/
 
