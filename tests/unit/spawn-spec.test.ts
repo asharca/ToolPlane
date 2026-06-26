@@ -23,6 +23,12 @@ describe('buildSpawnSpec', () => {
   it('docker without start command', () => {
     expect(buildSpawnSpec('docker', 'mcp/slack')).toEqual({ command: 'docker', args: ['run', '-i', '--rm', 'mcp/slack'] });
   });
+  it('docker injects env as -e flags before the image', () => {
+    expect(buildSpawnSpec('docker', 'mcp/slack', undefined, { MIKROTIK_HOST: '192.168.88.1', PORT: '22' })).toEqual({
+      command: 'docker',
+      args: ['run', '-i', '--rm', '-e', 'MIKROTIK_HOST=192.168.88.1', '-e', 'PORT=22', 'mcp/slack'],
+    });
+  });
   it('throws on unsupported source', () => {
     expect(() => buildSpawnSpec('brew', 'x')).toThrow(/Unsupported MCP source/);
   });
@@ -44,6 +50,6 @@ describe('resolveSpawnSpec', () => {
         sourceRef: 'mcp/slack',
         installCfg: { env: { TOKEN: 'x' }, startCommand: 'node app.js' },
       }),
-    ).toEqual({ kind: 'bridge', name: 'Slack', command: 'docker', args: ['run', '-i', '--rm', 'mcp/slack', 'node', 'app.js'], env: { TOKEN: 'x' } });
+    ).toEqual({ kind: 'bridge', name: 'Slack', command: 'docker', args: ['run', '-i', '--rm', '-e', 'TOKEN=x', 'mcp/slack', 'node', 'app.js'], env: { TOKEN: 'x' } });
   });
 });
