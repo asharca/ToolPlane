@@ -95,6 +95,7 @@ export async function deployCustomServerAction(formData: FormData) {
   );
 
   revalidatePath(`/app/${slug}/mcp`);
+  redirect(`/app/${slug}/mcp/${dep.id}`);
 }
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
