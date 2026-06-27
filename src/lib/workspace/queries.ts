@@ -81,22 +81,38 @@ export async function getInstalledSkills(workspaceId: string) {
 }
 
 const BROWSE_PAGE_SIZE = 25;
+const BROWSE_SELECT = { id: true, name: true, description: true, iconUrl: true } as const;
 
-export async function getBrowseServers(page: number) {
+type BrowseRow = { id: string; name: string; description: string | null; iconUrl: string | null };
+
+export async function getBrowseServers(page: number, q = '') {
+  const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
+  const where = term
+    ? {
+        OR: [
+          { name: { contains: term, mode: 'insensitive' as const } },
+          { description: { contains: term, mode: 'insensitive' as const } },
+        ],
+      }
+    : {};
   const [featured, total, all] = await Promise.all([
+    // Skip the Featured rail while searching — the result list is what matters.
+    term
+      ? Promise.resolve([] as BrowseRow[])
+      : db.server.findMany({
+          where: { isFeatured: true },
+          orderBy: { stars: 'desc' },
+          take: 12,
+          select: BROWSE_SELECT,
+        }),
+    db.server.count({ where }),
     db.server.findMany({
-      where: { isFeatured: true },
-      orderBy: { stars: 'desc' },
-      take: 12,
-      select: { id: true, name: true, description: true, iconUrl: true },
-    }),
-    db.server.count(),
-    db.server.findMany({
+      where,
       orderBy: { stars: 'desc' },
       skip,
       take: BROWSE_PAGE_SIZE,
-      select: { id: true, name: true, description: true, iconUrl: true },
+      select: BROWSE_SELECT,
     }),
   ]);
   return { featured, all, total, pageSize: BROWSE_PAGE_SIZE };
