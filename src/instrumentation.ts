@@ -12,6 +12,8 @@ export async function register() {
   g.__mcpReconciled = true;
 
   try {
+    const { ensureSandboxNetwork } = await import('@/lib/process/supervisor');
+    await ensureSandboxNetwork();
     const { reconcileDeployments } = await import('@/lib/process/reconcile');
     const n = await reconcileDeployments();
     if (n > 0) console.log(`[mcp] reconciled ${n} deployment(s) on startup`);

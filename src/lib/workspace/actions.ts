@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -120,8 +121,15 @@ export async function setDeploymentEnvAction(formData: FormData) {
     return;
   }
 
-  const cfg = (dep.installCfg ?? {}) as Record<string, unknown>;
-  await db.deployment.update({ where: { id: deploymentId }, data: { installCfg: { ...cfg, env } } });
+  const next: Record<string, unknown> = { ...((dep.installCfg ?? {}) as Record<string, unknown>), env };
+  // `--network none` toggle: an unchecked checkbox submits nothing → isolated.
+  if (String(formData.get('network') ?? '') === 'none') next.network = 'none';
+  else delete next.network;
+
+  await db.deployment.update({
+    where: { id: deploymentId },
+    data: { installCfg: next as Prisma.InputJsonValue },
+  });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
 

@@ -87,7 +87,7 @@ export default async function DeploymentInspectorPage({
   if (!dep) notFound();
 
   const label = deploymentLabel(dep);
-  const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string> };
+  const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string>; network?: string };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
 
   const status = effectiveStatus(deploymentId, dep.status);
@@ -225,7 +225,7 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'variables' ? (
-          <VariablesEditor slug={slug} deploymentId={deploymentId} initial={envRows} />
+          <VariablesEditor slug={slug} deploymentId={deploymentId} initial={envRows} network={envCfg.network} />
         ) : null}
 
         {current === 'tools' ? (

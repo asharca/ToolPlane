@@ -14,7 +14,7 @@ describe('reconcileDeployments', () => {
     expect(n).toBe(2);
     expect(start.mock.calls[0]).toEqual(['a', { kind: 'builtin', name: 'Stripe' }]);
     expect(start.mock.calls[1][0]).toBe('b');
-    expect(start.mock.calls[1][1]).toMatchObject({ kind: 'bridge', command: 'npx' });
+    expect(start.mock.calls[1][1]).toMatchObject({ kind: 'bridge', command: 'docker' });
   });
 
   it('keeps going when one deployment fails to start', async () => {

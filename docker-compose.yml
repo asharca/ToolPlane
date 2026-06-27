@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: mcp
       POSTGRES_DB: mcpmarket
     ports:
-      - '5433:5432'
+      # Bind to localhost only — MCP sandbox containers must not reach the DB.
+      - '127.0.0.1:5433:5432'
     volumes:
       - mcp_pg:/var/lib/postgresql/data
     healthcheck:
@@ -16,6 +17,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Restricted Docker API proxy. The app launches one hardened container per
+  # custom MCP, but never touches the raw socket — it talks to this proxy over
+  # TCP, which only exposes the container/image/network endpoints needed. The
+  # raw socket is mounted read-only into the proxy alone.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      POST: 1
+      # everything else stays denied (no volumes/secrets/swarm/exec of host…)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   # The app. Only started by `docker compose up app` / `up` — `up -d postgres`
   # alone still gives you the bare DB for local `pnpm dev`.
@@ -29,18 +46,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      socket-proxy:
+        condition: service_started
     environment:
       # Internal network → reach Postgres on 5432 (5433 is only the host mapping).
       DATABASE_URL: postgresql://mcp:mcp@postgres:5432/mcpmarket
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      # Reach the Docker daemon through the restricted proxy, not the raw socket.
+      DOCKER_HOST: tcp://socket-proxy:2375
     ports:
       - '3000:3000'
-    volumes:
-      # docker-source MCPs run via the HOST Docker daemon. Mounting the socket
-      # gives the container host-root-equivalent power — only enable if you use
-      # docker-source MCPs and trust what gets deployed.
-      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   mcp_pg:

@@ -42,30 +42,32 @@ RUN pnpm build
 # ---- runtime ----
 FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
-ARG PNPM_VERSION
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
-# uv/uvx for PyPI-source MCPs (uv fetches a managed Python at runtime); docker
-# CLI for docker-source MCPs (talks to the mounted host daemon socket).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# The app issues one `docker run` per custom MCP (through the socket proxy), so
+# it needs the docker CLI. npx/uvx run INSIDE those per-MCP wrapper containers,
+# not here, so the app image doesn't bundle them.
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 
-# Full node_modules (prisma is a devDependency and is needed for the startup
-# `migrate deploy`), the built app, and the files referenced at runtime.
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/public ./public
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/next.config.ts ./next.config.ts
+# Full node_modules (prisma is a devDependency, needed for the startup
+# `migrate deploy`), the built app, and the files referenced at runtime — all
+# owned by the non-root `node` user.
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/.next ./.next
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/next.config.ts ./next.config.ts
 # Spawned by the supervisor via process.cwd()/scripts — Next never bundles them.
-COPY --from=build /app/scripts ./scripts
+COPY --from=build --chown=node:node /app/scripts ./scripts
 # Needed by `prisma migrate deploy` on startup.
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY --from=build --chown=node:node /app/prisma ./prisma
+COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Non-root: the app reaches Docker over TCP via the proxy, so it needs no socket
+# group membership.
+USER node
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]

@@ -7,6 +7,7 @@
 // mirroring scripts/mcp-server.mjs so the supervisor/gateway are unchanged.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
+import { filterEnv } from './bridge-env.mjs';
 
 const NAME = process.env.MCP_NAME || 'mcp';
 const COMMAND = process.env.MCP_COMMAND;
@@ -19,12 +20,10 @@ if (!COMMAND) {
   process.exit(1);
 }
 
-// Spawn the real MCP server; strip our control vars so they don't leak into it.
-const childEnv = { ...process.env };
-delete childEnv.MCP_COMMAND;
-delete childEnv.MCP_ARGS;
-delete childEnv.MCP_PORT;
-delete childEnv.MCP_NAME;
+// COMMAND is always `docker`; give the CLI only the minimal allowlisted env
+// (PATH + DOCKER_* settings). The MCP's own env is inside ARGS as `-e` flags, so
+// the app's secrets never reach the CLI process or the container.
+const childEnv = filterEnv(process.env);
 
 const child = spawn(COMMAND, ARGS, { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
 child.on('error', (err) => {

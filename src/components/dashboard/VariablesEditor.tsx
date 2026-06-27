@@ -6,7 +6,17 @@ import { setDeploymentEnvAction } from '@/lib/workspace/actions';
 
 type Row = { id: number; key: string; value: string };
 
-export function VariablesEditor({ slug, deploymentId, initial }: { slug: string; deploymentId: string; initial: { key: string; value: string }[] }) {
+export function VariablesEditor({
+  slug,
+  deploymentId,
+  initial,
+  network,
+}: {
+  slug: string;
+  deploymentId: string;
+  initial: { key: string; value: string }[];
+  network?: string | null;
+}) {
   const [rows, setRows] = useState<Row[]>(() =>
     (initial.length ? initial : [{ key: '', value: '' }]).map((r, i) => ({ id: i, ...r })),
   );
@@ -62,6 +72,23 @@ export function VariablesEditor({ slug, deploymentId, initial }: { slug: string;
           </div>
         ))}
       </div>
+
+      <label className="flex items-start gap-2 border-t border-zinc-100 pt-3 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          name="network"
+          value="none"
+          defaultChecked={network === 'none'}
+          className="mt-0.5 size-4"
+        />
+        <span>
+          Disconnect from network
+          <span className="block text-xs text-muted-foreground">
+            Runs the server with <code className="font-mono">--network none</code> — full
+            isolation, no internet. Leave off for servers that call external APIs.
+          </span>
+        </span>
+      </label>
 
       <div className="flex items-center justify-between">
         <button type="button" onClick={() => setRows((rs) => [...rs, { id: nextId.current++, key: '', value: '' }])} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">

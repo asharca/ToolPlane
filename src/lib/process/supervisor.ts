@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { db } from '@/lib/db';
 import { type SpawnSpec } from './spawn-spec';
+import { MCP_NETWORK } from './sandbox';
 
 type Entry = {
   child: ChildProcess;
@@ -41,6 +42,23 @@ async function persist(deploymentId: string, status: string) {
   }
 }
 
+// Create the dedicated MCP sandbox network if it doesn't exist (idempotent).
+// Called once on startup before reconciling. Tolerant: if docker isn't
+// reachable, it resolves quietly — custom MCP spawns would then fail on their
+// own with a visible error.
+export function ensureSandboxNetwork(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const check = spawn('docker', ['network', 'inspect', MCP_NETWORK], { stdio: 'ignore' });
+    check.on('error', () => resolve());
+    check.on('exit', (code) => {
+      if (code === 0) return resolve();
+      const create = spawn('docker', ['network', 'create', MCP_NETWORK], { stdio: 'ignore' });
+      create.on('error', () => resolve());
+      create.on('exit', () => resolve());
+    });
+  });
+}
+
 export function liveStatus(deploymentId: string): string | null {
   return store().get(deploymentId)?.status ?? null;
 }
@@ -67,11 +85,13 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
   if (existing && existing.child.exitCode === null && !existing.stopping) return;
 
   const script = spec.kind === 'bridge' ? BRIDGE : BUILTIN;
+  // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
+  // down to an allowlist before spawning the docker CLI. The MCP's own env is
+  // already baked into spec.args as `-e` flags, so it is NOT injected here.
   const env =
     spec.kind === 'bridge'
       ? {
           ...process.env,
-          ...spec.env,
           MCP_PORT: '0',
           MCP_NAME: spec.name,
           MCP_COMMAND: spec.command,

@@ -1,70 +1,114 @@
 import { describe, it, expect } from 'vitest';
 import { buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import { MCP_NETWORK } from '@/lib/process/sandbox';
 
-describe('buildSpawnSpec', () => {
-  it('npm → npx -y', () => {
-    expect(buildSpawnSpec('npm', 'mcp-server-fetch')).toEqual({ command: 'npx', args: ['-y', 'mcp-server-fetch'] });
+describe('buildSpawnSpec — every custom source runs in a hardened container', () => {
+  it('always uses `docker run` with the hardening flags', () => {
+    const cases: [string, string][] = [
+      ['npm', 'pkg'],
+      ['github', 'https://github.com/o/r'],
+      ['pypi', 'pkg'],
+      ['docker', 'img'],
+    ];
+    for (const [source, ref] of cases) {
+      const { command, args } = buildSpawnSpec(source, ref);
+      expect(command).toBe('docker');
+      expect(args[0]).toBe('run');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--cap-drop',
+          'ALL',
+          '--security-opt',
+          'no-new-privileges',
+          '--read-only',
+          '--network',
+          MCP_NETWORK,
+        ]),
+      );
+    }
   });
-  it('pypi → uvx', () => {
-    expect(buildSpawnSpec('pypi', 'mcp-server-fetch')).toEqual({ command: 'uvx', args: ['mcp-server-fetch'] });
+
+  it('npm/github wrap in node + npx, cache redirected to tmpfs', () => {
+    const { args } = buildSpawnSpec('npm', 'mcp-server-fetch');
+    expect(args).toContain('node:24-bookworm-slim');
+    expect(args.slice(-3)).toEqual(['npx', '-y', 'mcp-server-fetch']);
+    expect(args).toContain('npm_config_cache=/tmp/.npm');
   });
-  it('github → npx -y <url>', () => {
-    expect(buildSpawnSpec('github', 'https://github.com/org/repo')).toEqual({
-      command: 'npx',
-      args: ['-y', 'https://github.com/org/repo'],
-    });
+
+  it('pypi wraps in the uv image + uvx, cache redirected to tmpfs', () => {
+    const { args } = buildSpawnSpec('pypi', 'mcp-server-fetch');
+    expect(args.some((a) => a.startsWith('ghcr.io/astral-sh/uv'))).toBe(true);
+    expect(args.slice(-2)).toEqual(['uvx', 'mcp-server-fetch']);
+    expect(args).toContain('UV_CACHE_DIR=/tmp/.uv');
   });
-  it('docker → docker run -i --rm <image> <startCommand…>', () => {
-    expect(buildSpawnSpec('docker', 'mcp/slack', 'node dist/index.js')).toEqual({
-      command: 'docker',
-      args: ['run', '-i', '--rm', 'mcp/slack', 'node', 'dist/index.js'],
-    });
+
+  it('docker source runs the image directly with its start command', () => {
+    const { args } = buildSpawnSpec('docker', 'mcp/slack', 'node app.js');
+    expect(args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
   });
-  it('docker without start command', () => {
-    expect(buildSpawnSpec('docker', 'mcp/slack')).toEqual({ command: 'docker', args: ['run', '-i', '--rm', 'mcp/slack'] });
+
+  it('passes the MCP env in as -e flags (the only env the container gets)', () => {
+    const { args } = buildSpawnSpec('npm', 'pkg', undefined, { TOKEN: 'secret', HOST: 'h' });
+    expect(args).toContain('TOKEN=secret');
+    expect(args).toContain('HOST=h');
   });
-  it('docker injects env as -e flags before the image', () => {
-    expect(buildSpawnSpec('docker', 'mcp/slack', undefined, { MIKROTIK_HOST: '192.168.88.1', PORT: '22' })).toEqual({
-      command: 'docker',
-      args: ['run', '-i', '--rm', '-e', 'MIKROTIK_HOST=192.168.88.1', '-e', 'PORT=22', 'mcp/slack'],
-    });
-  });
-  it('throws on unsupported source', () => {
-    expect(() => buildSpawnSpec('brew', 'x')).toThrow(/Unsupported MCP source/);
+
+  it('network "none" swaps the sandbox bridge for full isolation', () => {
+    const { args } = buildSpawnSpec('npm', 'pkg', undefined, {}, false, 'none');
+    expect(args).toContain('none');
+    expect(args).not.toContain(MCP_NETWORK);
   });
 
   it('rebuild re-fetches: npm --prefer-online, pypi --refresh, docker --pull always', () => {
-    expect(buildSpawnSpec('npm', 'pkg', undefined, {}, true)).toEqual({
-      command: 'npx',
-      args: ['-y', '--prefer-online', 'pkg'],
-    });
-    expect(buildSpawnSpec('pypi', 'pkg', undefined, {}, true)).toEqual({
-      command: 'uvx',
-      args: ['--refresh', 'pkg'],
-    });
-    expect(buildSpawnSpec('docker', 'mcp/slack', undefined, { T: 'x' }, true)).toEqual({
-      command: 'docker',
-      args: ['run', '-i', '--rm', '--pull', 'always', '-e', 'T=x', 'mcp/slack'],
-    });
+    expect(buildSpawnSpec('npm', 'pkg', undefined, {}, true).args).toContain('--prefer-online');
+    expect(buildSpawnSpec('pypi', 'pkg', undefined, {}, true).args).toContain('--refresh');
+    const d = buildSpawnSpec('docker', 'img', undefined, {}, true).args;
+    expect(d).toContain('--pull');
+    expect(d).toContain('always');
+  });
+
+  it('throws on unsupported source', () => {
+    expect(() => buildSpawnSpec('brew', 'x')).toThrow(/Unsupported MCP source/);
   });
 });
 
 describe('resolveSpawnSpec', () => {
-  it('builtin for catalog', () => {
+  it('builtin for catalog (in-process, not containerized)', () => {
     expect(
       resolveSpawnSpec({ serverId: 's1', server: { name: 'Stripe' }, name: null, source: null, sourceRef: null, installCfg: null }),
     ).toEqual({ kind: 'builtin', name: 'Stripe' });
   });
-  it('bridge for custom docker with env + startCommand', () => {
-    expect(
-      resolveSpawnSpec({
-        serverId: null,
-        server: null,
-        name: 'Slack',
-        source: 'docker',
-        sourceRef: 'mcp/slack',
-        installCfg: { env: { TOKEN: 'x' }, startCommand: 'node app.js' },
-      }),
-    ).toEqual({ kind: 'bridge', name: 'Slack', command: 'docker', args: ['run', '-i', '--rm', '-e', 'TOKEN=x', 'mcp/slack', 'node', 'app.js'], env: { TOKEN: 'x' } });
+
+  it('bridge runs a hardened docker container for a custom deployment', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Slack',
+      source: 'docker',
+      sourceRef: 'mcp/slack',
+      installCfg: { env: { TOKEN: 'x' }, startCommand: 'node app.js' },
+    });
+    expect(spec.kind).toBe('bridge');
+    if (spec.kind === 'bridge') {
+      expect(spec.command).toBe('docker');
+      expect(spec.args).toContain('--cap-drop');
+      expect(spec.args).toContain('TOKEN=x');
+      expect(spec.args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
+    }
+  });
+
+  it('installCfg.network="none" cuts the network', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'x',
+      source: 'npm',
+      sourceRef: 'pkg',
+      installCfg: { network: 'none' },
+    });
+    if (spec.kind === 'bridge') {
+      expect(spec.args).toContain('none');
+      expect(spec.args).not.toContain(MCP_NETWORK);
+    }
   });
 });
