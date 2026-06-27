@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from './password';
 import { createSession, clearSession, getSessionUserId } from './session';
 import { createApiToken, revokeApiToken } from './tokens';
 import { safeRelativePath } from './safe-redirect';
+import { reconcileAdminRole } from './admin';
 
 export type AuthState = { error?: string };
 
@@ -31,6 +32,7 @@ export async function signupAction(
     data: { email, name: name || null, passwordHash: await hashPassword(password) },
   });
   await createSession(user.id);
+  await reconcileAdminRole(user);
   redirect(safeRelativePath(formData.get('next')) ?? '/app');
 }
 
@@ -45,7 +47,10 @@ export async function loginAction(
   if (!user || !(await verifyPassword(password, user.passwordHash)))
     return { error: 'Invalid email or password.' };
 
+  if (user.status === 'suspended') return { error: 'This account has been suspended.' };
+
   await createSession(user.id);
+  await reconcileAdminRole(user);
   redirect(safeRelativePath(formData.get('next')) ?? '/app');
 }
 

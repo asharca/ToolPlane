@@ -44,5 +44,6 @@ export async function verifyApiToken(authHeader: string | null) {
     where: { id: record.id },
     data: { lastUsedAt: new Date() },
   });
+  if (record.user.status === 'suspended') return null;
   return record.user;
 }
