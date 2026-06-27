@@ -13,12 +13,14 @@ export function DashboardChrome({
   workspaceName,
   userLabel,
   workspaces,
+  isAdmin = false,
   children,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  isAdmin?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -39,6 +41,7 @@ export function DashboardChrome({
         workspaceName={workspaceName}
         userLabel={userLabel}
         workspaces={workspaces}
+        isAdmin={isAdmin}
         mobileOpen={open}
         onClose={() => setOpen(false)}
       />
