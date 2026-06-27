@@ -28,6 +28,7 @@ export default async function WorkspaceLayout({
       workspaceName={ws.name}
       userLabel={user.name ?? user.email}
       workspaces={workspaces}
+      isAdmin={user.role === 'admin'}
     >
       {children}
     </DashboardChrome>

@@ -6,6 +6,16 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  user
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+}
+
 model Server {
   id          String       @id @default(cuid())
   slug        String       @unique
@@ -16,6 +26,7 @@ model Server {
   stars       Int          @default(0)
   isOfficial  Boolean      @default(false)
   isFeatured  Boolean      @default(false)
+  curated     Boolean      @default(false)
   installCfg  Json?
   readme      String?
   categories  Category[]   @relation("ServerCategories")
@@ -29,6 +40,8 @@ model User {
   email           String       @unique
   name            String?
   passwordHash    String
+  role            UserRole     @default(user)
+  status          UserStatus   @default(active)
   apiTokens       ApiToken[]
   ownedWorkspaces Workspace[]  @relation("WorkspaceOwner")
   memberships     Membership[]
@@ -70,6 +83,7 @@ model Skill {
   description String?
   iconUrl     String?
   score       Int              @default(0)
+  curated     Boolean          @default(false)
   categories  Category[]       @relation("SkillCategories")
   installs    InstalledSkill[]
   createdAt   DateTime         @default(now())

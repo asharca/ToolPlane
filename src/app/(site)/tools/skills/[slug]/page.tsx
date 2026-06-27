@@ -2,6 +2,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
 import { getSkill } from '@/lib/queries/skills';
+import { getCurrentUser } from '@/lib/auth/current-user';
+import { addSkillToWorkspaceAction } from '@/lib/skills/public-install';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +16,8 @@ export default async function Page({
   const { slug } = await params;
   const skill = await getSkill(slug);
   if (!skill) notFound();
+
+  const user = await getCurrentUser();
 
   return (
     <article className="mx-auto max-w-3xl px-4 py-12">
@@ -63,6 +68,29 @@ export default async function Page({
           ))}
         </div>
       ) : null}
+
+      <div className="mt-10 rounded-lg border border-border bg-card p-4">
+          {!user ? (
+            <Link
+              href={`/app/login?next=${encodeURIComponent(`/tools/skills/${skill.slug}`)}`}
+              className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Sign in to add
+            </Link>
+          ) : (
+            <form action={addSkillToWorkspaceAction}>
+              <input type="hidden" name="skillId" value={skill.id} />
+              <input type="hidden" name="slug" value={skill.slug} />
+              <SubmitButton
+                pendingLabel="Adding…"
+                className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                Add to my workspace
+              </SubmitButton>
+            </form>
+          )}
+          <p className="mt-2 text-center text-xs text-muted-foreground">One-click install</p>
+        </div>
 
       <section className="mt-10 rounded-lg border border-border bg-card p-5">
         <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">

@@ -13,6 +13,7 @@ import {
   Store,
   LifeBuoy,
   MessageSquare,
+  Shield,
   type LucideIcon,
 } from 'lucide-react';
 import { DashboardLogo } from './DashboardLogo';
@@ -57,6 +58,7 @@ export function DashboardSidebar({
   workspaceName,
   userLabel,
   workspaces,
+  isAdmin = false,
   mobileOpen = false,
   onClose,
 }: {
@@ -64,6 +66,7 @@ export function DashboardSidebar({
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  isAdmin?: boolean;
   mobileOpen?: boolean;
   onClose?: () => void;
 }) {
@@ -130,6 +133,16 @@ export function DashboardSidebar({
           <Store className="size-4" />
           Sell Skills
         </Link>
+        {isAdmin ? (
+          <Link
+            href="/admin"
+            onClick={onClose}
+            className="flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30"
+          >
+            <Shield className="size-4" />
+            Admin console
+          </Link>
+        ) : null}
         <div className="grid grid-cols-2 gap-2">
           <a
             href="mailto:support@mcpmarket.com"
