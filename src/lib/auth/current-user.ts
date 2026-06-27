@@ -8,7 +8,7 @@ export const getCurrentUser = cache(async () => {
   if (!userId) return null;
   return db.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true, createdAt: true },
+    select: { id: true, email: true, name: true, createdAt: true, role: true, status: true },
   });
 });
 
