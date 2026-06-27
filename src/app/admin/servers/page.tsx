@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export default async function AdminServersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
   await requireAdmin();
   const { q = '', page = '1' } = await searchParams;
-  const { items, total } = await listDirectoryServers({ page: Number(page) || 1, q });
+  const { items, total, pageSize } = await listDirectoryServers({ page: Number(page) || 1, q });
 
   return (
     <div className="space-y-4 px-8 py-6">
@@ -31,6 +31,20 @@ export default async function AdminServersPage({ searchParams }: { searchParams:
           </li>
         ))}
       </ul>
+      <Pagination total={total} page={Number(page) || 1} pageSize={pageSize} q={q} />
+    </div>
+  );
+}
+
+function Pagination({ total, page, pageSize, q }: { total: number; page: number; pageSize: number; q: string }) {
+  const pages = Math.ceil(total / pageSize);
+  if (pages <= 1) return null;
+  const qs = (p: number) => `?q=${encodeURIComponent(q)}&page=${p}`;
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      {page > 1 ? <Link href={qs(page - 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">Prev</Link> : null}
+      <span className="text-zinc-500">Page {page} / {pages}</span>
+      {page < pages ? <Link href={qs(page + 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">Next</Link> : null}
     </div>
   );
 }

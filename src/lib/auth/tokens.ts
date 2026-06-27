@@ -40,10 +40,10 @@ export async function verifyApiToken(authHeader: string | null) {
   });
   if (!record) return null;
 
+  if (record.user.status === 'suspended') return null;
   await db.apiToken.update({
     where: { id: record.id },
     data: { lastUsedAt: new Date() },
   });
-  if (record.user.status === 'suspended') return null;
   return record.user;
 }
