@@ -11,5 +11,36 @@ services:
       - '5433:5432'
     volumes:
       - mcp_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d mcpmarket']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The app. Only started by `docker compose up app` / `up` — `up -d postgres`
+  # alone still gives you the bare DB for local `pnpm dev`.
+  app:
+    build:
+      context: .
+      args:
+        # NEXT_PUBLIC_* is baked at build time; pass it through to the image.
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Internal network → reach Postgres on 5432 (5433 is only the host mapping).
+      DATABASE_URL: postgresql://mcp:mcp@postgres:5432/mcpmarket
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - '3000:3000'
+    volumes:
+      # docker-source MCPs run via the HOST Docker daemon. Mounting the socket
+      # gives the container host-root-equivalent power — only enable if you use
+      # docker-source MCPs and trust what gets deployed.
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   mcp_pg:
