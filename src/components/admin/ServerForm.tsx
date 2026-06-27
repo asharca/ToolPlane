@@ -1,0 +1,59 @@
+'use client';
+
+import { useActionState } from 'react';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import type { AdminActionState } from '@/lib/admin/user-actions';
+
+type Category = { id: string; name: string };
+type Initial = {
+  id?: string; slug?: string; name?: string; author?: string | null; description?: string | null;
+  iconUrl?: string | null; stars?: number; isOfficial?: boolean; isFeatured?: boolean; categoryIds?: string[];
+};
+
+export function ServerForm({
+  action, initial, categories, submitLabel,
+}: {
+  action: (prev: AdminActionState, fd: FormData) => Promise<AdminActionState>;
+  initial: Initial;
+  categories: Category[];
+  submitLabel: string;
+}) {
+  const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
+  const input = 'h-9 w-full rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900';
+  const lbl = 'block space-y-1 text-sm font-medium text-zinc-700 dark:text-zinc-300';
+  const sel = new Set(initial.categoryIds ?? []);
+
+  return (
+    <form action={formAction} className="max-w-xl space-y-4">
+      {initial.id ? <input type="hidden" name="id" value={initial.id} /> : null}
+      <label className={lbl}>Name<input name="name" defaultValue={initial.name ?? ''} required className={input} /></label>
+      {initial.id ? (
+        <p className="text-xs text-zinc-500">Slug: <span className="font-mono">{initial.slug}</span> (immutable)</p>
+      ) : (
+        <label className={lbl}>Slug<input name="slug" required placeholder="my-server" className={`${input} font-mono`} /></label>
+      )}
+      <label className={lbl}>Author<input name="author" defaultValue={initial.author ?? ''} className={input} /></label>
+      <label className={lbl}>Description<textarea name="description" defaultValue={initial.description ?? ''} rows={3} className="w-full rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" /></label>
+      <label className={lbl}>Icon URL<input name="iconUrl" defaultValue={initial.iconUrl ?? ''} className={input} /></label>
+      <label className={lbl}>Stars<input name="stars" type="number" defaultValue={initial.stars ?? 0} className={input} /></label>
+      <div className="flex gap-4 text-sm text-zinc-700 dark:text-zinc-300">
+        <label className="flex items-center gap-2"><input type="checkbox" name="isOfficial" defaultChecked={initial.isOfficial} className="size-4" /> Official</label>
+        <label className="flex items-center gap-2"><input type="checkbox" name="isFeatured" defaultChecked={initial.isFeatured} className="size-4" /> Featured</label>
+      </div>
+      <fieldset className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+        <legend className="px-1 text-xs font-semibold uppercase text-zinc-500">Categories</legend>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {categories.map((c) => (
+            <label key={c.id} className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+              <input type="checkbox" name="categoryIds" value={c.id} defaultChecked={sel.has(c.id)} className="size-4" /> {c.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="flex items-center gap-3">
+        <SubmitButton error={state.error} className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{submitLabel}</SubmitButton>
+        {state.error ? <span className="text-sm text-red-600" role="alert">{state.error}</span> : null}
+      </div>
+    </form>
+  );
+}
