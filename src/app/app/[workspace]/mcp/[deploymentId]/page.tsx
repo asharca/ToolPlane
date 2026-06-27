@@ -23,6 +23,7 @@ import {
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
 
@@ -134,25 +135,33 @@ export default async function DeploymentInspectorPage({
                 <form action={restartDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <button className={actionButton}>Restart</button>
+                  <SubmitButton flash={false} pendingLabel="Restarting…" className={actionButton}>
+                    Restart
+                  </SubmitButton>
                 </form>
                 <form action={stopDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <button className={actionButton}>Stop</button>
+                  <SubmitButton flash={false} pendingLabel="Stopping…" className={actionButton}>
+                    Stop
+                  </SubmitButton>
                 </form>
               </>
             ) : (
               <form action={startDeploymentAction}>
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
-                <button className={actionButton}>Start</button>
+                <SubmitButton flash={false} pendingLabel="Starting…" className={actionButton}>
+                  Start
+                </SubmitButton>
               </form>
             )}
             <form action={rebuildDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="deploymentId" value={deploymentId} />
-              <button className={actionButton}>Rebuild</button>
+              <SubmitButton flash={false} pendingLabel="Rebuilding…" className={actionButton}>
+                Rebuild
+              </SubmitButton>
             </form>
             <form action={removeDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />

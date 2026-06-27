@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react';
 import { updateAgentAction, type ActionState } from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 type Provider = { id: string; name: string; models: string[] };
 type Option = { id: string; label: string; checked: boolean; running?: boolean };
@@ -103,9 +104,12 @@ export function AgentSettingsForm({
       <CheckGroup legend="Sub-agents" name="subAgentId" options={subAgents} />
 
       <div className="flex items-center gap-3">
-        <button className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
+        <SubmitButton
+          error={state.error}
+          className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        >
           Save changes
-        </button>
+        </SubmitButton>
         {state.error ? (
           <span className="text-sm text-red-600" role="alert">{state.error}</span>
         ) : null}

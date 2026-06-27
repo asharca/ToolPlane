@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import {
   renameWorkspaceAction,
   deleteWorkspaceAction,
@@ -58,9 +59,9 @@ export default async function SettingsPage({
                 />
               </div>
             </div>
-            <button className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
+            <SubmitButton className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
               Save changes
-            </button>
+            </SubmitButton>
           </form>
         </section>
 

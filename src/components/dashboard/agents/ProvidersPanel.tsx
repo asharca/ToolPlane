@@ -8,6 +8,7 @@ import {
   refreshModelsAction,
   type ActionState,
 } from '@/lib/agents/actions';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export type ProviderRow = {
   id: string;
@@ -47,9 +48,14 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
           API key
           <input name="apiKey" required type="password" placeholder="sk-…" className={input} />
         </label>
-        <button className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
+        <SubmitButton
+          error={state.error}
+          pendingLabel="Adding…"
+          savedLabel="Added"
+          className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        >
           Add provider
-        </button>
+        </SubmitButton>
       </form>
       {state.error ? <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p> : null}
       {refreshState.error ? <p className="mt-2 text-sm text-red-600" role="alert">{refreshState.error}</p> : null}
@@ -81,9 +87,14 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
                 <form action={refreshAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="providerId" value={p.id} />
-                  <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                  <SubmitButton
+                    error={refreshState.error}
+                    pendingLabel="Refreshing…"
+                    savedLabel="Refreshed"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
                     <RefreshCw className="h-3.5 w-3.5" /> Refresh models
-                  </button>
+                  </SubmitButton>
                 </form>
                 <form action={deleteProviderAction}>
                   <input type="hidden" name="workspace" value={slug} />

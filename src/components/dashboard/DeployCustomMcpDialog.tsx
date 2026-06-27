@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, AlertTriangle } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
+import { SubmitButton } from './SubmitButton';
 
 const SOURCES = [
   { key: 'npm', label: 'npm', field: 'npm Package', placeholder: '@modelcontextprotocol/server-filesystem' },
@@ -97,7 +98,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
 
                   <div className="flex justify-end gap-2 pt-2">
                     <button type="button" onClick={() => setOpen(false)} className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">Cancel</button>
-                    <button type="submit" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Deploy</button>
+                    <SubmitButton pendingLabel="Deploying…" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Deploy</SubmitButton>
                   </div>
                 </form>
               </div>

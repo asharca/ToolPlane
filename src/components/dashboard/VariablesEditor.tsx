@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { Plus, Trash2, Eye, EyeOff } from 'lucide-react';
 import { setDeploymentEnvAction } from '@/lib/workspace/actions';
+import { SubmitButton } from './SubmitButton';
 
 type Row = { id: number; key: string; value: string };
 
@@ -94,7 +95,7 @@ export function VariablesEditor({
         <button type="button" onClick={() => setRows((rs) => [...rs, { id: nextId.current++, key: '', value: '' }])} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           <Plus className="size-3.5" /> Add variable
         </button>
-        <button type="submit" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Save</button>
+        <SubmitButton className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Save</SubmitButton>
       </div>
     </form>
   );
