@@ -32,6 +32,21 @@ describe('buildSpawnSpec', () => {
   it('throws on unsupported source', () => {
     expect(() => buildSpawnSpec('brew', 'x')).toThrow(/Unsupported MCP source/);
   });
+
+  it('rebuild re-fetches: npm --prefer-online, pypi --refresh, docker --pull always', () => {
+    expect(buildSpawnSpec('npm', 'pkg', undefined, {}, true)).toEqual({
+      command: 'npx',
+      args: ['-y', '--prefer-online', 'pkg'],
+    });
+    expect(buildSpawnSpec('pypi', 'pkg', undefined, {}, true)).toEqual({
+      command: 'uvx',
+      args: ['--refresh', 'pkg'],
+    });
+    expect(buildSpawnSpec('docker', 'mcp/slack', undefined, { T: 'x' }, true)).toEqual({
+      command: 'docker',
+      args: ['run', '-i', '--rm', '--pull', 'always', '-e', 'T=x', 'mcp/slack'],
+    });
+  });
 });
 
 describe('resolveSpawnSpec', () => {

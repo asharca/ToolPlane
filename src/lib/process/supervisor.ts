@@ -26,6 +26,13 @@ function store(): Store {
 const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
 
+// How long startProcess waits for the child to print `LISTENING <port>` before
+// returning. A builtin server is ready in ~50ms; a custom MCP cold-start (npx
+// fetch / uvx / docker pull) measured ~5s, so 3s was too short — it returned
+// while still "provisioning". 15s covers a cold start; the process still flips
+// to running in the background if it exceeds even this.
+const READY_TIMEOUT_MS = 15000;
+
 async function persist(deploymentId: string, status: string) {
   try {
     await db.deployment.update({ where: { id: deploymentId }, data: { status } });
@@ -99,7 +106,7 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
     });
     child.once('exit', () => resolve());
     child.once('error', () => resolve());
-    setTimeout(resolve, 3000);
+    setTimeout(resolve, READY_TIMEOUT_MS);
   });
 
   child.on('exit', (code) => {

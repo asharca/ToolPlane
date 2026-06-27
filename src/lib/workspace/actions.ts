@@ -137,6 +137,9 @@ export async function removeDeploymentAction(formData: FormData) {
     where: { id: deploymentId, workspaceId: ctx.ws.id },
   });
   revalidatePath(`/app/${slug}/mcp`);
+  // Redirect to the list: this action also fires from the deployment detail
+  // page, which would otherwise re-render against the now-deleted row → 404.
+  redirect(`/app/${slug}/mcp`);
 }
 
 export async function startDeploymentAction(formData: FormData) {
@@ -175,6 +178,22 @@ export async function restartDeploymentAction(formData: FormData) {
   if (!dep) return;
 
   await restartProcess(dep.id, resolveSpawnSpec(dep));
+  revalidatePath(`/app/${slug}/mcp`);
+}
+
+// Rebuild = tear the process down and spawn it fresh, re-fetching the package /
+// image (vs. Restart, which reuses the cached one). Stays on the detail page.
+export async function rebuildDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!dep) return;
+
+  await restartProcess(dep.id, resolveSpawnSpec(dep, true));
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);
 }
 

@@ -18,6 +18,7 @@ import {
   startDeploymentAction,
   stopDeploymentAction,
   restartDeploymentAction,
+  rebuildDeploymentAction,
   removeDeploymentAction,
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
@@ -148,11 +149,16 @@ export default async function DeploymentInspectorPage({
                 <button className={actionButton}>Start</button>
               </form>
             )}
+            <form action={rebuildDeploymentAction}>
+              <input type="hidden" name="workspace" value={slug} />
+              <input type="hidden" name="deploymentId" value={deploymentId} />
+              <button className={actionButton}>Rebuild</button>
+            </form>
             <form action={removeDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="deploymentId" value={deploymentId} />
               <button className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10">
-                Rebuild
+                Remove
               </button>
             </form>
           </div>
