@@ -19,6 +19,8 @@ async function categoryConnect(name: string | null) {
 }
 
 export async function upsertServer(card: ParsedServerCard): Promise<void> {
+  const existingServer = await db.server.findUnique({ where: { slug: card.slug }, select: { curated: true } });
+  if (existingServer?.curated) return;
   const categories = await categoryConnect(card.category);
   await db.server.upsert({
     where: { slug: card.slug },
@@ -64,6 +66,8 @@ export async function upsertClient(card: ParsedServerCard): Promise<void> {
 }
 
 export async function upsertSkill(card: ParsedServerCard): Promise<void> {
+  const existingSkill = await db.skill.findUnique({ where: { slug: card.slug }, select: { curated: true } });
+  if (existingSkill?.curated) return;
   await db.skill.upsert({
     where: { slug: card.slug },
     create: {
