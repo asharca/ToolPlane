@@ -1,0 +1,178 @@
+{
+  "common": {
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "back": "Back",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "noResults": "No results found",
+    "viewAll": "View all",
+    "pleaseWait": "Please wait…",
+    "home": "Home",
+    "all": "All",
+    "new": "New",
+    "remove": "Remove",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "submit": "Submit",
+    "invite": "Invite",
+    "revoke": "Revoke",
+    "install": "Install",
+    "deploy": "Deploy",
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart",
+    "saveChanges": "Save changes"
+  },
+  "header": {
+    "mcpServers": "MCP Servers",
+    "agentSkills": "Agent Skills",
+    "sellSkills": "Sell Skills",
+    "signIn": "Sign in",
+    "dashboard": "Dashboard"
+  },
+  "footer": {
+    "browse": "Browse",
+    "rankings": "Rankings",
+    "about": "About",
+    "links": {
+      "mcpSearch": "MCP Search",
+      "mcpServers": "MCP Servers",
+      "mcpClients": "MCP Clients",
+      "agentSkills": "Agent Skills",
+      "categories": "Categories",
+      "whatIsMcp": "What is an MCP server?",
+      "mcp": "Model Context Protocol",
+      "topMcpsToday": "Top MCPs Today",
+      "topSkillsToday": "Top Agent Skills Today",
+      "top100Skills": "Top 100 Agent Skills",
+      "top100Servers": "Top 100 MCP Servers",
+      "news": "News",
+      "submit": "Submit",
+      "contact": "Contact"
+    }
+  },
+  "home": {
+    "searchPlaceholder": "Search for MCP servers...",
+    "searchAriaLabel": "Search for MCP servers",
+    "allCategories": "All",
+    "officialServers": "Official MCP Servers",
+    "viewAllOfficialServers": "View all official servers",
+    "featuredServers": "Featured MCP Servers",
+    "viewAllFeaturedServers": "View all featured servers",
+    "topServers": "Top MCP Servers",
+    "viewLeaderboard": "View leaderboard",
+    "latestServers": "Latest MCP Servers",
+    "viewAllNewServers": "View all new servers",
+    "mcpClients": "MCP Clients",
+    "viewAllClients": "View all clients",
+    "topAgentSkills": "Top Agent Skills",
+    "viewAllSkills": "View all skills"
+  },
+  "search": {
+    "home": "Home",
+    "searchLabel": "Search",
+    "servers": "MCP Servers",
+    "clients": "MCP Clients",
+    "skills": "Agent Skills"
+  },
+  "server": {
+    "home": "Home",
+    "servers": "Servers",
+    "tools": "Tools",
+    "install": "Install",
+    "relatedServers": "Related Servers",
+    "relatedSkills": "Related Skills"
+  },
+  "auth": {
+    "loginTitle": "Welcome back",
+    "loginSubtitle": "Sign in to manage your MCP Hub.",
+    "signupTitle": "Create your account",
+    "signupSubtitle": "Sign up to build your MCP Hub.",
+    "name": "Name",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "createAccount": "Create account",
+    "noAccount": "Don't have an account?",
+    "signUpLink": "Sign up",
+    "hasAccount": "Already have an account?",
+    "signInLink": "Sign in",
+    "pending": "Please wait…"
+  },
+  "errors": {
+    "notFound": "Page not found",
+    "notFoundDesc": "The page you're looking for doesn't exist.",
+    "serverError": "Something went wrong",
+    "serverErrorDesc": "An unexpected error occurred. Please try again.",
+    "unauthorized": "Unauthorized",
+    "backHome": "Back to home",
+    "tryAgain": "Try again"
+  },
+  "metadata": {
+    "siteTitle": "Discover Top MCP Servers | MCP Market",
+    "siteDescription": "Find the best MCP servers, agent skills, and MCP clients."
+  },
+  "console": {
+    "sidebar": {
+      "manage": "Manage",
+      "monitor": "Monitor",
+      "workspace": "Workspace",
+      "agents": "Agents",
+      "mcpServers": "MCP Servers",
+      "skills": "Skills",
+      "toolkits": "Toolkits",
+      "observability": "Observability",
+      "members": "Members",
+      "settings": "Settings",
+      "openMenu": "Open menu",
+      "closeMenu": "Close menu"
+    },
+    "agents": {
+      "title": "Agents",
+      "modelProviders": "Model Providers"
+    },
+    "mcp": {
+      "title": "MCP Servers",
+      "deploy": "Deploy MCP Server",
+      "running": "Running",
+      "stopped": "Stopped",
+      "error": "Error"
+    },
+    "skills": {
+      "title": "Skills",
+      "newSkill": "New Skill"
+    },
+    "toolkits": {
+      "title": "Toolkits",
+      "newToolkit": "New Toolkit"
+    },
+    "observability": {
+      "title": "Observability"
+    },
+    "members": {
+      "title": "Members"
+    },
+    "settings": {
+      "title": "Settings",
+      "general": "General",
+      "orgName": "Organization name",
+      "urlSlug": "URL slug",
+      "timezone": "Your timezone",
+      "timezoneDesc": "Times you give your agent are interpreted in this zone. Detected from the server automatically.",
+      "timezoneScheduled": "Timezone for scheduled tasks.",
+      "dangerZone": "Danger zone",
+      "deleteOrg": "Delete organization",
+      "deleteOrgDesc": "Permanently delete this organization, all its members, and everything it contains. This can't be undone.",
+      "deleteOrgButton": "Delete organization…",
+      "tokens": "API Tokens",
+      "newToken": "New token",
+      "revokeToken": "Revoke",
+      "tokenWarning": "Copy your token now — it won't be shown again."
+    }
+  }
+}
