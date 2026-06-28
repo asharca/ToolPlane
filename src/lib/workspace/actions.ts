@@ -14,6 +14,7 @@ import {
 } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
+import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
 async function authorizedWorkspace(slug: string) {
@@ -40,14 +41,41 @@ export async function deployServerAction(formData: FormData) {
 
   const server = await db.server.findUnique({
     where: { id: serverId },
-    select: { name: true },
+    select: { name: true, installCfg: true, verifiedAt: true },
   });
+  if (!server) return;
+  // Only deploy a catalog server an admin has wired up AND validated. Without a
+  // verified recipe the entry is not deployable (the browse UI hides "Add").
+  const recipe = parseServerRecipe(server.installCfg);
+  if (!recipe || !server.verifiedAt) return;
+
+  const data = recipeToDeploymentData(recipe);
+  // `update: {}` on re-deploy intentionally preserves the deployment's existing
+  // installCfg — so a user's filled-in env values are not wiped by the recipe's
+  // empty seeds. Only the first create seeds from the recipe.
   const dep = await db.deployment.upsert({
     where: { workspaceId_serverId: { workspaceId: ctx.ws.id, serverId } },
     update: {},
-    create: { workspaceId: ctx.ws.id, serverId, status: 'provisioning' },
+    create: {
+      workspaceId: ctx.ws.id,
+      serverId,
+      status: 'provisioning',
+      source: data.source,
+      sourceRef: data.sourceRef,
+      installCfg: data.installCfg as Prisma.InputJsonValue,
+    },
   });
-  await startProcess(dep.id, { kind: 'builtin', name: server?.name ?? 'mcp' });
+  await startProcess(
+    dep.id,
+    resolveSpawnSpec({
+      serverId: dep.serverId,
+      server: { name: server.name },
+      name: dep.name,
+      source: dep.source,
+      sourceRef: dep.sourceRef,
+      installCfg: dep.installCfg,
+    }),
+  );
 
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/new`);

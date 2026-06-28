@@ -79,6 +79,23 @@ describe('resolveSpawnSpec', () => {
     ).toEqual({ kind: 'builtin', name: 'Stripe' });
   });
 
+  it('bridge for a catalog server that has an admin recipe (real package)', () => {
+    const spec = resolveSpawnSpec({
+      serverId: 's1',
+      server: { name: 'Firecrawl' },
+      name: null,
+      source: 'npm',
+      sourceRef: 'firecrawl-mcp',
+      installCfg: { env: { FIRECRAWL_API_KEY: '' } },
+    });
+    expect(spec.kind).toBe('bridge');
+    if (spec.kind === 'bridge') {
+      expect(spec.name).toBe('Firecrawl');
+      expect(spec.command).toBe('docker');
+      expect(spec.args.slice(-1)).toEqual(['firecrawl-mcp']);
+    }
+  });
+
   it('bridge runs a hardened docker container for a custom deployment', () => {
     const spec = resolveSpawnSpec({
       serverId: null,

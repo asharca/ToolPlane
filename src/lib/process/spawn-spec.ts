@@ -88,15 +88,19 @@ function readCfg(installCfg: unknown): {
 }
 
 export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnSpec {
-  if (d.serverId && d.server) return { kind: 'builtin', name: d.server.name };
+  // No real package source → the builtin demo server. This covers legacy catalog
+  // rows that have no admin-wired recipe (serverId set, source null). A catalog
+  // deployment WITH a source runs its real package in a container, same path as
+  // a custom deployment.
+  if (!d.source) return { kind: 'builtin', name: d.server?.name ?? d.name ?? 'mcp' };
   const { env, startCommand, network } = readCfg(d.installCfg);
   const { command, args } = buildSpawnSpec(
-    d.source ?? '',
+    d.source,
     d.sourceRef ?? '',
     startCommand,
     env,
     rebuild,
     network,
   );
-  return { kind: 'bridge', name: d.name ?? d.sourceRef ?? 'custom', command, args, env };
+  return { kind: 'bridge', name: d.name ?? d.server?.name ?? d.sourceRef ?? 'custom', command, args, env };
 }
