@@ -9,6 +9,10 @@ export type ServerRecipe = {
   ref: string;
   startCommand?: string;
   env: string[];
+  // Preset fixed env values baked into the recipe (infra wiring like a
+  // self-hosted API URL, or a dummy key a package demands even when unused).
+  // These are applied at deploy time and are NOT user secrets.
+  envValues?: Record<string, string>;
   network?: 'none';
 };
 
@@ -29,11 +33,24 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
   const env = Array.isArray(c.env)
     ? c.env.filter((k): k is string => typeof k === 'string' && ENV_KEY.test(k))
     : [];
+  const envValues: Record<string, string> = {};
+  if (c.envValues && typeof c.envValues === 'object') {
+    for (const [k, v] of Object.entries(c.envValues as Record<string, unknown>)) {
+      if (ENV_KEY.test(k) && typeof v === 'string') envValues[k] = v;
+    }
+  }
   const startCommand =
     typeof c.startCommand === 'string' && c.startCommand.trim() ? c.startCommand.trim() : undefined;
   const network = c.network === 'none' ? ('none' as const) : undefined;
 
-  return { source: source as McpSource, ref, env, ...(startCommand ? { startCommand } : {}), ...(network ? { network } : {}) };
+  return {
+    source: source as McpSource,
+    ref,
+    env,
+    ...(Object.keys(envValues).length ? { envValues } : {}),
+    ...(startCommand ? { startCommand } : {}),
+    ...(network ? { network } : {}),
+  };
 }
 
 export type DeploymentRecipeData = {
@@ -46,8 +63,10 @@ export type DeploymentRecipeData = {
 // are seeded EMPTY so they surface in the workspace's Variables editor for the
 // user to fill, then Rebuild.
 export function recipeToDeploymentData(recipe: ServerRecipe): DeploymentRecipeData {
-  const env: Record<string, string> = {};
-  for (const k of recipe.env) env[k] = '';
+  // Preset values first; then declared keys default to empty (without clobbering
+  // a preset of the same name) for the user to fill in the Variables editor.
+  const env: Record<string, string> = { ...(recipe.envValues ?? {}) };
+  for (const k of recipe.env) if (!(k in env)) env[k] = '';
   const installCfg: DeploymentRecipeData['installCfg'] = { env };
   if (recipe.startCommand) installCfg.startCommand = recipe.startCommand;
   if (recipe.network === 'none') installCfg.network = 'none';

@@ -38,6 +38,9 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
           ref: recipe?.ref ?? '',
           startCommand: recipe?.startCommand ?? '',
           env: (recipe?.env ?? []).join(' '),
+          envValues: Object.entries(recipe?.envValues ?? {})
+            .map(([k, v]) => `${k}=${v}`)
+            .join('\n'),
           network: recipe?.network === 'none',
         }}
         verifiedAt={server.verifiedAt ? server.verifiedAt.toISOString() : null}

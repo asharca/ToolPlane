@@ -27,8 +27,9 @@ export async function validateServerRecipe(
   recipe: ServerRecipe,
   envOverride: Record<string, string> = {},
 ): Promise<ValidateResult> {
-  const env: Record<string, string> = {};
-  for (const k of recipe.env) env[k] = envOverride[k] ?? '';
+  const env: Record<string, string> = { ...(recipe.envValues ?? {}) };
+  for (const k of recipe.env) if (!(k in env)) env[k] = '';
+  for (const [k, v] of Object.entries(envOverride)) env[k] = v;
 
   let spec: SpawnSpec;
   try {

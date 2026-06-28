@@ -134,6 +134,7 @@ function recipeFromForm(fd: FormData) {
     ref: str(fd, 'recipeRef'),
     startCommand: str(fd, 'recipeStartCommand'),
     env: envKeys(str(fd, 'recipeEnv')),
+    envValues: envPairs(str(fd, 'recipeEnvValues')),
     network: fd.get('recipeNetwork') === 'on' ? 'none' : undefined,
   });
 }

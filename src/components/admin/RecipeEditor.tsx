@@ -15,6 +15,7 @@ type Initial = {
   ref: string;
   startCommand: string;
   env: string; // space-joined key names
+  envValues: string; // preset KEY=value lines
   network: boolean; // network === 'none'
 };
 
@@ -79,8 +80,18 @@ export function RecipeEditor({
           <input name="recipeStartCommand" defaultValue={initial.startCommand} placeholder="node dist/index.js" className={`${input} font-mono`} />
         </label>
         <label className={lbl}>
-          Required env keys (space or comma separated)
-          <input name="recipeEnv" defaultValue={initial.env} placeholder="FIRECRAWL_API_KEY" className={`${input} font-mono`} />
+          Required env keys (user fills · space or comma separated)
+          <input name="recipeEnv" defaultValue={initial.env} placeholder="GITHUB_TOKEN" className={`${input} font-mono`} />
+        </label>
+        <label className={lbl}>
+          Preset env values (fixed wiring · KEY=value per line)
+          <textarea
+            name="recipeEnvValues"
+            defaultValue={initial.envValues}
+            rows={2}
+            placeholder={'FIRECRAWL_API_URL=http://firecrawl-api:3002\nFIRECRAWL_API_KEY=self-hosted'}
+            className="w-full rounded-md border border-zinc-200 p-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          />
         </label>
         <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <input type="checkbox" name="recipeNetwork" defaultChecked={initial.network} className="size-4" />

@@ -31,6 +31,16 @@ describe('parseServerRecipe', () => {
     expect(parseServerRecipe({})).toBeNull();
     expect(parseServerRecipe('npm')).toBeNull();
   });
+
+  it('parses preset envValues (and drops malformed ones)', () => {
+    const r = parseServerRecipe({
+      source: 'npm',
+      ref: 'firecrawl-mcp',
+      env: [],
+      envValues: { FIRECRAWL_API_URL: 'http://firecrawl-api:3002', FIRECRAWL_API_KEY: 'self-hosted', '1bad': 'x', OK: 9 },
+    });
+    expect(r?.envValues).toEqual({ FIRECRAWL_API_URL: 'http://firecrawl-api:3002', FIRECRAWL_API_KEY: 'self-hosted' });
+  });
 });
 
 describe('recipeToDeploymentData', () => {
@@ -45,5 +55,19 @@ describe('recipeToDeploymentData', () => {
   it('carries startCommand and network when present', () => {
     const d = recipeToDeploymentData({ source: 'docker', ref: 'mcp/slack', env: [], startCommand: 'run', network: 'none' });
     expect(d.installCfg).toEqual({ env: {}, startCommand: 'run', network: 'none' });
+  });
+
+  it('seeds preset envValues and leaves declared keys empty', () => {
+    const d = recipeToDeploymentData({
+      source: 'npm',
+      ref: 'firecrawl-mcp',
+      env: ['EXTRA_KEY'],
+      envValues: { FIRECRAWL_API_URL: 'http://firecrawl-api:3002', FIRECRAWL_API_KEY: 'self-hosted' },
+    });
+    expect(d.installCfg.env).toEqual({
+      FIRECRAWL_API_URL: 'http://firecrawl-api:3002',
+      FIRECRAWL_API_KEY: 'self-hosted',
+      EXTRA_KEY: '',
+    });
   });
 });
