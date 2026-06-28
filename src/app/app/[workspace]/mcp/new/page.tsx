@@ -98,12 +98,14 @@ export default async function BrowseMcpPage({
                         <td className="px-4 py-3 text-right">
                           {deployedIds.has(s.id) ? (
                             <span className="text-xs text-muted-foreground">Added</span>
-                          ) : (
+                          ) : s.deployable ? (
                             <form action={deployServerAction} className="inline">
                               <input type="hidden" name="workspace" value={slug} />
                               <input type="hidden" name="serverId" value={s.id} />
                               <button className="text-xs font-medium text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100">Add</button>
                             </form>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Demo only</span>
                           )}
                         </td>
                       </tr>

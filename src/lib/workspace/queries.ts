@@ -81,9 +81,16 @@ export async function getInstalledSkills(workspaceId: string) {
 }
 
 const BROWSE_PAGE_SIZE = 25;
-const BROWSE_SELECT = { id: true, name: true, description: true, iconUrl: true } as const;
+const BROWSE_SELECT = { id: true, name: true, description: true, iconUrl: true, verifiedAt: true } as const;
 
-type BrowseRow = { id: string; name: string; description: string | null; iconUrl: string | null };
+type RawBrowse = { id: string; name: string; description: string | null; iconUrl: string | null; verifiedAt: Date | null };
+export type BrowseServer = { id: string; name: string; description: string | null; iconUrl: string | null; deployable: boolean };
+
+// A catalog server is deployable only once an admin has wired up a recipe and
+// it has passed validation (verifiedAt set).
+function toBrowse(rows: RawBrowse[]): BrowseServer[] {
+  return rows.map(({ verifiedAt, ...r }) => ({ ...r, deployable: verifiedAt !== null }));
+}
 
 export async function getBrowseServers(page: number, q = '') {
   const term = q.trim();
@@ -99,7 +106,7 @@ export async function getBrowseServers(page: number, q = '') {
   const [featured, total, all] = await Promise.all([
     // Skip the Featured rail while searching — the result list is what matters.
     term
-      ? Promise.resolve([] as BrowseRow[])
+      ? Promise.resolve([] as RawBrowse[])
       : db.server.findMany({
           where: { isFeatured: true },
           orderBy: { stars: 'desc' },
@@ -115,5 +122,5 @@ export async function getBrowseServers(page: number, q = '') {
       select: BROWSE_SELECT,
     }),
   ]);
-  return { featured, all, total, pageSize: BROWSE_PAGE_SIZE };
+  return { featured: toBrowse(featured), all: toBrowse(all), total, pageSize: BROWSE_PAGE_SIZE };
 }

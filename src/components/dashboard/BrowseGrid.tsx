@@ -3,6 +3,10 @@ type BrowseItem = {
   name: string;
   description: string | null;
   iconUrl: string | null;
+  // When explicitly false the item is not deployable (no verified recipe) and
+  // the action is replaced by a disabled "Demo only" marker. Undefined (e.g. for
+  // skills, which are always installable) leaves the action enabled.
+  deployable?: boolean;
 };
 
 export function BrowseGrid({
@@ -50,6 +54,10 @@ export function BrowseGrid({
           {installedIds.has(it.id) ? (
             <span className="inline-flex h-8 w-fit items-center rounded-md border border-border px-3 text-sm text-muted-foreground">
               {installedLabel}
+            </span>
+          ) : it.deployable === false ? (
+            <span className="inline-flex h-8 w-fit items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
+              Demo only
             </span>
           ) : (
             <form action={action}>

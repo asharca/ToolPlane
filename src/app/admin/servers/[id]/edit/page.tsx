@@ -3,7 +3,9 @@ import { requireAdmin } from '@/lib/auth/admin';
 import { getDirectoryServer } from '@/lib/admin/market';
 import { listCategories } from '@/lib/admin/categories';
 import { updateServerAction, deleteServerAction } from '@/lib/admin/market-actions';
+import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 import { ServerForm } from '@/components/admin/ServerForm';
+import { RecipeEditor } from '@/components/admin/RecipeEditor';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +15,7 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const [server, categories] = await Promise.all([getDirectoryServer(id), listCategories()]);
   if (!server) notFound();
+  const recipe = parseServerRecipe(server.installCfg);
 
   return (
     <div className="space-y-6 px-8 py-6">
@@ -26,6 +29,19 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
         }}
         categories={categories}
         submitLabel="Save changes"
+      />
+      <RecipeEditor
+        serverId={server.id}
+        hasRecipe={!!recipe}
+        initial={{
+          source: recipe?.source ?? 'npm',
+          ref: recipe?.ref ?? '',
+          startCommand: recipe?.startCommand ?? '',
+          env: (recipe?.env ?? []).join(' '),
+          network: recipe?.network === 'none',
+        }}
+        verifiedAt={server.verifiedAt ? server.verifiedAt.toISOString() : null}
+        verifiedTools={server.verifiedTools ?? null}
       />
       <section className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
         <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Delete</h2>
