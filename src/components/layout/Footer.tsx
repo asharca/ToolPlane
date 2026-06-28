@@ -1,54 +1,68 @@
 import Link from 'next/link';
-import { Globe } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { Logo } from './Logo';
 
-type FooterLink = { label: string; href: string };
+type FooterLink = { labelKey: string; href: string };
 
 const BROWSE: FooterLink[] = [
-  { label: 'MCP Search', href: '/search' },
-  { label: 'MCP Servers', href: '/server' },
-  { label: 'MCP Clients', href: '/client' },
-  { label: 'Agent Skills', href: '/tools/skills' },
-  { label: 'Categories', href: '/categories' },
-  { label: 'What is an MCP server?', href: '/what-is-an-mcp-server' },
-  { label: 'Model Context Protocol', href: 'https://modelcontextprotocol.io' },
+  { labelKey: 'mcpSearch', href: '/search' },
+  { labelKey: 'mcpServers', href: '/server' },
+  { labelKey: 'mcpClients', href: '/client' },
+  { labelKey: 'agentSkills', href: '/tools/skills' },
+  { labelKey: 'categories', href: '/categories' },
+  { labelKey: 'whatIsMcp', href: '/what-is-an-mcp-server' },
+  { labelKey: 'mcp', href: 'https://modelcontextprotocol.io' },
 ];
 
 const RANKINGS: FooterLink[] = [
-  { label: 'Top MCPs Today', href: '/daily' },
-  { label: 'Top Agent Skills Today', href: '/daily/skills' },
-  { label: 'Top 100 Agent Skills', href: '/tools/skills/leaderboard' },
-  { label: 'Top 100 MCP Servers', href: '/leaderboards' },
+  { labelKey: 'topMcpsToday', href: '/daily' },
+  { labelKey: 'topSkillsToday', href: '/daily/skills' },
+  { labelKey: 'top100Skills', href: '/tools/skills/leaderboard' },
+  { labelKey: 'top100Servers', href: '/leaderboards' },
 ];
 
 const ABOUT: FooterLink[] = [
-  { label: 'News', href: '/news' },
-  { label: 'Submit', href: '/submit' },
-  { label: 'Contact', href: 'mailto:support@mcpmarket.com' },
+  { labelKey: 'news', href: '/news' },
+  { labelKey: 'submit', href: '/submit' },
+  { labelKey: 'contact', href: 'mailto:support@mcpmarket.com' },
 ];
 
 const itemClass =
   'text-sm text-muted-foreground transition-colors hover:text-foreground';
 
-function FooterItem({ link }: { link: FooterLink }) {
+function FooterItem({
+  link,
+  label,
+}: {
+  link: FooterLink;
+  label: string;
+}) {
   const isExternal =
     link.href.startsWith('http') || link.href.startsWith('mailto:');
   if (isExternal) {
     return (
       <a href={link.href} className={itemClass} rel="noopener noreferrer">
-        {link.label}
+        {label}
       </a>
     );
   }
   return (
     <Link href={link.href} className={itemClass}>
-      {link.label}
+      {label}
     </Link>
   );
 }
 
-function Column({ title, links }: { title: string; links: FooterLink[] }) {
+function Column({
+  title,
+  links,
+  tLinks,
+}: {
+  title: string;
+  links: FooterLink[];
+  tLinks: (key: string) => string;
+}) {
   return (
     <div>
       <h4 className="mb-4 font-mono text-xs font-semibold uppercase tracking-wider text-foreground">
@@ -57,7 +71,7 @@ function Column({ title, links }: { title: string; links: FooterLink[] }) {
       <ul className="space-y-3">
         {links.map((link) => (
           <li key={link.href}>
-            <FooterItem link={link} />
+            <FooterItem link={link} label={tLinks(link.labelKey)} />
           </li>
         ))}
       </ul>
@@ -66,58 +80,25 @@ function Column({ title, links }: { title: string; links: FooterLink[] }) {
 }
 
 export function Footer() {
-  const year = new Date().getFullYear();
+  const t = useTranslations('footer');
+  const tLinks = useTranslations('footer.links');
 
   return (
-    <footer className="border-t border-border bg-card">
-      <div className="w-full px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl py-12 md:py-16">
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-5 lg:gap-10">
-            <div className="md:col-span-2">
-              <Link href="/" className="group mb-4 flex items-center gap-2">
-                <Logo wordmarkClass="text-xl" />
-              </Link>
-              <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-                Discover MCP servers that connect MCP clients like Claude and
-                Cursor to your favorite tools. Browse the MCP Market to get
-                started.
-              </p>
-            </div>
-
-            <Column title="Browse" links={BROWSE} />
-            <Column title="Rankings" links={RANKINGS} />
-            <Column title="About" links={ABOUT} />
+    <footer className="border-t border-border bg-background">
+      <div className="mx-auto max-w-7xl px-6 py-12 lg:px-8">
+        <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
+          <div className="col-span-2 md:col-span-1">
+            <Logo />
           </div>
-
-          <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-border pt-6 md:mt-12 md:flex-row md:pt-8">
-            <div className="order-2 flex items-center gap-2 md:order-1">
-              <button
-                type="button"
-                aria-label="Switch language"
-                className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Globe className="size-4" />
-              </button>
-              <ThemeToggle />
-            </div>
-            <p className="order-1 font-mono text-xs text-muted-foreground md:order-2">
-              © {year} MCP Market. All rights reserved.
-              <span className="mx-1.5">·</span>
-              <Link
-                href="/privacy"
-                className="transition-colors hover:text-foreground"
-              >
-                Privacy
-              </Link>
-              <span className="mx-1.5">·</span>
-              <Link
-                href="/terms"
-                className="transition-colors hover:text-foreground"
-              >
-                Terms
-              </Link>
-            </p>
-          </div>
+          <Column title={t('browse')} links={BROWSE} tLinks={tLinks} />
+          <Column title={t('rankings')} links={RANKINGS} tLinks={tLinks} />
+          <Column title={t('about')} links={ABOUT} tLinks={tLinks} />
+        </div>
+        <div className="mt-8 flex items-center justify-between border-t border-border pt-8">
+          <p className="text-sm text-muted-foreground">
+            © {new Date().getFullYear()} MCP Market
+          </p>
+          <ThemeToggle />
         </div>
       </div>
     </footer>
