@@ -1,5 +1,7 @@
 import 'server-only';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import type { ServerRecipe } from '@/lib/workspace/server-recipe';
 
 const PAGE_SIZE = 25;
 
@@ -21,7 +23,7 @@ export async function listDirectoryServers({ page = 1, q = '' }: { page?: number
   const [items, total] = await Promise.all([
     db.server.findMany({
       where, orderBy: { updatedAt: 'desc' }, skip, take: PAGE_SIZE,
-      select: { id: true, slug: true, name: true, stars: true, isOfficial: true, isFeatured: true, curated: true, _count: { select: { deployments: true } } },
+      select: { id: true, slug: true, name: true, stars: true, isOfficial: true, isFeatured: true, curated: true, verifiedAt: true, _count: { select: { deployments: true } } },
     }),
     db.server.count({ where }),
   ]);
@@ -47,6 +49,25 @@ export async function deleteDirectoryServer(id: string) {
   if (!s) throw new Error('Server not found.');
   if (s._count.deployments > 0) throw new Error(`Refused: ${s._count.deployments} live deployment(s) reference this server.`);
   await db.server.delete({ where: { id } });
+}
+
+// Store/replace a server's deploy recipe (in installCfg). Changing the recipe
+// clears verification — it must be re-validated before becoming deployable.
+// Passing null removes the recipe entirely.
+export function setServerRecipe(id: string, recipe: ServerRecipe | null) {
+  return db.server.update({
+    where: { id },
+    data: {
+      installCfg: recipe ? (recipe as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+      verifiedAt: null,
+      verifiedTools: null,
+    },
+  });
+}
+
+// Mark a server's recipe as validated (call after a successful live probe).
+export function setServerVerified(id: string, toolCount: number) {
+  return db.server.update({ where: { id }, data: { verifiedAt: new Date(), verifiedTools: toolCount } });
 }
 
 // ---- Skills ----

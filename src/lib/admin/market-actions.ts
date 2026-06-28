@@ -3,10 +3,14 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth/admin';
+import { db } from '@/lib/db';
 import {
   createDirectoryServer, updateDirectoryServer, deleteDirectoryServer,
   createDirectorySkill, updateDirectorySkill, deleteDirectorySkill,
+  setServerRecipe, setServerVerified,
 } from '@/lib/admin/market';
+import { parseServerRecipe } from '@/lib/workspace/server-recipe';
+import { validateServerRecipe } from '@/lib/admin/recipe-validate';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
@@ -99,4 +103,73 @@ export async function deleteSkillAction(_prev: AdminActionState, fd: FormData): 
   }
   revalidatePath('/admin/skills');
   redirect('/admin/skills');
+}
+
+// ---- Server deploy recipes ----
+
+export type RecipeActionState = { error?: string; ok?: boolean; toolCount?: number; tools?: string[] };
+
+const SOURCES = new Set(['npm', 'pypi', 'github', 'docker']);
+
+// Free-form env-keys field → list (comma / whitespace / newline separated).
+function envKeys(raw: string): string[] {
+  return raw.split(/[\s,]+/).map((k) => k.trim()).filter(Boolean);
+}
+
+// "KEY=value" lines → map (throwaway test values used only during validation).
+function envPairs(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split(/\n+/)) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line.trim());
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+function recipeFromForm(fd: FormData) {
+  const source = str(fd, 'recipeSource');
+  if (!SOURCES.has(source)) return null;
+  return parseServerRecipe({
+    source,
+    ref: str(fd, 'recipeRef'),
+    startCommand: str(fd, 'recipeStartCommand'),
+    env: envKeys(str(fd, 'recipeEnv')),
+    network: fd.get('recipeNetwork') === 'on' ? 'none' : undefined,
+  });
+}
+
+export async function setServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+  await requireAdmin();
+  const id = str(fd, 'id');
+  const recipe = recipeFromForm(fd);
+  if (!recipe) return { error: 'Invalid recipe: pick a source and a valid package/image reference.' };
+  await setServerRecipe(id, recipe);
+  revalidatePath(`/admin/servers/${id}/edit`);
+  revalidatePath('/admin/servers');
+  return {};
+}
+
+export async function removeServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+  await requireAdmin();
+  const id = str(fd, 'id');
+  await setServerRecipe(id, null);
+  revalidatePath(`/admin/servers/${id}/edit`);
+  revalidatePath('/admin/servers');
+  return {};
+}
+
+export async function validateServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
+  await requireAdmin();
+  const id = str(fd, 'id');
+  const server = await db.server.findUnique({ where: { id }, select: { installCfg: true } });
+  const recipe = parseServerRecipe(server?.installCfg);
+  if (!recipe) return { error: 'Save a valid recipe before validating.' };
+
+  const result = await validateServerRecipe(recipe, envPairs(str(fd, 'testEnv')));
+  if (!result.ok) return { error: result.error };
+
+  await setServerVerified(id, result.toolCount);
+  revalidatePath(`/admin/servers/${id}/edit`);
+  revalidatePath('/admin/servers');
+  return { ok: true, toolCount: result.toolCount, tools: result.tools };
 }
