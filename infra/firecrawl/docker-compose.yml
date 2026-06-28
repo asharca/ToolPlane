@@ -1,0 +1,105 @@
+# Self-hosted Firecrawl as shared infrastructure for MCP Station.
+#
+# Runs the real Firecrawl engine (keyless: USE_DB_AUTHENTICATION=false) using the
+# prebuilt ghcr images — no source build. The `api` service joins the external
+# `mcp-sandbox` network (the same one MCP sandbox containers run on) under the
+# alias `firecrawl-api`, so a `firecrawl-mcp` deployment reaches it at
+# http://firecrawl-api:3002 with a dummy key.
+#
+# Bring up on the server:
+#   docker compose -f infra/firecrawl/docker-compose.yml up -d
+# Verify:
+#   curl http://localhost:3002/test   # -> "Hello, world!"
+#
+# Note: self-hosted Firecrawl has no Fire Engine (no anti-bot / IP rotation);
+# it scrapes via basic fetch + Playwright. Needs ~8GB RAM headroom.
+
+x-firecrawl-env: &firecrawl-env
+  REDIS_URL: redis://redis:6379
+  REDIS_RATE_LIMIT_URL: redis://redis:6379
+  PLAYWRIGHT_MICROSERVICE_URL: http://playwright-service:3000/scrape
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_DB: postgres
+  POSTGRES_HOST: nuq-postgres
+  POSTGRES_PORT: 5432
+  USE_DB_AUTHENTICATION: "false"
+  BULL_AUTH_KEY: CHANGEME
+
+services:
+  redis:
+    image: redis:alpine
+    command: redis-server --bind 0.0.0.0
+    networks: [backend]
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    command: rabbitmq-server
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  nuq-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    networks: [backend]
+    restart: unless-stopped
+
+  playwright-service:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    environment:
+      PORT: 3000
+      MAX_CONCURRENT_PAGES: 10
+    networks: [backend]
+    cpus: 2.0
+    mem_limit: 4g
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    container_name: firecrawl-api
+    command: node dist/src/harness.js --start-docker
+    environment:
+      <<: *firecrawl-env
+      HOST: "0.0.0.0"
+      PORT: 3002
+      INTERNAL_PORT: 3002
+      EXTRACT_WORKER_PORT: 3004
+      WORKER_PORT: 3005
+      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
+      ENV: local
+    depends_on:
+      redis:
+        condition: service_started
+      playwright-service:
+        condition: service_started
+      nuq-postgres:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    networks:
+      backend:
+      mcp-sandbox:
+        aliases: [firecrawl-api]
+    cpus: 4.0
+    mem_limit: 8g
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
+  # Shared with the app's MCP sandbox containers; created by the app at startup
+  # (ensureSandboxNetwork) / docker network create mcp-sandbox.
+  mcp-sandbox:
+    external: true

@@ -27,4 +27,25 @@ const RUN = process.env.SMOKE_DOCKER === '1';
       console.error('validation failed:', r.error);
     }
   }, 120_000);
+
+  // Requires the self-hosted Firecrawl stack on the mcp-sandbox network:
+  //   docker compose -f infra/firecrawl/docker-compose.yml up -d
+  it('validates firecrawl-mcp against the self-hosted Firecrawl api', async () => {
+    const r = await validateServerRecipe({
+      source: 'npm',
+      ref: 'firecrawl-mcp',
+      env: [],
+      envValues: {
+        FIRECRAWL_API_URL: 'http://firecrawl-api:3002',
+        FIRECRAWL_API_KEY: 'self-hosted',
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.toolCount).toBeGreaterThan(0);
+      process.stdout.write(`\nFIRECRAWL_TOOLS count=${r.toolCount} names=${r.tools.join(',')}\n`);
+    } else {
+      process.stdout.write(`\nFIRECRAWL_FAIL ${r.error}\n`);
+    }
+  }, 120_000);
 });
