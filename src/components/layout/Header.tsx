@@ -1,10 +1,13 @@
 import Link from 'next/link';
 import { ChevronDown } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { Logo } from './Logo';
+import { LocaleSwitcher } from './LocaleSwitcher';
 
 export async function Header() {
   const user = await getCurrentUser();
+  const t = useTranslations('header');
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
@@ -20,31 +23,32 @@ export async function Header() {
                 href="/server"
                 className="inline-flex items-center gap-1 px-2 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
-                MCP Servers
+                {t('mcpServers')}
                 <ChevronDown className="size-3.5" />
               </Link>
               <Link
                 href="/tools/skills"
                 className="inline-flex items-center gap-1 px-2 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
-                Agent Skills
+                {t('agentSkills')}
                 <ChevronDown className="size-3.5" />
               </Link>
             </nav>
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
+            <LocaleSwitcher />
             <Link
               href="/sell"
               className="hidden px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
             >
-              Sell Skills
+              {t('sellSkills')}
             </Link>
             <Link
               href={user ? '/app' : '/app/login'}
               className="inline-flex h-9 items-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
-              {user ? 'Dashboard' : 'Sign in'}
+              {user ? t('dashboard') : t('signIn')}
             </Link>
           </div>
         </div>
