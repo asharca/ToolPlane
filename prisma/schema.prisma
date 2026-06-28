@@ -44,6 +44,7 @@ model User {
   passwordHash    String
   role            UserRole     @default(user)
   status          UserStatus   @default(active)
+  locale          String       @default("en")
   apiTokens       ApiToken[]
   ownedWorkspaces Workspace[]  @relation("WorkspaceOwner")
   memberships     Membership[]
