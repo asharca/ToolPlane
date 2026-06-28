@@ -5,6 +5,17 @@ const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/;
 const DOCKER_IMAGE = /^[a-z0-9]+([._/-][a-z0-9]+)*(:[\w.-]+)?$/;
 
+export type McpSource = 'npm' | 'pypi' | 'github' | 'docker';
+
+// Shared reference validator for a given source — reused by both the custom-MCP
+// deploy form and the admin server-recipe parser so the rules can't drift.
+export function isValidMcpRef(source: McpSource, ref: string): boolean {
+  return source === 'npm' ? NPM_NAME.test(ref)
+    : source === 'pypi' ? PYPI_NAME.test(ref)
+    : source === 'github' ? GITHUB_URL.test(ref)
+    : DOCKER_IMAGE.test(ref);
+}
+
 const schema = z
   .object({
     source: z.enum(['npm', 'pypi', 'github', 'docker']),
@@ -13,12 +24,8 @@ const schema = z
     startCommand: z.string().trim().default(''),
   })
   .superRefine((v, ctx) => {
-    const ok =
-      v.source === 'npm' ? NPM_NAME.test(v.ref)
-      : v.source === 'pypi' ? PYPI_NAME.test(v.ref)
-      : v.source === 'github' ? GITHUB_URL.test(v.ref)
-      : DOCKER_IMAGE.test(v.ref);
-    if (!ok) ctx.addIssue({ code: 'custom', path: ['ref'], message: `invalid ${v.source} reference` });
+    if (!isValidMcpRef(v.source, v.ref))
+      ctx.addIssue({ code: 'custom', path: ['ref'], message: `invalid ${v.source} reference` });
   });
 
 export type ParsedCustomMcp = {

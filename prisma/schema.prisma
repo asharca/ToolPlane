@@ -28,6 +28,8 @@ model Server {
   isFeatured  Boolean      @default(false)
   curated     Boolean      @default(false)
   installCfg  Json?
+  verifiedAt  DateTime?
+  verifiedTools Int?
   readme      String?
   categories  Category[]   @relation("ServerCategories")
   deployments Deployment[]
