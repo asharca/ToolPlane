@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import type { HomeSections } from '@/lib/queries/home';
 import { ServerCard } from '@/components/cards/ServerCard';
 import { ClientCard } from '@/components/cards/ClientCard';
@@ -92,6 +93,7 @@ export function HomeView({
   categories,
   serverCount,
 }: HomeViewProps) {
+  const t = useTranslations('home');
   return (
     <div className="mx-auto max-w-screen-xl px-4">
       <section className="relative py-16 sm:py-24">
@@ -130,14 +132,14 @@ export function HomeView({
             <input
               type="search"
               name="q"
-              placeholder="Search for MCP servers..."
-              aria-label="Search for MCP servers"
+              placeholder={t('searchPlaceholder')}
+              aria-label={t('searchAriaLabel')}
               className="h-12 w-full border border-input bg-background pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </form>
 
           <div className="no-scrollbar mx-auto mt-5 flex max-w-3xl gap-2 overflow-x-auto pb-1">
-            <CategoryChip href="/categories" label="All" active />
+            <CategoryChip href="/categories" label={t('allCategories')} active />
             {categories.map((c) => (
               <CategoryChip
                 key={c.slug}
@@ -150,9 +152,9 @@ export function HomeView({
       </section>
 
       <SectionGrid
-        title="Official MCP Servers"
+        title={t('officialServers')}
         viewAllHref="/categories/official"
-        viewAllLabel="View all official servers"
+        viewAllLabel={t('viewAllOfficialServers')}
       >
         {officialServers.map((s) => (
           <ServerCard key={s.slug} server={s} />
@@ -160,9 +162,9 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="Featured MCP Servers"
+        title={t('featuredServers')}
         viewAllHref="/categories/featured"
-        viewAllLabel="View all featured servers"
+        viewAllLabel={t('viewAllFeaturedServers')}
       >
         {featuredServers.map((s) => (
           <ServerCard key={s.slug} server={s} />
@@ -170,9 +172,9 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="Top MCP Servers"
+        title={t('topServers')}
         viewAllHref="/leaderboards"
-        viewAllLabel="View leaderboard"
+        viewAllLabel={t('viewLeaderboard')}
       >
         {topServers.map((s) => (
           <ServerCard key={s.slug} server={s} />
@@ -180,9 +182,9 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="Latest MCP Servers"
+        title={t('latestServers')}
         viewAllHref="/server"
-        viewAllLabel="View all new servers"
+        viewAllLabel={t('viewAllNewServers')}
       >
         {latestServers.map((s) => (
           <ServerCard key={s.slug} server={s} />
@@ -190,9 +192,9 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="MCP Clients"
+        title={t('mcpClients')}
         viewAllHref="/client"
-        viewAllLabel="View all clients"
+        viewAllLabel={t('viewAllClients')}
       >
         {clients.map((c) => (
           <ClientCard key={c.slug} client={c} />
@@ -200,9 +202,9 @@ export function HomeView({
       </SectionGrid>
 
       <SectionGrid
-        title="Top Agent Skills"
+        title={t('topAgentSkills')}
         viewAllHref="/tools/skills"
-        viewAllLabel="View all skills"
+        viewAllLabel={t('viewAllSkills')}
         badge={{ label: 'What are Agent Skills?', href: '/tools/skills' }}
       >
         {topSkills.map((k) => (
