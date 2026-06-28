@@ -6,8 +6,8 @@ import { searchAll } from '@/lib/queries/search';
 
 beforeAll(async () => {
   await db.server.upsert({
-    where: { slug: 'firecrawl' },
-    create: { slug: 'firecrawl', name: 'Firecrawl', description: 'web scraping', stars: 4200 },
+    where: { slug: 'queries-test-fire' },
+    create: { slug: 'queries-test-fire', name: 'Firecrawl', description: 'web scraping', stars: 4200 },
     update: {},
   });
 });
@@ -21,7 +21,7 @@ describe('queries', () => {
   });
 
   it('gets a server by slug', async () => {
-    const s = await getServer('firecrawl');
+    const s = await getServer('queries-test-fire');
     expect(s?.name).toBe('Firecrawl');
   });
 
@@ -31,7 +31,7 @@ describe('queries', () => {
 
   it('searches servers by name/description (case-insensitive)', async () => {
     const res = await searchAll('FIRE');
-    expect(res.servers.some((s) => s.slug === 'firecrawl')).toBe(true);
+    expect(res.servers.some((s) => s.slug === 'queries-test-fire')).toBe(true);
   });
 
   it('returns empty results for blank query without hitting filters', async () => {
