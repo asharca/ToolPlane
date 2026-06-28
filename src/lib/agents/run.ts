@@ -69,7 +69,7 @@ export async function buildAgentToolSet(
   ctx: AgentRunContext,
   deps: RunDeps = defaultDeps,
 ): Promise<ToolSet> {
-  const set = await buildToolSet(resolved.deploymentIds);
+  const set = await buildToolSet(resolved.deploymentIds, ctx.workspaceId);
   for (const sub of resolved.subAgents) {
     set[subAgentToolKey(sub.slug)] = tool({
       description: `Delegate a task to the "${sub.name}" sub-agent. ${sub.description ?? ''}`.trim(),
