@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star, ChevronRight } from 'lucide-react';
+import { getTranslations } from 'next-intl/server';
 import { getServer, getRelatedServers } from '@/lib/queries/servers';
 import { getRelatedSkills } from '@/lib/queries/skills';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -51,6 +52,7 @@ export default async function Page({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations('server');
   const { slug } = await params;
   const server = await getServer(slug);
   if (!server) notFound();
@@ -66,11 +68,11 @@ export default async function Page({
     <div className="mx-auto max-w-6xl px-4 py-8">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link href="/" className="transition-colors hover:text-foreground">
-          Home
+          {t('home')}
         </Link>
         <ChevronRight className="size-3.5" />
         <Link href="/server" className="transition-colors hover:text-foreground">
-          Servers
+          {t('servers')}
         </Link>
         <ChevronRight className="size-3.5" />
         <span className="text-foreground">{server.name}</span>
@@ -197,7 +199,7 @@ Content-Type: application/json
             <div className="overflow-hidden rounded-lg border border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <h2 className="text-sm font-semibold text-foreground">
-                  Related Skills
+                  {t('relatedSkills')}
                 </h2>
                 <Link
                   href="/tools/skills"
