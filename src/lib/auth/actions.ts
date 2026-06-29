@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { hashPassword, verifyPassword } from './password';
 import { createSession, clearSession, getSessionUserId } from './session';
@@ -51,6 +52,18 @@ export async function loginAction(
 
   await createSession(user.id);
   await reconcileAdminRole(user);
+
+  // Restore locale preference across devices
+  if (user.locale && user.locale !== 'en') {
+    const cookieStore = await cookies();
+    cookieStore.set('NEXT_LOCALE', user.locale, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  }
+
   redirect(safeRelativePath(formData.get('next')) ?? '/app');
 }
 
