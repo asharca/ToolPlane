@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Bot,
   Plug,
@@ -20,7 +21,7 @@ import { DashboardLogo } from './DashboardLogo';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 type NavItem = {
-  label: string;
+  labelKey: string;
   segment: string;
   icon: LucideIcon;
   badge?: string;
@@ -28,27 +29,27 @@ type NavItem = {
 
 type Workspace = { id: string; slug: string; name: string };
 
-const SECTIONS: { title: string; items: NavItem[] }[] = [
+const SECTIONS: { titleKey: string; items: NavItem[] }[] = [
   {
-    title: 'Manage',
+    titleKey: 'manage',
     items: [
-      { label: 'Agents', segment: 'agents', icon: Bot },
-      { label: 'MCP Servers', segment: 'mcp', icon: Plug },
-      { label: 'Skills', segment: 'skills', icon: Brain },
-      { label: 'Toolkits', segment: 'toolkits', icon: Wrench },
+      { labelKey: 'agents', segment: 'agents', icon: Bot },
+      { labelKey: 'mcpServers', segment: 'mcp', icon: Plug },
+      { labelKey: 'skills', segment: 'skills', icon: Brain },
+      { labelKey: 'toolkits', segment: 'toolkits', icon: Wrench },
     ],
   },
   {
-    title: 'Monitor',
+    titleKey: 'monitor',
     items: [
-      { label: 'Observability', segment: 'observability', icon: BarChart3 },
+      { labelKey: 'observability', segment: 'observability', icon: BarChart3 },
     ],
   },
   {
-    title: 'Workspace',
+    titleKey: 'workspace',
     items: [
-      { label: 'Members', segment: 'members', icon: Users },
-      { label: 'Settings', segment: 'settings', icon: Settings },
+      { labelKey: 'members', segment: 'members', icon: Users },
+      { labelKey: 'settings', segment: 'settings', icon: Settings },
     ],
   },
 ];
@@ -72,6 +73,7 @@ export function DashboardSidebar({
 }) {
   const pathname = usePathname() ?? '';
   const base = `/app/${slug}`;
+  const t = useTranslations('console.sidebar');
 
   return (
     <aside
@@ -87,9 +89,9 @@ export function DashboardSidebar({
 
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-2">
         {SECTIONS.map((section) => (
-          <div key={section.title}>
+          <div key={section.titleKey}>
             <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-              {section.title}
+              {t(section.titleKey)}
             </p>
             <ul className="space-y-0.5">
               {section.items.map((item) => {
@@ -109,7 +111,7 @@ export function DashboardSidebar({
                       }`}
                     >
                       <Icon className="size-4 shrink-0" />
-                      <span className="flex-1">{item.label}</span>
+                      <span className="flex-1">{t(item.labelKey)}</span>
                       {item.badge ? (
                         <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
                           {item.badge}
