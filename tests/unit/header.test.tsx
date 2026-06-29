@@ -11,6 +11,16 @@ vi.mock('next-intl', async () => {
   return { useTranslations: (ns: string) => (k: string) => getNs(ns)[k] ?? k, useLocale: () => 'en' };
 });
 
+vi.mock('next-intl/server', async () => {
+  const en = (await import('../../messages/en.json')).default as Record<string, unknown>;
+  function getNs(ns: string): Record<string, string> {
+    let obj: unknown = en;
+    for (const part of ns.split('.')) obj = (obj as Record<string, unknown>)[part];
+    return obj as Record<string, string>;
+  }
+  return { getTranslations: (ns: string) => Promise.resolve((k: string) => getNs(ns)[k] ?? k) };
+});
+
 vi.mock('@/lib/auth/current-user', () => ({
   getCurrentUser: vi.fn().mockResolvedValue(null),
 }));
