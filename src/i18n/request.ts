@@ -1,11 +1,33 @@
+import { cookies, headers } from 'next/headers';
 import { getRequestConfig } from 'next-intl/server';
-import { routing } from './routing';
+import type { Locale } from './routing';
 
-export default getRequestConfig(async ({ requestLocale }) => {
-  let locale = await requestLocale;
-  if (!locale || !(routing.locales as readonly string[]).includes(locale)) {
-    locale = routing.defaultLocale;
+const LOCALES: Locale[] = ['en', 'zh'];
+
+function pickLocaleFromAcceptLanguage(acceptLang: string): Locale {
+  for (const part of acceptLang.split(',')) {
+    const tag = part.split(';')[0].trim().toLowerCase();
+    if (tag.startsWith('zh')) return 'zh';
+    if (tag.startsWith('en')) return 'en';
   }
+  return 'en';
+}
+
+export default getRequestConfig(async () => {
+  const cookieStore = await cookies();
+  const headerStore = await headers();
+
+  const cookie = cookieStore.get('NEXT_LOCALE')?.value;
+  let locale: Locale = 'en';
+
+  if (cookie && (LOCALES as string[]).includes(cookie)) {
+    locale = cookie as Locale;
+  } else {
+    locale = pickLocaleFromAcceptLanguage(
+      headerStore.get('accept-language') ?? '',
+    );
+  }
+
   return {
     locale,
     messages: (await import(`../../messages/${locale}.json`)).default,
