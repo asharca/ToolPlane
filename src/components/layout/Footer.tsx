@@ -94,11 +94,21 @@ export function Footer() {
           <Column title={t('rankings')} links={RANKINGS} tLinks={tLinks} />
           <Column title={t('about')} links={ABOUT} tLinks={tLinks} />
         </div>
-        <div className="mt-8 flex items-center justify-between border-t border-border pt-8">
-          <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} MCP Market
+        <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-border pt-6 md:mt-12 md:flex-row md:pt-8">
+          <div className="order-2 md:order-1">
+            <ThemeToggle />
+          </div>
+          <p className="order-1 font-mono text-xs text-muted-foreground md:order-2">
+            © {new Date().getFullYear()} MCP Market. All rights reserved.
+            <span className="mx-1.5">·</span>
+            <Link href="/privacy" className="transition-colors hover:text-foreground">
+              Privacy
+            </Link>
+            <span className="mx-1.5">·</span>
+            <Link href="/terms" className="transition-colors hover:text-foreground">
+              Terms
+            </Link>
           </p>
-          <ThemeToggle />
         </div>
       </div>
     </footer>

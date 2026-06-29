@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+vi.mock('next-intl', async () => {
+  const en = (await import('../../messages/en.json')).default as Record<string, unknown>;
+  function getNs(ns: string): Record<string, string> {
+    let obj: unknown = en;
+    for (const part of ns.split('.')) obj = (obj as Record<string, unknown>)[part];
+    return obj as Record<string, string>;
+  }
+  return { useTranslations: (ns: string) => (k: string) => getNs(ns)[k] ?? k, useLocale: () => 'en' };
+});
 
 import { HomeView } from '@/components/home/HomeView';
 import type { HomeSections } from '@/lib/queries/home';
