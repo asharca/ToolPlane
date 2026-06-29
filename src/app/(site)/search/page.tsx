@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ChevronRight, Search } from 'lucide-react';
+import { getTranslations } from 'next-intl/server';
 import { searchAll } from '@/lib/queries/search';
 import { ServerCard } from '@/components/cards/ServerCard';
 import { ClientCard } from '@/components/cards/ClientCard';
@@ -24,6 +25,7 @@ export default async function Page({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  const t = await getTranslations('search');
   const { q = '' } = await searchParams;
   const query = q.trim();
   const { servers, clients, skills } = query
@@ -35,11 +37,11 @@ export default async function Page({
     <div className="mx-auto max-w-screen-xl px-4 py-8">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link href="/" className="transition-colors hover:text-foreground">
-          Home
+          {t('home')}
         </Link>
         <ChevronRight className="size-3.5" />
         <span className="text-foreground">
-          {query ? `Search for "${query}"` : 'Search'}
+          {query ? `Search for "${query}"` : t('searchLabel')}
         </span>
       </nav>
 
@@ -76,21 +78,21 @@ export default async function Page({
           ) : (
             <div className="mt-8 space-y-10">
               {servers.length > 0 ? (
-                <Section title="MCP Servers">
+                <Section title={t('servers')}>
                   {servers.map((s) => (
                     <ServerCard key={s.slug} server={s} />
                   ))}
                 </Section>
               ) : null}
               {clients.length > 0 ? (
-                <Section title="MCP Clients">
+                <Section title={t('clients')}>
                   {clients.map((c) => (
                     <ClientCard key={c.slug} client={c} />
                   ))}
                 </Section>
               ) : null}
               {skills.length > 0 ? (
-                <Section title="Agent Skills">
+                <Section title={t('skills')}>
                   {skills.map((k) => (
                     <SkillCard key={k.slug} skill={k} />
                   ))}
