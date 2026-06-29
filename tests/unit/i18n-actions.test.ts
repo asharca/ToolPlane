@@ -17,7 +17,7 @@ vi.mock('@/lib/auth/session', () => ({
 
 // Mock DB — won't be called unless user is logged in
 vi.mock('@/lib/db', () => ({
-  db: { user: { update: vi.fn() } },
+  db: { user: { updateMany: vi.fn() } },
 }));
 
 describe('setLocale', () => {
@@ -42,7 +42,7 @@ describe('setLocale', () => {
     const { setLocale } = await import('@/lib/i18n/actions');
     await setLocale('en');
 
-    expect(db.user.update).not.toHaveBeenCalled();
+    expect(db.user.updateMany).not.toHaveBeenCalled();
   });
 
   it('updates User.locale in DB when user is logged in', async () => {
@@ -52,7 +52,7 @@ describe('setLocale', () => {
     const { setLocale } = await import('@/lib/i18n/actions');
     await setLocale('zh');
 
-    expect(db.user.update).toHaveBeenCalledWith({
+    expect(db.user.updateMany).toHaveBeenCalledWith({
       where: { id: 'user-123' },
       data: { locale: 'zh' },
     });

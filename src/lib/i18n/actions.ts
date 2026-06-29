@@ -17,7 +17,7 @@ export async function setLocale(locale: Locale): Promise<void> {
 
   const userId = await getSessionUserId();
   if (userId) {
-    await db.user.update({ where: { id: userId }, data: { locale } });
+    await db.user.updateMany({ where: { id: userId }, data: { locale } });
   }
 
   revalidatePath('/', 'layout');
