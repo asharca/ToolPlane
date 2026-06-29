@@ -1,13 +1,12 @@
 import Link from 'next/link';
 import { ChevronDown } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { Logo } from './Logo';
 import { LocaleSwitcher } from './LocaleSwitcher';
 
 export async function Header() {
-  const user = await getCurrentUser();
-  const t = useTranslations('header');
+  const [user, t] = await Promise.all([getCurrentUser(), getTranslations('header')]);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
