@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listAgents, listProviders } from '@/lib/agents/queries';
@@ -9,11 +10,6 @@ import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 
 export const dynamic = 'force-dynamic';
 
-const TABS = [
-  { key: 'agents', label: 'Agents' },
-  { key: 'providers', label: 'Model Providers' },
-];
-
 export default async function AgentsPage({
   params,
   searchParams,
@@ -23,6 +19,11 @@ export default async function AgentsPage({
 }) {
   const { workspace: slug } = await params;
   const { tab } = await searchParams;
+  const t = await getTranslations('console.agents');
+  const TABS = [
+    { key: 'agents', label: t('title') },
+    { key: 'providers', label: t('modelProviders') },
+  ];
   const current = TABS.some((t) => t.key === tab) ? tab! : 'agents';
 
   const user = await getCurrentUser();
@@ -34,7 +35,7 @@ export default async function AgentsPage({
 
   return (
     <>
-      <DashboardHeader title="Agents" />
+      <DashboardHeader title={t('title')} />
       <div className="px-8 pt-6">
         <TabBar tabs={TABS} current={current} basePath={`/app/${slug}/agents`} />
       </div>

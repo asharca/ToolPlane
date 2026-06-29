@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
@@ -33,6 +34,7 @@ export default async function McpServersPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
+  const t = await getTranslations('console.mcp');
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -46,7 +48,7 @@ export default async function McpServersPage({
     <>
       <ProvisioningRefresher active={anyProvisioning} />
       <DashboardHeader
-        title="MCP Servers"
+        title={t('title')}
         actions={
           <Link
             href={`/app/${slug}/mcp/new`}
