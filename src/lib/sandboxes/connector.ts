@@ -2,10 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 
 export const DEFAULT_CONNECTOR_SERVER_URL = 'http://localhost:3000';
 export const DEFAULT_CONNECTOR_REMOTE_ROOT = '~/toolplane-sandbox';
-export const DEFAULT_CONNECTOR_PACKAGE = '@toolplane/connector';
+export const DEFAULT_CONNECTOR_PACKAGE = '/api/v1/connectors/package.tgz';
 export const CONNECTOR_PROTOCOL_VERSION = '2026-07-connector-ws';
 
 const LEGACY_CONNECTOR_PACKAGE = `@${['mcp', 'market'].join('-')}/connector`;
+const UNPUBLISHED_CONNECTOR_PACKAGE = '@toolplane/connector';
 const LEGACY_CONNECTOR_ROOT_SEGMENT = `${['mcp', 'market'].join('')}-sandbox`;
 
 export type SandboxConnectorConfig = {
@@ -51,7 +52,15 @@ function normalizeConnectorRoot(raw: string | null | undefined): string {
 
 function normalizeConnectorPackage(raw: string | null | undefined): string {
   const value = String(raw ?? '').trim();
-  return !value || value === LEGACY_CONNECTOR_PACKAGE ? DEFAULT_CONNECTOR_PACKAGE : value;
+  return !value || value === LEGACY_CONNECTOR_PACKAGE || value === UNPUBLISHED_CONNECTOR_PACKAGE
+    ? DEFAULT_CONNECTOR_PACKAGE
+    : value;
+}
+
+function connectorPackageSpec(config: SandboxConnectorConfig): string {
+  const value = normalizeConnectorPackage(config.packageName);
+  if (!value.startsWith('/')) return value;
+  return `${sanitizeConnectorServerUrl(config.serverUrl)}${value}`;
 }
 
 export function generateConnectorToken(): string {
@@ -92,7 +101,9 @@ export function connectorClientCommand(config: SandboxConnectorConfig, token = '
   return [
     'npx',
     '-y',
-    config.packageName,
+    '--package',
+    connectorPackageSpec(config),
+    'connector',
     'connect',
     '--server',
     shellArg(config.serverUrl),

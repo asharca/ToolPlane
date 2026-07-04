@@ -53,7 +53,7 @@ opening SSH, configuring keys, or letting the platform dial arbitrary user
 hosts. The user runs one command:
 
 ```bash
-npx -y @toolplane/connector connect \
+npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect \
   --server http://localhost:3002 \
   --token <one-time-token> \
   --root ~/toolplane-sandbox
@@ -65,7 +65,7 @@ authenticated WebSocket session open.
 
 ```txt
 User machine
-`-- @toolplane/connector
+`-- connector package tarball from /api/v1/connectors/package.tgz
     |-- local shell
     |-- local filesystem root
     `-- local PTY
@@ -139,7 +139,7 @@ connector.serverUrl        = platform URL shown in the command
 connector.remoteRoot       = root path used by the connector command
 connector.tokenHash        = sha256(token)
 connector.tokenPrefix      = short display prefix only
-connector.packageName      = @toolplane/connector
+connector.packageName      = /api/v1/connectors/package.tgz
 ```
 
 The plaintext token is shown only immediately after creation through the

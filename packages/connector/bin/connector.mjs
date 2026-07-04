@@ -22,7 +22,7 @@ Usage:
   connector connect --server <url> --token <token> --root <path>
 
 Example:
-  npx -y @toolplane/connector connect --server http://localhost:3002 --token mcpcon_... --root ~/toolplane-sandbox
+  npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect --server http://localhost:3002 --token mcpcon_... --root ~/toolplane-sandbox
 `);
   process.exit(exitCode);
 }

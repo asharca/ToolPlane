@@ -83,7 +83,7 @@ Use `pnpm`; the lockfile is `pnpm-lock.yaml`.
 User-machine sandboxes do not require SSH or Chisel. The user runs one command:
 
 ```bash
-npx -y @toolplane/connector connect \
+npx -y --package http://localhost:3000/api/v1/connectors/package.tgz connector connect \
   --server http://localhost:3000 \
   --token <one-time-token> \
   --root ~/toolplane-sandbox

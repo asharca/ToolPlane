@@ -179,7 +179,7 @@ describe('resolveSpawnSpec', () => {
           remoteRoot: '/srv/workspace',
           tokenHash: hashConnectorToken('mcpcon_deadbeef'),
           tokenPrefix: 'mcpcon_deadb',
-          packageName: '@toolplane/connector',
+          packageName: '/api/v1/connectors/package.tgz',
           createdAt: '2026-07-05T00:00:00.000Z',
         },
       },
@@ -198,7 +198,7 @@ describe('resolveSpawnSpec', () => {
         remoteRoot: '/srv/workspace',
         tokenHash: hashConnectorToken('mcpcon_deadbeef'),
         tokenPrefix: 'mcpcon_deadb',
-        packageName: '@toolplane/connector',
+        packageName: '/api/v1/connectors/package.tgz',
         createdAt: '2026-07-05T00:00:00.000Z',
       },
     });
@@ -214,7 +214,7 @@ describe('resolveSpawnSpec', () => {
     );
 
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      'npx -y @toolplane/connector connect --server https://app.example.com --token mcpcon_deadbeef --root /srv/workspace',
+      'npx -y --package https://app.example.com/api/v1/connectors/package.tgz connector connect --server https://app.example.com --token mcpcon_deadbeef --root /srv/workspace',
     );
   });
 
@@ -236,7 +236,27 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector).not.toBeNull();
     expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
-      'npx -y @toolplane/connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
+      'npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
+    );
+  });
+
+  it('normalizes the unpublished registry connector package to the hosted tarball', () => {
+    const connector = connectorFromConfig({
+      connector: {
+        provider: 'websocket',
+        protocolVersion: '2026-07-connector-ws',
+        serverUrl: 'http://localhost:3002',
+        remoteRoot: '~/toolplane-sandbox',
+        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
+        tokenPrefix: 'mcpcon_deadb',
+        packageName: '@toolplane/connector',
+        createdAt: '2026-07-05T00:00:00.000Z',
+      },
+    });
+
+    expect(connector).not.toBeNull();
+    expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
+      'npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
     );
   });
 });
