@@ -5,6 +5,10 @@ import { useFormStatus } from 'react-dom';
 import { KeyRound, Copy, Check, Trash2 } from 'lucide-react';
 import { createTokenAction, revokeTokenAction } from '@/lib/auth/actions';
 import type { TokenState } from '@/lib/auth/actions';
+import {
+  DashboardEmptyState,
+  DashboardPanel,
+} from './DashboardUI';
 
 export type TokenView = {
   id: string;
@@ -20,7 +24,7 @@ function CreateButton() {
     <button
       type="submit"
       disabled={pending}
-      className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+      className="ui-button-primary disabled:opacity-60"
     >
       {pending ? 'Creating…' : 'Create token'}
     </button>
@@ -35,7 +39,7 @@ function NewTokenReveal({ token }: { token: string }) {
         Copy this token now — you won’t be able to see it again.
       </p>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1.5 font-mono text-sm text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+        <code className="min-w-0 flex-1 truncate rounded bg-card px-2 py-1.5 font-mono text-sm text-foreground">
           {token}
         </code>
         <button
@@ -46,7 +50,7 @@ function NewTokenReveal({ token }: { token: string }) {
               setTimeout(() => setCopied(false), 1500);
             });
           }}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          className="ui-button-secondary ui-button-sm shrink-0"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? 'Copied' : 'Copy'}
@@ -69,18 +73,11 @@ export function TokenManager({
   );
 
   return (
-    <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <div className="border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          API Tokens
-        </h2>
-        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          Personal Bearer tokens for the MCP gateway and JSON API. Scoped to your
-          account, not this workspace.
-        </p>
-      </div>
-
-      <div className="space-y-4 px-5 py-5">
+    <DashboardPanel
+      title="API Tokens"
+      description="Personal Bearer tokens for the MCP gateway and JSON API. Scoped to your account, not this workspace."
+    >
+      <div className="space-y-4">
         {state.token ? <NewTokenReveal token={state.token} /> : null}
 
         <form action={formAction} className="flex flex-wrap items-end gap-2">
@@ -88,7 +85,7 @@ export function TokenManager({
           <div className="flex-1 space-y-1.5">
             <label
               htmlFor="token-name"
-              className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+              className="text-sm font-medium text-foreground"
             >
               Token name
             </label>
@@ -97,7 +94,7 @@ export function TokenManager({
               name="name"
               type="text"
               placeholder="e.g. My laptop"
-              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className="ui-input h-9"
             />
           </div>
           <CreateButton />
@@ -109,31 +106,28 @@ export function TokenManager({
         ) : null}
 
         {tokens.length === 0 ? (
-          <div className="flex flex-col items-center gap-1 rounded-md border border-dashed border-zinc-200 py-8 text-center dark:border-zinc-800">
-            <KeyRound className="h-5 w-5 text-muted-foreground" />
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              No tokens yet
-            </p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Create one above to connect an agent or CLI.
-            </p>
-          </div>
+          <DashboardEmptyState
+            icon={KeyRound}
+            title="No tokens yet"
+            description="Create one above to connect an agent or CLI."
+            className="min-h-48"
+          />
         ) : (
-          <ul className="divide-y divide-zinc-100 overflow-hidden rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
             {tokens.map((t) => (
               <li
                 key={t.id}
                 className="flex items-center justify-between gap-3 px-3.5 py-3"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
                     <KeyRound className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    <p className="truncate text-sm font-medium text-foreground">
                       {t.name || 'Untitled token'}
                     </p>
-                    <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                    <p className="truncate font-mono text-xs text-muted-foreground">
                       {t.prefix}… · {t.lastUsedAt ? `last used ${t.lastUsedAt}` : 'never used'} · created {t.createdAt}
                     </p>
                   </div>
@@ -153,6 +147,6 @@ export function TokenManager({
           </ul>
         )}
       </div>
-    </section>
+    </DashboardPanel>
   );
 }

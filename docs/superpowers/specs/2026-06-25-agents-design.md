@@ -177,21 +177,21 @@ model Message {
 
 ```
 [Client] AgentChat: useChat({ api:'/api/v1/agents/[id]/chat', body:{ conversationId } })
-   │  initialMessages 来自 getConversation(conversationId).messages → UIMessage[]
+   │  initialMessages from getConversation(conversationId).messages -> UIMessage[]
    ▼
 [POST /chat]
-   1. resolveRequestUser(req) → 校验 agent 属于该用户工作区（否则 401/403）
-   2. 取 body.messages 的最后一条 user message → 落库（role=user）
-   3. provider/model 缺失 → 返回 400 + 友好错误（聊天框显示）
+   1. resolveRequestUser(req) -> verify agent belongs to caller workspace (else 401/403)
+   2. Persist the last user message from body.messages (role=user)
+   3. Missing provider/model -> return 400 with chat-friendly error
    4. model = buildModel(provider, agent.model)
    5. tools = await buildToolSet(agent)
    6. system = assembleSystemPrompt(agent)
    7. streamText({ model, system,
         messages: convertToModelMessages(body.messages),
-        tools, stopWhen: stepCountIs(agent.maxSteps) })   // v5 step-count 停止条件
+        tools, stopWhen: stepCountIs(agent.maxSteps) })   // v5 step-count stop condition
    8. return result.toUIMessageStreamResponse({
         originalMessages: body.messages,
-        onFinish: ({ responseMessage }) => 落库(role=assistant, parts)
+        onFinish: ({ responseMessage }) => persist assistant message (role=assistant, parts)
       })
 ```
 

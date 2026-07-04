@@ -21,4 +21,33 @@ describe('buildInstalledSkillMarkdown', () => {
     const md = buildInstalledSkillMarkdown({ skillId: null, skill: null, slug: 'c', name: 'C', content: '# Hi', userInvocable: true, agentInvocable: true });
     expect(md).toContain('# Hi');
   });
+
+  it('preserves imported workspace SKILL.md when content already has frontmatter', () => {
+    const source = '---\nname: imported\n---\n\n# Imported';
+    const md = buildInstalledSkillMarkdown({
+      skillId: null,
+      skill: null,
+      slug: 'imported',
+      name: 'Imported',
+      content: source,
+      userInvocable: true,
+      agentInvocable: true,
+    });
+    expect(md).toBe(`${source}\n`);
+    expect(md.match(/^name: imported$/gm)).toHaveLength(1);
+  });
+
+  it('preserves catalog bundle SKILL.md content when present', () => {
+    const md = buildInstalledSkillMarkdown({
+      skillId: 's1',
+      skill: {
+        slug: 'pdf',
+        name: 'PDF',
+        description: 'x',
+        author: 'a',
+        content: '---\nname: pdf\n---\n\n# Real PDF Skill',
+      },
+    });
+    expect(md).toBe('---\nname: pdf\n---\n\n# Real PDF Skill');
+  });
 });

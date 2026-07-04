@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/ContentPage';
+import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Submit | MCP Market' };
+export const metadata: Metadata = { title: 'Submit | ToolPlane' };
 
 export default function Page() {
   return (
@@ -10,7 +10,7 @@ export default function Page() {
         Know a great MCP server that should be listed? Community submissions
         help others discover new tools and capabilities.
       </p>
-      <p>This is a demo clone; the submission form is not yet active.</p>
+      <p>The submission workflow is planned but not yet active.</p>
     </ContentPage>
   );
 }

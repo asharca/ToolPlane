@@ -166,7 +166,7 @@ export async function requireAdmin() {
 ### Shell
 
 - `src/app/admin/layout.tsx` (server) — `await requireAdmin()`; renders `AdminChrome`. `export const dynamic = 'force-dynamic'`.
-- `src/components/admin/AdminChrome.tsx` + `AdminSidebar.tsx` — mirror `DashboardChrome`/`DashboardSidebar` structure and zinc dark-mode token convention. Distinct **"Admin"** marker (e.g. red accent) and a "← Back to app" link to avoid confusing it with a workspace. Nav items: Overview (`/admin`), Users, Workspaces, MCP Market (`/admin/servers`), Skills Market (`/admin/skills`), Categories.
+- `src/components/admin/AdminChrome.tsx` + `AdminSidebar.tsx` — mirror `DashboardChrome`/`DashboardSidebar` structure and zinc dark-mode token convention. Distinct **"Admin"** marker (e.g. red accent) and a "← Back to app" link to avoid confusing it with a workspace. Nav items: Overview (`/admin`), Users, Workspaces, ToolPlane (`/admin/servers`), Skills Market (`/admin/skills`), Categories.
 - Console entry: pass `isAdmin` into the console chrome (`DashboardChrome`) and show an "Admin" link only when `role === 'admin'`. Minimal, non-invasive.
 
 ### Overview data (`src/lib/admin/overview.ts`)

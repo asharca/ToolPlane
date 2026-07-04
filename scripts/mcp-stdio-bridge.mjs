@@ -13,7 +13,7 @@ const NAME = process.env.MCP_NAME || 'mcp';
 const COMMAND = process.env.MCP_COMMAND;
 const ARGS = JSON.parse(process.env.MCP_ARGS || '[]');
 const PROTOCOL_VERSION = '2025-06-18';
-const CALL_TIMEOUT_MS = 30000;
+const CALL_TIMEOUT_MS = 70000;
 
 if (!COMMAND) {
   process.stderr.write('mcp-stdio-bridge: MCP_COMMAND is required\n');
@@ -86,7 +86,7 @@ async function handshake() {
   const reply = await callChild('initialize', {
     protocolVersion: PROTOCOL_VERSION,
     capabilities: {},
-    clientInfo: { name: 'mcp-market-bridge', version: '1.0.0' },
+    clientInfo: { name: 'toolplane-bridge', version: '1.0.0' },
   });
   initResult = reply.result ?? {};
   notifyChild('notifications/initialized', {});

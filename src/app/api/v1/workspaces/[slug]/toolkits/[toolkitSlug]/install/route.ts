@@ -1,6 +1,7 @@
 import { verifyApiToken } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
-import { buildPluginInstallScript } from '@/lib/plugin/install-script';
+import { originFromRequest } from '@/lib/http/origin';
+import { buildToolkitInstallScript } from '@/lib/plugin/install-script';
 
 export const runtime = 'nodejs';
 
@@ -38,11 +39,9 @@ export async function GET(
   });
   if (!toolkit) return text('# Toolkit not found.\n', 404);
 
-  const host = req.headers.get('host') ?? 'localhost:3000';
-  const proto = host.startsWith('localhost') ? 'http' : 'https';
-  const base = `${proto}://${host}`;
+  const base = originFromRequest(req);
 
-  const script = buildPluginInstallScript({
+  const script = buildToolkitInstallScript({
     base,
     workspaceSlug: slug,
     toolkitSlug,

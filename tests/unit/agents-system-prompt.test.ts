@@ -28,7 +28,9 @@ describe('assembleSystemPrompt', () => {
     const out = assembleSystemPrompt(null, [
       catalogSkill('s', 'Thing', ''),
     ]);
-    expect(out.startsWith('# Skill: Thing')).toBe(true);
+    expect(out).toContain('# Attached Skill Runtime');
+    expect(out).toContain('# Skill: Thing');
+    expect(out).not.toContain('You are helpful.');
   });
 
   it('returns an empty string when there is nothing to assemble', () => {

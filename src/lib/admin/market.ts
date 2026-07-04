@@ -12,7 +12,8 @@ export type ServerInput = {
 
 export type SkillInput = {
   slug: string; name: string; author: string | null; description: string | null;
-  iconUrl: string | null; score: number; categoryIds: string[];
+  iconUrl: string | null; githubSource: string | null; content?: string | null;
+  files?: Prisma.InputJsonValue; score: number; categoryIds: string[];
 };
 
 // ---- Servers ----
@@ -78,7 +79,7 @@ export async function listDirectorySkills({ page = 1, q = '' }: { page?: number;
   const [items, total] = await Promise.all([
     db.skill.findMany({
       where, orderBy: { updatedAt: 'desc' }, skip, take: PAGE_SIZE,
-      select: { id: true, slug: true, name: true, score: true, curated: true, _count: { select: { installs: true } } },
+      select: { id: true, slug: true, name: true, score: true, curated: true, files: true, _count: { select: { installs: true } } },
     }),
     db.skill.count({ where }),
   ]);
@@ -95,8 +96,20 @@ export function createDirectorySkill(input: SkillInput) {
 }
 
 export function updateDirectorySkill(id: string, input: Omit<SkillInput, 'slug'>) {
-  const { categoryIds, ...rest } = input;
-  return db.skill.update({ where: { id }, data: { ...rest, curated: true, categories: { set: categoryIds.map((cid) => ({ id: cid })) } } });
+  const { categoryIds } = input;
+  return db.skill.update({
+    where: { id },
+    data: {
+      name: input.name,
+      author: input.author,
+      description: input.description,
+      iconUrl: input.iconUrl,
+      githubSource: input.githubSource,
+      score: input.score,
+      curated: true,
+      categories: { set: categoryIds.map((cid) => ({ id: cid })) },
+    },
+  });
 }
 
 export async function deleteDirectorySkill(id: string) {

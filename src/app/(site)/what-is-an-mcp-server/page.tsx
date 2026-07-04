@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/ContentPage';
+import { ContentPage } from '@/components/theme/ContentPage';
 
 export const metadata: Metadata = {
-  title: 'What is an MCP Server? | MCP Market',
+  title: 'What is an MCP Server? | ToolPlane',
 };
 
 export default function Page() {

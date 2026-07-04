@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
+import { originFromHeaders } from '@/lib/http/origin';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -96,10 +97,7 @@ export default async function DeploymentInspectorPage({
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
   const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];
 
-  const h = await headers();
-  const host = h.get('host') ?? 'localhost:3000';
-  const proto = host.startsWith('localhost') ? 'http' : 'https';
-  const endpoint = `${proto}://${host}/api/v1/mcp/${deploymentId}/rpc`;
+  const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
 
   return (

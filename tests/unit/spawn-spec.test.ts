@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { MCP_NETWORK } from '@/lib/process/sandbox';
+import {
+  buildConnectorConfig,
+  connectorClientCommand,
+  connectorFromConfig,
+  hashConnectorToken,
+} from '@/lib/sandboxes/connector';
 
 describe('buildSpawnSpec — every custom source runs in a hardened container', () => {
   it('always uses `docker run` with the hardening flags', () => {
@@ -127,5 +133,110 @@ describe('resolveSpawnSpec', () => {
       expect(spec.args).toContain('none');
       expect(spec.args).not.toContain(MCP_NETWORK);
     }
+  });
+
+  it('sandbox source resolves to the sandbox MCP server spec', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Sandbox: Lab',
+      source: 'sandbox',
+      sourceRef: 'mcr.microsoft.com/devcontainers/javascript-node:24-bookworm',
+      installCfg: {
+        sandboxId: 'sb1',
+        kind: 'docker',
+        image: 'node:24-bookworm-slim',
+        volumeName: 'vol1',
+        network: 'none',
+      },
+    });
+    expect(spec).toEqual({
+      kind: 'sandbox',
+      name: 'Sandbox: Lab',
+      sandboxId: 'sb1',
+      sandboxKind: 'docker',
+      image: 'node:24-bookworm-slim',
+      volumeName: 'vol1',
+      network: 'none',
+    });
+  });
+
+  it('sandbox source supports WebSocket connector specs', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Sandbox: Remote lab',
+      source: 'sandbox',
+      sourceRef: 'connector://mcpcon_deadbeef/srv/workspace',
+      installCfg: {
+        sandboxId: 'sb-connector',
+        kind: 'connector',
+        network: 'isolated',
+        connector: {
+          provider: 'websocket',
+          protocolVersion: '2026-07-connector-ws',
+          serverUrl: 'https://app.example.com',
+          remoteRoot: '/srv/workspace',
+          tokenHash: hashConnectorToken('mcpcon_deadbeef'),
+          tokenPrefix: 'mcpcon_deadb',
+          packageName: '@toolplane/connector',
+          createdAt: '2026-07-05T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(spec).toEqual({
+      kind: 'sandbox',
+      name: 'Sandbox: Remote lab',
+      sandboxId: 'sb-connector',
+      sandboxKind: 'connector',
+      network: 'isolated',
+      connector: {
+        provider: 'websocket',
+        protocolVersion: '2026-07-connector-ws',
+        serverUrl: 'https://app.example.com',
+        remoteRoot: '/srv/workspace',
+        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
+        tokenPrefix: 'mcpcon_deadb',
+        packageName: '@toolplane/connector',
+        createdAt: '2026-07-05T00:00:00.000Z',
+      },
+    });
+  });
+
+  it('generates the one-command WebSocket connector command', () => {
+    const connector = buildConnectorConfig(
+      {
+        serverUrl: 'https://app.example.com/',
+        remoteRoot: '/srv/workspace',
+      },
+      'mcpcon_deadbeef',
+    );
+
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+      'npx -y @toolplane/connector connect --server https://app.example.com --token mcpcon_deadbeef --root /srv/workspace',
+    );
+  });
+
+  it('normalizes legacy connector package and root names', () => {
+    const legacyPackage = `@${['mcp', 'market'].join('-')}/connector`;
+    const legacyRoot = `~/${['mcp', 'market'].join('')}-sandbox`;
+    const connector = connectorFromConfig({
+      connector: {
+        provider: 'websocket',
+        protocolVersion: '2026-07-connector-ws',
+        serverUrl: 'http://localhost:3002',
+        remoteRoot: legacyRoot,
+        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
+        tokenPrefix: 'mcpcon_deadb',
+        packageName: legacyPackage,
+        createdAt: '2026-07-05T00:00:00.000Z',
+      },
+    });
+
+    expect(connector).not.toBeNull();
+    expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
+      'npx -y @toolplane/connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
+    );
   });
 });

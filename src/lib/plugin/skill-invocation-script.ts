@@ -1,3 +1,5 @@
+import { SITE } from '@/lib/site';
+
 type Options = {
   apiBase: string;
   workspaceSlug: string;
@@ -22,7 +24,7 @@ export function buildSkillInvocationScript({
   client,
 }: Options): string {
   return String.raw`#!/usr/bin/env bash
-# MCPmarket skill-invocation telemetry — Claude Code PostToolUse/PostToolUseFailure.
+# ${SITE.compactName} skill-invocation telemetry — Claude Code PostToolUse/PostToolUseFailure.
 set -eo pipefail
 
 API_BASE="${apiBase}"

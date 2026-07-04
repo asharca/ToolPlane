@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildToolkitInstallScript,
   buildPluginInstallScript,
   buildPluginUninstallScript,
   resolveClient,
@@ -11,9 +12,9 @@ function escapeRe(s: string): string {
 }
 
 // Pull a base64-embedded file body back out of the generated install script.
-function decodeFile(script: string, relPath: string): string {
+function decodeFile(script: string, relPath: string, rootVar = 'PLUGIN_DIR'): string {
   const re = new RegExp(
-    `printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d > "\\$PLUGIN_DIR/${escapeRe(relPath)}"`,
+    `printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d > "\\$${rootVar}/${escapeRe(relPath)}"`,
   );
   const m = re.exec(script);
   if (!m) throw new Error(`no embedded file at ${relPath}`);
@@ -23,10 +24,10 @@ function decodeFile(script: string, relPath: string): string {
 const BASE = 'http://localhost:3000';
 
 describe('resolveClient', () => {
-  it('accepts known clients and falls back to claude-code', () => {
-    expect(resolveClient('codex')).toBe('codex');
-    expect(resolveClient('claude')).toBe('claude');
+  it('accepts supported auto-sync clients and falls back to Claude Code', () => {
     expect(resolveClient('claude-code')).toBe('claude-code');
+    expect(resolveClient('codex')).toBe('codex');
+    expect(resolveClient('opencode')).toBe('opencode');
     expect(resolveClient('bogus')).toBe('claude-code');
     expect(resolveClient(null)).toBe('claude-code');
   });
@@ -42,15 +43,15 @@ describe('buildPluginInstallScript', () => {
   });
 
   it('scaffolds the per-toolkit plugin dir and registers via the claude CLI', () => {
-    expect(script).toContain('$HOME/.claude/plugins/mcpmarket-tk');
+    expect(script).toContain('$HOME/.claude/plugins/toolplane-tk');
     expect(script).toContain('claude plugin marketplace add "$PLUGIN_DIR"');
-    expect(script).toContain('claude plugin install mcpmarket-tk@mcpmarket-tk');
+    expect(script).toContain('claude plugin install toolplane-tk@toolplane-tk');
   });
 
   it('embeds a valid marketplace.json + plugin.json', () => {
     const mkt = JSON.parse(decodeFile(script, '.claude-plugin/marketplace.json'));
-    expect(mkt.name).toBe('mcpmarket-tk');
-    expect(mkt.plugins[0]).toMatchObject({ name: 'mcpmarket-tk', source: './' });
+    expect(mkt.name).toBe('toolplane-tk');
+    expect(mkt.plugins[0]).toMatchObject({ name: 'toolplane-tk', source: './' });
 
     const plugin = JSON.parse(decodeFile(script, '.claude-plugin/plugin.json'));
     expect(plugin.skills).toBe('./skills/');
@@ -59,7 +60,7 @@ describe('buildPluginInstallScript', () => {
 
   it('points .mcp.json at the toolkit gateway with a Bearer header (claude → headers)', () => {
     const mcp = JSON.parse(decodeFile(script, '.mcp.json'));
-    const server = mcp.mcpServers['mcpmarket-tk'];
+    const server = mcp.mcpServers['toolplane-tk'];
     expect(server.url).toBe(`${BASE}/api/v1/workspaces/ws/toolkits/tk/mcp`);
     expect(server.headers.Authorization).toBe('Bearer sk_user_TESTTOKEN');
     expect(server.http_headers).toBeUndefined();
@@ -88,27 +89,85 @@ describe('buildPluginInstallScript', () => {
     expect(inv).toContain('WORKSPACE="ws"');
   });
 
-  it('uses http_headers for the codex client', () => {
-    const codex = buildPluginInstallScript({
+  it('keeps buildPluginInstallScript Claude-only even if a client param is passed', () => {
+    const scriptForCodexParam = buildPluginInstallScript({
       base: BASE,
       workspaceSlug: 'ws',
       toolkitSlug: 'tk',
       token: 'sk_user_X',
       client: 'codex',
     });
-    const mcp = JSON.parse(decodeFile(codex, '.mcp.json'));
-    const server = mcp.mcpServers['mcpmarket-tk'];
-    expect(server.http_headers.Authorization).toBe('Bearer sk_user_X');
-    expect(server.headers).toBeUndefined();
+    const mcp = JSON.parse(decodeFile(scriptForCodexParam, '.mcp.json'));
+    const server = mcp.mcpServers['toolplane-tk'];
+    expect(server.headers.Authorization).toBe('Bearer sk_user_X');
+    expect(server.http_headers).toBeUndefined();
+  });
+});
+
+describe('buildToolkitInstallScript', () => {
+  it('dispatches Codex installs to config.toml + SessionStart skill sync', () => {
+    const script = buildToolkitInstallScript({
+      base: BASE,
+      workspaceSlug: 'ws',
+      toolkitSlug: 'tk',
+      token: 'sk_user_CODEX',
+      client: 'codex',
+    });
+
+    expect(script).toContain('config.toml');
+    expect(script).toContain('hooks.json');
+    expect(script).toContain('[mcp_servers.');
+    expect(script).not.toContain('claude plugin install');
+
+    const mcp = JSON.parse(decodeFile(script, '.mcp.json', 'BUNDLE_DIR'));
+    expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_CODEX');
+
+    const sync = decodeFile(script, 'shared/sync.sh', 'BUNDLE_DIR');
+    expect(sync).toContain('CLIENT="codex"');
+    expect(sync).toContain('DEFAULT_SKILLS_DIR="$HOME/.agents/skills"');
+    expect(sync).toContain('DEFAULT_SKILL_DIR_PREFIX="toolplane-tk-"');
+  });
+
+  it('dispatches opencode installs to opencode.json MCP + command config', () => {
+    const script = buildToolkitInstallScript({
+      base: BASE,
+      workspaceSlug: 'ws',
+      toolkitSlug: 'tk',
+      token: 'sk_user_OC',
+      client: 'opencode',
+    });
+
+    expect(script).toContain('opencode.json');
+    expect(script).toContain('cfg.mcp[server]');
+    expect(script).toContain('cfg.command[server]');
+    expect(script).toContain('oauth: false');
+    expect(script).not.toContain('claude plugin install');
+
+    const sync = decodeFile(script, 'shared/sync.sh', 'BUNDLE_DIR');
+    expect(sync).toContain('CLIENT="opencode"');
+    expect(sync).toContain('DEFAULT_SKILLS_DIR="$PLUGIN_ROOT/skills"');
+  });
+
+  it('falls back to Claude Code for unknown clients', () => {
+    const script = buildToolkitInstallScript({
+      base: BASE,
+      workspaceSlug: 'ws',
+      toolkitSlug: 'tk',
+      token: 'sk_user_X',
+      client: 'bogus',
+    });
+    expect(script).toContain('claude plugin install toolplane-tk@toolplane-tk');
   });
 });
 
 describe('buildPluginUninstallScript', () => {
   const script = buildPluginUninstallScript({ toolkitSlug: 'tk' });
   it('unregisters the plugin + removes its dir', () => {
-    expect(script).toContain('$HOME/.claude/plugins/mcpmarket-tk');
-    expect(script).toContain('claude plugin uninstall mcpmarket-tk@mcpmarket-tk');
-    expect(script).toContain('claude plugin marketplace remove mcpmarket-tk');
+    expect(script).toContain('$HOME/.claude/plugins/toolplane-tk');
+    expect(script).toContain('$HOME/.codex');
+    expect(script).toContain('$HOME/.config/opencode');
+    expect(script).toContain('claude plugin uninstall toolplane-tk@toolplane-tk');
+    expect(script).toContain('claude plugin marketplace remove toolplane-tk');
     expect(script).toContain('rm -rf "$PLUGIN_DIR"');
   });
 });

@@ -1,20 +1,15 @@
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/ContentPage';
+import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Privacy | MCP Market' };
+export const metadata: Metadata = { title: 'Privacy | ToolPlane' };
 
 export default function Page() {
   return (
     <ContentPage title="Privacy Policy">
       <p>
-        This site is a personal, non-commercial clone of MCP Market built for
-        learning purposes. It is not affiliated with, endorsed by, or connected
-        to mcpmarket.com.
-      </p>
-      <p>
-        The application does not collect personal data, set advertising
-        cookies, or use third-party tracking. Catalog data shown here was
-        gathered for local development and demonstration only.
+        ToolPlane stores the account, workspace, runtime, and observability data
+        needed to operate agent toolchains. It does not use advertising cookies
+        or third-party tracking.
       </p>
     </ContentPage>
   );

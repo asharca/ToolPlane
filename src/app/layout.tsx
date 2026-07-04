@@ -3,6 +3,7 @@ import { Inter, Geist_Mono } from 'next/font/google';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale } from 'next-intl/server';
 import './globals.css';
+import 'streamdown/styles.css';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
 
 const inter = Inter({
@@ -16,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Discover Top MCP Servers | MCP Market',
+  title: 'Discover Top MCP Servers | ToolPlane',
   description: 'Find the best MCP servers, agent skills, and MCP clients.',
 };
 

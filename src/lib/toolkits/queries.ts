@@ -99,3 +99,92 @@ export async function getToolkitComposables(
   ]);
   return { deployments, skills };
 }
+
+const TOOLKIT_MARKET_PAGE_SIZE = 20;
+
+export type PublicToolkitBrowseItem = {
+  id: string;
+  name: string;
+  slug: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  toolCount: number;
+  serverCount: number;
+  skillCount: number;
+  customServerCount: number;
+  serverNames: string[];
+  skillNames: string[];
+  createdAt: Date;
+};
+
+export async function getBrowseToolkits(workspaceId: string, page: number, q = '') {
+  const term = q.trim();
+  const skip = (Math.max(1, page) - 1) * TOOLKIT_MARKET_PAGE_SIZE;
+  const where = {
+    visibility: 'public',
+    enabled: true,
+    workspaceId: { not: workspaceId },
+    ...(term
+      ? {
+          OR: [
+            { name: { contains: term, mode: 'insensitive' as const } },
+            { slug: { contains: term, mode: 'insensitive' as const } },
+            { workspace: { name: { contains: term, mode: 'insensitive' as const } } },
+            { workspace: { slug: { contains: term, mode: 'insensitive' as const } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, rows] = await Promise.all([
+    db.toolkit.count({ where }),
+    db.toolkit.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      skip,
+      take: TOOLKIT_MARKET_PAGE_SIZE,
+      include: {
+        workspace: { select: { name: true, slug: true } },
+        servers: {
+          include: {
+            deployment: {
+              include: { server: { select: { name: true } } },
+            },
+          },
+        },
+        skills: {
+          include: {
+            installedSkill: {
+              include: { skill: { select: { name: true } } },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const items: PublicToolkitBrowseItem[] = rows.map((t) => {
+    const serverNames = t.servers
+      .map((s) => s.deployment.server?.name ?? s.deployment.name ?? s.deployment.sourceRef)
+      .filter((name): name is string => Boolean(name));
+    const skillNames = t.skills
+      .map((s) => s.installedSkill.skill?.name ?? s.installedSkill.name)
+      .filter((name): name is string => Boolean(name));
+    return {
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+      workspaceName: t.workspace.name,
+      workspaceSlug: t.workspace.slug,
+      serverCount: t.servers.length,
+      skillCount: t.skills.length,
+      customServerCount: t.servers.filter((s) => !s.deployment.serverId).length,
+      toolCount: t.servers.length + t.skills.length,
+      serverNames: serverNames.slice(0, 4),
+      skillNames: skillNames.slice(0, 4),
+      createdAt: t.createdAt,
+    };
+  });
+
+  return { items, total, pageSize: TOOLKIT_MARKET_PAGE_SIZE };
+}

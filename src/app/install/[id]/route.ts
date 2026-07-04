@@ -1,5 +1,6 @@
 import { issueInstallToken } from '@/lib/toolkits/install-link';
-import { buildPluginInstallScript, resolveClient } from '@/lib/plugin/install-script';
+import { buildToolkitInstallScript, resolveClient } from '@/lib/plugin/install-script';
+import { originFromRequest } from '@/lib/http/origin';
 
 export const runtime = 'nodejs';
 
@@ -20,11 +21,8 @@ export async function GET(
   const issued = await issueInstallToken(id, client);
   if (!issued) return text('# Install link not found or expired.\n', 404);
 
-  const host = req.headers.get('host') ?? 'localhost:3000';
-  const proto = host.startsWith('localhost') ? 'http' : 'https';
-
-  const script = buildPluginInstallScript({
-    base: `${proto}://${host}`,
+  const script = buildToolkitInstallScript({
+    base: originFromRequest(req),
     workspaceSlug: issued.workspaceSlug,
     toolkitSlug: issued.toolkitSlug,
     token: issued.token,

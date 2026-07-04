@@ -1,13 +1,19 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from 'ai';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc, type McpTool } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
 
+function shortHash(input: string, length: number): string {
+  return createHash('sha256').update(input).digest('hex').slice(0, length);
+}
+
 export function toolKey(deploymentId: string, toolName: string): string {
-  const dep = deploymentId.slice(0, 8).replace(/[^A-Za-z0-9_-]/g, '');
-  const name = toolName.replace(/[^A-Za-z0-9_-]/g, '_');
-  return `${dep}__${name}`;
+  const dep = shortHash(deploymentId, 12);
+  const name = toolName.replace(/[^A-Za-z0-9_-]/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'tool';
+  const toolHash = shortHash(`${deploymentId}:${toolName}`, 8);
+  return `d_${dep}__${name}_${toolHash}`;
 }
 
 type LogEntry = {

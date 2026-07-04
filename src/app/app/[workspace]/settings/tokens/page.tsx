@@ -5,6 +5,7 @@ import { listApiTokens } from '@/lib/auth/tokens';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import { TokenManager, type TokenView } from '@/components/dashboard/TokenManager';
+import { DashboardPage } from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,10 +36,10 @@ export default async function TokensPage({
   return (
     <>
       <DashboardHeader title="Settings" />
-      <div className="max-w-2xl space-y-8 px-8 py-6">
+      <DashboardPage className="max-w-2xl">
         <SettingsTabs slug={slug} />
         <TokenManager tokens={view} workspaceSlug={slug} />
-      </div>
+      </DashboardPage>
     </>
   );
 }

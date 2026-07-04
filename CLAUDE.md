@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A personal 1:1 clone of mcpmarket.com. Three distinct zones share one Next.js app:
+ToolPlane is a self-hosted control plane for agent tools, MCP servers, skills,
+toolkits, and sandboxes. Three distinct zones share one Next.js app:
 
 1. **Public directory site** — `src/app/(site)/**` — browse/search MCP servers, clients, and skills. No auth, no personal data. Server Components read Prisma directly via `src/lib/queries/*`.
 2. **Console / Hub** — `src/app/app/[workspace]/**` — authenticated workspace. Deploying an MCP server **spawns a real Node subprocess** running a JSON-RPC server; the console proxies tool calls to it and records observability.
@@ -33,7 +34,7 @@ pnpm db:generate               # prisma generate
 pnpm db:studio                 # prisma studio
 ```
 
-Database is Postgres via `docker-compose.yml` (port **5433**, user/pass/db all `mcp`/`mcp`/`mcpmarket`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
+Database is Postgres via `docker-compose.yml` (port **5433**, user/pass/db all `mcp`/`mcp`/`toolplane`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
 
 Seed a test account: run `scripts/smoke-seed.ts` with tsx (`pnpm tsx scripts/smoke-seed.ts`) → `smoke@example.com` / `password123`. Scrapers in `scraper/*.ts` and the seed are standalone tsx scripts (they `import 'dotenv/config'` and use the `@/` path alias).
 

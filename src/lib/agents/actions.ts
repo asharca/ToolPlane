@@ -132,6 +132,7 @@ export async function updateAgentAction(
     deploymentIds: formData.getAll('deploymentId').map(String),
     installedSkillIds: formData.getAll('installedSkillId').map(String),
     toolkitIds: formData.getAll('toolkitId').map(String),
+    sandboxIds: formData.getAll('sandboxId').map(String),
     subAgentIds: formData.getAll('subAgentId').map(String),
   });
   revalidatePath(`/app/${slug}/agents/${agentId}`);

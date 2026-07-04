@@ -5,6 +5,12 @@ import { getObservability } from '@/lib/observability/log';
 import { getPluginTelemetry } from '@/lib/observability/plugin-telemetry';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
+import {
+  DashboardEmptyState,
+  DashboardPage,
+  DashboardPanel,
+  DashboardTable,
+} from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,19 +31,19 @@ function Stat({
   sub: string;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+    <div className="ui-panel p-5">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
       <div className="mt-1.5 flex items-baseline gap-1">
-        <span className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+        <span className="text-3xl font-bold tracking-tight text-foreground">
           {value}
         </span>
         {unit ? (
           <span className="text-sm text-muted-foreground">{unit}</span>
         ) : null}
       </div>
-      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{sub}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
     </div>
   );
 }
@@ -73,10 +79,10 @@ export default async function ObservabilityPage({
   return (
     <>
       <DashboardHeader title="Observability" />
-      <div className="space-y-6 px-8 py-6">
+      <DashboardPage>
         <TabBar tabs={TABS} current={current} basePath={base} />
 
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-muted-foreground">
           Tool calls, latency, and errors across every server. Aggregated over
           the last 24 hours.
         </p>
@@ -109,12 +115,10 @@ export default async function ObservabilityPage({
               />
             </div>
 
-            <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
+            <DashboardPanel title="Requests per hour">
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Requests per hour
-                </h3>
-                <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+                <div />
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm bg-sky-500" />
                     requests
@@ -126,10 +130,10 @@ export default async function ObservabilityPage({
                 </div>
               </div>
               {o.total === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">
-                  No traffic yet. Call a deployment&apos;s gateway endpoint to see
-                  activity here.
-                </p>
+                <DashboardEmptyState
+                  description="No traffic yet. Call a deployment's gateway endpoint to see activity here."
+                  className="min-h-48"
+                />
               ) : (
                 <div className="flex h-40 items-end gap-1">
                   {o.series.map((s, i) => {
@@ -165,60 +169,59 @@ export default async function ObservabilityPage({
                   })}
                 </div>
               )}
-            </div>
+            </DashboardPanel>
           </>
         ) : current === 'audit' ? (
-          <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <DashboardPanel title="Audit log" padded={false}>
             {o.recent.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">
-                No requests logged in the last 24 hours.
-              </p>
+              <DashboardEmptyState
+                description="No requests logged in the last 24 hours."
+                className="min-h-48 rounded-none border-0"
+              />
             ) : (
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Method</th>
-                    <th className="px-4 py-3 font-medium">Path</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Duration</th>
-                    <th className="px-4 py-3 font-medium">Time</th>
+              <DashboardTable
+                panel={false}
+                headers={[
+                  { label: 'Method' },
+                  { label: 'Path' },
+                  { label: 'Status' },
+                  { label: 'Duration' },
+                  { label: 'Time' },
+                ]}
+              >
+                {o.recent.map((l) => (
+                  <tr key={l.id}>
+                    <td className="px-4 py-2.5 font-mono text-xs text-foreground">
+                      {l.method}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-foreground">
+                      {l.path}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span
+                        className={
+                          l.statusCode >= 400
+                            ? 'text-red-600 dark:text-red-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }
+                      >
+                        {l.statusCode}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">
+                      {l.durationMs}ms
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">
+                      {l.createdAt.toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {o.recent.map((l) => (
-                    <tr key={l.id}>
-                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-300">
-                        {l.method}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-300">
-                        {l.path}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={
-                            l.statusCode >= 400
-                              ? 'text-red-600 dark:text-red-400'
-                              : 'text-emerald-600 dark:text-emerald-400'
-                          }
-                        >
-                          {l.statusCode}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                        {l.durationMs}ms
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                        {l.createdAt.toLocaleTimeString('en-US', {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                ))}
+              </DashboardTable>
             )}
-          </div>
+          </DashboardPanel>
         ) : pt ? (
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -244,118 +247,109 @@ export default async function ObservabilityPage({
               />
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <div className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
-                Recent skill invocations
-              </div>
+            <DashboardPanel title="Recent skill invocations" padded={false}>
               {pt.skill.recent.length === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">
-                  No skill invocations yet. Install a toolkit as an auto-sync
-                  plugin and run one of its skills.
-                </p>
+                <DashboardEmptyState
+                  description="No skill invocations yet. Install a toolkit as an auto-sync plugin and run one of its skills."
+                  className="min-h-48 rounded-none border-0"
+                />
               ) : (
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Skill</th>
-                      <th className="px-4 py-3 font-medium">Source</th>
-                      <th className="px-4 py-3 font-medium">Outcome</th>
-                      <th className="px-4 py-3 font-medium">Time</th>
+                <DashboardTable
+                  panel={false}
+                  headers={[
+                    { label: 'Skill' },
+                    { label: 'Source' },
+                    { label: 'Outcome' },
+                    { label: 'Time' },
+                  ]}
+                >
+                  {pt.skill.recent.map((s) => (
+                    <tr key={s.id}>
+                      <td className="px-4 py-2.5 font-mono text-xs text-foreground">
+                        {s.skillSlug}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.source}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={
+                            s.outcome === 'error'
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-emerald-600 dark:text-emerald-400'
+                          }
+                        >
+                          {s.outcome}
+                          {s.errorClass ? ` · ${s.errorClass}` : ''}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.createdAt.toLocaleTimeString('en-US', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {pt.skill.recent.map((s) => (
-                      <tr key={s.id}>
-                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-300">
-                          {s.skillSlug}
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.source}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={
-                              s.outcome === 'error'
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-emerald-600 dark:text-emerald-400'
-                            }
-                          >
-                            {s.outcome}
-                            {s.errorClass ? ` · ${s.errorClass}` : ''}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.createdAt.toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </DashboardTable>
               )}
-            </div>
+            </DashboardPanel>
 
-            <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <div className="border-b border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
-                Recent skill syncs
-              </div>
+            <DashboardPanel title="Recent skill syncs" padded={false}>
               {pt.sync.recent.length === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">
-                  No syncs recorded yet.
-                </p>
+                <DashboardEmptyState
+                  description="No syncs recorded yet."
+                  className="min-h-48 rounded-none border-0"
+                />
               ) : (
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Outcome</th>
-                      <th className="px-4 py-3 font-medium">Added</th>
-                      <th className="px-4 py-3 font-medium">Updated</th>
-                      <th className="px-4 py-3 font-medium">Removed</th>
-                      <th className="px-4 py-3 font-medium">Time</th>
+                <DashboardTable
+                  panel={false}
+                  headers={[
+                    { label: 'Outcome' },
+                    { label: 'Added' },
+                    { label: 'Updated' },
+                    { label: 'Removed' },
+                    { label: 'Time' },
+                  ]}
+                >
+                  {pt.sync.recent.map((s) => (
+                    <tr key={s.id}>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={
+                            s.outcome === 'failure'
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-emerald-600 dark:text-emerald-400'
+                          }
+                        >
+                          {s.outcome === 'failure'
+                            ? `failure${s.reason ? ` · ${s.reason}` : ''}`
+                            : 'applied'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.added}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.updated}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.removed}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {s.createdAt.toLocaleTimeString('en-US', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                    {pt.sync.recent.map((s) => (
-                      <tr key={s.id}>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={
-                              s.outcome === 'failure'
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-emerald-600 dark:text-emerald-400'
-                            }
-                          >
-                            {s.outcome === 'failure'
-                              ? `failure${s.reason ? ` · ${s.reason}` : ''}`
-                              : 'applied'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.added}
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.updated}
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.removed}
-                        </td>
-                        <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-400">
-                          {s.createdAt.toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </DashboardTable>
               )}
-            </div>
+            </DashboardPanel>
           </div>
         ) : null}
-      </div>
+      </DashboardPage>
     </>
   );
 }

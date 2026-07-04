@@ -6,7 +6,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { safeRelativePath } from '@/lib/auth/safe-redirect';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Sign up | MCP Market' };
+export const metadata: Metadata = { title: 'Sign up | ToolPlane' };
 
 export default async function Page({
   searchParams,

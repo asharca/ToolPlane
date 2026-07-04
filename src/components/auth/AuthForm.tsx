@@ -15,7 +15,7 @@ function SubmitButton({ label }: { label: string }) {
     <button
       type="submit"
       disabled={pending}
-      className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+      className="ui-button-primary h-10 w-full"
     >
       {pending ? t('pending') : label}
     </button>
@@ -38,64 +38,66 @@ export function AuthForm({
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
-        {isSignup ? t('signupTitle') : t('loginTitle')}
-      </h1>
-      <p className="mb-6 text-sm text-muted-foreground">
-        {isSignup ? t('signupSubtitle') : t('loginSubtitle')}
-      </p>
+      <div className="ui-panel p-5 sm:p-6">
+        <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
+          {isSignup ? t('signupTitle') : t('loginTitle')}
+        </h1>
+        <p className="mb-6 text-sm text-muted-foreground">
+          {isSignup ? t('signupSubtitle') : t('loginSubtitle')}
+        </p>
 
-      <form action={formAction} className="space-y-4">
-        {next ? <input type="hidden" name="next" value={next} /> : null}
-        {isSignup && (
+        <form action={formAction} className="space-y-4">
+          {next ? <input type="hidden" name="next" value={next} /> : null}
+          {isSignup && (
+            <div className="space-y-1.5">
+              <label htmlFor="name" className="text-sm font-medium text-foreground">
+                {t('name')}
+              </label>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                autoComplete="name"
+                className="ui-input"
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label htmlFor="name" className="text-sm font-medium text-foreground">
-              {t('name')}
+            <label htmlFor="email" className="text-sm font-medium text-foreground">
+              {t('email')}
             </label>
             <input
-              id="name"
-              name="name"
-              type="text"
-              autoComplete="name"
-              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+              id="email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              className="ui-input"
             />
           </div>
-        )}
 
-        <div className="space-y-1.5">
-          <label htmlFor="email" className="text-sm font-medium text-foreground">
-            {t('email')}
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            required
-            autoComplete="email"
-            className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
+          <div className="space-y-1.5">
+            <label htmlFor="password" className="text-sm font-medium text-foreground">
+              {t('password')}
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              required
+              autoComplete={isSignup ? 'new-password' : 'current-password'}
+              className="ui-input"
+            />
+          </div>
 
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="text-sm font-medium text-foreground">
-            {t('password')}
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            required
-            autoComplete={isSignup ? 'new-password' : 'current-password'}
-            className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
+          {state.error ? (
+            <p className="text-sm text-destructive">{state.error}</p>
+          ) : null}
 
-        {state.error ? (
-          <p className="text-sm text-destructive">{state.error}</p>
-        ) : null}
-
-        <SubmitButton label={isSignup ? t('createAccount') : t('signIn')} />
-      </form>
+          <SubmitButton label={isSignup ? t('createAccount') : t('signIn')} />
+        </form>
+      </div>
 
       <p className="mt-6 text-center text-sm text-muted-foreground">
         {isSignup ? (

@@ -90,9 +90,9 @@
   },
   "auth": {
     "loginTitle": "欢迎回来",
-    "loginSubtitle": "登录以管理您的 MCP Hub。",
+    "loginSubtitle": "登录以管理您的 ToolPlane 工作区。",
     "signupTitle": "创建账号",
-    "signupSubtitle": "注册以构建您的 MCP Hub。",
+    "signupSubtitle": "注册以构建您的 ToolPlane 工作区。",
     "name": "姓名",
     "email": "邮箱",
     "password": "密码",
@@ -114,7 +114,7 @@
     "tryAgain": "重试"
   },
   "metadata": {
-    "siteTitle": "发现顶级 MCP 服务器 | MCP Market",
+    "siteTitle": "发现顶级 MCP 服务器 | ToolPlane",
     "siteDescription": "发现最优秀的 MCP 服务器、智能技能和 MCP 客户端。"
   },
   "console": {
@@ -126,6 +126,7 @@
       "mcpServers": "MCP 服务器",
       "skills": "技能",
       "toolkits": "工具包",
+      "sandboxes": "沙箱",
       "observability": "可观测性",
       "members": "成员",
       "settings": "设置",
@@ -165,6 +166,7 @@
       "timezone": "您的时区",
       "timezoneDesc": "您给智能体的时间将按此时区解析，由服务器自动检测。",
       "timezoneScheduled": "定时任务的时区。",
+      "saveChanges": "保存更改",
       "dangerZone": "危险操作",
       "deleteOrg": "删除组织",
       "deleteOrgDesc": "永久删除此组织、所有成员及其全部内容，此操作不可撤销。",

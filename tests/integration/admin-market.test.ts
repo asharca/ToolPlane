@@ -36,7 +36,7 @@ describe('directory server mutations', () => {
 
 describe('directory skill mutations', () => {
   it('creates curated and refuses delete with installs', async () => {
-    const sk = await createDirectorySkill({ slug: `mk-${stamp}`, name: 'MK', author: null, description: null, iconUrl: null, score: 3, categoryIds: [] });
+    const sk = await createDirectorySkill({ slug: `mk-${stamp}`, name: 'MK', author: null, description: null, iconUrl: null, githubSource: null, score: 3, categoryIds: [] });
     expect(sk.curated).toBe(true);
     const u = await db.user.create({ data: { email: `mk-${stamp}@t.dev`, passwordHash: 'x' } });
     const ws = await db.workspace.create({ data: { slug: `mk-${stamp}`, name: 'w', ownerId: u.id } });

@@ -90,9 +90,9 @@
   },
   "auth": {
     "loginTitle": "Welcome back",
-    "loginSubtitle": "Sign in to manage your MCP Hub.",
+    "loginSubtitle": "Sign in to manage your ToolPlane workspace.",
     "signupTitle": "Create your account",
-    "signupSubtitle": "Sign up to build your MCP Hub.",
+    "signupSubtitle": "Sign up to build your ToolPlane workspace.",
     "name": "Name",
     "email": "Email",
     "password": "Password",
@@ -114,7 +114,7 @@
     "tryAgain": "Try again"
   },
   "metadata": {
-    "siteTitle": "Discover Top MCP Servers | MCP Market",
+    "siteTitle": "Discover Top MCP Servers | ToolPlane",
     "siteDescription": "Find the best MCP servers, agent skills, and MCP clients."
   },
   "console": {
@@ -126,6 +126,7 @@
       "mcpServers": "MCP Servers",
       "skills": "Skills",
       "toolkits": "Toolkits",
+      "sandboxes": "Sandboxes",
       "observability": "Observability",
       "members": "Members",
       "settings": "Settings",
@@ -165,6 +166,7 @@
       "timezone": "Your timezone",
       "timezoneDesc": "Times you give your agent are interpreted in this zone. Detected from the server automatically.",
       "timezoneScheduled": "Timezone for scheduled tasks.",
+      "saveChanges": "Save changes",
       "dangerZone": "Danger zone",
       "deleteOrg": "Delete organization",
       "deleteOrgDesc": "Permanently delete this organization, all its members, and everything it contains. This can't be undone.",

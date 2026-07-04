@@ -1,6 +1,6 @@
-# MCP Market 克隆 — 架构文档
+# ToolPlane — 架构文档
 
-> 个人学习用途的 mcpmarket.com 1:1 克隆。包含一个**公开目录站**、一个**带真实 MCP 运行时的控制台(Hub)**，以及一套 **JSON API**。
+> ToolPlane 是一个自托管 Agent 工具控制面，包含一个**公开目录站**、一个**带真实 MCP/Agent/Sandbox 运行时的控制台**，以及一套 **JSON API**。
 
 ---
 
@@ -13,6 +13,10 @@
 3. **JSON API** `api/v1/*` —— MCP JSON-RPC 网关、技能下载、Toolkit/工作区 manifest 导出。
 
 核心特点：控制台里的 MCP 不是“假数据”——每次部署都会 `spawn` 一个真实的 Node 子进程跑 JSON-RPC server，网关把请求代理过去并记录可观测性。
+
+Toolkit 同步到 Claude Code、Codex、opencode 的安装脚本、MCP tools 聚合、skills baseline、token 轮换和本地文件布局见 [`docs/TOOLKIT_SYNC.md`](./TOOLKIT_SYNC.md)。
+
+Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill script 执行路径见 [`docs/SANDBOXES.md`](./SANDBOXES.md)。
 
 ---
 
@@ -39,21 +43,21 @@
 
 ```
                           ┌─────────────────────────────────────────┐
-   浏览器                  │            Next.js (App Router)          │
+   Browser                │            Next.js (App Router)          │
    ──────                  │                                         │
-   公开访客  ───────────►  │  (site)  公开目录站  (Server Components) │
+   Public visitor ──────► │  (site)  Public directory (RSC)          │
                           │     └─ queries/*  ──► Prisma ──► Postgres│
-   已登录用户 ──────────►  │  app/[workspace]  控制台 (会话 Cookie)   │
-                          │     └─ workspace/* toolkits/* 等 actions │
-   Agent / CLI ─────────► │  api/v1/*  JSON API (Bearer Token/会话)  │
-                          │     └─ /mcp/[id]/rpc  网关代理           │
+   Signed-in user ──────► │  app/[workspace]  Console (session)      │
+                          │     └─ workspace/* toolkits/* actions    │
+   Agent / CLI ─────────► │  api/v1/*  JSON API (Bearer/session)     │
+                          │     └─ /mcp/[id]/rpc  Gateway proxy      │
                           └──────────────┬──────────────────────────┘
                                          │ HTTP 127.0.0.1:<port>
                                          ▼
                           ┌─────────────────────────────────────────┐
-                          │  MCP 子进程（每个 Deployment 一个）       │
+                          │  MCP child process (one per Deployment) │
                           │  scripts/mcp-server.mjs (JSON-RPC 2.0)   │
-                          │  由 lib/process/supervisor.ts 管理        │
+                          │  Managed by lib/process/supervisor.ts    │
                           └─────────────────────────────────────────┘
 ```
 
@@ -71,26 +75,26 @@
 ```
 src/
 ├─ app/
-│  ├─ (site)/            公开目录站
-│  │  ├─ page.tsx                首页 (HomeView)
-│  │  ├─ server/ … /[slug]       MCP 服务器 列表/分页/详情
-│  │  ├─ client/ … /[slug]       MCP 客户端 列表/详情
-│  │  ├─ tools/skills/ …         技能 列表/详情/排行榜
-│  │  ├─ categories/ … /[slug]   分类
+│  ├─ (site)/            Public directory
+│  │  ├─ page.tsx                Home (HomeView)
+│  │  ├─ server/ ... /[slug]     MCP server list/pages/detail
+│  │  ├─ client/ ... /[slug]     MCP client list/detail
+│  │  ├─ tools/skills/ ...       Skill list/detail/leaderboard
+│  │  ├─ categories/ ... /[slug] Category pages
 │  │  ├─ leaderboards, daily, daily/skills, search
-│  │  ├─ hub, sell, submit       Hub 落地页(纯公开) / 卖家 / 提交
-│  │  └─ privacy, terms, news, what-is-an-mcp-server  静态页
-│  ├─ app/               控制台命名空间 (URL /app)
-│  │  ├─ page.tsx                /app → 默认工作区 → /app/<slug>/mcp
-│  │  ├─ (auth)/login, signup    /app/login、/app/signup（居中 auth 布局）
-│  │  └─ [workspace]/   工作区控制台 (见 §8；其 settings/tokens = API Token 管理)
+│  │  ├─ hub, sell, submit       Public hub/seller/submit pages
+│  │  └─ privacy, terms, news, what-is-an-mcp-server  Static pages
+│  ├─ app/               Console namespace (URL /app)
+│  │  ├─ page.tsx                /app -> default workspace -> /app/<slug>/mcp
+│  │  ├─ (auth)/login, signup    /app/login, /app/signup (centered auth layout)
+│  │  └─ [workspace]/   Workspace console (see sec. 8; settings/tokens = API tokens)
 │  │  ├─ layout.tsx              DashboardChrome
 │  │  ├─ mcp, mcp/new, mcp/[deploymentId]
 │  │  ├─ skills, skills/new, skills/[installId]
 │  │  ├─ toolkits, toolkits/[slug]
 │  │  ├─ observability, members, settings
-│  │  ├─ seller → seller/overview, agents
-│  └─ api/v1/            JSON API (见 §9)
+│  │  ├─ seller -> seller/overview, agents
+│  └─ api/v1/            JSON API (see sec. 9)
 ├─ components/
 │  ├─ layout/   Header, Footer, AnnouncementBar, Logo
 │  ├─ home/     HomeView, RotatingHeadline, FaqSection
@@ -99,23 +103,23 @@ src/
 │  │             ConnectDialog, ReadyToConnectBanner, ToolPlayground,
 │  │             ToolkitsBrowser, FeatureGateCard, WorkspaceSwitcher,
 │  │             StatusBadge, CopyButton, BrowseGrid, DashboardLogo
-│  ├─ server/   ServerList     (dashboard/ 内含 TokenManager, SettingsTabs)
+│  ├─ server/   ServerList     (dashboard/ also has TokenManager, SettingsTabs)
 │  └─ theme/    ThemeProvider, ThemeToggle
 ├─ lib/
 │  ├─ auth/        session(jose), tokens, password, current-user,
 │  │               request-user, safe-redirect, actions, token-format
-│  ├─ process/     supervisor(子进程), mcp-client(RPC 客户端)
-│  ├─ observability/ log (记录 + 聚合, 含 p95)
+│  ├─ process/     supervisor(child processes), mcp-client(RPC client)
+│  ├─ observability/ log (record + aggregate, including p95)
 │  ├─ queries/     servers, clients, skills, categories, home, search
 │  ├─ workspace/   queries, actions
 │  ├─ toolkits/    queries, actions
 │  ├─ hub/, seller/, skills/(artifact)
 │  └─ db.ts        Prisma client + pg adapter
 scripts/
-│  ├─ mcp-server.mjs   单个 MCP 的 JSON-RPC HTTP server
-│  ├─ mcp-tools.mjs    5 个内置工具 + RPC handler
-│  └─ smoke-seed.ts    测试账号/工作区种子
-scraper/              Playwright+cheerio 采集器
+│  ├─ mcp-server.mjs   JSON-RPC HTTP server for one MCP
+│  ├─ mcp-tools.mjs    5 built-in tools + RPC handler
+│  └─ smoke-seed.ts    Test account/workspace seed
+scraper/              Playwright+cheerio crawler
 prisma/
 │  ├─ schema.prisma
 │  └─ migrations/  0_init, 20260624122620_add_toolkits
@@ -150,7 +154,7 @@ tests/, e2e/
 - `ToolkitServer` —— Toolkit ↔ Deployment 关联（自由组装）。
 - `ToolkitSkill` —— Toolkit ↔ InstalledSkill 关联。
 
-> 关系：`Workspace 1─* Deployment / InstalledSkill / Toolkit`；`Toolkit *─* Deployment`（经 `ToolkitServer`）与 `*─* InstalledSkill`（经 `ToolkitSkill`）。
+> Relationship: `Workspace 1-* Deployment / InstalledSkill / Toolkit`; `Toolkit *-* Deployment` via `ToolkitServer`, and `*-* InstalledSkill` via `ToolkitSkill`.
 
 ---
 
@@ -209,7 +213,7 @@ Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
 - `/observability` —— 标签页 **Usage / Audit log**；4 张统计卡（Total Requests·24h、Error Rate、Avg Latency、**P95 Latency**）、Requests-per-hour 柱状图（requests/errors 图例）、Audit log 表。数据来自 `RequestLog`，`getObservability()` 现场聚合（含 p95）。**真实数据**，非 mock。
 
 ### 8.5 Members / Settings / Seller / Agents
-- `/members` —— 「Invite your team」Team-plan 引导卡（对齐真站的付费门）+ 下方真实成员表。
+- `/members` —— 「Invite your team」Team-plan 引导卡（对齐ToolPlane的付费门）+ 下方真实成员表。
 - `/settings` —— 子导航（General / API Tokens / Integrations / Billing）+ Organization name & URL slug 表单（`renameWorkspaceAction`）+ 时区显示 + Danger zone「Delete organization」（`deleteWorkspaceAction`，删前 `killMany` 关停子进程）。
 - `/seller` → 重定向 `/seller/overview` —— Marketplace 引导卡 + 真实发布技能表单（`submitSkillAction`）+ 我的上架列表。
 - `/agents` —— Coming soon 占位。
@@ -255,7 +259,7 @@ Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
 
 ## 11. 数据采集 `scraper/`
 
-Playwright + cheerio 抓取 mcpmarket.com 公开目录，落库到 `Server/Client/Skill/Category`：`browser.ts`（受控浏览器）、`enumerate.ts`、`fetch-detail.ts`、`parse.ts`、`rate-limit.ts`、`scrape-servers/clients/skills/server-details/home-flags.ts`。`ScrapeCheckpoint` 支持断点续传。**仅个人学习用途**；不复制专有字体与受版权内容。
+Playwright + cheerio 用于导入公开 MCP/Skill 目录数据，落库到 `Server/Client/Skill/Category`：`browser.ts`（受控浏览器）、`enumerate.ts`、`fetch-detail.ts`、`parse.ts`、`rate-limit.ts`、`scrape-servers/clients/skills/server-details/home-flags.ts`。`ScrapeCheckpoint` 支持断点续传。采集器仅用于导入公开元数据，不复制受版权保护的页面资产。
 
 ---
 
@@ -282,12 +286,11 @@ npm run test:e2e     # playwright e2e
 
 ---
 
-## 14. 已知差异 / 未完成项
+## 14. 未完成项
 
-- 真站把 Observability/Members/Seller 做成**付费门**（Enterprise/Team/Marketplace）；本克隆保留了真实可用的功能并在顶部叠加对齐的引导卡。
+- Observability/Members/Seller 的部分商业化流程仍是引导卡或占位。
 - Settings 的 Integrations/Billing 子页未建（占位）；时区为只读展示。
 - Toolkit 详情页的「可见性切换 / 删除」后端 action 已具备，UI 按钮尚未接上。
-- 专有像素字体（GeistPixelSquare）未复刻，用 Geist Mono 近似。
+- 品牌字体暂用 Geist/Inter 系列，后续可替换为正式品牌字体。
 - OAuth / Stripe 未接（需真实外部凭据）。
-- `/daily` 为「今日榜单」而非真站的多日快照归档（缺每日采集管道）。
-
+- `/daily` 为「今日榜单」而非ToolPlane的多日快照归档（缺每日采集管道）。

@@ -15,11 +15,7 @@ function CategoryChip({
   return (
     <Link
       href={href}
-      className={`shrink-0 whitespace-nowrap border px-3 py-1.5 text-sm font-medium transition-colors ${
-        active
-          ? 'border-foreground bg-primary text-primary-foreground'
-          : 'border-border text-muted-foreground hover:text-foreground'
-      }`}
+      className={`ui-chip ${active ? 'ui-chip-active' : ''}`}
     >
       {label}
     </Link>
@@ -47,7 +43,7 @@ export function ListingHero({
     <section className="relative py-14 sm:py-20">
       <div className="pointer-events-none absolute inset-0 hero-grid" aria-hidden />
       <div className="relative text-center">
-        <h1 className="mx-auto max-w-4xl text-balance font-mono text-5xl font-bold tracking-tight sm:text-7xl">
+        <h1 className="mx-auto max-w-4xl text-balance text-5xl font-black tracking-tight sm:text-7xl">
           <span className="text-foreground">{lead}</span>{' '}
           <span className="text-muted-foreground">{tail}</span>
         </h1>
@@ -61,7 +57,7 @@ export function ListingHero({
             name="q"
             placeholder={placeholder}
             aria-label={placeholder}
-            className="h-12 w-full border border-input bg-background pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="ui-input ui-input-search bg-card"
           />
         </form>
         {categories.length > 0 ? (

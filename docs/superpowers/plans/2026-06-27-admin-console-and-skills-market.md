@@ -446,7 +446,7 @@ const ITEMS: NavItem[] = [
   { label: 'Overview', href: '/admin', icon: LayoutDashboard, exact: true },
   { label: 'Users', href: '/admin/users', icon: Users },
   { label: 'Workspaces', href: '/admin/workspaces', icon: Building2 },
-  { label: 'MCP Market', href: '/admin/servers', icon: Plug },
+  { label: 'ToolPlane', href: '/admin/servers', icon: Plug },
   { label: 'Skills Market', href: '/admin/skills', icon: Brain },
   { label: 'Categories', href: '/admin/categories', icon: Tags },
 ];
@@ -2186,7 +2186,7 @@ export default async function AdminServersPage({ searchParams }: { searchParams:
   return (
     <div className="space-y-4 px-8 py-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">MCP Market <span className="text-base font-normal text-zinc-500">({total})</span></h1>
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">ToolPlane <span className="text-base font-normal text-zinc-500">({total})</span></h1>
         <Link href="/admin/servers/new" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">Add server</Link>
       </div>
       <form className="flex gap-2"><input name="q" defaultValue={q} placeholder="Search…" className="h-9 w-72 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" /><button className="h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700">Search</button></form>

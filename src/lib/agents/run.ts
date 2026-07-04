@@ -7,11 +7,12 @@ import {
   type LanguageModel,
   type ToolSet,
 } from 'ai';
-import { AGENT_MAX_DEPTH } from './constants';
-import { resolveAgentTools, type LoadedAgentTools, type SubAgentRef } from './resolve';
+import { AGENT_MAX_DEPTH, resolveMaxSteps } from './constants';
+import { resolveAgentTools, type LoadedAgentTools, type SkillForPrompt, type SubAgentRef } from './resolve';
 import { assembleSystemPrompt } from './system-prompt';
 import { buildModel, type ProviderConfig } from './model';
 import { buildToolSet } from './tools';
+import { buildSkillToolSet } from './skill-tools';
 import { getAgentForRun } from './queries';
 
 export type AgentRunContext = {
@@ -51,7 +52,7 @@ const defaultDeps: RunDeps = {
       system: system || undefined,
       prompt,
       tools,
-      stopWhen: stepCountIs(maxSteps),
+      stopWhen: stepCountIs(resolveMaxSteps(maxSteps)),
     });
     return text;
   },
@@ -65,11 +66,12 @@ export function subAgentToolKey(slug: string): string {
 // buildToolSet) plus one `agent_<slug>` tool per attached sub-agent. Calling a
 // sub-agent tool runs that agent's own loop and returns its final text.
 export async function buildAgentToolSet(
-  resolved: { deploymentIds: string[]; subAgents: SubAgentRef[] },
+  resolved: { deploymentIds: string[]; sandboxDeploymentIds?: string[]; skills?: SkillForPrompt[]; subAgents: SubAgentRef[] },
   ctx: AgentRunContext,
   deps: RunDeps = defaultDeps,
 ): Promise<ToolSet> {
   const set = await buildToolSet(resolved.deploymentIds, ctx.workspaceId);
+  Object.assign(set, buildSkillToolSet(resolved.skills ?? [], { sandboxDeploymentIds: resolved.sandboxDeploymentIds ?? [] }));
   for (const sub of resolved.subAgents) {
     set[subAgentToolKey(sub.slug)] = tool({
       description: `Delegate a task to the "${sub.name}" sub-agent. ${sub.description ?? ''}`.trim(),

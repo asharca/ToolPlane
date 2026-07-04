@@ -1,5 +1,5 @@
 {
-  "name": "mcp-market",
+  "name": "toolplane",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -12,6 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
+    "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
+    "connector:dev": "node packages/connector/bin/connector.mjs",
     "test:e2e": "node e2e/dashboard.e2e.mjs"
   },
   "dependencies": {
@@ -20,6 +22,9 @@
     "@ai-sdk/react": "^3.0.211",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@streamdown/code": "^1.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "ai": "^6.0.209",
     "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
@@ -28,10 +33,12 @@
     "next": "16.2.9",
     "next-intl": "^4.13.0",
     "next-themes": "^0.4.6",
+    "node-pty": "1.2.0-beta.14",
     "pg": "^8.22.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "streamdown": "^2.5.0",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -43,6 +50,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",

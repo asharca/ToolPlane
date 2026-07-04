@@ -45,6 +45,30 @@ describe('buildAgentToolSet', () => {
     expect(Object.keys(set)).toContain('agent_bee');
   });
 
+  it('adds skill runtime tools when skills are attached', async () => {
+    const set = await buildAgentToolSet(
+      {
+        deploymentIds: [],
+        subAgents: [],
+        skills: [
+          {
+            skillId: null,
+            skill: null,
+            name: 'PDF',
+            slug: 'pdf',
+            content: '# PDF',
+            userInvocable: true,
+            agentInvocable: true,
+            status: 'published',
+          },
+        ],
+      },
+      { workspaceId: 'w', depth: 0, visited: new Set(['a']) },
+      deps(),
+    );
+    expect(Object.keys(set).sort()).toEqual(['skill_list_attached', 'skill_read_file', 'skill_run_script']);
+  });
+
   it('delegates through runAgentTurn to the injected runner with the prompt', async () => {
     const runModel = vi.fn<RunDeps['runModel']>(async () => 'FROM_SUB');
     const set = await buildAgentToolSet(

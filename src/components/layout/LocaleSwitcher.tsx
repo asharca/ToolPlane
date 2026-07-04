@@ -11,12 +11,14 @@ export function LocaleSwitcher() {
     if (next !== locale) setLocale(next);
   }
 
-  const activeClass = 'text-foreground font-semibold';
+  const buttonClass =
+    'inline-flex h-9 min-w-9 items-center justify-center rounded px-2 text-xs font-semibold transition-colors';
+  const activeClass = `${buttonClass} bg-brand-soft text-accent-foreground`;
   const inactiveClass =
-    'text-muted-foreground transition-colors hover:text-foreground';
+    `${buttonClass} text-muted-foreground hover:bg-muted hover:text-foreground`;
 
   return (
-    <div className="flex items-center gap-1 text-sm">
+    <div className="inline-flex items-center gap-1 rounded-md border border-border bg-card p-0.5">
       <button
         type="button"
         onClick={() => handleSwitch('en')}
@@ -24,7 +26,6 @@ export function LocaleSwitcher() {
       >
         EN
       </button>
-      <span className="text-muted-foreground">|</span>
       <button
         type="button"
         onClick={() => handleSwitch('zh')}

@@ -20,6 +20,7 @@ export function AgentSettingsForm({
   deployments,
   skills,
   toolkits,
+  sandboxes,
   subAgents,
 }: {
   slug: string;
@@ -33,6 +34,7 @@ export function AgentSettingsForm({
   deployments: Option[];
   skills: Option[];
   toolkits: Option[];
+  sandboxes: Option[];
   subAgents: Option[];
 }) {
   const [state, formAction] = useActionState<ActionState, FormData>(updateAgentAction, {});
@@ -90,6 +92,7 @@ export function AgentSettingsForm({
         <label className="space-y-1 text-sm font-medium text-zinc-700 dark:text-zinc-300">
           Max tool steps
           <input name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} defaultValue={maxSteps} className={input} />
+          <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">0 = no limit</span>
         </label>
       </div>
       {selectedProvider && models.length === 0 ? (
@@ -101,6 +104,7 @@ export function AgentSettingsForm({
       <CheckGroup legend="MCP servers" name="deploymentId" options={deployments} />
       <CheckGroup legend="Skills" name="installedSkillId" options={skills} />
       <CheckGroup legend="Toolkits" name="toolkitId" options={toolkits} />
+      <CheckGroup legend="Sandboxes" name="sandboxId" options={sandboxes} />
       <CheckGroup legend="Sub-agents" name="subAgentId" options={subAgents} />
 
       <div className="flex items-center gap-3">

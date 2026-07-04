@@ -7,7 +7,7 @@ import type { AdminActionState } from '@/lib/admin/user-actions';
 type Category = { id: string; name: string };
 type Initial = {
   id?: string; slug?: string; name?: string; author?: string | null; description?: string | null;
-  iconUrl?: string | null; score?: number; categoryIds?: string[];
+  iconUrl?: string | null; githubSource?: string | null; score?: number; categoryIds?: string[];
 };
 
 export function SkillForm({
@@ -35,6 +35,11 @@ export function SkillForm({
       <label className={lbl}>Author<input name="author" defaultValue={initial.author ?? ''} className={input} /></label>
       <label className={lbl}>Description<textarea name="description" defaultValue={initial.description ?? ''} rows={3} className="w-full rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" /></label>
       <label className={lbl}>Icon URL<input name="iconUrl" defaultValue={initial.iconUrl ?? ''} className={input} /></label>
+      <label className={lbl}>
+        GitHub Source
+        <input name="githubSource" defaultValue={initial.githubSource ?? ''} placeholder="owner/repo or owner/repo/path/to/skill" className={`${input} font-mono`} />
+        <span className="text-xs font-normal text-zinc-400">Used to generate <code className="font-mono">npx skillfish add</code> install command</span>
+      </label>
       <label className={lbl}>Score<input name="score" type="number" defaultValue={initial.score ?? 0} className={input} /></label>
       <fieldset className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
         <legend className="px-1 text-xs font-semibold uppercase text-zinc-500">Categories</legend>

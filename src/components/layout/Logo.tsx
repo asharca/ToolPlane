@@ -5,9 +5,8 @@ type LogoProps = {
 };
 
 /**
- * The MCP Market brand mark, copied 1:1 from mcpmarket.com (1024 viewBox glyph
- * + "MCP" semibold / "Market" medium-italic wordmark). Render inside an element
- * carrying `group flex items-center gap-2` so the hover opacity transition works.
+ * ToolPlane brand mark. Render inside an element carrying
+ * `group flex items-center gap-2` so the hover opacity transition works.
  */
 export function Logo({
   svgSize = 36,
@@ -38,8 +37,8 @@ export function Logo({
       <span
         className={`${hideWordmarkOnMobile ? 'hidden sm:flex' : 'flex'} items-baseline ${wordmarkClass} tracking-tight`}
       >
-        <span className="font-sans font-semibold text-foreground">MCP</span>
-        <span className="font-sans font-medium italic text-foreground/70">Market</span>
+        <span className="font-sans font-semibold text-foreground">Tool</span>
+        <span className="font-sans font-medium italic text-foreground/70">Plane</span>
       </span>
     </>
   );

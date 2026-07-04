@@ -140,7 +140,7 @@ export default async function Page({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Deploy {server.name} to a workspace, then reach it over JSON-RPC
-              through the MCP Market gateway with your API token.
+              through the ToolPlane gateway with your API token.
             </p>
             <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
 {`POST /api/v1/mcp/<deployment-id>/rpc
@@ -159,7 +159,7 @@ Content-Type: application/json
                 href={`/app/login?next=${encodeURIComponent(`/server/${server.slug}`)}`}
                 className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                Sign in to run on MCP Market
+                Sign in to run on ToolPlane
               </Link>
             ) : (
               <Link

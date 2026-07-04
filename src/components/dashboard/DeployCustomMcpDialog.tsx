@@ -30,10 +30,10 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        className="ui-button-primary"
       >
         <Plus className="size-4" />
-        Add custom
+        Add custom MCP
       </button>
 
       {open

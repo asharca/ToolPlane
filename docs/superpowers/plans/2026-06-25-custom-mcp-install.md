@@ -770,7 +770,7 @@ async function handshake() {
   const reply = await callChild('initialize', {
     protocolVersion: PROTOCOL_VERSION,
     capabilities: {},
-    clientInfo: { name: 'mcp-market-bridge', version: '1.0.0' },
+    clientInfo: { name: 'toolplane-bridge', version: '1.0.0' },
   });
   initResult = reply.result ?? {};
   notifyChild('notifications/initialized', {});

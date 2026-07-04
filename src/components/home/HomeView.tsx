@@ -34,14 +34,14 @@ function SectionGrid({
     <section className="py-8">
       <div className="mb-4 flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h2 className="font-mono text-xl font-bold tracking-tight sm:text-2xl">
+          <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
             <span className="text-muted-foreground">{first}</span>{' '}
             <span className="text-foreground">{rest.join(' ')}</span>
           </h2>
           {badge ? (
             <Link
               href={badge.href}
-              className="hidden shrink-0 items-center border border-border px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground hover:text-foreground sm:inline-flex"
+              className="ui-chip hidden min-h-0 px-2 py-1 font-mono text-[10px] uppercase tracking-wider sm:inline-flex"
             >
               {badge.label}
             </Link>
@@ -49,7 +49,7 @@ function SectionGrid({
         </div>
         <Link
           href={viewAllHref}
-          className="inline-flex h-9 shrink-0 items-center gap-1.5 border border-border px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          className="ui-button-secondary shrink-0"
         >
           {viewAllLabel}
           <ArrowRight className="size-4" />
@@ -72,11 +72,7 @@ function CategoryChip({
   return (
     <Link
       href={href}
-      className={`shrink-0 whitespace-nowrap border px-3 py-1.5 text-sm font-medium transition-colors ${
-        active
-          ? 'border-foreground bg-primary text-primary-foreground'
-          : 'border-border text-muted-foreground hover:text-foreground'
-      }`}
+      className={`ui-chip ${active ? 'ui-chip-active' : ''}`}
     >
       {label}
     </Link>
@@ -99,9 +95,9 @@ export function HomeView({
       <section className="relative py-16 sm:py-24">
         <div className="pointer-events-none absolute inset-0 hero-grid" aria-hidden />
         <div className="relative text-center">
-          <div className="mx-auto mb-6 inline-flex items-center gap-2 border border-border bg-background px-3 py-1 text-sm">
+          <div className="ui-panel mx-auto mb-6 inline-flex items-center gap-2 px-3 py-1 text-sm">
             <span className="inline-flex items-center gap-1.5 text-foreground">
-              <span className="size-2 rounded-full bg-emerald-500" />
+              <span className="size-2 rounded-full bg-brand" />
               <strong className="font-semibold">
                 {serverCount.toLocaleString()}
               </strong>{' '}
@@ -111,7 +107,7 @@ export function HomeView({
             <span className="text-muted-foreground">Updated just now</span>
           </div>
 
-          <h1 className="mx-auto max-w-4xl text-balance font-mono text-5xl font-bold tracking-tight sm:text-7xl">
+          <h1 className="mx-auto max-w-4xl text-balance text-5xl font-black tracking-tight sm:text-7xl">
             <span className="sr-only">
               Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools
             </span>
@@ -134,7 +130,7 @@ export function HomeView({
               name="q"
               placeholder={t('searchPlaceholder')}
               aria-label={t('searchAriaLabel')}
-              className="h-12 w-full border border-input bg-background pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="ui-input ui-input-search bg-card"
             />
           </form>
 

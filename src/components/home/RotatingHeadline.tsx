@@ -6,7 +6,7 @@ const WORDS = ['MCP Servers', 'Agent Skills', 'MCP Clients', 'Agent Tools'];
 
 export function RotatingHeadline() {
   const [wordIndex, setWordIndex] = useState(0);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(WORDS[0]);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {

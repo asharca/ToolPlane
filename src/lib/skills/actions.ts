@@ -57,14 +57,22 @@ export async function updateSkillAttributesAction(formData: FormData) {
   const installId = String(formData.get('installId') ?? '');
   const ctx = await authedWs(slug);
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return;
+  const data: {
+    description?: string | null;
+    userInvocable: boolean;
+    agentInvocable: boolean;
+    effort: string;
+  } = {
+    userInvocable: formData.get('userInvocable') === 'on',
+    agentInvocable: formData.get('agentInvocable') === 'on',
+    effort: String(formData.get('effort') ?? 'default'),
+  };
+  if (formData.has('description')) {
+    data.description = String(formData.get('description') ?? '') || null;
+  }
   await db.installedSkill.update({
     where: { id: installId },
-    data: {
-      description: String(formData.get('description') ?? '') || null,
-      userInvocable: formData.get('userInvocable') === 'on',
-      agentInvocable: formData.get('agentInvocable') === 'on',
-      effort: String(formData.get('effort') ?? 'default'),
-    },
+    data,
   });
   revalidatePath(`/app/${slug}/skills/${installId}`);
 }

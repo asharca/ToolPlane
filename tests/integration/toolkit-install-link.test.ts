@@ -39,10 +39,11 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-const KEY_NAME = () => `MCPmarket plugin - ${tkSlug} (Claude Code)`;
+const KEY_NAME = (client = 'Claude Code') => `ToolPlane plugin - ${tkSlug} (${client})`;
 
-function install(id: string) {
-  return installGET(new Request(`http://localhost/install/${id}`), {
+function install(id: string, client?: string) {
+  const suffix = client ? `?client=${client}` : '';
+  return installGET(new Request(`http://localhost/install/${id}${suffix}`), {
     params: Promise.resolve({ id }),
   });
 }
@@ -53,9 +54,13 @@ function uninstall(id: string) {
 }
 // Pull the embedded Bearer token out of the script's base64 .mcp.json blob.
 function tokenFromScript(body: string): string {
-  const m = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > "\$PLUGIN_DIR\/\.mcp\.json"/.exec(body);
+  const m =
+    /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > "\$(?:PLUGIN_DIR|BUNDLE_DIR)\/\.mcp\.json"/.exec(
+      body,
+    );
   const mcp = JSON.parse(Buffer.from(m![1], 'base64').toString('utf8'));
-  return mcp.mcpServers[`mcpmarket-${tkSlug}`].headers.Authorization.replace('Bearer ', '');
+  const key = Object.keys(mcp.mcpServers)[0];
+  return mcp.mcpServers[key].headers.Authorization.replace('Bearer ', '');
 }
 
 describe('toolkit install link (mint-on-fetch named key)', () => {
@@ -72,7 +77,7 @@ describe('toolkit install link (mint-on-fetch named key)', () => {
     const res = await install(link.id);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain(`claude plugin install mcpmarket-${tkSlug}@mcpmarket-${tkSlug}`);
+    expect(body).toContain(`claude plugin install toolplane-${tkSlug}@toolplane-${tkSlug}`);
 
     const token = tokenFromScript(body);
     const row = await db.apiToken.findUnique({
@@ -90,17 +95,39 @@ describe('toolkit install link (mint-on-fetch named key)', () => {
     expect(await db.apiToken.count({ where: { userId, name: KEY_NAME() } })).toBe(1);
   });
 
+  it('mints separate named keys for Codex and opencode installers', async () => {
+    const link = await getOrCreateToolkitInstallLink(toolkitId, userId);
+
+    const codexBody = await (await install(link.id, 'codex')).text();
+    expect(codexBody).toContain('client: Codex');
+    const codexToken = tokenFromScript(codexBody);
+    const codexRow = await db.apiToken.findUnique({
+      where: { tokenHash: hashToken(codexToken) },
+      select: { name: true },
+    });
+    expect(codexRow?.name).toBe(KEY_NAME('Codex'));
+
+    const opencodeBody = await (await install(link.id, 'opencode')).text();
+    expect(opencodeBody).toContain('client: opencode');
+    const opencodeToken = tokenFromScript(opencodeBody);
+    const opencodeRow = await db.apiToken.findUnique({
+      where: { tokenHash: hashToken(opencodeToken) },
+      select: { name: true },
+    });
+    expect(opencodeRow?.name).toBe(KEY_NAME('opencode'));
+  });
+
   it('uninstall revokes the key(s) and returns a removal script', async () => {
     const link = await getOrCreateToolkitInstallLink(toolkitId, userId);
     await install(link.id); // ensure a key exists
     const res = await uninstall(link.id);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain(`claude plugin uninstall mcpmarket-${tkSlug}@mcpmarket-${tkSlug}`);
+    expect(body).toContain(`claude plugin uninstall toolplane-${tkSlug}@toolplane-${tkSlug}`);
     expect(body).toContain('rm -rf');
     expect(
       await db.apiToken.count({
-        where: { userId, name: { startsWith: `MCPmarket plugin - ${tkSlug} (` } },
+        where: { userId, name: { startsWith: `ToolPlane plugin - ${tkSlug} (` } },
       }),
     ).toBe(0);
   });

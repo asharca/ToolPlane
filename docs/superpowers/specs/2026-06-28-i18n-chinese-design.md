@@ -8,7 +8,7 @@
 
 ## 目标
 
-为 mcp-market 添加中英文双语支持。语言偏好通过 cookie 持久化，无 URL 变化。登录用户的偏好同步到数据库账户，跨设备生效。
+为 toolplane 添加中英文双语支持。语言偏好通过 cookie 持久化，无 URL 变化。登录用户的偏好同步到数据库账户，跨设备生效。
 
 ---
 
@@ -25,14 +25,14 @@
 
 ```
 messages/
-  en.json              # 英文翻译（约 300–400 key）
-  zh.json              # 中文翻译（同结构）
+  en.json              # English translations, about 300-400 keys
+  zh.json              # Chinese translations, same structure
 src/i18n/
   config.ts            # locales: ['en', 'zh'], defaultLocale: 'en', localePrefix: 'never'
-  request.ts           # next-intl getRequestConfig — 读 cookie 确定 locale
-src/middleware.ts      # next-intl createMiddleware — 拦截所有请求注入 locale
+  request.ts           # next-intl getRequestConfig, reads cookie for locale
+src/middleware.ts      # next-intl createMiddleware, injects locale for all requests
 src/components/layout/
-  LocaleSwitcher.tsx   # EN | 中 切换按钮（Client Component）
+  LocaleSwitcher.tsx   # EN | zh switcher (Client Component)
 ```
 
 ---

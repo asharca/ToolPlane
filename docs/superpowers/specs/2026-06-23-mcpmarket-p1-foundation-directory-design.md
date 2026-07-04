@@ -1,16 +1,16 @@
-# MCP Market Clone — P1: Foundation + DB-backed Directory
+# ToolPlane — P1: Foundation + DB-backed Directory
 
 **Date:** 2026-06-23
 **Status:** Approved design (pending written-spec review)
-**Goal of overall project:** Pixel-level 1:1 clone of mcpmarket.com (full platform), built in phases. This spec covers **P1 only**.
+**Goal of overall project:** Build ToolPlane as a self-hosted control plane for MCP directories, skills, toolkits, and agent runtimes. This spec covers **P1 only**.
 
 ---
 
 ## Context
 
-mcpmarket.com is a Next.js (App Router) + Tailwind directory site fronting ~37k MCP servers,
+public MCP directory source is a Next.js (App Router) + Tailwind directory site fronting ~37k MCP servers,
 plus MCP clients and Agent Skills, with categories, search, leaderboards, and a Hub/gateway.
-The full clone is decomposed into 5 phases:
+The product is decomposed into 5 phases:
 
 - **P1 (this spec):** Foundation shell + data layer + DB-backed directory pages.
 - P2: (folded into P1) data layer — now part of P1.
@@ -23,7 +23,7 @@ Confirmed decisions for P1:
 - **Scope of first spec:** all directory entity types — Server, Client, Skill.
 - **Theme:** dark + light both implemented.
 - **i18n:** NOT in P1 (English only, no i18n scaffolding).
-- **Data source:** scrape the live mcpmarket.com (full catalog) into the local DB. Personal/learning use only.
+- **Data source:** scrape the public MCP directory source (full catalog) into the local DB. Personal/learning use only.
 - **Stack:** Next.js App Router + TypeScript + Tailwind CSS (matches the real site).
 
 ---
@@ -55,7 +55,7 @@ Single Next.js App Router application with four internally-isolated units. No mo
 units are folders with well-defined interfaces.
 
 ```
-mcp-market/
+toolplane/
   docker-compose.yml          # local Postgres
   prisma/
     schema.prisma             # DB schema (unit 2)
@@ -90,7 +90,7 @@ mcp-market/
 - **Depends on:** PostgreSQL (Docker locally; `DATABASE_URL` env). Swap to managed Postgres = change env only.
 
 ### Unit 3 — `scraper/` (ingestion, standalone)
-- **Does:** enumerates all entity slugs from mcpmarket.com (`sitemap.xml` + category/listing pages), fetches each detail page, parses to entities, upserts into the DB. Resumable via a checkpoint table.
+- **Does:** enumerates all entity slugs from public MCP directory source (`sitemap.xml` + category/listing pages), fetches each detail page, parses to entities, upserts into the DB. Resumable via a checkpoint table.
 - **Interface:** CLI scripts (`pnpm scrape:servers`, `:clients`, `:skills`, `:all`); `parse.ts` is a set of pure functions taking HTML → typed objects (the unit-test seam).
 - **Depends on:** the live site, the DB. Decoupled from `web` — runs separately.
 - **Politeness:** concurrency ≤ 2, ~1 req/s, exponential backoff on 429 (the real site returns 429 to automated traffic), `User-Agent` set, resume from last checkpoint.
@@ -195,7 +195,7 @@ web (Server Components) <-- read via lib/queries -----------------+
 
 ---
 
-## Pixel-level fidelity approach
+## Product-grade fidelity approach
 
 During implementation, per target page:
 1. Load the real page in a browser; extract **computed** CSS (colors, font sizes, line-heights, spacing, breakpoints, radii, shadows) for both themes.

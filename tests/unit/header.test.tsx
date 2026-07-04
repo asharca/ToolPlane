@@ -31,7 +31,7 @@ describe('Header', () => {
   it('renders logo, nav, and CTAs when logged out', async () => {
     render(await Header());
 
-    expect(screen.getByRole('link', { name: /MCP\s*Market/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /ToolPlane/ })).toHaveAttribute(
       'href',
       '/',
     );

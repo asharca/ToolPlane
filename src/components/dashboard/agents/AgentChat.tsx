@@ -6,6 +6,7 @@ import { DefaultChatTransport, type UIMessage } from 'ai';
 import Link from 'next/link';
 import { Send, Plus } from 'lucide-react';
 import { Streamdown } from 'streamdown';
+import { code } from '@streamdown/code';
 import { createConversationAction } from '@/lib/agents/actions';
 
 type Conversation = { id: string; title: string | null; createdAt: string };
@@ -92,6 +93,7 @@ export function AgentChat({
                       ) : (
                         <Streamdown
                           key={i}
+                          plugins={{ code }}
                           className="space-y-2 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5"
                         >
                           {part.text}

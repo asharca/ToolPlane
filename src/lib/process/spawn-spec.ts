@@ -5,14 +5,25 @@ import {
   CACHE_ENV,
   type McpNetwork,
 } from './sandbox';
+import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxes/connector';
 
 export type SpawnSpec =
   | { kind: 'builtin'; name: string }
-  | { kind: 'bridge'; name: string; command: string; args: string[]; env: Record<string, string> };
+  | { kind: 'bridge'; name: string; command: string; args: string[]; env: Record<string, string> }
+  | {
+      kind: 'sandbox';
+      name: string;
+      sandboxId: string;
+      sandboxKind: 'docker' | 'connector';
+      image?: string;
+      volumeName?: string;
+      network: McpNetwork;
+      connector?: SandboxConnectorConfig;
+    };
 
 export type DeploymentForSpawn = {
   serverId: string | null;
-  server: { name: string } | null;
+  server?: { name: string } | null;
   name: string | null;
   source: string | null;
   sourceRef: string | null;
@@ -87,7 +98,47 @@ function readCfg(installCfg: unknown): {
   };
 }
 
+function readSandboxCfg(installCfg: unknown): {
+  sandboxId: string;
+  kind: 'docker' | 'connector';
+  image?: string;
+  volumeName?: string;
+  network: McpNetwork;
+  connector?: SandboxConnectorConfig;
+} {
+  const c = (installCfg ?? {}) as {
+    sandboxId?: string;
+    kind?: string;
+    image?: string;
+    volumeName?: string;
+    network?: string;
+  };
+  const connector = connectorFromConfig(installCfg);
+  return {
+    sandboxId: c.sandboxId ?? '',
+    kind: c.kind === 'connector' && connector ? 'connector' : 'docker',
+    image: c.image,
+    volumeName: c.volumeName,
+    network: c.network === 'none' ? 'none' : 'isolated',
+    connector: connector ?? undefined,
+  };
+}
+
 export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnSpec {
+  if (d.source === 'sandbox') {
+    const cfg = readSandboxCfg(d.installCfg);
+    return {
+      kind: 'sandbox',
+      name: d.name ?? 'Sandbox',
+      sandboxId: cfg.sandboxId,
+      sandboxKind: cfg.kind,
+      image: cfg.image,
+      volumeName: cfg.volumeName,
+      network: cfg.network,
+      connector: cfg.connector,
+    };
+  }
+
   // No real package source → the builtin demo server. This covers legacy catalog
   // rows that have no admin-wired recipe (serverId set, source null). A catalog
   // deployment WITH a source runs its real package in a container, same path as

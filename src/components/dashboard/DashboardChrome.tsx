@@ -28,7 +28,7 @@ export function DashboardChrome({
   const t = useTranslations('console.sidebar');
 
   return (
-    <div className="flex min-h-dvh bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <div className="flex min-h-dvh bg-background text-foreground">
       {open ? (
         <button
           type="button"
@@ -49,12 +49,12 @@ export function DashboardChrome({
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-14 items-center gap-3 border-b border-zinc-200 px-4 lg:hidden dark:border-zinc-800">
+        <div className="flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur lg:hidden">
           <button
             type="button"
             aria-label={t('openMenu')}
             onClick={() => setOpen(true)}
-            className="inline-flex size-9 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="ui-button-ghost ui-icon-button"
           >
             <Menu className="size-5" />
           </button>

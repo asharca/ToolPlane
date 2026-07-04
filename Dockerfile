@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# mcp-market — self-hosted image.
+# toolplane — self-hosted image.
 #
 # NOT serverless-compatible: the app spawns long-lived MCP child processes
 # (scripts/mcp-*.mjs) and keeps them in an in-memory table, so it must run as a

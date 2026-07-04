@@ -96,10 +96,26 @@ export default async function Page({
         <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
           Install this skill
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Install {skill.name} into a workspace, then export it as a
-          ready-to-use <code className="font-mono">SKILL.md</code> for your agent.
-        </p>
+        {skill.githubSource ? (
+          <div className="mt-3 space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Install with{' '}
+              <a href="https://github.com/knoxgraeme/skillfish" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                skillfish
+              </a>{' '}
+              — works with Claude Code, Cursor, Copilot and 30+ agents:
+            </p>
+            <pre className="overflow-x-auto rounded-md bg-muted px-4 py-3 font-mono text-sm text-foreground">
+              <code>npx skillfish add {skill.githubSource}</code>
+            </pre>
+            <p className="text-xs text-muted-foreground">Or install into your ToolPlane workspace:</p>
+          </div>
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Install {skill.name} into a workspace, then export it as a
+            ready-to-use <code className="font-mono">SKILL.md</code> for your agent.
+          </p>
+        )}
         <Link
           href="/app"
           className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"

@@ -43,6 +43,7 @@ beforeAll(async () => {
       slug: 'alpha-skill',
       description: 'does alpha',
       content: '# Alpha\n\nbody',
+      files: [{ path: 'scripts/alpha.py', content: 'print("alpha")' }],
       source: 'custom',
       status: 'published',
     },
@@ -103,7 +104,7 @@ describe('GET /api/v1/plugin/baseline', () => {
     const res = await call(token);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { skills: { slug: string; version: string; content: string }[] };
+      data: { skills: { slug: string; version: string; content: string; files: { path: string; content: string }[] }[] };
     };
     const slugs = body.data.skills.map((s) => s.slug);
     expect(slugs).toContain('alpha-skill');
@@ -111,6 +112,7 @@ describe('GET /api/v1/plugin/baseline', () => {
 
     const alpha = body.data.skills.find((s) => s.slug === 'alpha-skill')!;
     expect(alpha.content).toContain('name: alpha-skill');
+    expect(alpha.files).toEqual([{ path: 'scripts/alpha.py', content: 'print("alpha")' }]);
     expect(alpha.version).toMatch(/^[0-9a-f]{12}$/);
   });
 

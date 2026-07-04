@@ -41,7 +41,7 @@ curl -s -X POST http://localhost:3002/v1/scrape \
 
 ## Wire the Firecrawl catalog entry
 
-In the admin console → **MCP Market → Firecrawl → Deploy recipe**:
+In the admin console → **ToolPlane → Firecrawl → Deploy recipe**:
 
 - **Source:** `npm`
 - **Reference:** `firecrawl-mcp`

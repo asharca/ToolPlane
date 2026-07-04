@@ -1,19 +1,19 @@
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/ContentPage';
+import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Terms | MCP Market' };
+export const metadata: Metadata = { title: 'Terms | ToolPlane' };
 
 export default function Page() {
   return (
     <ContentPage title="Terms of Use">
       <p>
-        This site is provided as-is for educational and demonstration purposes,
-        with no warranties of any kind. It is a personal clone and not an
-        official product.
+        ToolPlane is provided as-is, with no warranties of any kind. Use it only
+        in environments where you control the deployed MCP servers, connectors,
+        and sandbox runtimes.
       </p>
       <p>
-        Trademarks, names, and content referenced here belong to their
-        respective owners. Do not rely on this demo for production use.
+        Trademarks, package names, and third-party content referenced here belong
+        to their respective owners.
       </p>
     </ContentPage>
   );

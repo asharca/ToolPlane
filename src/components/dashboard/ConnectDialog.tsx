@@ -64,9 +64,33 @@ const CLIENTS: Client[] = [
   {
     id: 'codex',
     label: 'Codex CLI',
-    howTo: 'Run in your terminal:',
+    howTo: 'Add to ~/.codex/config.toml:',
     snippet: (key, endpoint) =>
-      `codex mcp add "${key}" --transport http --url "${endpoint}" \\\n  --header "Authorization: Bearer <API_TOKEN>"`,
+      [
+        `[mcp_servers.${key}]`,
+        `url = "${endpoint}"`,
+        'http_headers = { Authorization = "Bearer <API_TOKEN>" }',
+      ].join('\n'),
+  },
+  {
+    id: 'opencode',
+    label: 'opencode',
+    howTo: 'Add to opencode.json:',
+    snippet: (key, endpoint) =>
+      [
+        '{',
+        '  "$schema": "https://opencode.ai/config.json",',
+        '  "mcp": {',
+        `    "${key}": {`,
+        '      "type": "remote",',
+        `      "url": "${endpoint}",`,
+        '      "enabled": true,',
+        '      "oauth": false,',
+        '      "headers": { "Authorization": "Bearer <API_TOKEN>" }',
+        '    }',
+        '  }',
+        '}',
+      ].join('\n'),
   },
   {
     id: 'windsurf',

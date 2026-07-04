@@ -31,20 +31,20 @@
 ## 4. 架构与数据流
 
 ```
-Slide-over 表单 ──▶ deployCustomServerAction (授权 + zod 校验 + 建 Deployment)
+Slide-over form ──▶ deployCustomServerAction (auth + zod + create Deployment)
                          │  serverId=null, source=npm, sourceRef=<pkg>, installCfg={env,args}
                          ▼
                  supervisor.startProcess(id, spec)   // spec.kind='bridge'
                          ▼  spawn: node scripts/mcp-stdio-bridge.mjs
    ┌────────────────────────────────────────────────────────────┐
-   │ bridge: spawn `npx -y <pkg> <args>`(注入自定义 env)        │
-   │   1. 与子进程 stdio 做 initialize + initialized 握手         │
-   │   2. 握手成功后 HTTP 监听 → 打印 LISTENING <port>            │
-   │   3. POST / : JSON-RPC 转发到长连接(id 重映射), 回响应      │
-   │   4. GET /health ; ppid 看门狗(父死自杀)                    │
+   │ bridge: spawn `npx -y <pkg> <args>` with custom env        │
+   │   1. initialize + initialized handshake over child stdio   │
+   │   2. After handshake, listen HTTP and print LISTENING      │
+   │   3. POST /: forward JSON-RPC to persistent stdio link     │
+   │   4. GET /health; ppid watchdog exits when parent dies     │
    └────────────────────────────────────────────────────────────┘
-                         ▲ 现有链路零改动:
-   网关 /mcp/[id]/rpc ───┤  fetch 127.0.0.1:<port>  (mcpRpc)
+                         ▲ Existing path unchanged:
+   Gateway /mcp/[id]/rpc ─┤  fetch 127.0.0.1:<port>  (mcpRpc)
    ToolPlayground / agent ┘  tools/list, tools/call
 ```
 
@@ -74,12 +74,12 @@ type SpawnSpec =
   | { kind: 'bridge'; name: string; command: string; args: string[]; env: Record<string,string> }
 
 buildSpawnSpec(source, ref, args): { command, args }
-  // npm  → { command: 'npx', args: ['-y', ref, ...args] }
-  // pypi/github/docker → throw 'not implemented'(UI 已挡住)
+  // npm -> { command: 'npx', args: ['-y', ref, ...args] }
+  // pypi/github/docker -> throw 'not implemented' (blocked by UI)
 
 resolveSpawnSpec(deployment): SpawnSpec
-  // 有 serverId → { kind:'builtin', name: server.name }
-  // 自定义      → { kind:'bridge', name, ...buildSpawnSpec(...), env }
+  // has serverId -> { kind:'builtin', name: server.name }
+  // custom       -> { kind:'bridge', name, ...buildSpawnSpec(...), env }
 ```
 
 **`src/lib/process/supervisor.ts`** —— `startProcess(deploymentId, spec: SpawnSpec)`:
@@ -169,5 +169,5 @@ resolveSpawnSpec(deployment): SpawnSpec
 
 - 本次只做 **npm**;PyPI(uvx)/GitHub/Docker 留 `buildSpawnSpec` 扩展点 + UI 占位。
 - env 值**明文**存库(与 `ModelProvider.apiKey` 一致)。
-- **任意代码执行**:`npx -y <任意包>` 按设计执行第三方代码,**不做沙箱**——仅本地个人学习克隆可接受。截图的信任警告予以保留作为唯一提示。
+- **任意代码执行**:`npx -y <任意包>` 按设计执行第三方代码,**不做沙箱**——仅在本地开发或受信任环境中可接受。截图的信任警告予以保留作为唯一提示。
 - 多级进程(supervisor → bridge → npx → 真 server)多一跳本地 HTTP;ppid 看门狗确保不留孤儿。

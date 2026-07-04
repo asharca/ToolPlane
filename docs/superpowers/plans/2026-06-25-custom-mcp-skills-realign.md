@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make custom MCP match the real app.mcpmarket.com (4 real sources npm/PyPI/GitHub/Docker, "Add custom" on the browse page, env on the inspector Variables tab) and add full custom Skills (Create new / GitHub import / folder upload, draft→publish, frontmatter attributes, an editor), authored content usable by agents.
+**Goal:** Make custom MCP match the real ToolPlane console (4 real sources npm/PyPI/GitHub/Docker, "Add custom" on the browse page, env on the inspector Variables tab) and add full custom Skills (Create new / GitHub import / folder upload, draft→publish, frontmatter attributes, an editor), authored content usable by agents.
 
 **Architecture:** Reuse the existing stdio↔HTTP bridge unchanged — every MCP source reduces to "spawn a command that speaks MCP over stdio" (`npx`/`uvx`/`npx <git-url>`/`docker run`). Custom skills become workspace-owned `InstalledSkill` rows with `skillId` nullable + authored `content`, so agent/toolkit binding and download reuse existing wiring.
 

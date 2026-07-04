@@ -79,18 +79,21 @@ model Client {
 }
 
 model Skill {
-  id          String           @id @default(cuid())
-  slug        String           @unique
-  name        String
-  author      String?
-  description String?
-  iconUrl     String?
-  score       Int              @default(0)
-  curated     Boolean          @default(false)
-  categories  Category[]       @relation("SkillCategories")
-  installs    InstalledSkill[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id           String           @id @default(cuid())
+  slug         String           @unique
+  name         String
+  author       String?
+  description  String?
+  iconUrl      String?
+  githubSource String?
+  content      String?
+  files        Json?
+  score        Int              @default(0)
+  curated      Boolean          @default(false)
+  categories   Category[]       @relation("SkillCategories")
+  installs     InstalledSkill[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 }
 
 model Category {
@@ -131,6 +134,7 @@ model Workspace {
   deployments     Deployment[]
   installedSkills InstalledSkill[]
   requestLogs     RequestLog[]
+  sandboxes       Sandbox[]
   toolkits        Toolkit[]
   modelProviders  ModelProvider[]
   agents          Agent[]
@@ -167,8 +171,29 @@ model Deployment {
   updatedAt    DateTime        @updatedAt
   toolkitLinks ToolkitServer[]
   agentLinks   AgentServer[]
+  sandbox      Sandbox?
 
   @@unique([workspaceId, serverId])
+}
+
+model Sandbox {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deploymentId String         @unique
+  deployment   Deployment     @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  name         String
+  slug         String
+  kind         String         @default("docker")
+  image        String?
+  hostRoot     String?
+  network      String         @default("isolated")
+  config       Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  agentLinks   AgentSandbox[]
+
+  @@unique([workspaceId, slug])
 }
 
 model InstalledSkill {
@@ -299,6 +324,7 @@ model Agent {
   servers       AgentServer[]
   skills        AgentSkill[]
   toolkits      AgentToolkit[]
+  sandboxes     AgentSandbox[]
   subAgents     AgentSubAgent[] @relation("AgentParent")
   parentLinks   AgentSubAgent[] @relation("AgentChild")
   conversations Conversation[]
@@ -342,6 +368,15 @@ model AgentToolkit {
   toolkit   Toolkit @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
 
   @@id([agentId, toolkitId])
+}
+
+model AgentSandbox {
+  agentId   String
+  sandboxId String
+  agent     Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandbox   Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, sandboxId])
 }
 
 model Conversation {

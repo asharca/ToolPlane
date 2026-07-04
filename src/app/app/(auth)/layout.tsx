@@ -8,7 +8,7 @@ export default function AuthLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-dvh flex-col bg-white dark:bg-zinc-950">
+    <div className="flex min-h-dvh flex-col bg-background">
       <header className="flex h-14 items-center justify-between px-6">
         <Link href="/" className="group flex items-center gap-2">
           <Logo svgSize={28} wordmarkClass="text-lg" />

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { SITE, mailto } from '@/lib/site';
 import { Logo } from './Logo';
 
 type FooterLink = { labelKey: string; href: string };
@@ -12,7 +13,7 @@ const BROWSE: FooterLink[] = [
   { labelKey: 'agentSkills', href: '/tools/skills' },
   { labelKey: 'categories', href: '/categories' },
   { labelKey: 'whatIsMcp', href: '/what-is-an-mcp-server' },
-  { labelKey: 'mcp', href: 'https://modelcontextprotocol.io' },
+  { labelKey: 'mcp', href: SITE.protocolUrl },
 ];
 
 const RANKINGS: FooterLink[] = [
@@ -25,11 +26,11 @@ const RANKINGS: FooterLink[] = [
 const ABOUT: FooterLink[] = [
   { labelKey: 'news', href: '/news' },
   { labelKey: 'submit', href: '/submit' },
-  { labelKey: 'contact', href: 'mailto:support@mcpmarket.com' },
+  { labelKey: 'contact', href: mailto(SITE.supportEmail) },
 ];
 
 const itemClass =
-  'text-sm text-muted-foreground transition-colors hover:text-foreground';
+  'inline-flex min-h-8 items-center text-sm text-muted-foreground transition-colors hover:text-foreground';
 
 function FooterItem({
   link,
@@ -99,13 +100,13 @@ export function Footer() {
             <ThemeToggle />
           </div>
           <p className="order-1 font-mono text-xs text-muted-foreground md:order-2">
-            © {new Date().getFullYear()} MCP Market. All rights reserved.
+            © {new Date().getFullYear()} {SITE.name}. All rights reserved.
             <span className="mx-1.5">·</span>
-            <Link href="/privacy" className="transition-colors hover:text-foreground">
+            <Link href="/privacy" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
               Privacy
             </Link>
             <span className="mx-1.5">·</span>
-            <Link href="/terms" className="transition-colors hover:text-foreground">
+            <Link href="/terms" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
               Terms
             </Link>
           </p>

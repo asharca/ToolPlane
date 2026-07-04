@@ -41,7 +41,7 @@ export default async function SellerOverviewPage({
           kicker="Sell"
           badge="Marketplace"
           title="Sell your skills"
-          description="Set up an MCP Market storefront in minutes and begin monetizing your agent skills."
+          description="Set up a ToolPlane storefront in minutes and begin monetizing your agent skills."
           bullets={[
             'Reach the 1M+ monthly marketplace visitors',
             'Your own storefront to share anywhere',
@@ -56,7 +56,7 @@ export default async function SellerOverviewPage({
             Publish an agent skill
           </h2>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            List a skill in the MCP Market directory. It goes live immediately
+            List a skill in the ToolPlane directory. It goes live immediately
             under your account.
           </p>
 

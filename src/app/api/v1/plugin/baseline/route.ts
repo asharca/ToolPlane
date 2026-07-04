@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { verifyApiToken } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
-import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
+import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { logRequest } from '@/lib/observability/log';
 
@@ -57,13 +57,14 @@ export async function GET(req: Request) {
               slug: true,
               description: true,
               content: true,
+              files: true,
               source: true,
               status: true,
               userInvocable: true,
               agentInvocable: true,
               effort: true,
               skill: {
-                select: { slug: true, name: true, description: true, author: true },
+                select: { slug: true, name: true, description: true, author: true, content: true, files: true },
               },
             },
           },
@@ -74,7 +75,12 @@ export async function GET(req: Request) {
   if (!toolkit) return json({ error: 'toolkit not found' }, 404);
 
   const seen = new Set<string>();
-  const skills: { slug: string; version: string; content: string }[] = [];
+  const skills: {
+    slug: string;
+    version: string;
+    content: string;
+    files: { path: string; content: string }[];
+  }[] = [];
   for (const ts of toolkit.skills) {
     const s = ts.installedSkill;
     if (s.status === 'draft') continue;
@@ -82,8 +88,12 @@ export async function GET(req: Request) {
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
     const content = buildInstalledSkillMarkdown(s);
-    const version = createHash('sha256').update(content).digest('hex').slice(0, 12);
-    skills.push({ slug, version, content });
+    const files = installedSkillExtraFiles(s);
+    const version = createHash('sha256')
+      .update(JSON.stringify({ content, files }))
+      .digest('hex')
+      .slice(0, 12);
+    skills.push({ slug, version, content, files });
   }
 
   await logRequest({

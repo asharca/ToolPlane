@@ -21,7 +21,7 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
         action={updateSkillAction}
         initial={{
           id: skill.id, slug: skill.slug, name: skill.name, author: skill.author, description: skill.description,
-          iconUrl: skill.iconUrl, score: skill.score, categoryIds: skill.categories.map((c) => c.id),
+          iconUrl: skill.iconUrl, githubSource: skill.githubSource, score: skill.score, categoryIds: skill.categories.map((c) => c.id),
         }}
         categories={categories}
         submitLabel="Save changes"

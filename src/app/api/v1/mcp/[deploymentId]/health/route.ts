@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/current-user';
+import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { livePort, effectiveStatus } from '@/lib/process/supervisor';
 import { logRequest } from '@/lib/observability/log';
@@ -7,12 +7,12 @@ import { logRequest } from '@/lib/observability/log';
 // Gateway health proxy: forwards to the live stub process for a deployment
 // and records the request for observability.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
   const start = Date.now();
   const { deploymentId } = await params;
-  const user = await getCurrentUser();
+  const user = await resolveRequestUser(req);
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

@@ -31,7 +31,7 @@ export function BrowseGrid({
       {items.map((it) => (
         <div
           key={it.id}
-          className="flex flex-col rounded-lg border border-border p-4"
+          className="ui-panel flex flex-col p-4"
         >
           <div className="mb-2 flex items-center gap-2.5">
             {it.iconUrl ? (
@@ -44,7 +44,7 @@ export function BrowseGrid({
                 className="size-5 rounded object-cover"
               />
             ) : (
-              <span className="size-5 rounded bg-zinc-200" />
+              <span className="size-5 rounded bg-muted" />
             )}
             <span className="font-medium text-foreground">{it.name}</span>
           </div>
@@ -52,18 +52,18 @@ export function BrowseGrid({
             {it.description}
           </p>
           {installedIds.has(it.id) ? (
-            <span className="inline-flex h-8 w-fit items-center rounded-md border border-border px-3 text-sm text-muted-foreground">
+            <span className="ui-button-secondary ui-button-sm w-fit text-muted-foreground">
               {installedLabel}
             </span>
           ) : it.deployable === false ? (
-            <span className="inline-flex h-8 w-fit items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
+            <span className="inline-flex min-h-8 w-fit items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
               Demo only
             </span>
           ) : (
             <form action={action}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name={idField} value={it.id} />
-              <button className="inline-flex h-8 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800">
+              <button className="ui-button-primary ui-button-sm">
                 {actionLabel}
               </button>
             </form>

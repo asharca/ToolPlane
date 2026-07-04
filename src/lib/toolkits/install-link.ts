@@ -2,25 +2,21 @@ import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { db } from '@/lib/db';
 import { createApiToken } from '@/lib/auth/tokens';
-
-const CLIENT_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  claude: 'Claude',
-  codex: 'Codex',
-};
+import { SITE } from '@/lib/site';
+import { installClientLabel, resolveInstallClient } from '@/lib/plugin/clients';
 
 function clientLabel(client: string): string {
-  return CLIENT_LABELS[client] ?? 'Claude Code';
+  return installClientLabel(resolveInstallClient(client));
 }
 
 // Stable per-(toolkit, client) key name. Re-installing overwrites the key of
 // this exact name; uninstall revokes every key whose name starts with the
 // per-toolkit prefix.
 function tokenName(toolkitSlug: string, client: string): string {
-  return `MCPmarket plugin - ${toolkitSlug} (${clientLabel(client)})`;
+  return `${SITE.compactName} plugin - ${toolkitSlug} (${clientLabel(client)})`;
 }
 function tokenNamePrefix(toolkitSlug: string): string {
-  return `MCPmarket plugin - ${toolkitSlug} (`;
+  return `${SITE.compactName} plugin - ${toolkitSlug} (`;
 }
 
 // Ensure an opaque install link exists for (toolkit, user). The link is just a
@@ -70,7 +66,7 @@ export type IssuedInstall = {
 
 // Issue (rotate) the install token for an opaque link. Mirrors the real site:
 // each call to the install URL overwrites a single named key
-// ("MCPmarket plugin - <toolkit> (<client>)"), so the embedded credential is
+// ("<brand> plugin - <toolkit> (<client>)"), so the embedded credential is
 // always freshly valid and can never silently go stale.
 export async function issueInstallToken(
   id: string,

@@ -11,6 +11,7 @@ import {
 } from '@/lib/admin/market';
 import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 import { validateServerRecipe } from '@/lib/admin/recipe-validate';
+import { fetchGithubSkillBundle } from '@/lib/skills/bundle';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
@@ -63,6 +64,54 @@ export async function deleteServerAction(_prev: AdminActionState, fd: FormData):
   redirect('/admin/servers');
 }
 
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+export async function importSkillFromGithubAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
+  await requireAdmin();
+  const source = str(fd, 'githubSource').trim();
+  if (!source) return { error: 'GitHub source is required.' };
+
+  let bundle;
+  try {
+    bundle = await fetchGithubSkillBundle(source);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Network error fetching skill bundle from GitHub.' };
+  }
+
+  const name = bundle.name;
+  const description = bundle.description;
+  const author = bundle.author;
+
+  let slug = slugify(bundle.slugHint);
+  if (!SLUG_RE.test(slug)) slug = slugify(`${bundle.source.owner}-${bundle.source.repo}`);
+
+  const existing = await db.skill.findUnique({ where: { slug } });
+  if (existing?.githubSource === bundle.source.normalized) return { error: `Already imported: ${slug}.` };
+  if (existing) slug = `${slug}-${Date.now().toString(36)}`;
+
+  try {
+    await createDirectorySkill({
+      slug,
+      name,
+      author,
+      description,
+      iconUrl: null,
+      githubSource: bundle.source.normalized,
+      content: bundle.content,
+      ...(bundle.files.length ? { files: bundle.files } : {}),
+      score: 0,
+      categoryIds: [],
+    });
+  } catch {
+    return { error: 'Failed to create skill — slug conflict.' };
+  }
+
+  revalidatePath('/admin/skills');
+  redirect('/admin/skills');
+}
+
 export async function createSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
   const slug = str(fd, 'slug').toLowerCase();
@@ -71,7 +120,8 @@ export async function createSkillAction(_prev: AdminActionState, fd: FormData): 
   try {
     await createDirectorySkill({
       slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-      iconUrl: nul(str(fd, 'iconUrl')), score: num(str(fd, 'score')), categoryIds: ids(fd),
+      iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
+      score: num(str(fd, 'score')), categoryIds: ids(fd),
     });
   } catch {
     return { error: 'A skill with that slug already exists.' };
@@ -87,7 +137,8 @@ export async function updateSkillAction(_prev: AdminActionState, fd: FormData): 
   if (!name) return { error: 'Name is required.' };
   await updateDirectorySkill(id, {
     name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-    iconUrl: nul(str(fd, 'iconUrl')), score: num(str(fd, 'score')), categoryIds: ids(fd),
+    iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
+    score: num(str(fd, 'score')), categoryIds: ids(fd),
   });
   revalidatePath('/admin/skills');
   revalidatePath(`/admin/skills/${id}/edit`);

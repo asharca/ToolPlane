@@ -30,7 +30,7 @@ export async function GET(
       },
     },
     include: {
-      skill: { select: { slug: true, name: true, description: true, author: true } },
+      skill: { select: { slug: true, name: true, description: true, author: true, content: true, files: true } },
       workspace: { select: { id: true } },
     },
   });

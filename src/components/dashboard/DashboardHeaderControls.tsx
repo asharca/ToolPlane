@@ -11,6 +11,7 @@ import {
   Plug,
   Brain,
   Wrench,
+  Boxes,
   Bot,
   BarChart3,
   Users,
@@ -19,6 +20,7 @@ import {
   Home,
   type LucideIcon,
 } from 'lucide-react';
+import { SITE, mailto } from '@/lib/site';
 
 type Command = {
   id: string;
@@ -37,21 +39,28 @@ export function DashboardHeaderControls() {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setMounted(true), []);
-
   const toggleTheme = () =>
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+
+  function openPalette() {
+    setQuery('');
+    setActive(0);
+    setOpen(true);
+  }
+
+  function closePalette() {
+    setOpen(false);
+  }
 
   const commands = useMemo<Command[]>(() => {
     const slug = workspaceSlug(pathname);
     const go = (href: string) => () => {
-      setOpen(false);
+      closePalette();
       router.push(href);
     };
     const list: Command[] = [];
@@ -61,6 +70,7 @@ export function DashboardHeaderControls() {
         { id: 'mcp', label: 'MCP Servers', group: 'Manage', icon: Plug, run: go(`${b}/mcp`) },
         { id: 'skills', label: 'Skills', group: 'Manage', icon: Brain, run: go(`${b}/skills`) },
         { id: 'toolkits', label: 'Toolkits', group: 'Manage', icon: Wrench, run: go(`${b}/toolkits`) },
+        { id: 'sandboxes', label: 'Sandboxes', group: 'Manage', icon: Boxes, run: go(`${b}/sandboxes`) },
         { id: 'agents', label: 'Agents', group: 'Manage', icon: Bot, run: go(`${b}/agents`) },
         { id: 'obs', label: 'Observability', group: 'Monitor', icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: 'Members', group: 'Workspace', icon: Users, run: go(`${b}/members`) },
@@ -71,7 +81,7 @@ export function DashboardHeaderControls() {
       );
     }
     list.push(
-      { id: 'home', label: 'Back to mcpmarket.com', group: 'Actions', icon: Home, run: go('/') },
+      { id: 'home', label: 'Back to ToolPlane', group: 'Actions', icon: Home, run: go('/') },
       {
         id: 'theme',
         label: 'Toggle dark mode',
@@ -79,7 +89,7 @@ export function DashboardHeaderControls() {
         icon: resolvedTheme === 'dark' ? Sun : Moon,
         run: () => {
           toggleTheme();
-          setOpen(false);
+          closePalette();
         },
       },
     );
@@ -93,24 +103,22 @@ export function DashboardHeaderControls() {
     return commands.filter((c) => c.label.toLowerCase().includes(q));
   }, [commands, query]);
 
-  useEffect(() => setActive(0), [query, open]);
-
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setOpen((v) => !v);
+        if (open) closePalette();
+        else openPalette();
       } else if (e.key === 'Escape') {
-        setOpen(false);
+        closePalette();
       }
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (open) {
-      setQuery('');
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
@@ -132,20 +140,20 @@ export function DashboardHeaderControls() {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        className="relative hidden h-9 w-56 items-center rounded-md border border-zinc-200 bg-zinc-50 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-zinc-100 sm:flex dark:border-zinc-700 dark:bg-zinc-800/60 dark:hover:bg-zinc-800"
+        onClick={openPalette}
+        className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
       >
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         Search
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] text-muted-foreground dark:border-zinc-600 dark:bg-zinc-900">
+        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
           ⌘K
         </kbd>
       </button>
 
       <a
-        href="mailto:support@mcpmarket.com"
+        href={mailto(SITE.supportEmail)}
         aria-label="Get help"
-        className="inline-flex size-9 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        className="ui-button-ghost ui-icon-button"
       >
         <HelpCircle className="size-4" />
       </a>
@@ -154,19 +162,18 @@ export function DashboardHeaderControls() {
         type="button"
         aria-label="Toggle theme"
         onClick={toggleTheme}
-        className="inline-flex size-9 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        className="ui-button-ghost ui-icon-button"
       >
-        {mounted && resolvedTheme === 'dark' ? (
-          <Sun className="size-4" />
-        ) : (
-          <Moon className="size-4" />
-        )}
+        <span aria-hidden="true">
+          <Sun className="hidden size-4 dark:block" />
+          <Moon className="size-4 dark:hidden" />
+        </span>
       </button>
 
       {open ? (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh]"
-          onClick={() => setOpen(false)}
+          onClick={closePalette}
         >
           <div
             role="dialog"
@@ -179,7 +186,10 @@ export function DashboardHeaderControls() {
               <input
                 ref={inputRef}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActive(0);
+                }}
                 onKeyDown={onListKey}
                 placeholder="Type a command or search…"
                 className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
@@ -201,8 +211,8 @@ export function DashboardHeaderControls() {
                         onClick={() => c.run()}
                         className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
                           i === active
-                            ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-zinc-600 dark:text-zinc-300'
+                            ? 'bg-brand-soft text-accent-foreground'
+                            : 'text-muted-foreground'
                         }`}
                       >
                         <Icon className="size-4 shrink-0 text-muted-foreground" />

@@ -18,7 +18,7 @@ describe('buildSkillMarkdown', () => {
 
   it('falls back to a generated description when none is provided', () => {
     const md = buildSkillMarkdown({ slug: 's', name: 'Thing', description: null });
-    expect(md).toContain('Thing agent skill installed from MCP Market.');
+    expect(md).toContain('Thing agent skill installed from ToolPlane.');
   });
 
   it('escapes quotes in the description so frontmatter stays valid', () => {

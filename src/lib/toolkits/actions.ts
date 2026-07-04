@@ -2,9 +2,11 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -49,6 +51,161 @@ export async function createToolkitAction(formData: FormData) {
   });
   revalidatePath(`/app/${slug}/toolkits`);
   redirect(`/app/${slug}/toolkits/${toolkitSlug}`);
+}
+
+export async function clonePublicToolkitAction(formData: FormData) {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const sourceToolkitId = String(formData.get('toolkitId') ?? '');
+  const ctx = await authorizedWorkspace(workspaceSlug);
+  if (!ctx || !sourceToolkitId) return;
+
+  const source = await db.toolkit.findFirst({
+    where: { id: sourceToolkitId, visibility: 'public', enabled: true },
+    include: {
+      servers: {
+        include: {
+          deployment: {
+            include: {
+              server: {
+                select: { id: true, name: true, installCfg: true, verifiedAt: true },
+              },
+            },
+          },
+        },
+      },
+      skills: {
+        include: {
+          installedSkill: {
+            include: { skill: { select: { id: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!source) return;
+  if (source.workspaceId === ctx.ws.id) {
+    return redirect(`/app/${workspaceSlug}/toolkits/${source.slug}`);
+  }
+
+  const base = slugify(source.name);
+  let nextSlug = base;
+  for (
+    let i = 1;
+    await db.toolkit.findFirst({
+      where: { workspaceId: ctx.ws.id, slug: nextSlug },
+    });
+    i += 1
+  ) {
+    nextSlug = `${base}-${i}`;
+  }
+
+  const cloned = await db.$transaction(async (tx) => {
+    const target = await tx.toolkit.create({
+      data: {
+        workspaceId: ctx.ws.id,
+        name: source.name,
+        slug: nextSlug,
+        visibility: 'private',
+        enabled: true,
+      },
+    });
+
+    for (const link of source.servers) {
+      const deployment = link.deployment;
+      if (!deployment.serverId || !deployment.server?.verifiedAt) continue;
+
+      const recipe = parseServerRecipe(deployment.server.installCfg);
+      if (!recipe) continue;
+      const data = recipeToDeploymentData(recipe);
+      const targetDeployment = await tx.deployment.upsert({
+        where: {
+          workspaceId_serverId: {
+            workspaceId: ctx.ws.id,
+            serverId: deployment.serverId,
+          },
+        },
+        update: {},
+        create: {
+          workspaceId: ctx.ws.id,
+          serverId: deployment.serverId,
+          status: 'stopped',
+          source: data.source,
+          sourceRef: data.sourceRef,
+          installCfg: data.installCfg as Prisma.InputJsonValue,
+        },
+      });
+
+      await tx.toolkitServer.upsert({
+        where: {
+          toolkitId_deploymentId: {
+            toolkitId: target.id,
+            deploymentId: targetDeployment.id,
+          },
+        },
+        update: {},
+        create: {
+          toolkitId: target.id,
+          deploymentId: targetDeployment.id,
+        },
+      });
+    }
+
+    for (const link of source.skills) {
+      const installed = link.installedSkill;
+      const targetSkill = installed.skillId
+        ? await tx.installedSkill.upsert({
+            where: {
+              workspaceId_skillId: {
+                workspaceId: ctx.ws.id,
+                skillId: installed.skillId,
+              },
+            },
+            update: {},
+            create: {
+              workspaceId: ctx.ws.id,
+              skillId: installed.skillId,
+            },
+          })
+        : await tx.installedSkill.create({
+            data: {
+              workspaceId: ctx.ws.id,
+              name: installed.name,
+              slug: installed.slug,
+              description: installed.description,
+              content: installed.content,
+              source: installed.source,
+              sourceRef: installed.sourceRef,
+              status: installed.status,
+              userInvocable: installed.userInvocable,
+              agentInvocable: installed.agentInvocable,
+              effort: installed.effort,
+              ...(installed.files === null
+                ? {}
+                : { files: installed.files as Prisma.InputJsonValue }),
+            },
+          });
+
+      await tx.toolkitSkill.upsert({
+        where: {
+          toolkitId_installedSkillId: {
+            toolkitId: target.id,
+            installedSkillId: targetSkill.id,
+          },
+        },
+        update: {},
+        create: {
+          toolkitId: target.id,
+          installedSkillId: targetSkill.id,
+        },
+      });
+    }
+
+    return target;
+  });
+
+  revalidatePath(`/app/${workspaceSlug}/toolkits`);
+  revalidatePath(`/app/${workspaceSlug}/toolkits/new`);
+  redirect(`/app/${workspaceSlug}/toolkits/${cloned.slug}`);
 }
 
 export async function deleteToolkitAction(formData: FormData) {

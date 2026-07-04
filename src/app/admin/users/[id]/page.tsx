@@ -25,7 +25,7 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
       <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Access</h2>
         {isSelf ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">You can't change your own role or status.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">You can&apos;t change your own role or status.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             <ConfirmDialog

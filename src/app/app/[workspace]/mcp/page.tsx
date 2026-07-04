@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
+import { Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
+import { DeployCustomMcpDialog } from '@/components/dashboard/DeployCustomMcpDialog';
 import {
   removeDeploymentAction,
   startDeploymentAction,
@@ -14,6 +16,12 @@ import {
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
+import {
+  DashboardEmptyState,
+  DashboardPage,
+  DashboardTable,
+  DashboardToolbar,
+} from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +34,7 @@ function formatDate(d: Date): string {
 }
 
 const rowButton =
-  'text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
+  'text-xs text-muted-foreground transition-colors hover:text-foreground';
 
 export default async function McpServersPage({
   params,
@@ -47,135 +55,131 @@ export default async function McpServersPage({
   return (
     <>
       <ProvisioningRefresher active={anyProvisioning} />
-      <DashboardHeader
-        title={t('title')}
-        actions={
-          <Link
-            href={`/app/${slug}/mcp/new`}
-            className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-          >
-            Browse MCPs
-          </Link>
-        }
-      />
-      <div className="px-8 py-6">
-        <div className="mb-6 flex items-center justify-between">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Servers deployed to your org.
+      <DashboardHeader title={t('title')} />
+      <DashboardPage>
+        <DashboardToolbar
+          actions={
+            <>
+              <Link href={`/app/${slug}/mcp/new`} className="ui-button-secondary">
+                <Store className="size-4" />
+                Browse ToolPlane
+              </Link>
+              <DeployCustomMcpDialog slug={slug} />
+            </>
+          }
+        >
+          <p className="text-sm text-muted-foreground">
+            Servers deployed to your org. {deployments.length} server{deployments.length === 1 ? '' : 's'} deployed.
           </p>
-          <span className="text-sm text-muted-foreground">
-            {deployments.length} server{deployments.length === 1 ? '' : 's'}
-          </span>
-        </div>
+        </DashboardToolbar>
 
         {deployments.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 py-20 text-center dark:border-zinc-700">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              No servers deployed yet.
-            </p>
-            <Link
-              href={`/app/${slug}/mcp/new`}
-              className="mt-4 inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              Browse MCPs
-            </Link>
-          </div>
+          <DashboardEmptyState
+            description="No servers deployed yet."
+            actions={
+              <>
+                <Link
+                  href={`/app/${slug}/mcp/new`}
+                  className="ui-button-secondary"
+                >
+                  <Store className="size-4" />
+                  Browse ToolPlane
+                </Link>
+                <DeployCustomMcpDialog slug={slug} />
+              </>
+            }
+          />
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Server</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Created</th>
-                  <th className="px-4 py-3 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {deployments.map((d) => {
-                  const status = effectiveStatus(d.id, d.status);
-                  const isUp = status === 'running' || status === 'provisioning';
-                  const label = deploymentLabel(d);
-                  return (
-                    <tr
-                      key={d.id}
-                      className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          {d.server?.iconUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={d.server.iconUrl}
-                              alt=""
-                              width={20}
-                              height={20}
-                              className="size-5 rounded object-cover"
-                            />
-                          ) : (
-                            <span className="size-5 rounded bg-zinc-200 dark:bg-zinc-700" />
-                          )}
-                          <Link
-                            href={`/app/${slug}/mcp/${d.id}`}
-                            className="font-medium text-zinc-900 hover:underline dark:text-zinc-100"
-                          >
-                            {label.name}
-                          </Link>
-                          {label.source !== 'catalog' ? (
-                            <span className="inline-flex items-center rounded-md border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium uppercase text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                              {label.source}
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={status} />
-                      </td>
-                      <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
-                        {formatDate(d.createdAt)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-3">
-                          <Link href={`/app/${slug}/mcp/${d.id}`} className={rowButton}>
-                            Inspect
-                          </Link>
-                          {isUp ? (
-                            <>
-                              <form action={stopDeploymentAction}>
-                                <input type="hidden" name="workspace" value={slug} />
-                                <input type="hidden" name="deploymentId" value={d.id} />
-                                <button className={rowButton}>Stop</button>
-                              </form>
-                              <form action={restartDeploymentAction}>
-                                <input type="hidden" name="workspace" value={slug} />
-                                <input type="hidden" name="deploymentId" value={d.id} />
-                                <button className={rowButton}>Restart</button>
-                              </form>
-                            </>
-                          ) : (
-                            <form action={startDeploymentAction}>
-                              <input type="hidden" name="workspace" value={slug} />
-                              <input type="hidden" name="deploymentId" value={d.id} />
-                              <button className={rowButton}>Start</button>
-                            </form>
-                          )}
-                          <form action={removeDeploymentAction}>
+          <DashboardTable
+            headers={[
+              { label: 'Server' },
+              { label: 'Status' },
+              { label: 'Created' },
+              { label: 'Actions', align: 'right' },
+            ]}
+          >
+            {deployments.map((d) => {
+              const status = effectiveStatus(d.id, d.status);
+              const isUp = status === 'running' || status === 'provisioning';
+              const label = deploymentLabel(d);
+              return (
+                <tr
+                  key={d.id}
+                  className="transition-colors"
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      {d.server?.iconUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={d.server.iconUrl}
+                          alt=""
+                          width={20}
+                          height={20}
+                          className="size-5 rounded object-cover"
+                        />
+                      ) : (
+                        <span className="size-5 rounded bg-muted" />
+                      )}
+                      <Link
+                        href={`/app/${slug}/mcp/${d.id}`}
+                        className="font-medium text-foreground hover:underline"
+                      >
+                        {label.name}
+                      </Link>
+                      {label.source !== 'catalog' ? (
+                        <span className="inline-flex items-center rounded-md border border-border bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium uppercase text-muted-foreground">
+                          {label.source}
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={status} />
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {formatDate(d.createdAt)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-3">
+                      <Link href={`/app/${slug}/mcp/${d.id}`} className={rowButton}>
+                        Inspect
+                      </Link>
+                      {isUp ? (
+                        <>
+                          <form action={stopDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                              Remove
-                            </button>
+                            <button className={rowButton}>Stop</button>
                           </form>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                          <form action={restartDeploymentAction}>
+                            <input type="hidden" name="workspace" value={slug} />
+                            <input type="hidden" name="deploymentId" value={d.id} />
+                            <button className={rowButton}>Restart</button>
+                          </form>
+                        </>
+                      ) : (
+                        <form action={startDeploymentAction}>
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input type="hidden" name="deploymentId" value={d.id} />
+                          <button className={rowButton}>Start</button>
+                        </form>
+                      )}
+                      <form action={removeDeploymentAction}>
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input type="hidden" name="deploymentId" value={d.id} />
+                        <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
+                          Remove
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </DashboardTable>
         )}
-      </div>
+      </DashboardPage>
     </>
   );
 }

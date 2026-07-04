@@ -1,19 +1,19 @@
 services:
   postgres:
     image: postgres:16
-    container_name: mcp-market-pg
+    container_name: toolplane-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: mcp
       POSTGRES_PASSWORD: mcp
-      POSTGRES_DB: mcpmarket
+      POSTGRES_DB: toolplane
     ports:
       # Bind to localhost only — MCP sandbox containers must not reach the DB.
       - '127.0.0.1:5433:5432'
     volumes:
       - mcp_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U mcp -d mcpmarket']
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d toolplane']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -50,13 +50,17 @@ services:
         condition: service_started
     environment:
       # Internal network → reach Postgres on 5432 (5433 is only the host mapping).
-      DATABASE_URL: postgresql://mcp:mcp@postgres:5432/mcpmarket
+      DATABASE_URL: postgresql://mcp:mcp@postgres:5432/toolplane
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      CONNECTOR_WS_BIND: 0.0.0.0
+      CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
+      CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-ws://localhost:9321}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
     ports:
       - '3000:3000'
+      - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'
 
 volumes:
   mcp_pg:

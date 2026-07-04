@@ -35,6 +35,11 @@ const TOOL_INCLUDE = {
       child: { select: { id: true, name: true, slug: true, systemPrompt: true } },
     },
   },
+  sandboxes: {
+    select: {
+      sandbox: { select: { id: true, name: true, slug: true, deploymentId: true } },
+    },
+  },
 } as const;
 
 export async function listProviders(workspaceId: string) {
@@ -49,7 +54,7 @@ export async function listAgents(workspaceId: string) {
   return db.agent.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'desc' },
-    include: { provider: { select: { name: true } }, _count: { select: { servers: true, skills: true, toolkits: true } } },
+    include: { provider: { select: { name: true } }, _count: { select: { servers: true, skills: true, toolkits: true, sandboxes: true } } },
   });
 }
 

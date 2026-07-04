@@ -1,8 +1,8 @@
-# mcpmarket P1b — Design System + Global Shell + Home Page
+# toolplane P1b — Design System + Global Shell + Home Page
 
 > **For agentic workers:** Implement task-by-task with TDD. Steps use checkbox (`- [ ]`) syntax. This plan is executed **inline in the originating session** (cost-controlled) with `pnpm exec tsc --noEmit` + `pnpm test` review between tasks — not the full subagent-driven ceremony.
 
-**Goal:** Build the pixel-faithful global shell (header/footer/theme) and home page of mcpmarket.com on top of the P1a foundation.
+**Goal:** Build the Product-grade global shell (header/footer/theme) and home page of public MCP directory source on top of the P1a foundation.
 
 **Architecture:** shadcn-style design tokens in Tailwind v4 `@theme`; global `Header`/`Footer`/`ThemeProvider` in the root layout; presentational `EntityCard` reused by `Server/Client/Skill` card wrappers; `getHomeSections()` DB query feeds a presentational `HomeView`. Server components fetch; client components only where interactivity is required (theme toggle).
 
@@ -10,7 +10,7 @@
 
 ---
 
-## Extracted design facts (live mcpmarket.com, 2026-06-23)
+## Extracted design facts (public MCP directory source, 2026-06-23)
 
 Theme mechanism: **next-themes**, `class` strategy on `<html>` (`light`/`dark`), default light. Colors are shadcn **HSL triplets** consumed as `hsl(var(--x))`.
 
@@ -42,7 +42,7 @@ Fonts: body **Inter** (`--font-sans`); card titles **mono** (site class `font-ge
 
 Header: `<header>` sticky top, height ~57px, `background: hsl(var(--background)/0.8)`, `backdrop-blur`, `border-b` 1px `hsl(var(--border))` (neutral-200 light).
 
-Nav (anchors): logo **MCPMarket**→`/`; **Sell Skills**→`/sell`; Hub CTA **"Power Your Agents / Connect"**→`/hub`. Plus a theme toggle button + (search — deferred to P1c).
+Nav (anchors): logo **ToolPlane**→`/`; **Sell Skills**→`/sell`; Hub CTA **"Power Your Agents / Connect"**→`/hub`. Plus a theme toggle button + (search — deferred to P1c).
 
 Home sections (top→bottom): hero `<h1>` "Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools"; then `Official MCP Servers`, `Featured MCP Servers`, `Top MCP Servers`, `Latest MCP Servers` (6 server cards each); `MCP Clients` (6 client cards); `Top Agent Skills` (6 skill cards); `Frequently Asked Questions` (8 Q&A — **deferred to P1c**, answer copy not yet scraped).
 
@@ -67,10 +67,10 @@ Card markup (server example):
 Detail routes (singular): `/server/{slug}`, `/client/{slug}`, skills under `/tools/skills`. Cards link to `/server/{slug}` and `/client/{slug}`; skills link to `/tools/skills/{slug}` (confirm in P1c).
 
 Footer: 4 columns.
-- **MCP**: MCP Search→`/search`, MCP Servers→`/server`, MCP Clients→`/client`, Agent Skills→`/tools/skills`, MCP Market Hub→`/hub`
+- **MCP**: MCP Search→`/search`, MCP Servers→`/server`, MCP Clients→`/client`, Agent Skills→`/tools/skills`, ToolPlane Hub→`/hub`
 - **Browse**: Categories→`/categories`, What is an MCP server?→`/what-is-an-mcp-server`, Model Context Protocol→`https://modelcontextprotocol.io`
 - **Rankings**: Top MCPs Today→`/daily`, Top Agent Skills Today→`/daily/skills`, Top 100 Agent Skills→`/tools/skills/leaderboard`, Top 100 MCP Servers→`/leaderboards`
-- **About**: News→`/news`, Submit→`/submit`, Contact→`mailto:support@mcpmarket.com`, Privacy→`/privacy`, Terms→`/terms`
+- **About**: News→`/news`, Submit→`/submit`, Contact→`mailto:support@public MCP directory source`, Privacy→`/privacy`, Terms→`/terms`
 
 ---
 
@@ -106,7 +106,7 @@ Footer: 4 columns.
 - [ ] Verify tests pass; commit `feat: add theme provider and toggle`.
 
 ### Task 3 — Header (TDD)
-- [ ] Test `tests/unit/header.test.tsx`: renders logo link to `/` with text MCPMarket; nav links `Sell Skills`→`/sell`, Hub→`/hub`; contains a theme toggle (`aria-label="Toggle theme"`).
+- [ ] Test `tests/unit/header.test.tsx`: renders logo link to `/` with text ToolPlane; nav links `Sell Skills`→`/sell`, Hub→`/hub`; contains a theme toggle (`aria-label="Toggle theme"`).
 - [ ] Implement `Header` (`<header class="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur">`, inner `mx-auto flex h-[57px] max-w-screen-xl items-center justify-between px-4`).
 - [ ] Verify; commit `feat: add site header`.
 
@@ -116,7 +116,7 @@ Footer: 4 columns.
 - [ ] Verify; commit `feat: add site footer`.
 
 ### Task 5 — shell wiring
-- [ ] Rewrite `layout.tsx`: load `Inter({variable:'--font-inter'})` + `Geist_Mono({variable:'--font-geist-mono'})`; `<html lang="en" suppressHydrationWarning className={`${inter.variable} ${geistMono.variable}`}>`; `<body class="min-h-dvh bg-background text-foreground font-sans antialiased">`; wrap `<ThemeProvider><div class="flex min-h-dvh flex-col"><Header/><main class="flex-1">{children}</main><Footer/></div></ThemeProvider>`; metadata title "Discover Top MCP Servers | MCP Market".
+- [ ] Rewrite `layout.tsx`: load `Inter({variable:'--font-inter'})` + `Geist_Mono({variable:'--font-geist-mono'})`; `<html lang="en" suppressHydrationWarning className={`${inter.variable} ${geistMono.variable}`}>`; `<body class="min-h-dvh bg-background text-foreground font-sans antialiased">`; wrap `<ThemeProvider><div class="flex min-h-dvh flex-col"><Header/><main class="flex-1">{children}</main><Footer/></div></ThemeProvider>`; metadata title "Discover Top MCP Servers | ToolPlane".
 - [ ] Verify `pnpm dev`: header + footer visible on `/`, theme toggle flips `<html class>`.
 - [ ] Commit `feat: wire global shell into layout`.
 

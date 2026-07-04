@@ -168,9 +168,12 @@ export async function removeDeploymentAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  killProcess(deploymentId);
+  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!dep) return;
+
+  killProcess(dep.id);
   await db.deployment.deleteMany({
-    where: { id: deploymentId, workspaceId: ctx.ws.id },
+    where: { id: dep.id, workspaceId: ctx.ws.id },
   });
   revalidatePath(`/app/${slug}/mcp`);
   // Redirect to the list: this action also fires from the deployment detail

@@ -37,9 +37,21 @@ describe('resolveAgentTools', () => {
   it('returns empty arrays when nothing is attached', () => {
     expect(resolveAgentTools({ servers: [], skills: [], toolkits: [] })).toEqual({
       deploymentIds: [],
+      sandboxDeploymentIds: [],
       skills: [],
       subAgents: [],
     });
+  });
+
+  it('adds sandbox deployments to the agent tool list and tracks them separately', () => {
+    const { deploymentIds, sandboxDeploymentIds } = resolveAgentTools({
+      servers: [{ deploymentId: 'mcp1' }],
+      skills: [],
+      toolkits: [],
+      sandboxes: [{ sandbox: { deploymentId: 'sandbox1' } }],
+    });
+    expect(deploymentIds.sort()).toEqual(['mcp1', 'sandbox1']);
+    expect(sandboxDeploymentIds).toEqual(['sandbox1']);
   });
 
   it('filters out skills where agentInvocable is false', () => {

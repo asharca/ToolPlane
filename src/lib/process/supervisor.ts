@@ -4,6 +4,7 @@ import path from 'node:path';
 import { db } from '@/lib/db';
 import { type SpawnSpec } from './spawn-spec';
 import { MCP_NETWORK } from './sandbox';
+import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
 
 type Entry = {
   child: ChildProcess;
@@ -26,13 +27,14 @@ function store(): Store {
 
 const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
+const SANDBOX_SERVER = path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs');
 
 // How long startProcess waits for the child to print `LISTENING <port>` before
 // returning. A builtin server is ready in ~50ms; a custom MCP cold-start (npx
 // fetch / uvx / docker pull) measured ~5s, so 3s was too short — it returned
 // while still "provisioning". 15s covers a cold start; the process still flips
 // to running in the background if it exceeds even this.
-const READY_TIMEOUT_MS = 15000;
+const READY_TIMEOUT_MS = 90000;
 
 async function persist(deploymentId: string, status: string) {
   try {
@@ -84,7 +86,10 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) return;
 
-  const script = spec.kind === 'bridge' ? BRIDGE : BUILTIN;
+  const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
+    ? await ensureConnectorBroker()
+    : null;
+  const script = spec.kind === 'bridge' ? BRIDGE : spec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
   // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
   // down to an allowlist before spawning the docker CLI. The MCP's own env is
   // already baked into spec.args as `-e` flags, so it is NOT injected here.
@@ -97,7 +102,28 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
           MCP_COMMAND: spec.command,
           MCP_ARGS: JSON.stringify(spec.args),
         }
-      : { ...process.env, MCP_PORT: '0', MCP_NAME: spec.name };
+      : spec.kind === 'sandbox'
+        ? {
+            PATH: process.env.PATH ?? '',
+            NODE_ENV: process.env.NODE_ENV ?? 'production',
+            HOME: process.env.HOME ?? '',
+            DOCKER_HOST: process.env.DOCKER_HOST ?? '',
+            DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH ?? '',
+            DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY ?? '',
+            LANG: process.env.LANG ?? '',
+            LC_ALL: process.env.LC_ALL ?? '',
+            MCP_PORT: '0',
+            MCP_NAME: spec.name,
+            SANDBOX_ID: spec.sandboxId,
+            SANDBOX_KIND: spec.sandboxKind,
+            SANDBOX_IMAGE: spec.image ?? '',
+            SANDBOX_VOLUME: spec.volumeName ?? '',
+            SANDBOX_NETWORK: spec.network,
+            SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
+            SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
+            SANDBOX_CONNECTOR_REMOTE_ROOT: spec.connector?.remoteRoot ?? '',
+          }
+        : { ...process.env, MCP_PORT: '0', MCP_NAME: spec.name };
 
   const child = spawn(process.execPath, [script], {
     env,

@@ -14,8 +14,8 @@ export function DashboardHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
-      <div className="flex h-16 items-center justify-between gap-4 px-8">
+    <header className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+      <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-8">
         {breadcrumb ? (
           <nav className="flex items-center gap-2 text-sm">
             {breadcrumb.map((crumb, i) => {
@@ -23,12 +23,12 @@ export function DashboardHeader({
               return (
                 <span key={`${crumb.label}-${i}`} className="flex items-center gap-2">
                   {i > 0 ? (
-                    <span className="text-zinc-300 dark:text-zinc-600">/</span>
+                    <span className="text-muted-foreground/55">/</span>
                   ) : null}
                   {crumb.href && !last ? (
                     <Link
                       href={crumb.href}
-                      className="font-semibold text-zinc-900 transition-colors hover:text-zinc-600 dark:text-zinc-100 dark:hover:text-zinc-300"
+                      className="font-semibold text-foreground transition-colors hover:text-muted-foreground"
                     >
                       {crumb.label}
                     </Link>
@@ -36,8 +36,8 @@ export function DashboardHeader({
                     <span
                       className={
                         last
-                          ? 'text-zinc-500 dark:text-zinc-400'
-                          : 'font-semibold text-zinc-900 dark:text-zinc-100'
+                          ? 'text-muted-foreground'
+                          : 'font-semibold text-foreground'
                       }
                     >
                       {crumb.label}
@@ -48,7 +48,7 @@ export function DashboardHeader({
             })}
           </nav>
         ) : (
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
             {title}
           </h1>
         )}

@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser } from 'playwright';
 
-const BASE_URL = 'https://mcpmarket.com';
+const BASE_URL = process.env.SCRAPER_BASE_URL ?? 'https://example.com';
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 

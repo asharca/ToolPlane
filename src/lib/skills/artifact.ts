@@ -1,10 +1,13 @@
 import 'server-only';
+import { normalizeSkillFiles, type SkillBundleFile } from './bundle';
 
 type SkillMeta = {
   slug: string;
   name: string;
   description?: string | null;
   author?: string | null;
+  content?: string | null;
+  files?: unknown;
 };
 
 function yamlString(value: string): string {
@@ -15,9 +18,11 @@ function yamlString(value: string): string {
 // and `description`, followed by markdown instructions. This is a real,
 // usable artifact that can be dropped into an agent's skills directory.
 export function buildSkillMarkdown(skill: SkillMeta): string {
+  if (skill.content?.trim()) return skill.content;
+
   const description =
     skill.description?.trim() ||
-    `${skill.name} agent skill installed from MCP Market.`;
+    `${skill.name} agent skill installed from ToolPlane.`;
   const by = skill.author ? ` by ${skill.author}` : '';
 
   return `---
@@ -42,7 +47,7 @@ load these instructions and follow the steps below.
 
 ## Notes
 
-Installed from MCP Market. Replace these starter instructions with the
+Installed from ToolPlane. Replace these starter instructions with the
 concrete procedure your agent should follow for ${skill.name}.
 `;
 }
@@ -52,6 +57,7 @@ type CustomSkillData = {
   name?: string | null;
   description?: string | null;
   content?: string | null;
+  files?: unknown;
   userInvocable?: boolean;
   agentInvocable?: boolean;
   effort?: string | null;
@@ -61,6 +67,7 @@ export function buildCustomSkillMarkdown(s: CustomSkillData): string {
   const slug = (s.slug || s.name || 'skill').trim();
   const description = (s.description || `${s.name ?? slug} agent skill.`).trim();
   const body = (s.content ?? '').trim() || `# ${s.name ?? slug}\n\n${description}`;
+  if (/^---\r?\n[\s\S]*?\r?\n---/.test(body)) return `${body}\n`;
   return [
     '---',
     `name: ${slug}`,
@@ -77,8 +84,17 @@ export function buildCustomSkillMarkdown(s: CustomSkillData): string {
 
 export function buildInstalledSkillMarkdown(installed: {
   skillId: string | null;
-  skill: { slug: string; name: string; description?: string | null; author?: string | null } | null;
+  skill: SkillMeta | null;
 } & CustomSkillData): string {
   if (installed.skillId && installed.skill) return buildSkillMarkdown(installed.skill);
   return buildCustomSkillMarkdown(installed);
+}
+
+export function installedSkillExtraFiles(installed: {
+  skillId: string | null;
+  skill: SkillMeta | null;
+} & CustomSkillData): SkillBundleFile[] {
+  const files = installed.skillId && installed.skill ? installed.skill.files : installed.files;
+  if (!Array.isArray(files)) return [];
+  return normalizeSkillFiles(files as SkillBundleFile[]);
 }

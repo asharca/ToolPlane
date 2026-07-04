@@ -38,8 +38,8 @@ export function EntityCard({
   rank,
 }: EntityCardProps) {
   return (
-    <Link href={href} className="group block">
-      <div className="relative h-full rounded-lg border border-border bg-card transition-colors duration-200 hover:border-foreground/20 hover:bg-accent/50">
+    <Link href={href} className="group block h-full">
+      <div className="ui-panel relative h-full transition-colors duration-200 group-hover:border-brand/50 group-hover:bg-accent/40">
         <div className="p-5">
           {typeof rank === 'number' ? (
             <div className="mb-3">
@@ -64,7 +64,7 @@ export function EntityCard({
               ) : (
                 <div className="size-5 shrink-0 rounded-full bg-muted" />
               )}
-              <h3 className="line-clamp-1 font-mono text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
+              <h3 className="line-clamp-1 text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
                 {name}
               </h3>
             </div>
@@ -81,7 +81,7 @@ export function EntityCard({
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 {category ? (
-                  <span className="inline-flex max-w-full items-center truncate rounded-lg border border-border px-1.5 py-0 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  <span className="inline-flex max-w-full items-center truncate rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {category}
                   </span>
                 ) : null}

@@ -1,10 +1,10 @@
-# MCP Market Clone — P1a Foundation Implementation Plan
+# ToolPlane — P1a Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up the project scaffold, PostgreSQL data layer, typed read-query layer, and the scraper core — a fully tested foundation that later UI plans render from.
 
-**Architecture:** A single Next.js App Router app. PostgreSQL via Prisma (Docker locally). A standalone, rate-limited scraper ingests mcpmarket.com into the DB. The web layer reads only through `src/lib/queries/*`. This plan (P1a) builds scaffold + DB + queries + scraper core. UI/pages come in P1b/P1c.
+**Architecture:** A single Next.js App Router app. PostgreSQL via Prisma (Docker locally). A standalone, rate-limited scraper ingests public MCP directory source into the DB. The web layer reads only through `src/lib/queries/*`. This plan (P1a) builds scaffold + DB + queries + scraper core. UI/pages come in P1b/P1c.
 
 **Tech Stack:** Next.js (App Router) · TypeScript · Tailwind CSS · Prisma · PostgreSQL · cheerio · Vitest + React Testing Library · Playwright (e2e, used in later plans) · pnpm.
 
@@ -31,14 +31,14 @@
 ### Task 1: Project scaffold (Next.js + TS + Tailwind + Vitest)
 
 **Files:**
-- Create: whole Next.js app under `mcp-market/` (merged with existing `docs/`, `.git`)
+- Create: whole Next.js app under `toolplane/` (merged with existing `docs/`, `.git`)
 - Create: `vitest.config.ts`, `vitest.setup.ts`
 - Test: `tests/unit/smoke.test.ts`
 
 - [ ] **Step 1: Scaffold Next.js into a temp dir and merge (keeps existing `docs/` + `.git`)**
 
 ```bash
-cd /Users/ashark/Code/mcp-market
+cd /Users/ashark/Code/toolplane
 pnpm create next-app@latest /tmp/mm-scaffold \
   --ts --tailwind --eslint --app --src-dir \
   --import-alias "@/*" --use-pnpm --no-turbopack
@@ -122,12 +122,12 @@ git commit -m "chore: scaffold Next.js app with Tailwind and Vitest"
 services:
   postgres:
     image: postgres:16
-    container_name: mcp-market-pg
+    container_name: toolplane-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: mcp
       POSTGRES_PASSWORD: mcp
-      POSTGRES_DB: mcpmarket
+      POSTGRES_DB: toolplane
     ports:
       - '5433:5432'
     volumes:
@@ -139,7 +139,7 @@ volumes:
 - [ ] **Step 2: Write `.env.example`**
 
 ```bash
-DATABASE_URL="postgresql://mcp:mcp@localhost:5433/mcpmarket?schema=public"
+DATABASE_URL="postgresql://mcp:mcp@localhost:5433/toolplane?schema=public"
 ```
 
 - [ ] **Step 3: Create `.env` from it**
@@ -154,7 +154,7 @@ grep -q '^\.env$' .gitignore || echo '.env' >> .gitignore
 ```bash
 docker compose up -d
 sleep 3
-docker exec mcp-market-pg pg_isready -U mcp
+docker exec toolplane-pg pg_isready -U mcp
 ```
 Expected: `... accepting connections`.
 
@@ -514,7 +514,7 @@ export function parseServerCard(html: string): ParsedServerCard {
 Run: `pnpm test tests/unit/parse.test.ts`
 Expected: PASS.
 
-> Note: real mcpmarket markup uses generated class names, not `data-` attributes. During implementation, replace the fixture with real saved HTML and adjust the selectors so the test still asserts the same `ParsedServerCard` shape.
+> Note: real toolplane markup uses generated class names, not `data-` attributes. During implementation, replace the fixture with real saved HTML and adjust the selectors so the test still asserts the same `ParsedServerCard` shape.
 
 - [ ] **Step 7: Commit**
 

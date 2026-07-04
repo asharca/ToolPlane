@@ -1,9 +1,9 @@
-# 设计:自定义 MCP 对齐真站 + 自定义 Skill(完整)
+# 设计:自定义 MCP 对齐ToolPlane + 自定义 Skill(完整)
 
 > 日期:2026-06-25 · 状态:已批准设计,待实现计划
-> 一个 spec,两部分:**A** 把已实现的自定义 MCP 对齐 app.mcpmarket.com 真站(4 来源全部真实运行、字段/入口对齐、去掉 env/args);**B** 新增完整的自定义 Skill(Create new / GitHub 导入 / 文件夹上传 + 草稿/发布 + frontmatter 属性 + 编辑器)。
+> 一个 spec,两部分:**A** 把已实现的自定义 MCP 对齐 ToolPlane console ToolPlane(4 来源全部真实运行、字段/入口对齐、去掉 env/args);**B** 新增完整的自定义 Skill(Create new / GitHub 导入 / 文件夹上传 + 草稿/发布 + frontmatter 属性 + 编辑器)。
 >
-> 真站取证(已登录 4sharca 工作区实地查看):
+> ToolPlane取证(已登录 4sharca 工作区实地查看):
 > - **Deploy custom MCP** 对话框入口 = `/<ws>/mcp/new` 浏览页的 **"Add custom"** 按钮;4 来源全部可用;字段:npm Package / PyPI Package / GitHub Repository / Docker Image+**Start Command**;+ Server Name + `/<ws>/mcp/<slug>` 预览;**无 env/args**。
 > - **Add skill** 对话框 3 来源:Import from GitHub(同步)/ Upload a folder / Create new(空白 SKILL.md)。Create new = Name+Description→**Draft**。编辑器:状态(Draft→Publish)、属性徽章(Effort / User-invocable / Agent-invocable / Tools / Toolkits)、Files 面板(可多文件)、SKILL.md 编辑器 + Source 切换。
 
@@ -13,9 +13,9 @@
 |---|---|
 | MCP 来源 | npm / PyPI / GitHub / Docker **四个都完整真实运行** |
 | MCP 运行机制 | 复用现有 stdio bridge;仅扩展 `buildSpawnSpec`(npx / uvx / npx git-url / docker run) |
-| MCP env/args | 创建对话框**去掉**(对齐真站);Docker 保留 Start Command;**env 改由检查器 Variables 标签页管理**(真站如此) |
+| MCP env/args | 创建对话框**去掉**(对齐ToolPlane);Docker 保留 Start Command;**env 改由检查器 Variables 标签页管理**(ToolPlane如此) |
 | MCP 入口 | 移到 `/mcp/new` 的 "Add custom";居中 Dialog 替换右侧抽屉 |
-| MCP 浏览页 | `/mcp/new` 对齐真站:Featured 区 + All MCPs 分页表 + 搜索 + Add custom |
+| MCP 浏览页 | `/mcp/new` 对齐ToolPlane:Featured 区 + All MCPs 分页表 + 搜索 + Add custom |
 | MCP 检查器 | 已基本一致(Overview/Variables/Tools/Logs);补齐 **Variables** 标签页的真实 env 配置 |
 | Skill 范围 | 完整:Create new + GitHub 导入 + 文件夹上传 + 草稿/发布 + 属性 + 编辑器 |
 | Skill 数据 | `InstalledSkill.skillId` 改可空 + 自定义字段;自定义 skill 仍是 InstalledSkill(复用绑定/下载) |
@@ -23,11 +23,11 @@
 
 ---
 
-# Part A · 自定义 MCP 对齐真站
+# Part A · 自定义 MCP 对齐ToolPlane
 
 ## A1. 运行时:4 来源全部真实
 
-`Deployment` 模型够用(已有 `serverId?` + `source/sourceRef/name/installCfg`)。`installCfg` 重定义为 `{ env?: Record<string,string>, startCommand?: string }`。**创建对话框不收 env/args**(对齐真站);`env` 改由检查器 Variables 标签页编辑(见 A5),`startCommand` 仅 Docker 用。supervisor 启动时把 `installCfg.env` 注入进程(`resolveSpawnSpec` 已透传 env),改 env 后 Restart 生效。
+`Deployment` 模型够用(已有 `serverId?` + `source/sourceRef/name/installCfg`)。`installCfg` 重定义为 `{ env?: Record<string,string>, startCommand?: string }`。**创建对话框不收 env/args**(对齐ToolPlane);`env` 改由检查器 Variables 标签页编辑(见 A5),`startCommand` 仅 Docker 用。supervisor 启动时把 `installCfg.env` 注入进程(`resolveSpawnSpec` 已透传 env),改 env 后 Restart 生效。
 
 扩展纯函数 `buildSpawnSpec(source, ref, cfg)` → `{ command, args }`:
 
@@ -52,7 +52,7 @@
 ## A3. UI 对齐
 
 - **入口迁移**:从 `/mcp` 列表页移除 "Deploy custom MCP" 按钮;在 `/mcp/new` 浏览页搜索栏旁加 **"Add custom"** 按钮。
-- **居中 Dialog**(替换右侧抽屉,对齐真站):信任警告 + 4 来源分段标签(全部可用)+ 随来源变化的字段(npm/PyPI=包名,GitHub=仓库 URL,Docker=镜像 + Start Command)+ Server Name + `/<ws>/mcp/<slug>` 预览 + Cancel/Deploy。用 `createPortal` 渲染到 `document.body`,逃出 header 的 backdrop-blur 层叠上下文(同上一功能已落地的修复)。
+- **居中 Dialog**(替换右侧抽屉,对齐ToolPlane):信任警告 + 4 来源分段标签(全部可用)+ 随来源变化的字段(npm/PyPI=包名,GitHub=仓库 URL,Docker=镜像 + Start Command)+ Server Name + `/<ws>/mcp/<slug>` 预览 + Cancel/Deploy。用 `createPortal` 渲染到 `document.body`,逃出 header 的 backdrop-blur 层叠上下文(同上一功能已落地的修复)。
 - `deployCustomServerAction` 改为解析 `{ source, ref, name, startCommand }`(去掉 env/args)。
 
 ## A4. 回退既有实现(对齐的一部分)
@@ -61,7 +61,7 @@
 
 ## A5. 检查器 Variables 标签页(真实 env 配置)
 
-真站检查器 Variables 标签页 = 「My Credentials / Your personal API keys for this server」:列出变量(name、`required` 徽章、description)+ 值输入框 + Save。对齐实现:
+ToolPlane检查器 Variables 标签页 = 「My Credentials / Your personal API keys for this server」:列出变量(name、`required` 徽章、description)+ 值输入框 + Save。对齐实现:
 
 - 每个 Deployment 在 `installCfg.env`(`Record<string,string>`)里存环境变量值。
 - Variables 标签页:可增删的 KEY/value 行(value 视为密钥,密码框样式)+ Save(`setDeploymentEnvAction`,工作区鉴权)。catalog server 若声明了必填变量(`Server.installCfg.variables`,可选,后续 seed)则预列出 name/required/description;自定义 server 由用户自行加行。
@@ -69,7 +69,7 @@
 
 ## A6. `/mcp/new` 浏览页对齐
 
-对齐真站浏览页结构:顶部搜索栏 + **Add custom** 按钮;**Featured** 区(`Server.isFeatured` 卡片网格);**All MCPs** 分页表(Name / Description / Add,每页 ~25,复用现有分页模式);每行/卡片 Add = `deployServerAction`(catalog 部署,不变)。端点 URL 域名沿用克隆自身(`/api/v1/mcp/<id>/rpc`),不强求真站的 `link.mcpmarket.com` 域(§非目标)。
+对齐ToolPlane浏览页结构:顶部搜索栏 + **Add custom** 按钮;**Featured** 区(`Server.isFeatured` 卡片网格);**All MCPs** 分页表(Name / Description / Add,每页 ~25,复用现有分页模式);每行/卡片 Add = `deployServerAction`(catalog 部署,不变)。端点 URL 域名沿用ToolPlane(`/api/v1/mcp/<id>/rpc`),不强求ToolPlane的 `ToolPlane gateway` 域(§非目标)。
 
 ---
 
@@ -128,7 +128,7 @@
 - 所有新 action 工作区鉴权(沿用 `authorizedWorkspace`);仅自定义 skill 可编辑/删除/发布。
 - GitHub 导入:**限 `github.com` 主机**,经 `raw.githubusercontent.com` 拉取,超时 + 大小上限,防 SSRF。
 - 文件夹上传:文本类型 + 单文件/总量上限。
-- MCP 任意代码执行(npx/uvx/docker/git 跑第三方代码):本地个人克隆**接受**,保留信任警告;参数以数组传 `spawn`,不经 shell。
+- MCP 任意代码执行(npx/uvx/docker/git 跑第三方代码):仅在本地开发或受信任环境中接受,保留信任警告;参数以数组传 `spawn`,不经 shell。
 
 ## 测试
 - 单测:`buildSpawnSpec` 四来源映射 + 各校验(`custom-mcp` 重写);`buildCustomSkillMarkdown` frontmatter 拼装;skill 各校验;`skillLabel` / `deploymentLabel` 分支。
@@ -139,7 +139,7 @@
 - GitHub MCP 用 `npx <git-url>`,**仅适配 npm 体系仓库**;非 JS 仓库会运行失败 → error 状态(可接受、文档标注)。
 - Docker/uvx 依赖本机装了 docker/uv,否则 error。
 - Skill 的 GitHub 导入为**一次性**(无自动同步);多文件编辑器仅展示/下载附加文件,主要编辑 SKILL.md。
-- MCP 端点 URL 沿用克隆自身域(`/api/v1/mcp/<id>/rpc`),不复刻真站的 `link.mcpmarket.com` 网关域。
+- MCP 端点 URL 使用 ToolPlane 自身域(`/api/v1/mcp/<id>/rpc`),不依赖第三方网关域。
 - catalog server 的必填变量声明(`Server.installCfg.variables`)为**可选**:本 spec 让 Variables 标签页支持自由增删 env 行即可;预声明的 name/required/description 仅当数据存在时展示(seed 留后续)。
 
 ## 受影响文件(概览)

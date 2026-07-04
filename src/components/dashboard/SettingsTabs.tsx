@@ -13,7 +13,7 @@ export function SettingsTabs({ slug }: { slug: string }) {
   const muted = ['Integrations', 'Billing'];
 
   return (
-    <nav className="flex items-center gap-6 border-b border-zinc-200 dark:border-zinc-800">
+    <nav className="flex items-center gap-6 border-b border-border">
       {tabs.map((t) => {
         const active = pathname === t.href;
         return (
@@ -22,8 +22,8 @@ export function SettingsTabs({ slug }: { slug: string }) {
             href={t.href}
             className={`-mb-px border-b-2 pb-2.5 text-sm transition-colors ${
               active
-                ? 'border-zinc-900 font-medium text-zinc-900 dark:border-zinc-100 dark:text-zinc-100'
-                : 'border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+                ? 'border-foreground font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             {t.label}
@@ -33,7 +33,7 @@ export function SettingsTabs({ slug }: { slug: string }) {
       {muted.map((label) => (
         <span
           key={label}
-          className="cursor-default border-b-2 border-transparent pb-2.5 text-sm text-zinc-300 dark:text-zinc-600"
+          className="cursor-default border-b-2 border-transparent pb-2.5 text-sm text-muted-foreground/45"
         >
           {label}
         </span>

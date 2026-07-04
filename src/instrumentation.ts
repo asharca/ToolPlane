@@ -12,6 +12,8 @@ export async function register() {
   g.__mcpReconciled = true;
 
   try {
+    const { ensureConnectorBroker } = await import('@/lib/sandboxes/connector-broker');
+    await ensureConnectorBroker();
     const { ensureSandboxNetwork } = await import('@/lib/process/supervisor');
     await ensureSandboxNetwork();
     const { reconcileDeployments } = await import('@/lib/process/reconcile');

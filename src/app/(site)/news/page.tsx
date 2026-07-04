@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/ContentPage';
+import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'News | MCP Market' };
+export const metadata: Metadata = { title: 'News | ToolPlane' };
 
 export default function Page() {
   return (
