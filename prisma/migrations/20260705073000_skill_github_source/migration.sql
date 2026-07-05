@@ -1,0 +1,1 @@
+ALTER TABLE "Skill" ADD COLUMN IF NOT EXISTS "githubSource" TEXT;
