@@ -48,10 +48,12 @@ describe('skill bundle path guards', () => {
       normalizeSkillFiles([
         { path: 'SKILL.md', content: '# Skill' },
         { path: './scripts/render.py', content: 'print(1)' },
+        { path: 'assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
         { path: 'reference.md', content: 'ref' },
       ]),
     ).toEqual([
       { path: 'scripts/render.py', content: 'print(1)' },
+      { path: 'assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
       { path: 'reference.md', content: 'ref' },
     ]);
   });
@@ -87,6 +89,13 @@ describe('fetchGithubSkillBundle', () => {
               size: 12,
               download_url: 'https://raw.test/reference.md',
             },
+            {
+              type: 'file',
+              name: 'font.ttf',
+              path: 'skills/pdf/font.ttf',
+              size: 4,
+              download_url: 'https://raw.test/font.ttf',
+            },
             { type: 'dir', name: 'scripts', path: 'skills/pdf/scripts' },
           ]);
         }
@@ -106,6 +115,7 @@ describe('fetchGithubSkillBundle', () => {
         }
         if (href === 'https://raw.test/reference.md') return new Response('reference');
         if (href === 'https://raw.test/convert.py') return new Response('print(1)');
+        if (href === 'https://raw.test/font.ttf') return new Response(Buffer.from('font'));
         return new Response('not found', { status: 404 });
       }),
     );
@@ -115,6 +125,7 @@ describe('fetchGithubSkillBundle', () => {
     expect(bundle.content).toContain('# PDF');
     expect(bundle.files).toEqual([
       { path: 'reference.md', content: 'reference' },
+      { path: 'font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
       { path: 'scripts/convert.py', content: 'print(1)' },
     ]);
   });

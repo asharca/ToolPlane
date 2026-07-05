@@ -53,7 +53,7 @@ function findSkill(skills: RuntimeSkill[], raw: unknown): RuntimeSkill | null {
   return skills.find((s) => s.slug.toLowerCase() === key || s.name.toLowerCase() === key) ?? null;
 }
 
-function readSkillPath(skill: RuntimeSkill, rawPath: unknown): { path: string; content: string } | { error: string } {
+function readSkillPath(skill: RuntimeSkill, rawPath: unknown): SkillBundleFile | { error: string } {
   const requested = String(rawPath ?? '').trim() || 'SKILL.md';
   if (/^SKILL\.md$/i.test(requested)) return { path: 'SKILL.md', content: skill.markdown };
   const safePath = safeSkillFilePath(requested);
@@ -80,6 +80,12 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function fileContentBuffer(file: SkillBundleFile): Buffer {
+  return file.encoding === 'base64'
+    ? Buffer.from(file.content, 'base64')
+    : Buffer.from(file.content, 'utf8');
+}
+
 function sandboxCommandForScript(filePath: string, args: string[]): string | null {
   const ext = path.extname(filePath);
   const quoted = [filePath, ...args].map(shellQuote).join(' ');
@@ -97,7 +103,7 @@ async function materializeSkill(skill: RuntimeSkill): Promise<string> {
     if (!safePath) continue;
     const target = path.join(/* turbopackIgnore: true */ root, safePath);
     await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, file.content);
+    await writeFile(target, fileContentBuffer(file));
   }
   return root;
 }
@@ -183,11 +189,21 @@ async function writeSkillToSandbox(
 ): Promise<{ ok: true } | { error: string }> {
   const files = [{ path: 'SKILL.md', content: skill.markdown }, ...skill.files];
   for (const file of files) {
-    const result = await callSandboxTool(rpc, deploymentId, 'write_file', {
-      path: `${root}/${file.path}`,
+    const targetPath = `${root}/${file.path}`;
+    const writePath = file.encoding === 'base64' ? `${targetPath}.b64` : targetPath;
+    const writeResult = await callSandboxTool(rpc, deploymentId, 'write_file', {
+      path: writePath,
       content: file.content,
     });
-    if (!result) return { error: `Sandbox ${deploymentId} is not reachable.` };
+    if (!writeResult) return { error: `Sandbox ${deploymentId} is not reachable.` };
+    if (file.encoding === 'base64') {
+      const decodeResult = await callSandboxTool(rpc, deploymentId, 'shell_exec', {
+        command: `base64 -d ${shellQuote(`${file.path}.b64`)} > ${shellQuote(file.path)} && rm -f ${shellQuote(`${file.path}.b64`)}`,
+        cwd: root,
+        timeoutMs: SCRIPT_TIMEOUT_MS,
+      });
+      if (!decodeResult) return { error: `Sandbox ${deploymentId} is not reachable.` };
+    }
   }
   return { ok: true };
 }
@@ -212,6 +228,7 @@ export function buildSkillToolSet(
           name: s.name,
           description: s.description,
           files: ['SKILL.md', ...s.files.map((f) => f.path)],
+          binaryFiles: s.files.filter((f) => f.encoding === 'base64').map((f) => f.path),
           runnableScripts: s.files.filter((f) => isRunnableScript(f.path)).map((f) => f.path),
         })),
       }),
@@ -233,7 +250,7 @@ export function buildSkillToolSet(
         if (!runtimeSkill) return { error: `Attached skill not found: ${String(skill)}` };
         const file = readSkillPath(runtimeSkill, filePath);
         if ('error' in file) return file;
-        return { skill: runtimeSkill.slug, path: file.path, content: file.content };
+        return { skill: runtimeSkill.slug, path: file.path, content: file.content, encoding: file.encoding };
       },
     }),
 

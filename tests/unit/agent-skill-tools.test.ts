@@ -23,6 +23,23 @@ const pdfSkill = {
   effort: 'default',
 };
 
+const binarySkill = {
+  skillId: null,
+  skill: null,
+  name: 'Canvas',
+  slug: 'canvas',
+  description: 'Uses fonts',
+  content: '# Canvas',
+  files: [
+    { path: 'scripts/echo.js', content: "process.stdout.write('ok')" },
+    { path: 'assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' as const },
+  ],
+  userInvocable: true,
+  agentInvocable: true,
+  status: 'published',
+  effort: 'default',
+};
+
 describe('buildSkillToolSet', () => {
   it('exposes attached skills as readable runtime resources', async () => {
     const set = buildSkillToolSet([pdfSkill]);
@@ -105,6 +122,48 @@ describe('buildSkillToolSet', () => {
       arguments: {
         command: "node 'scripts/echo.js' 'one'",
         cwd: '.toolplane/skills/pdf',
+      },
+    });
+  });
+
+  it('preserves binary skill files as base64 and decodes them in sandboxes', async () => {
+    const calls: { method: string; params?: Record<string, unknown> }[] = [];
+    const set = buildSkillToolSet([binarySkill], {
+      sandboxDeploymentIds: ['sandbox-dep'],
+      rpc: async (_id, method, params) => {
+        calls.push({ method, params });
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+
+    const list = (await (set.skill_list_attached.execute as ToolExec)({})) as {
+      skills: { binaryFiles: string[] }[];
+    };
+    expect(list.skills[0].binaryFiles).toEqual(['assets/font.ttf']);
+
+    const font = (await (set.skill_read_file.execute as ToolExec)({ skill: 'canvas', path: 'assets/font.ttf' })) as {
+      content: string;
+      encoding?: string;
+    };
+    expect(font).toMatchObject({ content: Buffer.from('font').toString('base64'), encoding: 'base64' });
+
+    await (set.skill_run_script.execute as ToolExec)({
+      skill: 'canvas',
+      path: 'scripts/echo.js',
+    });
+
+    expect(calls.map((c) => (c.params?.name))).toEqual([
+      'write_file',
+      'write_file',
+      'write_file',
+      'shell_exec',
+      'shell_exec',
+    ]);
+    expect(calls.at(3)?.params).toMatchObject({
+      name: 'shell_exec',
+      arguments: {
+        command: "base64 -d 'assets/font.ttf.b64' > 'assets/font.ttf' && rm -f 'assets/font.ttf.b64'",
+        cwd: '.toolplane/skills/canvas',
       },
     });
   });

@@ -79,7 +79,7 @@ export async function GET(req: Request) {
     slug: string;
     version: string;
     content: string;
-    files: { path: string; content: string }[];
+    files: { path: string; content: string; encoding?: 'base64' }[];
   }[] = [];
   for (const ts of toolkit.skills) {
     const s = ts.installedSkill;

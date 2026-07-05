@@ -1,14 +1,37 @@
-export type SkillBundleFile = { path: string; content: string };
+export type SkillBundleFile = { path: string; content: string; encoding?: 'base64' };
 
-export const MAX_SKILL_FILES = 40;
-export const MAX_SKILL_FILE_BYTES = 256_000;
-export const MAX_SKILL_BUNDLE_BYTES = 1_500_000;
+export const MAX_SKILL_FILES = 160;
+export const MAX_SKILL_FILE_BYTES = 2_000_000;
+export const MAX_SKILL_BUNDLE_BYTES = 12_000_000;
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const GITHUB_SHORT =
   /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:\/(.+))?$/;
 const GITHUB_URL =
   /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:\/(?:(tree|blob)\/([^/]+)\/?)?(.*))?$/;
+const TEXT_EXTENSIONS = new Set([
+  '.bash',
+  '.cjs',
+  '.css',
+  '.csv',
+  '.html',
+  '.js',
+  '.json',
+  '.jsx',
+  '.md',
+  '.mjs',
+  '.py',
+  '.sh',
+  '.svg',
+  '.toml',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.xsd',
+]);
 
 export type ParsedGithubSkillSource = {
   owner: string;
@@ -108,7 +131,10 @@ export function normalizeSkillFiles(files: SkillBundleFile[]): SkillBundleFile[]
     const path = safeSkillFilePath(file.path);
     if (!path || /^SKILL\.md$/i.test(path) || seen.has(path)) continue;
 
-    const bytes = Buffer.byteLength(file.content, 'utf8');
+    const encoding = file.encoding === 'base64' ? 'base64' : undefined;
+    const bytes = encoding === 'base64'
+      ? Buffer.byteLength(file.content, 'base64')
+      : Buffer.byteLength(file.content, 'utf8');
     if (bytes > MAX_SKILL_FILE_BYTES) {
       throw new Error(`File too large: ${path}`);
     }
@@ -118,7 +144,7 @@ export function normalizeSkillFiles(files: SkillBundleFile[]): SkillBundleFile[]
     }
 
     seen.add(path);
-    out.push({ path, content: file.content });
+    out.push({ path, content: file.content, ...(encoding ? { encoding } : {}) });
     if (out.length > MAX_SKILL_FILES - 1) {
       throw new Error(`Skill bundle has too many files; max ${MAX_SKILL_FILES}.`);
     }
@@ -141,10 +167,15 @@ async function fetchJson(url: string): Promise<unknown> {
   return res.json();
 }
 
-async function fetchText(url: string): Promise<string> {
+async function fetchFile(url: string, filePath: string): Promise<Pick<SkillBundleFile, 'content' | 'encoding'>> {
   const res = await fetch(url, { headers: { 'user-agent': 'toolplane-skill-import' } });
   if (!res.ok) throw new Error(`GitHub file download failed (${res.status}).`);
-  return res.text();
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const ext = filePath.includes('.') ? filePath.slice(filePath.lastIndexOf('.')).toLowerCase() : '';
+  const contentType = res.headers.get('content-type') ?? '';
+  const isText = contentType.startsWith('text/') || TEXT_EXTENSIONS.has(ext);
+  if (isText) return { content: buffer.toString('utf8') };
+  return { content: buffer.toString('base64'), encoding: 'base64' };
 }
 
 function contentsUrl(source: ParsedGithubSkillSource, path: string): string {
@@ -179,8 +210,8 @@ export async function fetchGithubSkillBundle(rawSource: string): Promise<SkillBu
         : entry.name;
       const safePath = safeSkillFilePath(relative);
       if (!safePath) continue;
-      const content = await fetchText(entry.download_url);
-      files.push({ path: safePath, content });
+      const file = await fetchFile(entry.download_url, safePath);
+      files.push({ path: safePath, ...file });
       if (files.length > MAX_SKILL_FILES) {
         throw new Error(`Skill bundle has too many files; max ${MAX_SKILL_FILES}.`);
       }

@@ -13,6 +13,7 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
+    "skills:import:anthropic": "tsx scripts/import-anthropic-skills.ts",
     "connector:dev": "node packages/connector/bin/connector.mjs",
     "test:e2e": "node e2e/dashboard.e2e.mjs"
   },

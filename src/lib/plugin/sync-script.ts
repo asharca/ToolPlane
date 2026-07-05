@@ -94,7 +94,7 @@ RESP=$(curl -fsSL --max-time 15 -H "Authorization: Bearer $TOKEN" "$API_BASE/api
 # Parse {data:{skills:[{slug,content,files}]}} into "<slug>|<base64(json)>"
 # lines. Slug must match ^[a-z0-9][a-z0-9-]*[a-z0-9]$ (blocks path traversal
 # from server data); the field delimiter "|" never appears in a slug or base64.
-RECORDS=$(RESP_JSON="$RESP" node -e 'const SLUG = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/; try { const r = JSON.parse(process.env.RESP_JSON); const skills = (r && r.data && r.data.skills) || []; const out = []; for (const s of skills) { if (!s || typeof s.slug !== "string" || !SLUG.test(s.slug)) continue; const files = Array.isArray(s.files) ? s.files.filter((f) => f && typeof f.path === "string" && typeof f.content === "string").map((f) => ({ path: f.path, content: f.content })) : []; const payload = Buffer.from(JSON.stringify({ content: String(s.content == null ? "" : s.content), files }), "utf8").toString("base64"); out.push(s.slug + "|" + payload); } process.stdout.write(out.join("\n")); } catch { process.exit(1); }') || { report_failure "invalid_response"; echo "${SITE.compactName} sync: invalid response — keeping cached skills" >&2; exit 0; }
+RECORDS=$(RESP_JSON="$RESP" node -e 'const SLUG = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/; try { const r = JSON.parse(process.env.RESP_JSON); const skills = (r && r.data && r.data.skills) || []; const out = []; for (const s of skills) { if (!s || typeof s.slug !== "string" || !SLUG.test(s.slug)) continue; const files = Array.isArray(s.files) ? s.files.filter((f) => f && typeof f.path === "string" && typeof f.content === "string").map((f) => ({ path: f.path, content: f.content, ...(f.encoding === "base64" ? { encoding: "base64" } : {}) })) : []; const payload = Buffer.from(JSON.stringify({ content: String(s.content == null ? "" : s.content), files }), "utf8").toString("base64"); out.push(s.slug + "|" + payload); } process.stdout.write(out.join("\n")); } catch { process.exit(1); }') || { report_failure "invalid_response"; echo "${SITE.compactName} sync: invalid response — keeping cached skills" >&2; exit 0; }
 
 SYNCED=" "
 COUNT=0
@@ -135,7 +135,8 @@ if [ -n "$RECORDS" ]; then
         if (!rel) continue;
         const full = path.join(root, rel);
         fs.mkdirSync(path.dirname(full), { recursive: true });
-        fs.writeFileSync(full, String(f.content == null ? "" : f.content));
+        const content = String(f.content == null ? "" : f.content);
+        fs.writeFileSync(full, f.encoding === "base64" ? Buffer.from(content, "base64") : content);
       }
     ' || { report_failure "write_failed"; echo "${SITE.compactName} sync: write failed — keeping remaining cached skills" >&2; exit 0; }
     SYNCED="$SYNCED$DIR_NAME "
