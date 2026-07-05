@@ -144,6 +144,7 @@ function safeSkillFilePath(raw: string): string | null {
   if (!path || path.startsWith('/') || path.includes('\0')) return null;
   const parts = path.split('/');
   if (parts.some((part) => !part || part === '.' || part === '..')) return null;
+  if (parts.some((part) => part.startsWith('._') || part === '__MACOSX')) return null;
   if (parts.includes('.git') || parts.includes('node_modules')) return null;
   if (path.length > 240) return null;
   return path;

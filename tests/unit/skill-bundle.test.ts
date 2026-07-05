@@ -41,6 +41,8 @@ describe('skill bundle path guards', () => {
     expect(safeSkillFilePath('/tmp/x')).toBeNull();
     expect(safeSkillFilePath('scripts/../../x')).toBeNull();
     expect(safeSkillFilePath('node_modules/pkg/index.js')).toBeNull();
+    expect(safeSkillFilePath('._SKILL.md')).toBeNull();
+    expect(safeSkillFilePath('__MACOSX/SKILL.md')).toBeNull();
   });
 
   it('keeps safe nested files and excludes SKILL.md from extras', () => {
