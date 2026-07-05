@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, cp, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -455,10 +455,10 @@ async function replaceRuntimeEntries(root: string, payloadRoot: string, backupRo
       const hadExisting = await pathExists(dest);
       if (hadExisting) {
         await mkdir(path.dirname(backupPath), { recursive: true });
-        await rename(dest, backupPath);
+        await movePath(dest, backupPath);
       }
       replacements.push({ entry, backupPath, hadExisting });
-      await rename(path.join(/* turbopackIgnore: true */ payloadRoot, entry), dest);
+      await movePath(path.join(/* turbopackIgnore: true */ payloadRoot, entry), dest);
       installed.push(entry);
     }
   } catch (error) {
@@ -473,8 +473,22 @@ async function rollbackRuntimeEntries(root: string, replacements: ReplacementRec
   }
   for (const record of replacements.reverse()) {
     if (record.hadExisting) {
-      await rename(record.backupPath, path.join(/* turbopackIgnore: true */ root, record.entry)).catch(() => undefined);
+      await movePath(record.backupPath, path.join(/* turbopackIgnore: true */ root, record.entry)).catch(() => undefined);
     }
+  }
+}
+
+async function movePath(source: string, dest: string): Promise<void> {
+  try {
+    await rename(source, dest);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+    await cp(source, dest, {
+      recursive: true,
+      force: true,
+      verbatimSymlinks: true,
+    });
+    await rm(source, { recursive: true, force: true });
   }
 }
 
