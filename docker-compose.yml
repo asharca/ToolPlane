@@ -37,7 +37,7 @@ services:
   app:
     image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
-    container_name: ${TOOLPLANE_CONTAINER_NAME:-toolplane-app}
+    container_name: toolplane-app
     ports:
       - '${APP_HOST_PORT:-10030}:3000'
     restart: unless-stopped
@@ -68,7 +68,7 @@ services:
       DOCKER_HOST: tcp://socket-proxy:2375
       # Admin-only online updates pull this image and replace the app container.
       TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
-      TOOLPLANE_CONTAINER_NAME: ${TOOLPLANE_CONTAINER_NAME:-toolplane-app}
+      TOOLPLANE_CONTAINER_NAME: toolplane-app
       TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}
       # These paths are baked into the Docker image. Local `pnpm dev` may still
       # override them through .env when running outside Compose.
