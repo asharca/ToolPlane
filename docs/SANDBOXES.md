@@ -55,13 +55,15 @@ hosts. The user runs one command:
 ```bash
 npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect \
   --server http://localhost:3002 \
-  --token <one-time-token> \
+  --token mcpcon_... \
   --root ~/toolplane-sandbox
 ```
 
-The command starts a local connector agent. That agent calls the platform
-bootstrap endpoint, discovers the WebSocket broker, and then keeps one
-authenticated WebSocket session open.
+The sandbox page generates the `mcpcon_...` token when creating a connector
+sandbox or when the user clicks **Generate command**. The command starts a
+local connector agent. That agent calls the platform bootstrap endpoint,
+discovers the WebSocket broker, and then keeps one authenticated WebSocket
+session open.
 
 ```txt
 User machine
@@ -108,21 +110,19 @@ CONNECTOR_WS_PORT        default 9321
 CONNECTOR_WS_PUBLIC_URL  optional explicit public ws:// or wss:// URL
 ```
 
-In Docker Compose the app publishes the broker port:
+For local Docker debugging, `docker-compose.dev.yml` publishes the broker port:
 
 ```yaml
 app:
-  environment:
-    CONNECTOR_WS_BIND: 0.0.0.0
-    CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
-    CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-ws://localhost:9321}
   ports:
     - '3000:3000'
     - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'
 ```
 
-For production behind a reverse proxy, set `CONNECTOR_WS_PUBLIC_URL` to the
-public WebSocket endpoint, for example:
+The production `docker-compose.yml` intentionally does not publish host ports.
+For production behind Coolify or another reverse proxy, route the broker's
+container port and set `CONNECTOR_WS_PUBLIC_URL` to the public WebSocket
+endpoint, for example:
 
 ```txt
 wss://example.com/connect

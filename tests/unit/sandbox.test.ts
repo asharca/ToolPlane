@@ -1,5 +1,13 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { sandboxFlags, envFlags, MCP_NETWORK } from '@/lib/process/sandbox';
+import {
+  DEFAULT_SANDBOX_IMAGE,
+  SANDBOX_IMAGE_OPTIONS,
+  findSandboxImageOption,
+  resolveSandboxImage,
+} from '@/lib/sandboxes/images';
 import { parseSandboxDirectoryText } from '@/lib/sandboxes/file-list';
 
 describe('sandboxFlags', () => {
@@ -34,6 +42,39 @@ describe('envFlags', () => {
   });
   it('empty for no env', () => {
     expect(envFlags({})).toEqual([]);
+  });
+});
+
+describe('persistent Docker sandbox runtime', () => {
+  it('keeps the minimal capabilities apt needs inside user sandboxes', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID']");
+    expect(script).toContain("'--cap-drop'");
+    expect(script).toContain("'ALL'");
+    expect(script).toContain("DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap])");
+  });
+});
+
+describe('sandbox image catalog', () => {
+  it('includes the default Dev Container image and common language stacks', () => {
+    expect(SANDBOX_IMAGE_OPTIONS[0].image).toBe(DEFAULT_SANDBOX_IMAGE);
+    expect(SANDBOX_IMAGE_OPTIONS.map((option) => option.image)).toEqual(
+      expect.arrayContaining([
+        'mcr.microsoft.com/devcontainers/typescript-node:24-bookworm',
+        'mcr.microsoft.com/devcontainers/python:3.12-bookworm',
+        'mcr.microsoft.com/devcontainers/go:1-bookworm',
+        'mcr.microsoft.com/devcontainers/rust:1-bookworm',
+        'mcr.microsoft.com/devcontainers/universal:2',
+      ]),
+    );
+  });
+
+  it('resolves preset, custom, and empty image choices', () => {
+    expect(resolveSandboxImage('python-312', '')).toBe('mcr.microsoft.com/devcontainers/python:3.12-bookworm');
+    expect(resolveSandboxImage('custom', 'ghcr.io/acme/sandbox:latest')).toBe('ghcr.io/acme/sandbox:latest');
+    expect(resolveSandboxImage('', '')).toBe(DEFAULT_SANDBOX_IMAGE);
+    expect(findSandboxImageOption(DEFAULT_SANDBOX_IMAGE)?.name).toBe('JavaScript Node 24');
   });
 });
 

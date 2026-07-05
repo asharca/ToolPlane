@@ -6,7 +6,6 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listSandboxes } from '@/lib/sandboxes/queries';
 import {
-  connectorClientCommand,
   connectorFromConfig,
   defaultConnectorServerUrl,
   DEFAULT_CONNECTOR_REMOTE_ROOT,
@@ -18,7 +17,10 @@ import {
   startSandboxAction,
   stopSandboxAction,
 } from '@/lib/sandboxes/actions';
-import { DEFAULT_SANDBOX_IMAGE } from '@/lib/sandboxes/runtime';
+import {
+  DEFAULT_SANDBOX_IMAGE,
+  findSandboxImageOption,
+} from '@/lib/sandboxes/images';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
@@ -28,7 +30,6 @@ import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/Sandbox
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardPanel,
   DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
@@ -41,6 +42,26 @@ function formatDate(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function SandboxStat({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: number;
+  icon: typeof Boxes;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-card px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <Icon className="size-4 text-muted-foreground" />
+      </div>
+      <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+    </div>
+  );
+}
+
 function backingStore(sandbox: { kind: string; image: string | null; config: unknown; hostRoot?: string | null }): string {
   if (sandbox.kind === 'connector') {
     const connector = connectorFromConfig(sandbox.config);
@@ -50,7 +71,9 @@ function backingStore(sandbox: { kind: string; image: string | null; config: unk
   }
   if (sandbox.kind === 'ssh') return 'Legacy direct SSH disabled';
   if (sandbox.kind === 'host') return 'Legacy host root disabled';
-  return sandbox.image ?? DEFAULT_SANDBOX_IMAGE;
+  const image = sandbox.image ?? DEFAULT_SANDBOX_IMAGE;
+  const option = findSandboxImageOption(image);
+  return option ? option.name : image;
 }
 
 function modeLabel(kind: string): string {
@@ -62,7 +85,7 @@ function modeLabel(kind: string): string {
 
 function connectorMeta(connector: SandboxConnectorConfig | null): string {
   if (!connector) return 'waiting for config';
-  return connectorClientCommand(connector);
+  return 'open sandbox to generate command';
 }
 
 async function requestOrigin(): Promise<string> {
@@ -87,29 +110,39 @@ export default async function SandboxesPage({
   const sandboxes = await listSandboxes(ws.id);
   const connectorServerUrl = await requestOrigin();
   const anyProvisioning = sandboxes.some((s) => effectiveStatus(s.deploymentId, s.deployment.status) === 'provisioning');
+  const dockerCount = sandboxes.filter((s) => s.kind === 'docker').length;
+  const connectorCount = sandboxes.filter((s) => s.kind === 'connector').length;
+  const runningCount = sandboxes.filter((s) => {
+    const status = effectiveStatus(s.deploymentId, s.deployment.status);
+    return status === 'running' || status === 'provisioning';
+  }).length;
+  const agentLinkCount = sandboxes.reduce((sum, sandbox) => sum + sandbox._count.agentLinks, 0);
 
   return (
     <>
       <ProvisioningRefresher active={anyProvisioning} />
       <DashboardHeader title="Sandboxes" />
       <DashboardPage>
-        <DashboardToolbar>
+        <DashboardToolbar
+          actions={
+            <SandboxCreateForm
+              workspace={slug}
+              connectorServerUrl={connectorServerUrl}
+              defaultRemoteRoot={DEFAULT_CONNECTOR_REMOTE_ROOT}
+            />
+          }
+        >
           <p className="text-sm text-muted-foreground">
             Docker Linux workspaces and user machines connected by one-command WebSocket agents.
           </p>
         </DashboardToolbar>
 
-        <DashboardPanel
-          title="Create sandbox"
-          description="Pick one runtime type first; only the fields for that type are shown."
-        >
-          <SandboxCreateForm
-            workspace={slug}
-            defaultImage={DEFAULT_SANDBOX_IMAGE}
-            connectorServerUrl={connectorServerUrl}
-            defaultRemoteRoot={DEFAULT_CONNECTOR_REMOTE_ROOT}
-          />
-        </DashboardPanel>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SandboxStat label="Docker" value={dockerCount} icon={Cpu} />
+          <SandboxStat label="Connectors" value={connectorCount} icon={Laptop} />
+          <SandboxStat label="Running" value={runningCount} icon={Terminal} />
+          <SandboxStat label="Agent links" value={agentLinkCount} icon={Boxes} />
+        </div>
 
         {sandboxes.length === 0 ? (
           <DashboardEmptyState

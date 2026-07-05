@@ -135,8 +135,7 @@ export function ToolkitInstall({
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">
                 Auto-sync for {installClientLabel(autoClient)}.
               </span>{' '}
-              {autoDescription} This toolkit contains {serverCount} MCP server
-              {serverCount === 1 ? '' : 's'} and {skillCount} skill
+              {autoDescription} This toolkit contains {serverCount} MCP and {skillCount} skill
               {skillCount === 1 ? '' : 's'}.
             </p>
             <CopyButton text={autoSyncCmd} label="Copy" />
@@ -172,7 +171,7 @@ export function ToolkitInstall({
           <pre className={codeBlock}>{directSnippet}</pre>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Endpoint <code className="font-mono break-all">{mcpUrl}</code>. Replace{' '}
-            <code className="font-mono">YOUR_TOKEN</code> with an API token. MCP servers must be
+            <code className="font-mono">YOUR_TOKEN</code> with an API token. MCP must be
             running to expose their tools.
           </p>
         </div>

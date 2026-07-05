@@ -123,7 +123,7 @@
       "monitor": "Monitor",
       "workspace": "Workspace",
       "agents": "Agents",
-      "mcpServers": "MCP Servers",
+      "mcpServers": "MCP",
       "skills": "Skills",
       "toolkits": "Toolkits",
       "sandboxes": "Sandboxes",
@@ -137,9 +137,12 @@
       "title": "Agents",
       "modelProviders": "Model Providers"
     },
+    "agentMessaging": {
+      "reauthenticate": "Re-authenticate"
+    },
     "mcp": {
-      "title": "MCP Servers",
-      "deploy": "Deploy MCP Server",
+      "title": "MCP",
+      "deploy": "Deploy MCP",
       "running": "Running",
       "stopped": "Stopped",
       "error": "Error"
@@ -163,6 +166,10 @@
       "general": "General",
       "orgName": "Organization name",
       "urlSlug": "URL slug",
+      "preferences": "Preferences",
+      "preferencesDesc": "Choose how the console should feel across this browser and your signed-in account.",
+      "language": "Language",
+      "languageDesc": "Switch the app interface between English and Chinese.",
       "timezone": "Your timezone",
       "timezoneDesc": "Times you give your agent are interpreted in this zone. Detected from the server automatically.",
       "timezoneScheduled": "Timezone for scheduled tasks.",

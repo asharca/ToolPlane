@@ -1,0 +1,11 @@
+services:
+  postgres:
+    ports:
+      # Bind to localhost only so the dev database is reachable from the host
+      # without exposing it to the LAN.
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432'
+
+  app:
+    ports:
+      - '${APP_HOST_PORT:-3000}:3000'
+      - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'

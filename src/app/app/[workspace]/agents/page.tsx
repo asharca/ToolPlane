@@ -48,6 +48,8 @@ export default async function AgentsPage({
             providerName: a.provider?.name ?? null,
             model: a.model,
             toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
+            subAgentCount: a._count.subAgents,
+            conversationCount: a._count.conversations,
           }))}
         />
       ) : (

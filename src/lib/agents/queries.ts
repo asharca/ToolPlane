@@ -54,14 +54,35 @@ export async function listAgents(workspaceId: string) {
   return db.agent.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'desc' },
-    include: { provider: { select: { name: true } }, _count: { select: { servers: true, skills: true, toolkits: true, sandboxes: true } } },
+    include: {
+      provider: { select: { name: true } },
+      _count: {
+        select: {
+          servers: true,
+          skills: true,
+          toolkits: true,
+          sandboxes: true,
+          subAgents: true,
+          conversations: true,
+        },
+      },
+    },
   });
 }
 
 export async function getAgent(workspaceId: string, agentId: string) {
   return db.agent.findFirst({
     where: { id: agentId, workspaceId },
-    include: { provider: true, ...TOOL_INCLUDE },
+    include: {
+      provider: true,
+      ...TOOL_INCLUDE,
+      _count: {
+        select: {
+          conversations: true,
+          channels: true,
+        },
+      },
+    },
   });
 }
 
@@ -88,7 +109,18 @@ export async function getAgentForRun(agentId: string, workspaceId: string) {
 }
 
 export async function listConversations(agentId: string) {
-  return db.conversation.findMany({ where: { agentId }, orderBy: { createdAt: 'desc' } });
+  return db.conversation.findMany({
+    where: { agentId },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      _count: { select: { messages: true } },
+      messages: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { createdAt: true, role: true, parts: true },
+      },
+    },
+  });
 }
 
 export async function getConversation(conversationId: string, workspaceId: string) {

@@ -101,7 +101,7 @@ export function AgentSettingsForm({
         </p>
       ) : null}
 
-      <CheckGroup legend="MCP servers" name="deploymentId" options={deployments} />
+      <CheckGroup legend="MCP" name="deploymentId" options={deployments} />
       <CheckGroup legend="Skills" name="installedSkillId" options={skills} />
       <CheckGroup legend="Toolkits" name="toolkitId" options={toolkits} />
       <CheckGroup legend="Sandboxes" name="sandboxId" options={sandboxes} />

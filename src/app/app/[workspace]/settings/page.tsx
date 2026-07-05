@@ -5,6 +5,7 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import {
   DashboardPage,
   DashboardPanel,
@@ -61,6 +62,24 @@ export default async function SettingsPage({
               {t('saveChanges')}
             </SubmitButton>
           </form>
+        </DashboardPanel>
+
+        <DashboardPanel
+          title={t('preferences')}
+          description={t('preferencesDesc')}
+          bodyClassName="py-4"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {t('language')}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t('languageDesc')}
+              </p>
+            </div>
+            <LocaleSwitcher />
+          </div>
         </DashboardPanel>
 
         <DashboardPanel

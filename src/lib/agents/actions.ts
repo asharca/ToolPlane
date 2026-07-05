@@ -17,6 +17,17 @@ import {
 } from '@/lib/agents/mutations';
 import { modelsEndpoint, modelsHeaders, parseModelList } from '@/lib/agents/models-fetch';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import {
+  createAgentChannelConnection,
+  deleteAgentChannelConnection,
+  updateAgentChannelConnectionCredentials,
+} from '@/lib/agents/channel-connections';
+import {
+  applyAgentChannelPairing,
+  checkAgentChannelPairing,
+  requestAgentChannelPairing,
+} from '@/lib/agents/channel-pairing';
+import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/platforms';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -148,4 +159,121 @@ export async function createConversationAction(formData: FormData) {
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   redirect(`/app/${slug}/agents/${agentId}?tab=chat&c=${conv.id}`);
+}
+
+export async function createAgentChannelConnectionAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const platformSlug = String(formData.get('platform') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const platform = getMessagingPlatform(platformSlug);
+  if (!platform) return;
+
+  const credentials: Record<string, string> = {};
+  for (const credential of platform.credentials) {
+    const value = String(formData.get(`credential:${credential.name}`) ?? '').trim();
+    if (value) credentials[credential.name] = value;
+  }
+
+  const result = await createAgentChannelConnection({
+    workspaceId: ctx.ws.id,
+    agentId,
+    platform: platform.slug,
+    name: String(formData.get('name') ?? '').trim() || platform.label,
+    credentials,
+  });
+  if (result.connection && hasBuiltInPairingProvider(platform) && result.connection.missingStartCredentialNames.length > 0) {
+    await requestAgentChannelPairing(ctx.ws.id, result.connection.id);
+  }
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function updateAgentChannelConnectionCredentialsAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const platformSlug = String(formData.get('platform') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const platform = getMessagingPlatform(platformSlug);
+  if (!platform) return;
+
+  const credentials: Record<string, string> = {};
+  for (const credential of platform.credentials) {
+    const value = String(formData.get(`credential:${credential.name}`) ?? '').trim();
+    if (value) credentials[credential.name] = value;
+  }
+
+  await updateAgentChannelConnectionCredentials({
+    workspaceId: ctx.ws.id,
+    connectionId,
+    credentials,
+  });
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function requestAgentChannelPairingAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  await requestAgentChannelPairing(ctx.ws.id, connectionId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function checkAgentChannelPairingAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  await checkAgentChannelPairing(ctx.ws.id, connectionId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function applyAgentChannelPairingAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const allowedUserIds = String(formData.get('allowedUserIds') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  await applyAgentChannelPairing(ctx.ws.id, connectionId, allowedUserIds);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function deleteAgentChannelConnectionAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const { stopAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
+  await stopAgentChannelRunner(ctx.ws.id, connectionId);
+  await deleteAgentChannelConnection(ctx.ws.id, connectionId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function startAgentChannelConnectionAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const { startAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
+  await startAgentChannelRunner(ctx.ws.id, connectionId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function stopAgentChannelConnectionAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const connectionId = String(formData.get('connectionId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const { stopAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
+  await stopAgentChannelRunner(ctx.ws.id, connectionId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
 }

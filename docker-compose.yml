@@ -7,9 +7,6 @@ services:
       POSTGRES_USER: mcp
       POSTGRES_PASSWORD: mcp
       POSTGRES_DB: toolplane
-    ports:
-      # Bind to localhost only — MCP sandbox containers must not reach the DB.
-      - '127.0.0.1:5433:5432'
     volumes:
       - mcp_pg:/var/lib/postgresql/data
     healthcheck:
@@ -34,8 +31,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  # The app. Only started by `docker compose up app` / `up` — `up -d postgres`
-  # alone still gives you the bare DB for local `pnpm dev`.
+  # The app. Coolify should route to this service through its proxy; local host
+  # port mappings live in docker-compose.dev.yml.
   app:
     build:
       context: .
@@ -49,18 +46,15 @@ services:
       socket-proxy:
         condition: service_started
     environment:
-      # Internal network → reach Postgres on 5432 (5433 is only the host mapping).
+      # Internal network → reach Postgres on 5432.
       DATABASE_URL: postgresql://mcp:mcp@postgres:5432/toolplane
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       CONNECTOR_WS_BIND: 0.0.0.0
       CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
-      CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-ws://localhost:9321}
+      CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
-    ports:
-      - '3000:3000'
-      - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'
 
 volumes:
   mcp_pg:

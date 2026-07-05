@@ -114,10 +114,10 @@ export default async function BrowseToolkitsPage({
                     <div className="rounded-md border border-border bg-muted/35 p-3">
                       <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
                         <Plug className="size-3.5" />
-                        MCP Servers · {toolkit.serverCount}
+                        MCP · {toolkit.serverCount}
                       </div>
                       <p className="truncate text-sm text-foreground">
-                        {preview(toolkit.serverNames, 'No MCP servers')}
+                        {preview(toolkit.serverNames, 'No MCP')}
                       </p>
                     </div>
                     <div className="rounded-md border border-border bg-muted/35 p-3">
@@ -133,8 +133,7 @@ export default async function BrowseToolkitsPage({
 
                   {toolkit.customServerCount > 0 ? (
                     <p className="mt-3 text-xs text-muted-foreground">
-                      {toolkit.customServerCount} custom MCP server
-                      {toolkit.customServerCount === 1 ? '' : 's'} will need manual setup after import.
+                      {toolkit.customServerCount} custom MCP {toolkit.customServerCount === 1 ? 'entry' : 'entries'} will need manual setup after import.
                     </p>
                   ) : null}
                 </article>

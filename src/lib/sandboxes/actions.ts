@@ -9,10 +9,10 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { startProcess, stopProcess, restartProcess, killProcess } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import {
-  DEFAULT_SANDBOX_IMAGE,
   removeDockerSandboxRuntime,
   sandboxVolumeName,
 } from './runtime';
+import { resolveSandboxImage } from './images';
 import {
   connectorFromConfig,
   connectorSourceRef,
@@ -31,6 +31,10 @@ async function authorizedWorkspace(slug: string) {
 function slugify(input: string): string {
   const base = input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return base || 'sandbox';
+}
+
+function cleanName(input: FormDataEntryValue | null): string {
+  return String(input ?? '').trim().slice(0, 80);
 }
 
 async function uniqueSlug(workspaceId: string, name: string): Promise<string> {
@@ -75,7 +79,7 @@ export async function createSandboxAction(formData: FormData) {
   const sandboxSlug = await uniqueSlug(ctx.ws.id, name);
   const network = String(formData.get('network') ?? 'isolated') === 'none' ? 'none' : 'isolated';
   const image = kind === 'docker'
-    ? String(formData.get('image') ?? '').trim() || DEFAULT_SANDBOX_IMAGE
+    ? resolveSandboxImage(formData.get('imageChoice'), formData.get('customImage') ?? formData.get('image'))
     : null;
   const connectorBundle = kind === 'connector'
     ? createConnectorConfig({
@@ -123,6 +127,30 @@ export async function createSandboxAction(formData: FormData) {
   redirect(`/app/${slug}/sandboxes/${sandbox.id}${tokenQuery}`);
 }
 
+export async function renameSandboxAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const name = cleanName(formData.get('name'));
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !sandboxId || !name) return;
+
+  const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+  if (!sandbox) return;
+
+  await db.$transaction([
+    db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { name },
+    }),
+    db.deployment.update({
+      where: { id: sandbox.deploymentId },
+      data: { name: `Sandbox: ${name}` },
+    }),
+  ]);
+  revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
+}
+
 export async function startSandboxAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const sandboxId = String(formData.get('sandboxId') ?? '');
@@ -134,6 +162,44 @@ export async function startSandboxAction(formData: FormData) {
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
   await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment));
   revalidatePath(`/app/${slug}/sandboxes`);
+}
+
+export async function generateConnectorCommandAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !sandboxId) return;
+
+  const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+  if (!sandbox || sandbox.kind !== 'connector') return;
+  const connector = connectorFromConfig(sandbox.config);
+  if (!connector) return;
+
+  const bundle = createConnectorConfig({
+    serverUrl: connector.serverUrl,
+    remoteRoot: connector.remoteRoot,
+    packageName: connector.packageName,
+  });
+  const nextConnector = bundle.config;
+  const currentConfig = (sandbox.config ?? {}) as Record<string, unknown>;
+  const currentInstallCfg = (sandbox.deployment.installCfg ?? {}) as Record<string, unknown>;
+
+  await db.$transaction([
+    db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { config: { ...currentConfig, connector: nextConnector } as Prisma.InputJsonValue },
+    }),
+    db.deployment.update({
+      where: { id: sandbox.deploymentId },
+      data: {
+        sourceRef: connectorSourceRef(nextConnector),
+        installCfg: { ...currentInstallCfg, connector: nextConnector } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
+
+  revalidatePath(`/app/${slug}/sandboxes`);
+  redirect(`/app/${slug}/sandboxes/${sandbox.id}?token=${encodeURIComponent(bundle.token)}`);
 }
 
 export async function stopSandboxAction(formData: FormData) {

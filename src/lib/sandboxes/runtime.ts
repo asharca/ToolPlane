@@ -1,7 +1,7 @@
 import 'server-only';
 import { spawn } from 'node:child_process';
 
-export const DEFAULT_SANDBOX_IMAGE = 'mcr.microsoft.com/devcontainers/javascript-node:24-bookworm';
+export { DEFAULT_SANDBOX_IMAGE } from './images';
 
 export function sandboxVolumeName(sandboxId: string): string {
   return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;

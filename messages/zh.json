@@ -123,7 +123,7 @@
       "monitor": "监控",
       "workspace": "工作区",
       "agents": "智能体",
-      "mcpServers": "MCP 服务器",
+      "mcpServers": "MCP",
       "skills": "技能",
       "toolkits": "工具包",
       "sandboxes": "沙箱",
@@ -137,9 +137,12 @@
       "title": "智能体",
       "modelProviders": "模型提供商"
     },
+    "agentMessaging": {
+      "reauthenticate": "重新认证"
+    },
     "mcp": {
-      "title": "MCP 服务器",
-      "deploy": "部署 MCP 服务器",
+      "title": "MCP",
+      "deploy": "部署 MCP",
       "running": "运行中",
       "stopped": "已停止",
       "error": "错误"
@@ -163,6 +166,10 @@
       "general": "常规",
       "orgName": "组织名称",
       "urlSlug": "URL 标识符",
+      "preferences": "偏好设置",
+      "preferencesDesc": "设置控制台在当前浏览器和登录账号中的显示方式。",
+      "language": "界面语言",
+      "languageDesc": "在英文和中文之间切换应用界面。",
       "timezone": "您的时区",
       "timezoneDesc": "您给智能体的时间将按此时区解析，由服务器自动检测。",
       "timezoneScheduled": "定时任务的时区。",

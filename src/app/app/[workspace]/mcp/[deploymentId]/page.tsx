@@ -104,7 +104,7 @@ export default async function DeploymentInspectorPage({
     <>
       <DashboardHeader
         breadcrumb={[
-          { label: 'MCP Servers', href: `/app/${slug}/mcp` },
+          { label: 'MCP', href: `/app/${slug}/mcp` },
           { label: dep.server?.slug ?? label.name },
         ]}
       />

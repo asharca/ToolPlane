@@ -97,7 +97,7 @@ function shellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function connectorClientCommand(config: SandboxConnectorConfig, token = '<one-time-token>'): string {
+export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
   return [
     'npx',
     '-y',

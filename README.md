@@ -43,7 +43,7 @@ Requirements:
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
 pnpm install
 pnpm db:migrate
 pnpm tsx scripts/smoke-seed.ts
@@ -85,11 +85,12 @@ User-machine sandboxes do not require SSH or Chisel. The user runs one command:
 ```bash
 npx -y --package http://localhost:3000/api/v1/connectors/package.tgz connector connect \
   --server http://localhost:3000 \
-  --token <one-time-token> \
+  --token mcpcon_... \
   --root ~/toolplane-sandbox
 ```
 
-The connector opens a WebSocket session to ToolPlane. ToolPlane then proxies
+The sandbox page generates the `mcpcon_...` token and stores only its hash.
+The connector opens a WebSocket session to ToolPlane, then ToolPlane proxies
 shell execution, file operations, and terminal streams through that session.
 
 ## Deployment Notes
@@ -101,6 +102,10 @@ than serverless functions.
 Docker Compose runs Postgres and the app. The app image includes the Docker CLI
 for Docker-source MCP deployments; those deployments use the configured Docker
 daemon, so keep that host access restricted.
+
+`docker-compose.yml` is production-oriented and does not publish host ports.
+For local debugging, layer `docker-compose.dev.yml` on top to expose Postgres on
+`127.0.0.1:5433` and the app/broker ports when running the app in Docker.
 
 ## Private GitHub Setup
 

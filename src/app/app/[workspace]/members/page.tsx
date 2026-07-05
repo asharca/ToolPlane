@@ -42,7 +42,7 @@ export default async function MembersPage({
           description="Add teammates, manage roles, and share servers across your workspace. Available on the Team plan."
           bullets={[
             'Invite teammates with admin, member, and owner roles',
-            'Share toolkits, MCP servers, and skills across your org',
+            'Share toolkits, MCP, and skills across your org',
             'Pooled credits, unlimited skills, and version history',
           ]}
           primaryLabel="Upgrade to Team"

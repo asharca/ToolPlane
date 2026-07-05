@@ -12,6 +12,8 @@ import {
 } from '@/lib/sandboxes/connector';
 import {
   deleteSandboxAction,
+  generateConnectorCommandAction,
+  renameSandboxAction,
   restartSandboxAction,
   startSandboxAction,
   stopSandboxAction,
@@ -85,7 +87,7 @@ export default async function SandboxDetailPage({
   searchParams?: Promise<{ token?: string }>;
 }) {
   const { workspace: slug, sandboxId } = await params;
-  const token = (await searchParams)?.token;
+  const token = (await searchParams)?.token?.trim();
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -128,6 +130,18 @@ export default async function SandboxDetailPage({
               </span>
               <div className="min-w-0">
                 <h1 className="truncate text-xl font-semibold text-foreground">{sandbox.name}</h1>
+                <form action={renameSandboxAction} className="mt-2 flex max-w-md items-center gap-2">
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="sandboxId" value={sandbox.id} />
+                  <input
+                    name="name"
+                    defaultValue={sandbox.name}
+                    maxLength={80}
+                    className="ui-input h-8 min-w-0 text-sm"
+                    aria-label="Sandbox name"
+                  />
+                  <button className="ui-button-secondary h-8 text-xs">Rename</button>
+                </form>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="font-mono">{sandbox.slug}</span>
                   <span className="inline-flex items-center gap-1">
@@ -194,7 +208,23 @@ export default async function SandboxDetailPage({
               description="Run this command on the user machine. The client connects back to the platform over WebSocket and executes sandbox operations locally."
             >
               <div className="grid gap-4 lg:grid-cols-2">
-                <CommandBlock label="Run on the user machine" command={connectorClientCommand(connector, token)} />
+                {token ? (
+                  <CommandBlock label="Run on the user machine" command={connectorClientCommand(connector, token)} />
+                ) : (
+                  <div className="rounded-md border border-border bg-background px-3 py-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Run on the user machine
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Generate a fresh connection command to mint a token for this sandbox.
+                    </p>
+                    <form action={generateConnectorCommandAction} className="mt-3">
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input type="hidden" name="sandboxId" value={sandbox.id} />
+                      <button className="ui-button-primary text-sm">Generate command</button>
+                    </form>
+                  </div>
+                )}
                 <div className="rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
                   <div className="font-medium text-foreground">Connection model</div>
                   <p className="mt-1">
@@ -202,9 +232,13 @@ export default async function SandboxDetailPage({
                   </p>
                   {token ? (
                     <p className="mt-2 text-foreground">
-                      This token is shown only on this newly-created URL. Keep the command somewhere safe before leaving the page.
+                      This generated token is shown only in this URL. Keep the command somewhere safe before leaving the page.
                     </p>
-                  ) : null}
+                  ) : (
+                    <p className="mt-2">
+                      Tokens are generated server-side and stored only as hashes.
+                    </p>
+                  )}
                 </div>
               </div>
             </DashboardPanel>

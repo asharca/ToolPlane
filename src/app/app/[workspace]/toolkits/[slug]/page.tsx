@@ -128,7 +128,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Connected MCP servers
+                  Connected MCP
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {toolkit.servers.length}
@@ -248,7 +248,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Available MCP servers
+                  Available MCP
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {composables.deployments.length}

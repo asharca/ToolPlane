@@ -27,6 +27,7 @@ const MAX_WRITE = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_TERMINAL_BUFFER = 200;
+const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
 
 const TOOLS = [
   {
@@ -205,20 +206,26 @@ async function connectorTool(op, args = {}, timeoutMs = DEFAULT_TIMEOUT_MS, isEr
   }
 }
 
-async function dockerInspect(format) {
-  return run('docker', ['inspect', '-f', format, CONTAINER], { env: dockerEnv(), timeoutMs: 10_000 });
+async function dockerInspectJson() {
+  const inspected = await run('docker', ['inspect', CONTAINER], { env: dockerEnv(), timeoutMs: 10_000 });
+  if (inspected.exitCode !== 0) return null;
+  try {
+    const parsed = JSON.parse(inspected.stdout);
+    return Array.isArray(parsed) ? parsed[0] : null;
+  } catch {
+    return null;
+  }
 }
 
-async function ensureDockerContainer() {
-  const inspected = await dockerInspect('{{.State.Running}}');
-  if (inspected.exitCode === 0) {
-    if (inspected.stdout.trim() === 'true') return;
-    const started = await run('docker', ['start', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 });
-    if (started.exitCode !== 0) throw new Error(started.stderr || `docker start failed (${started.exitCode})`);
-    return;
-  }
+function hasExpectedDockerSandboxCaps(info) {
+  const hostConfig = info?.HostConfig ?? {};
+  const capDrop = new Set((hostConfig.CapDrop ?? []).map((cap) => String(cap).toUpperCase()));
+  const capAdd = new Set((hostConfig.CapAdd ?? []).map((cap) => String(cap).toUpperCase()));
+  return capDrop.has('ALL') && DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap));
+}
 
-  const args = [
+function dockerCreateArgs() {
+  return [
     'run',
     '-d',
     '--name',
@@ -239,14 +246,36 @@ async function ensureDockerContainer() {
     'no-new-privileges',
     '--cap-drop',
     'ALL',
+    ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap]),
     '-v',
     `${VOLUME}:/workspace`,
     IMAGE,
     'sleep',
     'infinity',
   ];
-  const created = await run('docker', args, { env: dockerEnv(), timeoutMs: 120_000 });
+}
+
+async function createDockerContainer() {
+  const created = await run('docker', dockerCreateArgs(), { env: dockerEnv(), timeoutMs: 120_000 });
   if (created.exitCode !== 0) throw new Error(created.stderr || `docker run failed (${created.exitCode})`);
+}
+
+async function ensureDockerContainer() {
+  const info = await dockerInspectJson();
+  if (info) {
+    if (!hasExpectedDockerSandboxCaps(info)) {
+      const removed = await run('docker', ['rm', '-f', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 });
+      if (removed.exitCode !== 0) throw new Error(removed.stderr || `docker rm failed (${removed.exitCode})`);
+      await createDockerContainer();
+      return;
+    }
+    if (info.State?.Running === true) return;
+    const started = await run('docker', ['start', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 });
+    if (started.exitCode !== 0) throw new Error(started.stderr || `docker start failed (${started.exitCode})`);
+    return;
+  }
+
+  await createDockerContainer();
 }
 
 async function ensureRuntime() {

@@ -34,7 +34,7 @@ pnpm db:generate               # prisma generate
 pnpm db:studio                 # prisma studio
 ```
 
-Database is Postgres via `docker-compose.yml` (port **5433**, user/pass/db all `mcp`/`mcp`/`toolplane`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
+Database is Postgres via `docker-compose.yml` plus the dev override (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres`, port **5433**, user/pass/db all `mcp`/`mcp`/`toolplane`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
 
 Seed a test account: run `scripts/smoke-seed.ts` with tsx (`pnpm tsx scripts/smoke-seed.ts`) → `smoke@example.com` / `password123`. Scrapers in `scraper/*.ts` and the seed are standalone tsx scripts (they `import 'dotenv/config'` and use the `@/` path alias).
 

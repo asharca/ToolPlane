@@ -49,11 +49,11 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                     <X className="size-5" />
                   </button>
                 </div>
-                <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">Deploy a custom MCP server</p>
+                <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">Deploy custom MCP</p>
 
                 <div className="mb-5 flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                  <span>MCP servers can access your data and execute arbitrary code. Only install servers from sources you trust.</span>
+                  <span>MCP can access your data and execute arbitrary code. Only install sources you trust.</span>
                 </div>
 
                 <form action={deployCustomServerAction} className="space-y-5">

@@ -43,7 +43,7 @@ export default async function BrowseMcpPage({
   return (
     <>
       <DashboardHeader
-        breadcrumb={[{ label: 'MCP Servers', href: `/app/${slug}/mcp` }, { label: 'Browse' }]}
+        breadcrumb={[{ label: 'MCP', href: `/app/${slug}/mcp` }, { label: 'Browse' }]}
       />
       <DashboardPage className="space-y-8">
         <DashboardToolbar
@@ -51,7 +51,7 @@ export default async function BrowseMcpPage({
         >
           <DashboardSearchForm
             defaultValue={q}
-            placeholder="Search MCP servers..."
+            placeholder="Search MCP..."
             clearHref={`/app/${slug}/mcp/new`}
           />
         </DashboardToolbar>
@@ -65,7 +65,7 @@ export default async function BrowseMcpPage({
         <DashboardSection title={q ? `Results for "${q}"` : 'All MCPs'} count={total}>
           {all.length === 0 ? (
             <DashboardEmptyState
-              description={q ? `No MCP servers match "${q}".` : 'No MCP servers found.'}
+              description={q ? `No MCP match "${q}".` : 'No MCP found.'}
             />
           ) : (
             <>

@@ -17,24 +17,24 @@ enum UserStatus {
 }
 
 model Server {
-  id          String       @id @default(cuid())
-  slug        String       @unique
-  name        String
-  author      String?
-  description String?
-  iconUrl     String?
-  stars       Int          @default(0)
-  isOfficial  Boolean      @default(false)
-  isFeatured  Boolean      @default(false)
-  curated     Boolean      @default(false)
-  installCfg  Json?
-  verifiedAt  DateTime?
+  id            String       @id @default(cuid())
+  slug          String       @unique
+  name          String
+  author        String?
+  description   String?
+  iconUrl       String?
+  stars         Int          @default(0)
+  isOfficial    Boolean      @default(false)
+  isFeatured    Boolean      @default(false)
+  curated       Boolean      @default(false)
+  installCfg    Json?
+  verifiedAt    DateTime?
   verifiedTools Int?
-  readme      String?
-  categories  Category[]   @relation("ServerCategories")
-  deployments Deployment[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  readme        String?
+  categories    Category[]   @relation("ServerCategories")
+  deployments   Deployment[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }
 
 model User {
@@ -125,23 +125,24 @@ model ScrapeCheckpoint {
 }
 
 model Workspace {
-  id              String           @id @default(cuid())
-  slug            String           @unique
-  name            String
-  ownerId         String
-  owner           User             @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members         Membership[]
-  deployments     Deployment[]
-  installedSkills InstalledSkill[]
-  requestLogs     RequestLog[]
-  sandboxes       Sandbox[]
-  toolkits        Toolkit[]
-  modelProviders  ModelProvider[]
-  agents          Agent[]
+  id               String                   @id @default(cuid())
+  slug             String                   @unique
+  name             String
+  ownerId          String
+  owner            User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members          Membership[]
+  deployments      Deployment[]
+  installedSkills  InstalledSkill[]
+  requestLogs      RequestLog[]
+  sandboxes        Sandbox[]
+  toolkits         Toolkit[]
+  modelProviders   ModelProvider[]
+  agents           Agent[]
+  agentChannels    AgentChannelConnection[]
   skillInvocations SkillInvocation[]
-  syncEvents      SyncEvent[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  syncEvents       SyncEvent[]
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
 }
 
 model Membership {
@@ -237,21 +238,21 @@ model RequestLog {
 }
 
 model Toolkit {
-  id          String          @id @default(cuid())
-  workspaceId String
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name        String
-  slug        String
-  visibility  String          @default("private")
-  enabled     Boolean         @default(true)
-  servers     ToolkitServer[]
-  skills      ToolkitSkill[]
-  agentLinks  AgentToolkit[]
-  installLinks ToolkitInstallLink[]
+  id               String               @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name             String
+  slug             String
+  visibility       String               @default("private")
+  enabled          Boolean              @default(true)
+  servers          ToolkitServer[]
+  skills           ToolkitSkill[]
+  agentLinks       AgentToolkit[]
+  installLinks     ToolkitInstallLink[]
   skillInvocations SkillInvocation[]
-  syncEvents  SyncEvent[]
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  syncEvents       SyncEvent[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@unique([workspaceId, slug])
 }
@@ -309,27 +310,54 @@ model ModelProvider {
 }
 
 model Agent {
-  id            String         @id @default(cuid())
+  id            String                   @id @default(cuid())
   workspaceId   String
-  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace     Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name          String
   slug          String
   systemPrompt  String?
   providerId    String?
-  provider      ModelProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  provider      ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model         String?
-  maxSteps      Int            @default(8)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  maxSteps      Int                      @default(8)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
   servers       AgentServer[]
   skills        AgentSkill[]
   toolkits      AgentToolkit[]
   sandboxes     AgentSandbox[]
-  subAgents     AgentSubAgent[] @relation("AgentParent")
-  parentLinks   AgentSubAgent[] @relation("AgentChild")
+  subAgents     AgentSubAgent[]          @relation("AgentParent")
+  parentLinks   AgentSubAgent[]          @relation("AgentChild")
   conversations Conversation[]
+  channels      AgentChannelConnection[]
 
   @@unique([workspaceId, slug])
+}
+
+model AgentChannelConnection {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId            String
+  agent              Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  platform           String
+  name               String
+  status             String    @default("stopped")
+  config             Json?
+  credentials        Json?
+  inboundTokenHash   String    @unique
+  inboundTokenSecret Json
+  inboundTokenPrefix String
+  runnerPid          Int?
+  lastError          String?
+  lastStartedAt      DateTime?
+  lastEventAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([agentId, platform, name])
+  @@index([workspaceId, agentId])
+  @@index([platform, status])
 }
 
 // A directed link letting one agent delegate to another (same workspace) by

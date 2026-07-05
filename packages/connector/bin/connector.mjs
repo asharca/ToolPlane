@@ -27,11 +27,7 @@ Example:
   process.exit(exitCode);
 }
 
-function parseArgs(argv) {
-  const [command, ...rest] = argv;
-  if (!command || command === '--help' || command === '-h') usage(0);
-  if (command !== 'connect') usage(1);
-
+function parseFlags(rest) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const key = rest[i];
@@ -41,9 +37,18 @@ function parseArgs(argv) {
     flags[key.slice(2)] = value;
     i += 1;
   }
+  return flags;
+}
+
+function parseArgs(argv) {
+  const [command, ...rest] = argv;
+  if (!command || command === '--help' || command === '-h') usage(0);
+  if (command !== 'connect') usage(1);
+  const flags = parseFlags(rest);
 
   if (!flags.server || !flags.token) usage(1);
   return {
+    command,
     server: flags.server,
     token: flags.token,
     root: flags.root || '~/toolplane-sandbox',
@@ -305,8 +310,7 @@ async function connectOnce(wsUrl, runtime) {
   console.log('[connector] disconnected');
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function runSandboxConnector(args) {
   const boot = await bootstrap(args.server, args.token);
   const runtime = createRuntime(args.root || boot.root);
   await fs.mkdir(runtime.root, { recursive: true });
@@ -321,6 +325,11 @@ async function main() {
     }
     await wait(2000);
   }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  await runSandboxConnector(args);
 }
 
 main().catch((error) => {
