@@ -1,6 +1,9 @@
 // @vitest-environment node
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { effectiveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus, livePort, liveStatus } from '@/lib/process/supervisor';
 
 // With no live process in the (empty) supervisor table, an active DB status is
 // stale and must downgrade to 'stopped'; terminal states pass through.
@@ -13,5 +16,31 @@ describe('effectiveStatus (no live process)', () => {
   it('passes terminal states through unchanged', () => {
     expect(effectiveStatus('unknown-stopped', 'stopped')).toBe('stopped');
     expect(effectiveStatus('unknown-error', 'error')).toBe('error');
+  });
+
+  it('reads live state from the cross-worker process registry', () => {
+    const deploymentId = `registry-test-${Date.now()}`;
+    const dir = path.join(os.tmpdir(), 'toolplane-supervisor');
+    const file = path.join(dir, `${deploymentId}.json`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        deploymentId,
+        name: 'test',
+        pid: process.pid,
+        port: 45678,
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    try {
+      expect(liveStatus(deploymentId)).toBe('running');
+      expect(livePort(deploymentId)).toBe(45678);
+      expect(effectiveStatus(deploymentId, 'stopped')).toBe('running');
+    } finally {
+      rmSync(file, { force: true });
+    }
   });
 });

@@ -61,6 +61,14 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain('const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000');
     expect(script).toContain('timeoutMs: DOCKER_CREATE_TIMEOUT_MS');
   });
+
+  it('does not self-terminate when the request worker parent changes in production', () => {
+    for (const file of ['scripts/mcp-server.mjs', 'scripts/mcp-stdio-bridge.mjs', 'scripts/sandbox-mcp-server.mjs']) {
+      const script = readFileSync(path.join(process.cwd(), file), 'utf8');
+      expect(script).not.toContain('process.ppid');
+      expect(script).not.toContain('initialPpid');
+    }
+  });
 });
 
 describe('sandbox image catalog', () => {

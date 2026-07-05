@@ -1,5 +1,13 @@
 import 'server-only';
 import { spawn, type ChildProcess } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { db } from '@/lib/db';
 import { type SpawnSpec } from './spawn-spec';
@@ -17,6 +25,15 @@ type Entry = {
 
 type Store = Map<string, Entry>;
 
+type RegistryEntry = {
+  deploymentId: string;
+  name: string;
+  pid: number;
+  port: number | null;
+  status: string;
+  updatedAt: string;
+};
+
 // Persist the process table on globalThis so it survives dev hot-reload
 // (module re-evaluation) while the Next server process stays alive.
 const g = globalThis as unknown as { __mcpSupervisor?: Store };
@@ -28,6 +45,7 @@ function store(): Store {
 const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
 const SANDBOX_SERVER = path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs');
+const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir(), 'toolplane-supervisor');
 
 // How long startProcess waits for the child to print `LISTENING <port>` before
 // returning. A builtin server is ready in ~50ms; a custom MCP cold-start (npx
@@ -42,6 +60,70 @@ async function persist(deploymentId: string, status: string) {
   } catch {
     // deployment may have been removed; ignore
   }
+}
+
+function safeId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_.-]/g, '_');
+}
+
+function registryPath(deploymentId: string): string {
+  return path.join(REGISTRY_DIR, `${safeId(deploymentId)}.json`);
+}
+
+function ensureRegistryDir() {
+  mkdirSync(REGISTRY_DIR, { recursive: true });
+}
+
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readRegistry(deploymentId: string): RegistryEntry | null {
+  const file = registryPath(deploymentId);
+  if (!existsSync(file)) return null;
+  try {
+    const entry = JSON.parse(readFileSync(file, 'utf8')) as RegistryEntry;
+    if (entry.deploymentId !== deploymentId || !pidAlive(entry.pid)) {
+      rmSync(file, { force: true });
+      return null;
+    }
+    return entry;
+  } catch {
+    rmSync(file, { force: true });
+    return null;
+  }
+}
+
+function writeRegistry(entry: RegistryEntry) {
+  ensureRegistryDir();
+  writeFileSync(registryPath(entry.deploymentId), JSON.stringify(entry), { mode: 0o600 });
+}
+
+function deleteRegistry(deploymentId: string, pid?: number) {
+  const current = readRegistry(deploymentId);
+  if (pid && current && current.pid !== pid) return;
+  rmSync(registryPath(deploymentId), { force: true });
+}
+
+function liveRegistry(deploymentId: string): RegistryEntry | null {
+  const e = store().get(deploymentId);
+  if (e && e.child.exitCode === null && !e.stopping && e.pid && pidAlive(e.pid)) {
+    return {
+      deploymentId,
+      name: e.name,
+      pid: e.pid,
+      port: e.port,
+      status: e.status,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  return readRegistry(deploymentId);
 }
 
 // Create the dedicated MCP sandbox network if it doesn't exist (idempotent).
@@ -62,7 +144,7 @@ export function ensureSandboxNetwork(): Promise<void> {
 }
 
 export function liveStatus(deploymentId: string): string | null {
-  return store().get(deploymentId)?.status ?? null;
+  return liveRegistry(deploymentId)?.status ?? null;
 }
 
 // Active states require a live supervised process. When the process table has
@@ -78,13 +160,18 @@ export function effectiveStatus(deploymentId: string, dbStatus: string): string 
 }
 
 export function livePort(deploymentId: string): number | null {
-  return store().get(deploymentId)?.port ?? null;
+  return liveRegistry(deploymentId)?.port ?? null;
 }
 
 export async function startProcess(deploymentId: string, spec: SpawnSpec): Promise<void> {
   const s = store();
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) return;
+  const registered = readRegistry(deploymentId);
+  if (registered && registered.status === 'running' && registered.port) {
+    await persist(deploymentId, 'running');
+    return;
+  }
 
   const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
     ? await ensureConnectorBroker()
@@ -138,6 +225,16 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
     name: spec.name,
   };
   s.set(deploymentId, entry);
+  if (child.pid) {
+    writeRegistry({
+      deploymentId,
+      name: spec.name,
+      pid: child.pid,
+      port: null,
+      status: 'provisioning',
+      updatedAt: new Date().toISOString(),
+    });
+  }
   await persist(deploymentId, 'provisioning');
 
   const ready = new Promise<void>((resolve) => {
@@ -146,9 +243,22 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
       if (m) {
         entry.port = Number(m[1]);
         entry.status = 'running';
+        if (child.pid) {
+          writeRegistry({
+            deploymentId,
+            name: spec.name,
+            pid: child.pid,
+            port: entry.port,
+            status: 'running',
+            updatedAt: new Date().toISOString(),
+          });
+        }
         void persist(deploymentId, 'running');
         resolve();
       }
+    });
+    child.stderr?.on('data', (buf: Buffer) => {
+      console.error(`[mcp-supervisor:${deploymentId}] ${buf.toString().trimEnd()}`);
     });
     child.once('exit', () => resolve());
     child.once('error', () => resolve());
@@ -157,10 +267,12 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
 
   child.on('exit', (code) => {
     entry.status = entry.stopping ? 'stopped' : code === 0 ? 'stopped' : 'error';
+    if (child.pid) deleteRegistry(deploymentId, child.pid);
     void persist(deploymentId, entry.status);
   });
   child.on('error', () => {
     entry.status = 'error';
+    if (child.pid) deleteRegistry(deploymentId, child.pid);
     void persist(deploymentId, 'error');
   });
 
@@ -173,6 +285,15 @@ export async function stopProcess(deploymentId: string): Promise<void> {
     e.stopping = true;
     if (e.child.exitCode === null) e.child.kill('SIGTERM');
     e.status = 'stopped';
+  }
+  const registered = readRegistry(deploymentId);
+  if (registered) {
+    try {
+      process.kill(registered.pid, 'SIGTERM');
+    } catch {
+      // already gone
+    }
+    deleteRegistry(deploymentId);
   }
   await persist(deploymentId, 'stopped');
 }
@@ -189,6 +310,15 @@ export function killProcess(deploymentId: string): void {
   if (e) {
     e.stopping = true;
     if (e.child.exitCode === null) e.child.kill('SIGKILL');
+  }
+  const registered = readRegistry(deploymentId);
+  if (registered) {
+    try {
+      process.kill(registered.pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+    deleteRegistry(deploymentId);
   }
   store().delete(deploymentId);
 }

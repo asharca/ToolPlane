@@ -660,11 +660,6 @@ const shutdown = () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-const initialPpid = process.ppid;
-setInterval(() => {
-  if (process.ppid === 1 || process.ppid !== initialPpid) shutdown();
-}, 2000).unref();
-
 ensureRuntime()
   .then(() => {
     server.listen(Number(process.env.MCP_PORT || 0), '127.0.0.1', () => {

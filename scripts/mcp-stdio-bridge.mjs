@@ -152,12 +152,6 @@ const shutdown = () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// Orphan watchdog: self-terminate if the supervising parent dies.
-const initialPpid = process.ppid;
-setInterval(() => {
-  if (process.ppid === 1 || process.ppid !== initialPpid) shutdown();
-}, 2000).unref();
-
 // Bring the child up, then start listening (so "running" means truly ready).
 handshake()
   .then(() => {

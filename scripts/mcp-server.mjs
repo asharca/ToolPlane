@@ -82,10 +82,3 @@ server.listen(Number(process.env.MCP_PORT || 0), '127.0.0.1', () => {
 const shutdown = () => server.close(() => process.exit(0));
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
-
-// Orphan watchdog: if the supervising parent dies, our ppid is reparented to
-// init/launchd. Self-terminate so processes don't leak across dev restarts.
-const initialPpid = process.ppid;
-setInterval(() => {
-  if (process.ppid === 1 || process.ppid !== initialPpid) shutdown();
-}, 2000).unref();
