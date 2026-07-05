@@ -21,6 +21,8 @@ describe('Hermes hosted runner image contract', () => {
     expect(dockerfile).toContain('/opt/hermes-agent');
     expect(dockerfile).toContain('/opt/toolplane-hermes-venv');
     expect(dockerfile).toContain('pip install ".[messaging,wecom,dingtalk]"');
+    expect(dockerfile).toContain('ARG TOOLPLANE_VERSION=dev');
+    expect(dockerfile).toContain('/app/.toolplane-version');
   });
 
   it('runs the prebuilt app image and wires bundled Hermes runtime through Docker Compose', () => {
@@ -28,12 +30,14 @@ describe('Hermes hosted runner image contract', () => {
 
     expect(compose).not.toContain('build:\n      context: .');
     expect(compose).toContain('image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
-    expect(compose).toContain('container_name: toolplane-app');
+    expect(compose).not.toContain('container_name: toolplane-app');
     expect(compose).toContain("- '${APP_HOST_PORT:-10030}:3000'");
     expect(compose).toContain('http://127.0.0.1:3000/api/v1/health');
     expect(compose).toContain('TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
-    expect(compose).toContain('TOOLPLANE_CONTAINER_NAME: toolplane-app');
     expect(compose).toContain('TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}');
+    expect(compose).toContain('TOOLPLANE_UPDATE_REPO: ${TOOLPLANE_UPDATE_REPO:-asharca/ToolPlane}');
+    expect(compose).toContain('TOOLPLANE_UPDATE_ARTIFACT: ${TOOLPLANE_UPDATE_ARTIFACT:-toolplane-runtime-linux-amd64.tar.gz}');
+    expect(compose).toContain('TOOLPLANE_RUNTIME_ROOT: /app');
     expect(compose).toContain('HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python');

@@ -142,15 +142,15 @@
     },
     "systemUpdate": {
       "checking": "检查更新",
-      "updating": "拉取镜像",
-      "restarting": "正在使用新镜像重启 ToolPlane。",
+      "updating": "下载更新",
+      "restarting": "正在使用下载的 Release 重启 ToolPlane。",
       "restartingShort": "正在重启",
       "failed": "更新失败",
       "unavailable": "无法更新",
       "upToDate": "已是最新",
       "updateAvailable": "有可用更新",
       "checkAndUpdate": "检查更新",
-      "targetImageUnknown": "未配置目标镜像"
+      "targetReleaseUnknown": "未配置 Release 产物"
     },
     "mcp": {
       "title": "MCP",

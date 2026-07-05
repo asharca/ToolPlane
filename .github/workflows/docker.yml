@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -56,5 +56,49 @@ jobs:
           # variable for production deploys; defaults to localhost otherwise.
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+            TOOLPLANE_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Set up Node for release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build release runtime artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+          NEXT_TELEMETRY_DISABLED: 1
+          TOOLPLANE_VERSION: ${{ github.ref_name }}
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec prisma generate
+          pnpm build
+          rm -rf dist/release
+          mkdir -p dist/release/app
+          cp -a \
+            node_modules \
+            .next \
+            public \
+            package.json \
+            next.config.ts \
+            scripts \
+            prisma \
+            prisma.config.ts \
+            dist/release/app/
+          printf '%s\n' "$TOOLPLANE_VERSION" > dist/release/app/.toolplane-version
+          tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
+          shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
+
+      - name: Publish GitHub release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            toolplane-runtime-linux-amd64.tar.gz
+            toolplane-runtime-linux-amd64.tar.gz.sha256

@@ -142,15 +142,15 @@
     },
     "systemUpdate": {
       "checking": "Checking update",
-      "updating": "Pulling image",
-      "restarting": "Restarting ToolPlane with the pulled image.",
+      "updating": "Downloading update",
+      "restarting": "Restarting ToolPlane with the downloaded release.",
       "restartingShort": "Restarting",
       "failed": "Update failed",
       "unavailable": "Update unavailable",
       "upToDate": "Up to date",
       "updateAvailable": "Update available",
       "checkAndUpdate": "Check update",
-      "targetImageUnknown": "Target image not configured"
+      "targetReleaseUnknown": "Release artifact not configured"
     },
     "mcp": {
       "title": "MCP",

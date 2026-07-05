@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminGate } from '@/lib/auth/admin-policy';
 import { getCurrentUser } from '@/lib/auth/current-user';
-import { applySystemUpdate, getSystemUpdateStatus } from '@/lib/system/docker-update';
+import { applySystemUpdate, getSystemUpdateStatus } from '@/lib/system/release-update';
 
 export const runtime = 'nodejs';
 

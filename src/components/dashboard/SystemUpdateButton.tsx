@@ -7,20 +7,21 @@ import { useTranslations } from 'next-intl';
 type UpdateStatus = {
   enabled: boolean;
   canUpdate: boolean;
-  targetImage: string;
-  containerName: string | null;
-  currentImage: string | null;
-  currentImageId: string | null;
-  targetImageId: string | null;
-  remoteDigest: string | null;
+  currentVersion: string;
+  latestVersion: string | null;
   updateAvailable: boolean | null;
+  releaseName: string | null;
+  releaseUrl: string | null;
+  artifactName: string;
   reason: string | null;
 };
 
 type UpdateResult = {
   ok: boolean;
   status: 'up_to_date' | 'restarting' | 'disabled' | 'unavailable' | 'failed';
-  targetImage: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  artifactName: string;
   message?: string;
 };
 
@@ -116,7 +117,13 @@ export function SystemUpdateButton() {
     return t('checkAndUpdate');
   }, [status, t, uiState]);
 
-  const detail = message || status?.targetImage || t('targetImageUnknown');
+  const versionDetail =
+    status?.latestVersion && status.currentVersion
+      ? `${status.currentVersion} -> ${status.latestVersion}`
+      : status?.currentVersion
+        ? status.currentVersion
+        : null;
+  const detail = message || versionDetail || status?.artifactName || t('targetReleaseUnknown');
 
   return (
     <div className="mt-3">

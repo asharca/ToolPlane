@@ -23,7 +23,9 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates \
-      python3; \
+      gzip \
+      python3 \
+      tar; \
     rm -rf /var/lib/apt/lists/*
 
 # ---- deps: full install (incl. dev) for build + runtime prisma CLI ----
@@ -49,10 +51,12 @@ RUN pnpm exec prisma generate
 # contacted during the build. AUTH_SECRET is read lazily at request time, so the
 # build does not need it.
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG TOOLPLANE_VERSION=dev
 ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
     DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder \
     NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
+RUN printf '%s\n' "${TOOLPLANE_VERSION}" > .toolplane-version
 
 # ---- hermes: source checkout + Python deps for hosted messaging channels ----
 FROM python-runtime-base AS hermes
@@ -101,6 +105,7 @@ COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/next.config.ts ./next.config.ts
+COPY --from=build --chown=node:node /app/.toolplane-version ./.toolplane-version
 # Spawned by the supervisor via process.cwd()/scripts — Next never bundles them.
 COPY --from=build --chown=node:node /app/scripts ./scripts
 # Needed by `prisma migrate deploy` on startup.
