@@ -30,10 +30,12 @@ The agent runtime owns:
 
 ## Hosted Hermes Reuse
 
-ToolPlane can reuse Hermes platform adapters without copying the whole Hermes
-gateway. The platform server starts a hosted runner, imports the Hermes adapter
-class from the platform's Hermes checkout, and installs a message handler with
-`adapter.set_message_handler(...)`.
+ToolPlane reuses Hermes platform adapters without copying the whole Hermes
+gateway into application code. The Docker image bundles a pinned Hermes checkout
+at `/opt/hermes-agent` and a Python virtual environment at
+`/opt/toolplane-hermes-venv`; Compose sets the runtime environment so hosted
+channel runners can import the selected Hermes adapter and install a message
+handler with `adapter.set_message_handler(...)`.
 
 Runtime flow:
 
@@ -72,9 +74,23 @@ Current hosted runner starters:
 | Discord | `plugins.platforms.discord.adapter.DiscordAdapter` | `TOOLPLANE_API_TOKEN`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` |
 | WeCom | `plugins.platforms.wecom.adapter.WeComAdapter` | `TOOLPLANE_API_TOKEN`, `WECOM_BOT_ID`, `WECOM_SECRET` |
 
-The platform server must have `HERMES_ROOT` or `TOOLPLANE_HERMES_ROOT` pointing
-at a Hermes checkout, plus the Python dependencies required by the selected
-adapter. Credentials are entered in the ToolPlane UI and stored encrypted.
+Docker Compose passes `HERMES_REPO` and `HERMES_REF` as build args, so the
+bundled Hermes version is reproducible and can be upgraded deliberately. The
+image downloads the pinned source archive during build instead of installing
+`git`; set `HERMES_ARCHIVE_URL` only when CI should use a pre-mirrored tarball.
+The default image installs the `messaging`, `wecom`, and `dingtalk` extras,
+which cover the currently exposed hosted channels: Telegram, Discord, WeCom,
+Weixin, and DingTalk. Credentials are entered in the ToolPlane UI and stored
+encrypted.
+
+For local `pnpm dev` outside Docker, set:
+
+```env
+TOOLPLANE_HERMES_ROOT="/absolute/path/to/hermes-agent"
+TOOLPLANE_PYTHON="/absolute/path/to/python-or-venv/bin/python"
+```
+
+Compose deployments do not need those host-specific paths.
 
 Callback-first platforms such as WhatsApp Cloud, LINE, WeCom Callback, Teams,
 and Microsoft Graph do not need a hosted runner. They require

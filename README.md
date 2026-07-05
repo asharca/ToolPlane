@@ -103,6 +103,15 @@ Docker Compose runs Postgres and the app. The app image includes the Docker CLI
 for Docker-source MCP deployments; those deployments use the configured Docker
 daemon, so keep that host access restricted.
 
+The app image also bundles the Hermes Python adapters used by hosted agent
+messaging channels. Compose pins the checkout with `HERMES_REPO` and
+`HERMES_REF`, downloads the matching source archive during the image build,
+installs the required messaging extras into `/opt/toolplane-hermes-venv`, and
+points the app at `/opt/hermes-agent`. Use `HERMES_ARCHIVE_URL` when CI needs a
+pre-mirrored tarball URL.
+Local `pnpm dev` can still use `TOOLPLANE_HERMES_ROOT` and `TOOLPLANE_PYTHON`
+when you want to run those channel workers outside Docker.
+
 `docker-compose.yml` is production-oriented and does not publish host ports.
 For local debugging, layer `docker-compose.dev.yml` on top to expose Postgres on
 `127.0.0.1:5433` and the app/broker ports when running the app in Docker.

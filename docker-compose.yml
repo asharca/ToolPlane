@@ -39,6 +39,10 @@ services:
       args:
         # NEXT_PUBLIC_* is baked at build time; pass it through to the image.
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+        # Hosted agent messaging runners reuse Hermes adapters bundled in the app image.
+        HERMES_REPO: ${HERMES_REPO:-https://github.com/NousResearch/hermes-agent.git}
+        HERMES_REF: ${HERMES_REF:-7e8f50a14176e02b514631b0b04470acaadae32a}
+        HERMES_ARCHIVE_URL: ${HERMES_ARCHIVE_URL:-}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -55,6 +59,11 @@ services:
       CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
+      # These paths are baked into the Docker image. Local `pnpm dev` may still
+      # override them through .env when running outside Compose.
+      HERMES_ROOT: /opt/hermes-agent
+      TOOLPLANE_HERMES_ROOT: /opt/hermes-agent
+      TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python
 
 volumes:
   mcp_pg:

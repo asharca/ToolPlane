@@ -44,11 +44,12 @@ export async function startAgentChannelRunner(workspaceId: string, connectionId:
 
   const hermesRoot = process.env.HERMES_ROOT || process.env.TOOLPLANE_HERMES_ROOT;
   if (!hermesRoot) {
+    const message = 'Hermes runner is not configured. Compose images bundle it at /opt/hermes-agent; local pnpm dev needs TOOLPLANE_HERMES_ROOT.';
     await db.agentChannelConnection.update({
       where: { id: connectionId },
-      data: { status: 'error', lastError: 'Set HERMES_ROOT or TOOLPLANE_HERMES_ROOT on the platform server.' },
+      data: { status: 'error', lastError: message },
     });
-    return { error: 'Set HERMES_ROOT or TOOLPLANE_HERMES_ROOT on the platform server.' };
+    return { error: message };
   }
 
   const credentials = decryptChannelCredentials(row.credentials);
