@@ -26,6 +26,7 @@ const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
 const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
 
@@ -256,7 +257,7 @@ function dockerCreateArgs() {
 }
 
 async function createDockerContainer() {
-  const created = await run('docker', dockerCreateArgs(), { env: dockerEnv(), timeoutMs: 120_000 });
+  const created = await run('docker', dockerCreateArgs(), { env: dockerEnv(), timeoutMs: DOCKER_CREATE_TIMEOUT_MS });
   if (created.exitCode !== 0) throw new Error(created.stderr || `docker run failed (${created.exitCode})`);
 }
 

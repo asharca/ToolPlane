@@ -113,7 +113,8 @@ COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && chown node:node /app
 
 # Non-root: the app reaches Docker over TCP via the proxy, so it needs no socket
 # group membership.

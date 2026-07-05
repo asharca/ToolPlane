@@ -26,6 +26,7 @@ services:
       CONTAINERS: 1
       IMAGES: 1
       NETWORKS: 1
+      VOLUMES: 1
       POST: 1
       # everything else stays denied (no volumes/secrets/swarm/exec of host…)
     volumes:

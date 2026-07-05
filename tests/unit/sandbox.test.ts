@@ -54,6 +54,13 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain("'ALL'");
     expect(script).toContain("DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap])");
   });
+
+  it('allows enough time for first-run Dev Container image pulls', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain('const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000');
+    expect(script).toContain('timeoutMs: DOCKER_CREATE_TIMEOUT_MS');
+  });
 });
 
 describe('sandbox image catalog', () => {

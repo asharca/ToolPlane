@@ -23,6 +23,7 @@ describe('Hermes hosted runner image contract', () => {
     expect(dockerfile).toContain('pip install ".[messaging,wecom,dingtalk]"');
     expect(dockerfile).toContain('ARG TOOLPLANE_VERSION=dev');
     expect(dockerfile).toContain('/app/.toolplane-version');
+    expect(dockerfile).toContain('chown node:node /app');
   });
 
   it('runs the prebuilt app image and wires bundled Hermes runtime through Docker Compose', () => {
@@ -31,6 +32,7 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).not.toContain('build:\n      context: .');
     expect(compose).toContain('image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
     expect(compose).not.toContain('container_name: toolplane-app');
+    expect(compose).toContain('VOLUMES: 1');
     expect(compose).toContain("- '${APP_HOST_PORT:-10030}:3000'");
     expect(compose).toContain('http://127.0.0.1:3000/api/v1/health');
     expect(compose).toContain('TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
