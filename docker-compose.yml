@@ -16,9 +16,10 @@ services:
       retries: 10
 
   # Restricted Docker API proxy. The app launches one hardened container per
-  # custom MCP, but never touches the raw socket — it talks to this proxy over
-  # TCP, which only exposes the container/image/network endpoints needed. The
-  # raw socket is mounted read-only into the proxy alone.
+  # custom MCP and can replace its own app container during admin-triggered
+  # updates. It never touches the raw socket directly — it talks to this proxy
+  # over TCP, which only exposes the container/image/network endpoints needed.
+  # The raw socket is mounted read-only into the proxy alone.
   socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
@@ -31,19 +32,25 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  # The app. Coolify should route to this service through its proxy; local host
-  # port mappings live in docker-compose.dev.yml.
+  # The app. Coolify can still route to this service through its proxy; the
+  # default host binding is http://localhost:10030 for direct deployments.
   app:
-    build:
-      context: .
-      args:
-        # NEXT_PUBLIC_* is baked at build time; pass it through to the image.
-        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-        # Hosted agent messaging runners reuse Hermes adapters bundled in the app image.
-        HERMES_REPO: ${HERMES_REPO:-https://github.com/NousResearch/hermes-agent.git}
-        HERMES_REF: ${HERMES_REF:-7e8f50a14176e02b514631b0b04470acaadae32a}
-        HERMES_ARCHIVE_URL: ${HERMES_ARCHIVE_URL:-}
+    image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
+    platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
+    container_name: ${TOOLPLANE_CONTAINER_NAME:-toolplane-app}
+    ports:
+      - '${APP_HOST_PORT:-10030}:3000'
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://127.0.0.1:3000/api/v1/health'').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,12 +60,16 @@ services:
       # Internal network → reach Postgres on 5432.
       DATABASE_URL: postgresql://mcp:mcp@postgres:5432/toolplane
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:10030}
       CONNECTOR_WS_BIND: 0.0.0.0
       CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
       CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
+      # Admin-only online updates pull this image and replace the app container.
+      TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
+      TOOLPLANE_CONTAINER_NAME: ${TOOLPLANE_CONTAINER_NAME:-toolplane-app}
+      TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}
       # These paths are baked into the Docker image. Local `pnpm dev` may still
       # override them through .env when running outside Compose.
       HERMES_ROOT: /opt/hermes-agent

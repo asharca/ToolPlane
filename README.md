@@ -4,7 +4,8 @@ ToolPlane is a self-hosted control plane for agent tools, skills, MCP servers,
 toolkits, and sandboxes. It gives a workspace one place to discover, run,
 compose, observe, and attach capabilities to agents.
 
-This is a private repository.
+The repository is public, while each deployment keeps its own credentials,
+workspace data, and runtime containers private.
 
 ## What It Does
 
@@ -99,28 +100,46 @@ ToolPlane should run as a single, always-on Node process because MCP and sandbox
 deployments are supervised in memory. Use a VM, VPS, or container host rather
 than serverless functions.
 
-Docker Compose runs Postgres and the app. The app image includes the Docker CLI
-for Docker-source MCP deployments; those deployments use the configured Docker
-daemon, so keep that host access restricted.
+Docker Compose runs Postgres, a restricted Docker socket proxy, and the
+prebuilt app image from GHCR:
+
+```bash
+docker compose pull app
+docker compose up -d
+```
+
+The Compose app is published on `http://localhost:10030` by default. Override
+`APP_HOST_PORT` if the host already uses that port.
+
+Set `TOOLPLANE_IMAGE` when you want to pin a specific tag, for example
+`ghcr.io/asharca/toolplane:sha-dc33d7f`. The published deployment image is
+`linux/amd64`; `TOOLPLANE_PLATFORM` defaults to that for server deployments.
+
+The app image includes the Docker CLI for Docker-source MCP deployments and for
+admin-triggered online updates. It talks to Docker only through the restricted
+socket proxy, so keep that proxy private to the Compose network.
+
+Admins can update a deployed instance from the workspace sidebar, directly
+under the ToolPlane logo. The update action pulls `TOOLPLANE_IMAGE`, creates a
+replacement app container with the same Compose runtime settings, then starts a
+short-lived helper container that stops the old app and starts the replacement.
+This is intentionally a container replacement, not a plain restart, because
+restarting would keep the old image.
 
 The app image also bundles the Hermes Python adapters used by hosted agent
-messaging channels. Compose pins the checkout with `HERMES_REPO` and
-`HERMES_REF`, downloads the matching source archive during the image build,
-installs the required messaging extras into `/opt/toolplane-hermes-venv`, and
-points the app at `/opt/hermes-agent`. Use `HERMES_ARCHIVE_URL` when CI needs a
-pre-mirrored tarball URL.
+messaging channels. The GitHub image build downloads the pinned Hermes source
+archive, installs the required messaging extras into
+`/opt/toolplane-hermes-venv`, and points the app at `/opt/hermes-agent`.
 Local `pnpm dev` can still use `TOOLPLANE_HERMES_ROOT` and `TOOLPLANE_PYTHON`
 when you want to run those channel workers outside Docker.
 
-`docker-compose.yml` is production-oriented and does not publish host ports.
 For local debugging, layer `docker-compose.dev.yml` on top to expose Postgres on
-`127.0.0.1:5433` and the app/broker ports when running the app in Docker.
+`127.0.0.1:5433` and the connector broker port when running the app in Docker.
 
-## Private GitHub Setup
+## GitHub Setup
 
 Recommended repository settings:
 
-- Visibility: private
 - Default branch protection on `main`
 - Required checks: `pnpm lint`, `pnpm test`, `pnpm build`
 - Secrets: deployment credentials, registry credentials, production env vars

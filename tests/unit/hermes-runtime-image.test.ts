@@ -23,12 +23,16 @@ describe('Hermes hosted runner image contract', () => {
     expect(dockerfile).toContain('pip install ".[messaging,wecom,dingtalk]"');
   });
 
-  it('wires the bundled Hermes runtime through Docker Compose', () => {
+  it('runs the prebuilt app image and wires bundled Hermes runtime through Docker Compose', () => {
     const compose = readRepoFile('docker-compose.yml');
 
-    expect(compose).toContain('HERMES_REPO: ${HERMES_REPO:-https://github.com/NousResearch/hermes-agent.git}');
-    expect(compose).toContain('HERMES_REF: ${HERMES_REF:-7e8f50a14176e02b514631b0b04470acaadae32a}');
-    expect(compose).toContain('HERMES_ARCHIVE_URL: ${HERMES_ARCHIVE_URL:-}');
+    expect(compose).not.toContain('build:\n      context: .');
+    expect(compose).toContain('image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
+    expect(compose).toContain('container_name: ${TOOLPLANE_CONTAINER_NAME:-toolplane-app}');
+    expect(compose).toContain("- '${APP_HOST_PORT:-10030}:3000'");
+    expect(compose).toContain('http://127.0.0.1:3000/api/v1/health');
+    expect(compose).toContain('TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
+    expect(compose).toContain('TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}');
     expect(compose).toContain('HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python');

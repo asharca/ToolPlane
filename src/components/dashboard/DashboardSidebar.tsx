@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { SITE, mailto } from '@/lib/site';
 import { DashboardLogo } from './DashboardLogo';
+import { SystemUpdateButton } from './SystemUpdateButton';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 type NavItem = {
@@ -88,6 +89,7 @@ export function DashboardSidebar({
         <Link href={base + '/mcp'} onClick={onClose}>
           <DashboardLogo />
         </Link>
+        {isAdmin ? <SystemUpdateButton /> : null}
       </div>
 
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-2">

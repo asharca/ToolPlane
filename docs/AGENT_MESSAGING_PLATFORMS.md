@@ -74,14 +74,14 @@ Current hosted runner starters:
 | Discord | `plugins.platforms.discord.adapter.DiscordAdapter` | `TOOLPLANE_API_TOKEN`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` |
 | WeCom | `plugins.platforms.wecom.adapter.WeComAdapter` | `TOOLPLANE_API_TOKEN`, `WECOM_BOT_ID`, `WECOM_SECRET` |
 
-Docker Compose passes `HERMES_REPO` and `HERMES_REF` as build args, so the
-bundled Hermes version is reproducible and can be upgraded deliberately. The
-image downloads the pinned source archive during build instead of installing
-`git`; set `HERMES_ARCHIVE_URL` only when CI should use a pre-mirrored tarball.
-The default image installs the `messaging`, `wecom`, and `dingtalk` extras,
-which cover the currently exposed hosted channels: Telegram, Discord, WeCom,
-Weixin, and DingTalk. Credentials are entered in the ToolPlane UI and stored
-encrypted.
+The published ToolPlane image already contains the pinned Hermes checkout, so
+Compose deployments do not need host-specific Hermes paths. The image build
+accepts `HERMES_REPO`, `HERMES_REF`, and `HERMES_ARCHIVE_URL` when the bundled
+Hermes version needs to be upgraded deliberately. It downloads the pinned source
+archive during build instead of installing `git`. The default image installs
+the `messaging`, `wecom`, and `dingtalk` extras, which cover the currently
+exposed hosted channels: Telegram, Discord, WeCom, Weixin, and DingTalk.
+Credentials are entered in the ToolPlane UI and stored encrypted.
 
 For local `pnpm dev` outside Docker, set:
 

@@ -7,5 +7,4 @@ services:
 
   app:
     ports:
-      - '${APP_HOST_PORT:-3000}:3000'
       - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'
