@@ -40,6 +40,7 @@ services:
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
     ports:
       - '${APP_HOST_PORT:-10030}:3000'
+      - '${CONNECTOR_WS_HOST_BIND:-127.0.0.1:9321}:9321'
     restart: unless-stopped
     healthcheck:
       test:
