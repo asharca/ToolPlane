@@ -163,7 +163,16 @@ export function livePort(deploymentId: string): number | null {
   return liveRegistry(deploymentId)?.port ?? null;
 }
 
-export async function startProcess(deploymentId: string, spec: SpawnSpec): Promise<void> {
+type StartProcessOptions = {
+  awaitReady?: boolean;
+};
+
+export async function startProcess(
+  deploymentId: string,
+  spec: SpawnSpec,
+  options: StartProcessOptions = {},
+): Promise<void> {
+  const awaitReady = options.awaitReady ?? true;
   const s = store();
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) return;
@@ -276,7 +285,9 @@ export async function startProcess(deploymentId: string, spec: SpawnSpec): Promi
     void persist(deploymentId, 'error');
   });
 
-  await ready;
+  if (awaitReady) {
+    await ready;
+  }
 }
 
 export async function stopProcess(deploymentId: string): Promise<void> {
@@ -298,11 +309,15 @@ export async function stopProcess(deploymentId: string): Promise<void> {
   await persist(deploymentId, 'stopped');
 }
 
-export async function restartProcess(deploymentId: string, spec: SpawnSpec): Promise<void> {
+export async function restartProcess(
+  deploymentId: string,
+  spec: SpawnSpec,
+  options: StartProcessOptions = {},
+): Promise<void> {
   await stopProcess(deploymentId);
   await new Promise((r) => setTimeout(r, 250));
   store().delete(deploymentId);
-  await startProcess(deploymentId, spec);
+  await startProcess(deploymentId, spec, options);
 }
 
 export function killProcess(deploymentId: string): void {

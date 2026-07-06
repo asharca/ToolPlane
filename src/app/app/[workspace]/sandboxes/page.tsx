@@ -33,6 +33,7 @@ import {
   DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -220,19 +221,25 @@ export default async function SandboxesPage({
                           <form action={stopSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="sandboxId" value={s.id} />
-                            <button className={rowButton}>Stop</button>
+                            <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
+                              Stop
+                            </SubmitButton>
                           </form>
                           <form action={restartSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="sandboxId" value={s.id} />
-                            <button className={rowButton}>Restart</button>
+                            <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
+                              Restart
+                            </SubmitButton>
                           </form>
                         </>
                       ) : (
                         <form action={startSandboxAction}>
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="sandboxId" value={s.id} />
-                          <button className={rowButton}>Start</button>
+                          <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
+                            Start
+                          </SubmitButton>
                         </form>
                       )}
                       <form action={deleteSandboxAction}>

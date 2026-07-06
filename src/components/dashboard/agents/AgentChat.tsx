@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import Link from 'next/link';
@@ -93,10 +93,9 @@ export function AgentChat({
   providerLabel: string;
 }) {
   const [text, setText] = useState('');
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, setMessages, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/v1/agents/${agentId}/chat`,
-      body: { conversationId },
     }),
     messages: initialMessages,
   });
@@ -116,9 +115,13 @@ export function AgentChat({
     return { external, consoleChats };
   }, [conversations]);
 
+  useEffect(() => {
+    setMessages(initialMessages);
+  }, [conversationId, initialMessages, setMessages]);
+
   function submitMessage() {
     if (!canSend) return;
-    sendMessage({ text });
+    sendMessage({ text }, { body: { conversationId } });
     setText('');
   }
 

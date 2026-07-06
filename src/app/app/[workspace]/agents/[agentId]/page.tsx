@@ -189,6 +189,7 @@ export default async function AgentDetailPage({
 
     content = (
       <AgentChat
+        key={conv?.id ?? 'empty'}
         slug={slug}
         agentId={agentId}
         conversationId={conv?.id ?? null}

@@ -22,6 +22,7 @@ import {
   DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,19 +151,25 @@ export default async function McpServersPage({
                           <form action={stopDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <button className={rowButton}>Stop</button>
+                            <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
+                              Stop
+                            </SubmitButton>
                           </form>
                           <form action={restartDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <button className={rowButton}>Restart</button>
+                            <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
+                              Restart
+                            </SubmitButton>
                           </form>
                         </>
                       ) : (
                         <form action={startDeploymentAction}>
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="deploymentId" value={d.id} />
-                          <button className={rowButton}>Start</button>
+                          <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
+                            Start
+                          </SubmitButton>
                         </form>
                       )}
                       <form action={removeDeploymentAction}>

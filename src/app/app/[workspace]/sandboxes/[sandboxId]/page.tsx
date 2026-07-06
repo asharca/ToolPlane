@@ -24,6 +24,8 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
 import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,6 +117,7 @@ export default async function SandboxDetailPage({
 
   return (
     <>
+      <ProvisioningRefresher active={status === 'provisioning'} />
       <DashboardHeader
         breadcrumb={[
           { label: 'Sandboxes', href: `/app/${slug}/sandboxes` },
@@ -140,7 +143,9 @@ export default async function SandboxDetailPage({
                     className="ui-input h-8 min-w-0 text-sm"
                     aria-label="Sandbox name"
                   />
-                  <button className="ui-button-secondary h-8 text-xs">Rename</button>
+                  <SubmitButton pendingLabel="Renaming…" className="ui-button-secondary h-8 text-xs">
+                    Rename
+                  </SubmitButton>
                 </form>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="font-mono">{sandbox.slug}</span>
@@ -168,19 +173,25 @@ export default async function SandboxDetailPage({
                   <form action={stopSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <button className={rowButton}>Stop</button>
+                    <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
+                      Stop
+                    </SubmitButton>
                   </form>
                   <form action={restartSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <button className={rowButton}>Restart</button>
+                    <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
+                      Restart
+                    </SubmitButton>
                   </form>
                 </>
               ) : (
                 <form action={startSandboxAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="sandboxId" value={sandbox.id} />
-                  <button className={rowButton}>Start</button>
+                  <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
+                    Start
+                  </SubmitButton>
                 </form>
               )}
               <form action={deleteSandboxAction}>
@@ -199,6 +210,27 @@ export default async function SandboxDetailPage({
                   {link.agent.name}
                 </Link>
               ))}
+            </div>
+          ) : null}
+
+          {status === 'provisioning' ? (
+            <div className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    Preparing {sandbox.kind === 'connector' ? 'connector sandbox' : 'Linux sandbox'}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {sandbox.kind === 'connector'
+                      ? 'ToolPlane is waiting for the connector session to come online and will refresh automatically.'
+                      : 'ToolPlane is creating the runtime, attaching storage, and waiting for the MCP endpoint to become ready.'}
+                  </p>
+                </div>
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">auto-refreshing</span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+              </div>
             </div>
           ) : null}
 
@@ -221,7 +253,9 @@ export default async function SandboxDetailPage({
                     <form action={generateConnectorCommandAction} className="mt-3">
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="sandboxId" value={sandbox.id} />
-                      <button className="ui-button-primary text-sm">Generate command</button>
+                      <SubmitButton pendingLabel="Generating…" className="ui-button-primary text-sm">
+                        Generate command
+                      </SubmitButton>
                     </form>
                   </div>
                 )}

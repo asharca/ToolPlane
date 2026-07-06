@@ -120,9 +120,10 @@ export async function createSandboxAction(formData: FormData) {
   });
 
   if (kind === 'docker') {
-    await startProcess(updated.id, resolveSpawnSpec(updated));
+    await startProcess(updated.id, resolveSpawnSpec(updated), { awaitReady: false });
   }
   revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
   const tokenQuery = connectorBundle ? `?token=${encodeURIComponent(connectorBundle.token)}` : '';
   redirect(`/app/${slug}/sandboxes/${sandbox.id}${tokenQuery}`);
 }
@@ -160,8 +161,9 @@ export async function startSandboxAction(formData: FormData) {
   if (!sandbox) return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-  await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment));
+  await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
   revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function generateConnectorCommandAction(formData: FormData) {
@@ -211,6 +213,7 @@ export async function stopSandboxAction(formData: FormData) {
   if (!sandbox) return;
   await stopProcess(sandbox.deploymentId);
   revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function restartSandboxAction(formData: FormData) {
@@ -222,8 +225,9 @@ export async function restartSandboxAction(formData: FormData) {
   if (!sandbox) return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-  await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment));
+  await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
   revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function deleteSandboxAction(formData: FormData) {

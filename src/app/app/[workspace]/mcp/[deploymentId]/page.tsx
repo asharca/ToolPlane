@@ -27,6 +27,7 @@ import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
+import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 
 export const dynamic = 'force-dynamic';
 
@@ -99,9 +100,11 @@ export default async function DeploymentInspectorPage({
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
+  const provisioning = status === 'provisioning';
 
   return (
     <>
+      <ProvisioningRefresher active={provisioning} />
       <DashboardHeader
         breadcrumb={[
           { label: 'MCP', href: `/app/${slug}/mcp` },
@@ -172,6 +175,23 @@ export default async function DeploymentInspectorPage({
         </div>
 
         <TabBar tabs={TABS} current={current} basePath={base} />
+
+        {provisioning ? (
+          <section className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Starting MCP runtime</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  ToolPlane is pulling dependencies and waiting for the server to announce its port.
+                </p>
+              </div>
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">auto-refreshing</span>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+            </div>
+          </section>
+        ) : null}
 
         {current === 'overview' ? (
           <div className="space-y-5">

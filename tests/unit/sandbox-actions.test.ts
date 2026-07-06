@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   sandboxUpdate: vi.fn(),
   deploymentUpdate: vi.fn(),
   transaction: vi.fn(),
+  startProcess: vi.fn(),
+  resolveSpawnSpec: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -27,12 +29,12 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 vi.mock('@/lib/process/supervisor', () => ({
-  startProcess: vi.fn(),
+  startProcess: mocks.startProcess,
   stopProcess: vi.fn(),
   restartProcess: vi.fn(),
   killProcess: vi.fn(),
 }));
-vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: vi.fn() }));
+vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('@/lib/sandboxes/runtime', () => ({
   DEFAULT_SANDBOX_IMAGE: 'node:24-bookworm-slim',
   removeDockerSandboxRuntime: vi.fn(),
@@ -41,7 +43,7 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
 
-import { renameSandboxAction } from '@/lib/sandboxes/actions';
+import { renameSandboxAction, startSandboxAction } from '@/lib/sandboxes/actions';
 
 function renameForm(name: string): FormData {
   const fd = new FormData();
@@ -84,6 +86,24 @@ describe('renameSandboxAction', () => {
       where: { id: 'dep1' },
       data: { name: 'Sandbox: Renamed lab' },
     });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
+  });
+
+  it('starts sandboxes in provisioning mode without waiting for ready', async () => {
+    mocks.sandboxFindFirst.mockResolvedValue({
+      id: 'sb1',
+      workspaceId: 'ws1',
+      deploymentId: 'dep1',
+      kind: 'docker',
+      deployment: { id: 'dep1' },
+    });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
+
+    await startSandboxAction(renameForm('Ignored'));
+
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({ id: 'dep1' });
+    expect(mocks.startProcess).toHaveBeenCalledWith('dep1', { kind: 'sandbox' }, { awaitReady: false });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
   });

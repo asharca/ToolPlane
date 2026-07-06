@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { useFormStatus } from 'react-dom';
 import {
   Cable,
   Check,
   Container,
   FolderOpen,
   Globe2,
+  Loader2,
   Network,
   Plus,
   Server,
@@ -16,6 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import {
   DEFAULT_SANDBOX_IMAGE,
   SANDBOX_IMAGE_OPTIONS,
@@ -175,6 +178,41 @@ function ImageGroup({
         ))}
       </div>
     </section>
+  );
+}
+
+function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <div className="sticky bottom-0 -mx-5 mt-5 border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
+      {pending ? (
+        <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            {isDocker ? 'Creating sandbox runtime' : 'Creating connector sandbox'}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {isDocker
+              ? 'Saving the sandbox, starting the runtime, and redirecting to the detail page as soon as provisioning begins.'
+              : 'Minting a one-time connector token and redirecting to the setup page.'}
+          </p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+          </div>
+        </div>
+      ) : null}
+      <div className="flex justify-end">
+        <SubmitButton
+          flash={false}
+          pendingLabel={isDocker ? 'Creating container…' : 'Creating connector…'}
+          className="ui-button-primary h-9 w-full sm:w-auto"
+        >
+          <Plus className="size-4" />
+          {isDocker ? 'Create container' : 'Create connector'}
+        </SubmitButton>
+      </div>
+    </div>
   );
 }
 
@@ -386,12 +424,7 @@ export function SandboxCreateForm({
                   </div>
                 )}
               </div>
-              <div className="sticky bottom-0 -mx-5 mt-5 flex justify-end border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
-                <button className="ui-button-primary h-9 w-full sm:w-auto">
-                  <Plus className="size-4" />
-                  {isDocker ? 'Create container' : 'Create connector'}
-                </button>
-              </div>
+              <CreateSandboxFooter isDocker={isDocker} />
             </form>
           </div>
         </div>

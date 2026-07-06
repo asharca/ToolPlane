@@ -75,6 +75,7 @@ export async function deployServerAction(formData: FormData) {
       sourceRef: dep.sourceRef,
       installCfg: dep.installCfg,
     }),
+    { awaitReady: false },
   );
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -121,6 +122,7 @@ export async function deployCustomServerAction(formData: FormData) {
       sourceRef: dep.sourceRef,
       installCfg: dep.installCfg,
     }),
+    { awaitReady: false },
   );
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -190,8 +192,9 @@ export async function startDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await startProcess(dep.id, resolveSpawnSpec(dep));
+  await startProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
 
 export async function stopDeploymentAction(formData: FormData) {
@@ -205,6 +208,7 @@ export async function stopDeploymentAction(formData: FormData) {
 
   await stopProcess(deploymentId);
   revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
 
 export async function restartDeploymentAction(formData: FormData) {
@@ -216,8 +220,9 @@ export async function restartDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await restartProcess(dep.id, resolveSpawnSpec(dep));
+  await restartProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
 
 // Rebuild = tear the process down and spawn it fresh, re-fetching the package /
@@ -231,7 +236,7 @@ export async function rebuildDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await restartProcess(dep.id, resolveSpawnSpec(dep, true));
+  await restartProcess(dep.id, resolveSpawnSpec(dep, true), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);
 }

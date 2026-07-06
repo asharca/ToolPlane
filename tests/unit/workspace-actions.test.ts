@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   deploymentFindFirst: vi.fn(),
   deploymentDeleteMany: vi.fn(),
+  startProcess: vi.fn(),
+  resolveSpawnSpec: vi.fn(),
   killProcess: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
@@ -21,16 +23,17 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 vi.mock('@/lib/process/supervisor', () => ({
-  startProcess: vi.fn(),
+  startProcess: mocks.startProcess,
   stopProcess: vi.fn(),
   restartProcess: vi.fn(),
   killProcess: mocks.killProcess,
 }));
+vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('@/lib/workspace/teardown', () => ({ killWorkspaceProcesses: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
-import { removeDeploymentAction } from '@/lib/workspace/actions';
+import { removeDeploymentAction, startDeploymentAction } from '@/lib/workspace/actions';
 
 function formData(deploymentId: string): FormData {
   const fd = new FormData();
@@ -67,5 +70,17 @@ describe('removeDeploymentAction', () => {
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
       where: { id: 'dep1', workspaceId: 'ws1' },
     });
+  });
+
+  it('starts deployments in provisioning mode without waiting for ready', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', workspaceId: 'ws1' });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'builtin' });
+
+    await startDeploymentAction(formData('dep1'));
+
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({ id: 'dep1', workspaceId: 'ws1' });
+    expect(mocks.startProcess).toHaveBeenCalledWith('dep1', { kind: 'builtin' }, { awaitReady: false });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
   });
 });
