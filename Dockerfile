@@ -108,6 +108,8 @@ COPY --from=build --chown=node:node /app/next.config.ts ./next.config.ts
 COPY --from=build --chown=node:node /app/.toolplane-version ./.toolplane-version
 # Spawned by the supervisor via process.cwd()/scripts — Next never bundles them.
 COPY --from=build --chown=node:node /app/scripts ./scripts
+# The connector package tarball endpoint reads these source files at runtime.
+COPY --from=build --chown=node:node /app/packages ./packages
 # Needed by `prisma migrate deploy` on startup.
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
