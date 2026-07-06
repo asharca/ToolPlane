@@ -2,6 +2,10 @@ import 'server-only';
 
 type HeaderReader = Pick<Headers, 'get'>;
 
+function runtimeEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
 function firstHeaderValue(value: string | null): string | null {
   return value?.split(',')[0]?.trim() || null;
 }
@@ -44,7 +48,7 @@ function protocolForHost(headers: HeaderReader, host: string): string {
 }
 
 function configuredOrigin(): string | null {
-  return normalizedHttpOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  return normalizedHttpOrigin(runtimeEnv('NEXT_PUBLIC_APP_URL'));
 }
 
 function requestOriginFromHeaders(headers: HeaderReader): string | null {

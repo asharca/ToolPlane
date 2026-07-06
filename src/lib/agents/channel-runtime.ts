@@ -18,13 +18,17 @@ declare global {
   var __toolplaneAgentChannelRunners: Map<string, RunnerState> | undefined;
 }
 
+function runtimeEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
 function runners() {
   globalThis.__toolplaneAgentChannelRunners ??= new Map();
   return globalThis.__toolplaneAgentChannelRunners;
 }
 
 function serverUrl() {
-  return (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3002').replace(/\/$/, '');
+  return (runtimeEnv('NEXT_PUBLIC_APP_URL') || 'http://localhost:3002').replace(/\/$/, '');
 }
 
 export function liveAgentChannelStatus(connectionId: string): 'running' | 'stopped' {
