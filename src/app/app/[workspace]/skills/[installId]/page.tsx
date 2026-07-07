@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
@@ -19,7 +20,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
-import { deleteCustomSkillAction, publishSkillAction, updateSkillAttributesAction } from '@/lib/skills/actions';
+import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skills/actions';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
@@ -71,6 +72,30 @@ function githubOriginalUrl(value: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function sourceReferenceDetail({
+  source,
+  sourceRef,
+  githubOriginal,
+  t,
+}: {
+  source: string | null;
+  sourceRef: string | null;
+  githubOriginal: string | null;
+  t: Awaited<ReturnType<typeof getTranslations>>;
+}): { label: string; value: string; href?: string | null } | null {
+  if (source === 'upload' && sourceRef) {
+    return { label: t('importFolder'), value: sourceRef };
+  }
+  if (githubOriginal) {
+    return { label: t('githubOriginal'), value: githubOriginal, href: githubOriginal };
+  }
+  if (source === 'github' && sourceRef) {
+    const href = sourceHref(sourceRef);
+    return { label: t('githubOriginal'), value: sourceRef, ...(href ? { href } : {}) };
+  }
+  return null;
 }
 
 function frontmatterValue(markdown: string, key: string): string | null {
@@ -143,21 +168,6 @@ function BooleanPill({ value, label }: { value: boolean; label: string }) {
   );
 }
 
-function StatusPill({ status }: { status: string }) {
-  const published = status === 'published';
-  return (
-    <span
-      className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold capitalize ${
-        published
-          ? 'border-brand/30 bg-brand/10 text-brand'
-          : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300'
-      }`}
-    >
-      {status}
-    </span>
-  );
-}
-
 const controlInput =
   'h-9 rounded-md border border-border bg-card px-3 text-sm text-foreground outline-none transition-colors focus:border-ring';
 
@@ -166,6 +176,7 @@ export default async function SkillInspectorPage({
 }: {
   params: Promise<{ workspace: string; installId: string }>;
 }) {
+  const t = await getTranslations('console.skills');
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -194,7 +205,12 @@ export default async function SkillInspectorPage({
   }
   const githubOriginal = githubOriginalUrl(install.sourceRef) || githubOriginalUrl(install.skill?.githubSource);
   const sourceRef = install.sourceRef || install.skill?.githubSource || null;
-  const sourceRefHref = sourceHref(sourceRef);
+  const sourceRefDetail = sourceReferenceDetail({
+    source: install.source,
+    sourceRef,
+    githubOriginal,
+    t,
+  });
   const downloadHref = `/api/v1/skills/${install.id}/download`;
   const rawData = {
     id: install.id,
@@ -236,7 +252,7 @@ export default async function SkillInspectorPage({
             className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             <ArrowLeft className="size-4" />
-            Back
+            {t('back')}
           </Link>
         }
       />
@@ -246,13 +262,12 @@ export default async function SkillInspectorPage({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <StatusPill status={install.status} />
                   <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
                     {sourceLabel(install.source, Boolean(install.skillId))}
                   </span>
                   {extraFiles.length ? (
                     <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      {extraFiles.length} bundled files
+                      {extraFiles.length} {t('bundledFiles')}
                     </span>
                   ) : null}
                 </div>
@@ -260,7 +275,7 @@ export default async function SkillInspectorPage({
                   {label.name}
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  {markdownDescription || install.description || install.skill?.description || 'No description provided.'}
+                  {markdownDescription || install.description || install.skill?.description || t('noDescriptionProvided')}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -272,12 +287,12 @@ export default async function SkillInspectorPage({
                     className="ui-button-secondary"
                   >
                     <ExternalLink className="size-4" />
-                    Open GitHub
+                    {t('openGithub')}
                   </a>
                 ) : null}
                 <a href={downloadHref} className="ui-button-primary">
                   <Download className="size-4" />
-                  Download
+                  {t('download')}
                 </a>
               </div>
             </div>
@@ -285,73 +300,68 @@ export default async function SkillInspectorPage({
 
           <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
             <DetailItem
-              label="Slug"
+              label={t('slug')}
               value={label.slug}
               icon={<FileCode2 className="size-3.5" />}
             />
             <DetailItem
-              label="Source"
+              label={t('source')}
               value={sourceLabel(install.source, Boolean(install.skillId))}
               icon={<GitBranch className="size-3.5" />}
             />
             <DetailItem
-              label="Created"
+              label={t('created')}
               value={formatDate(install.createdAt)}
               icon={<Info className="size-3.5" />}
             />
             <DetailItem
-              label="SKILL.md size"
+              label={t('skillmdSize')}
               value={formatBytes(markdown)}
               icon={<FileArchive className="size-3.5" />}
             />
+            {sourceRefDetail ? (
+              <DetailItem
+                label={sourceRefDetail.label}
+                value={sourceRefDetail.value}
+                href={sourceRefDetail.href}
+                icon={<LinkIcon className="size-3.5" />}
+                className="sm:col-span-2"
+              />
+            ) : null}
             <DetailItem
-              label="GitHub original"
-              value={githubOriginal || sourceRef || 'none'}
-              href={githubOriginal || sourceRefHref}
-              icon={<LinkIcon className="size-3.5" />}
-              className="sm:col-span-2"
-            />
-            <DetailItem
-              label="Effort"
+              label={t('effort')}
               value={install.effort || 'default'}
               icon={<Settings2 className="size-3.5" />}
             />
             <DetailItem
-              label="Install ID"
+              label={t('installId')}
               value={install.id}
               icon={<Braces className="size-3.5" />}
             />
             <DetailItem
-              label="Bundle files"
+              label={t('bundleFiles')}
               value={String(extraFiles.length)}
               icon={<FileArchive className="size-3.5" />}
             />
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4 sm:px-6">
-            <BooleanPill value={install.userInvocable} label="User invocable" />
-            <BooleanPill value={install.agentInvocable} label="Agent invocable" />
+            <BooleanPill value={install.userInvocable} label={t('userInvocable')} />
+            <BooleanPill value={install.agentInvocable} label={t('agentInvocable')} />
           </div>
 
           {isCustom ? (
             <div className="border-t border-border px-5 py-4 sm:px-6">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Workspace controls
+                  {t('workspaceControls')}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <form action={publishSkillAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="installId" value={install.id} />
-                    <button className="ui-button-secondary ui-button-sm">
-                      {install.status === 'published' ? 'Unpublish' : 'Publish'}
-                    </button>
-                  </form>
                   <form action={deleteCustomSkillAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="installId" value={install.id} />
                     <button className="ui-button-secondary ui-button-sm text-red-600 hover:border-red-200 hover:text-red-700 dark:text-red-300">
-                      Delete
+                      {t('delete')}
                     </button>
                   </form>
                 </div>
@@ -362,21 +372,21 @@ export default async function SkillInspectorPage({
                 <input type="hidden" name="installId" value={install.id} />
                 <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
                   <input type="checkbox" name="userInvocable" defaultChecked={install.userInvocable} />
-                  User
+                  {t('user')}
                 </label>
                 <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
                   <input type="checkbox" name="agentInvocable" defaultChecked={install.agentInvocable} />
-                  Agent
+                  {t('agent')}
                 </label>
                 <label className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Effort
+                  {t('effort')}
                   <select name="effort" defaultValue={install.effort} className={`${controlInput} mt-1 w-full`}>
-                    <option value="default">default</option>
-                    <option value="low">low</option>
-                    <option value="high">high</option>
+                    <option value="default">{t('default')}</option>
+                    <option value="low">{t('low')}</option>
+                    <option value="high">{t('high')}</option>
                   </select>
                 </label>
-                <button className="ui-button-primary h-9">Save</button>
+                <button className="ui-button-primary h-9">{t('save')}</button>
               </form>
             </div>
           ) : null}
@@ -392,10 +402,10 @@ export default async function SkillInspectorPage({
           <section className="ui-panel overflow-hidden">
             <div className="border-b border-border px-5 py-4 sm:px-6">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Bundle files
+                {t('bundleFiles')}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Files that will be synced next to `SKILL.md`.
+                {t('filesThatWillBeSyncedNextToSkillmd')}
               </p>
             </div>
             <div className="divide-y divide-border">
@@ -418,17 +428,17 @@ export default async function SkillInspectorPage({
           </section>
         ) : (
           <section className="ui-panel-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
-            No bundled files. This skill syncs as a single `SKILL.md` file.
+            {t('noBundledFilesThisSkillSyncsAsASingleSkillmdFile')}
           </section>
         )}
 
         <section className="ui-panel overflow-hidden">
           <div className="border-b border-border px-5 py-4 sm:px-6">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Raw skill data
+              {t('rawSkillData')}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Database fields used by install, agent prompts, and toolkit sync.
+              {t('databaseFieldsUsedByInstallAgentPromptsAndToolkitSync')}
             </p>
           </div>
           <pre className="max-h-96 overflow-auto bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">

@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib';
 
 const BLOCK_SIZE = 512;
 
-export const CONNECTOR_TARBALL_FILENAME = 'toolplane-connector-0.1.0.tgz';
+export const CONNECTOR_TARBALL_FILENAME = 'toolplane-connector-0.1.6.tgz';
 
 type TarEntry = {
   name: string;

@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import type { UIMessage } from 'ai';
@@ -32,10 +33,6 @@ function fmtDate(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function metricLabel(count: number, label: string) {
-  return `${count} ${label}${count === 1 ? '' : 's'}`;
-}
-
 function AgentMetric({
   icon: Icon,
   label,
@@ -63,6 +60,7 @@ export default async function AgentDetailPage({
   params: Promise<{ workspace: string; agentId: string }>;
   searchParams: Promise<{ tab?: string; c?: string }>;
 }) {
+  const t = await getTranslations('console.agents');
   const { workspace: slug, agentId } = await params;
   const { tab, c } = await searchParams;
   const current = TABS.some((t) => t.key === tab) ? tab! : 'chat';
@@ -166,10 +164,10 @@ export default async function AgentDetailPage({
         <div className="max-w-2xl px-8 pb-8">
           <div className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Danger zone
+              {t('dangerZone')}
             </h2>
             <p className="mt-0.5 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Permanently delete this agent and all its conversations.
+              {t('permanentlyDeleteThisAgentAndAllItsConversations')}
             </p>
             <DeleteAgentButton slug={slug} agentId={agentId} />
           </div>
@@ -229,7 +227,7 @@ export default async function AgentDetailPage({
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{agent.name}</h1>
                 <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${ready ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
-                  {ready ? 'ready' : 'needs model'}
+                  {ready ? t('ready3') : t('needsModel')}
                 </span>
               </div>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{providerLabel}</p>
@@ -237,13 +235,17 @@ export default async function AgentDetailPage({
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               <AgentMetric
                 icon={CheckCircle2}
-                label="Steps"
+                label={t('steps')}
                 value={agent.maxSteps > 0 ? String(agent.maxSteps) : 'default'}
               />
-              <AgentMetric icon={Wrench} label="Runtime" value={metricLabel(toolCount, 'binding')} />
-              <AgentMetric icon={Users} label="Sub-agents" value={String(agent.subAgents.length)} />
-              <AgentMetric icon={Radio} label="Channels" value={`${runningChannelCount}/${channelConnections.length}`} />
-              <AgentMetric icon={MessageSquare} label="Sessions" value={String(agent._count.conversations)} />
+              <AgentMetric
+                icon={Wrench}
+                label={t('runtime')}
+                value={t('bindingCount', { count: toolCount })}
+              />
+              <AgentMetric icon={Users} label={t('subagents')} value={String(agent.subAgents.length)} />
+              <AgentMetric icon={Radio} label={t('channels')} value={`${runningChannelCount}/${channelConnections.length}`} />
+              <AgentMetric icon={MessageSquare} label={t('sessions')} value={String(agent._count.conversations)} />
             </div>
           </div>
         </section>

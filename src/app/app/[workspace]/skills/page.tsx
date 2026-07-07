@@ -1,6 +1,7 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Store } from 'lucide-react';
+import { CheckCircle2, Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -24,6 +25,10 @@ function fmt(d: Date) {
   });
 }
 
+function fileCount(files: unknown): number {
+  return Array.isArray(files) ? files.length : 0;
+}
+
 const STEPS = [
   {
     n: '01',
@@ -44,41 +49,88 @@ const STEPS = [
 
 export default async function SkillsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
+  searchParams: Promise<{ imported?: string | string[] }>;
 }) {
+  const t = await getTranslations('console.skills');
   const { workspace: slug } = await params;
+  const query = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const skills = await getInstalledSkills(ws.id);
+  const importedIds = new Set(
+    String(Array.isArray(query.imported) ? query.imported[0] : query.imported || '')
+      .split(',')
+      .filter(Boolean),
+  );
+  const importedSkills = skills.filter((skill) => importedIds.has(skill.id));
 
   return (
     <>
-      <DashboardHeader title="Skills" />
+      <DashboardHeader title={t('skills')} />
       <DashboardPage>
         <DashboardToolbar
           actions={
             <>
               <Link href={`/app/${slug}/skills/new`} className="ui-button-secondary">
                 <Store className="size-4" />
-                Browse Skill Market
+                {t('browseSkillMarket')}
               </Link>
               <AddSkillDialog slug={slug} />
             </>
           }
         >
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Instructions and assets your agent loads on demand. Author or sync
-            from GitHub.
+            {t('instructionsAndAssetsYourAgentLoadsOnDemandAuthorOrSyncFromGithub')}
           </p>
         </DashboardToolbar>
 
+        {importedSkills.length > 0 ? (
+          <section className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/70 dark:bg-emerald-950/30">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+                  <CheckCircle2 className="size-4" />
+                  {t('importedSkills', { count: importedSkills.length })}
+                </div>
+                <p className="mt-1 text-sm text-emerald-700 dark:text-emerald-300">
+                  {t('importedSkillsDescription')}
+                </p>
+              </div>
+              <Link href={`/app/${slug}/skills`} className="text-xs font-medium text-emerald-800 underline-offset-4 hover:underline dark:text-emerald-200">
+                {t('clear')}
+              </Link>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {importedSkills.map((skill) => {
+                const label = skillLabel(skill);
+                return (
+                  <Link
+                    key={skill.id}
+                    href={`/app/${slug}/skills/${skill.id}`}
+                    className="min-w-0 rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-zinc-950 dark:hover:bg-emerald-950/40"
+                  >
+                    <span className="block truncate font-medium text-foreground">
+                      {label.name}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                      {skill.sourceRef || label.slug} · {fileCount(skill.files)} {t('bundledFiles')}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         {skills.length === 0 ? (
           <DashboardEmptyState
-            title="Create. Refine. Sync."
-            description="Skills add focused capabilities to your agent."
+            title={t('createRefineSync')}
+            description={t('skillsAddFocusedCapabilitiesToYourAgent')}
             actions={
               <>
                 <AddSkillDialog slug={slug} />
@@ -86,7 +138,7 @@ export default async function SkillsPage({
                   href={`/app/${slug}/skills/new`}
                   className="ui-button-secondary"
                 >
-                  Browse Skill Market
+                  {t('browseSkillMarket')}
                 </Link>
               </>
             }
@@ -95,7 +147,7 @@ export default async function SkillsPage({
               {STEPS.map((step) => (
                 <div key={step.n}>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Step {step.n}
+                    {t('step')} {step.n}
                   </p>
                   <p className="mt-1.5 text-sm font-semibold text-foreground">
                     {step.title}
@@ -141,11 +193,6 @@ export default async function SkillsPage({
                       >
                         {label.name}
                       </Link>
-                      {label.source !== 'catalog' && s.status === 'draft' ? (
-                        <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-                          Draft
-                        </span>
-                      ) : null}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
@@ -163,13 +210,13 @@ export default async function SkillsPage({
                         href={`/api/v1/skills/${s.id}/download`}
                         className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                       >
-                        Download SKILL.md
+                        {t('downloadSkillmd')}
                       </a>
                       <form action={uninstallSkillAction}>
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="installId" value={s.id} />
                         <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                          Uninstall
+                          {t('uninstall')}
                         </button>
                       </form>
                     </div>

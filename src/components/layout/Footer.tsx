@@ -100,14 +100,14 @@ export function Footer() {
             <ThemeToggle />
           </div>
           <p className="order-1 font-mono text-xs text-muted-foreground md:order-2">
-            © {new Date().getFullYear()} {SITE.name}. All rights reserved.
+            © {new Date().getFullYear()} {SITE.name}{t('allRightsReserved')}
             <span className="mx-1.5">·</span>
             <Link href="/privacy" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
-              Privacy
+              {t('privacy')}
             </Link>
             <span className="mx-1.5">·</span>
             <Link href="/terms" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
-              Terms
+              {t('terms')}
             </Link>
           </p>
         </div>

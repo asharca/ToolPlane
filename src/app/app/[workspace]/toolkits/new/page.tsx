@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Brain, CopyPlus, Plug, Wrench } from 'lucide-react';
@@ -41,6 +42,7 @@ export default async function BrowseToolkitsPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
+  const t = await getTranslations('console.toolkits');
   const { workspace: slug } = await params;
   const { page: pageParam, q: qParam } = await searchParams;
   const page = Math.max(1, Number(pageParam) || 1);
@@ -62,22 +64,22 @@ export default async function BrowseToolkitsPage({
         <DashboardToolbar
           actions={
             <Link href={`/app/${slug}/toolkits`} className="ui-button-ghost">
-              Back to toolkits
+              {t('backToToolkits')}
             </Link>
           }
         >
           <DashboardSearchForm
             defaultValue={q}
-            placeholder="Search public toolkits..."
+            placeholder={t('searchPublicToolkits')}
             clearHref={`/app/${slug}/toolkits/new`}
           />
         </DashboardToolbar>
 
-        <DashboardSection title={q ? `Results for "${q}"` : 'Public Toolkits'} count={total}>
+        <DashboardSection title={q ? `Results for "${q}"` : t('publicToolkits')} count={total}>
           {items.length === 0 ? (
             <DashboardEmptyState
               icon={Wrench}
-              description={q ? `No public toolkits match "${q}".` : 'No public toolkits yet.'}
+              description={q ? `No public toolkits match "${q}".` : t('noPublicToolkitsYet')}
             />
           ) : (
             <div className="grid gap-4 xl:grid-cols-2">
@@ -104,7 +106,7 @@ export default async function BrowseToolkitsPage({
                         <input type="hidden" name="toolkitId" value={toolkit.id} />
                         <button className="ui-button-primary ui-button-sm">
                           <CopyPlus className="size-4" />
-                          Import
+                          {t('import')}
                         </button>
                       </form>
                     </div>
@@ -114,7 +116,7 @@ export default async function BrowseToolkitsPage({
                     <div className="rounded-md border border-border bg-muted/35 p-3">
                       <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
                         <Plug className="size-3.5" />
-                        MCP · {toolkit.serverCount}
+                        {t('mcp')} {toolkit.serverCount}
                       </div>
                       <p className="truncate text-sm text-foreground">
                         {preview(toolkit.serverNames, 'No MCP')}
@@ -123,7 +125,7 @@ export default async function BrowseToolkitsPage({
                     <div className="rounded-md border border-border bg-muted/35 p-3">
                       <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
                         <Brain className="size-3.5" />
-                        Skills · {toolkit.skillCount}
+                        {t('skills')} {toolkit.skillCount}
                       </div>
                       <p className="truncate text-sm text-foreground">
                         {preview(toolkit.skillNames, 'No skills')}
@@ -133,7 +135,7 @@ export default async function BrowseToolkitsPage({
 
                   {toolkit.customServerCount > 0 ? (
                     <p className="mt-3 text-xs text-muted-foreground">
-                      {toolkit.customServerCount} custom MCP {toolkit.customServerCount === 1 ? 'entry' : 'entries'} will need manual setup after import.
+                      {toolkit.customServerCount} {t('customMcp')} {toolkit.customServerCount === 1 ? t('entry') : t('entries')} {t('willNeedManualSetupAfterImport')}
                     </p>
                   ) : null}
                 </article>
@@ -146,7 +148,7 @@ export default async function BrowseToolkitsPage({
           page={page}
           lastPage={lastPage}
           total={total}
-          label="toolkits"
+          label={t('toolkits')}
           hrefForPage={(nextPage) => `/app/${slug}/toolkits/new?${q ? `q=${encodeURIComponent(q)}&` : ''}page=${nextPage}`}
         />
       </DashboardPage>

@@ -52,7 +52,7 @@ export function resolveAgentTools(agent: LoadedAgentTools): {
     for (const s of tk.toolkit.servers) depSet.add(s.deploymentId);
     for (const s of tk.toolkit.skills) skillMap.set(s.installedSkill.id, s.installedSkill);
   }
-  const skills = [...skillMap.values()].filter((s) => s.agentInvocable !== false && s.status !== 'draft');
+  const skills = [...skillMap.values()].filter((s) => s.agentInvocable !== false);
 
   const subMap = new Map<string, SubAgentRef>();
   for (const link of agent.subAgents ?? []) {

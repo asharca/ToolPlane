@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -45,32 +46,32 @@ function iconFor(name: string): LucideIcon {
 }
 
 export default async function Page() {
+  const t = await getTranslations('categories');
   const categories = await listCategories();
 
   return (
     <div className="mx-auto max-w-screen-xl px-4 py-8">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link href="/" className="transition-colors hover:text-foreground">
-          Home
+          {t('home')}
         </Link>
         <ChevronRight className="size-3.5" />
-        <span className="text-foreground">Categories</span>
+        <span className="text-foreground">{t('categories')}</span>
       </nav>
 
       <header className="mt-6">
         <h1 className="font-mono text-4xl font-bold tracking-tight sm:text-6xl">
-          <span className="text-foreground">Browse by</span>{' '}
-          <span className="text-muted-foreground">Category</span>
+          <span className="text-foreground">{t('browseBy')}</span>{' '}
+          <span className="text-muted-foreground">{t('category')}</span>
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
-          Explore the directory organized by category to find the right Model
-          Context Protocol server for your needs.
+          {t('exploreTheDirectoryOrganizedByCategoryToFindTheRightModelContextProtocolServerForYourNeeds')}
         </p>
       </header>
 
       {categories.length === 0 ? (
         <p className="mt-8 text-sm text-muted-foreground">
-          No categories yet. Run detail enrichment to populate them.
+          {t('noCategoriesYetRunDetailEnrichmentToPopulateThem')}
         </p>
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -90,7 +91,7 @@ export default async function Page() {
                   <span className="text-foreground">
                     {c._count.servers.toLocaleString()}
                   </span>{' '}
-                  MCP servers
+                  {t('mcpServers')}
                 </p>
               </Link>
             );

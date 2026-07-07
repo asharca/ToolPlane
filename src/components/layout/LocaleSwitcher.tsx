@@ -1,10 +1,11 @@
 'use client';
 
-import { useLocale } from 'next-intl';
+import { useTranslations, useLocale  } from 'next-intl';
 import { setLocale } from '@/lib/i18n/actions';
 import type { Locale } from '@/i18n/routing';
 
 export function LocaleSwitcher() {
+  const t = useTranslations('common');
   const locale = useLocale() as Locale;
 
   function handleSwitch(next: Locale) {
@@ -24,14 +25,14 @@ export function LocaleSwitcher() {
         onClick={() => handleSwitch('en')}
         className={locale === 'en' ? activeClass : inactiveClass}
       >
-        EN
+        {t('en')}
       </button>
       <button
         type="button"
         onClick={() => handleSwitch('zh')}
         className={locale === 'zh' ? activeClass : inactiveClass}
       >
-        中
+        {t('zh')}
       </button>
     </div>
   );

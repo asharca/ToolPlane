@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getDirectorySkill } from '@/lib/admin/market';
@@ -9,6 +10,7 @@ import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 export const dynamic = 'force-dynamic';
 
 export default async function EditSkillPage({ params }: { params: Promise<{ id: string }> }) {
+  const t = await getTranslations('admin');
   await requireAdmin();
   const { id } = await params;
   const [skill, categories] = await Promise.all([getDirectorySkill(id), listCategories()]);
@@ -16,7 +18,7 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="space-y-6 px-8 py-6">
-      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Edit {skill.name}</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('edit')} {skill.name}</h1>
       <SkillForm
         action={updateSkillAction}
         initial={{
@@ -27,9 +29,9 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
         submitLabel="Save changes"
       />
       <section className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
-        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Delete</h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Refused while any workspace has this skill installed ({skill._count.installs} now).</p>
-        <ConfirmDialog label="Delete skill" prompt="Delete this directory entry?" action={deleteSkillAction} hidden={{ id: skill.id }} pendingLabel="Deleting…" />
+        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">{t('delete')}</h2>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{t('refusedWhileAnyWorkspaceHasThisSkillInstalled')}{skill._count.installs} {t('now')}</p>
+        <ConfirmDialog label={t('deleteSkill')} prompt={t('deleteThisDirectoryEntry')} action={deleteSkillAction} hidden={{ id: skill.id }} pendingLabel={t('deleting')} />
       </section>
     </div>
   );

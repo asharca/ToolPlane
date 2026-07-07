@@ -74,7 +74,7 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
     JSON.stringify(
       {
         name: pluginName,
-        version: '0.1.0',
+        version: '0.1.6',
         description: `Auto-syncs the "${toolkitSlug}" toolkit's MCP tools and skills into Claude Code.`,
         skills: './skills/',
         mcpServers: './.mcp.json',

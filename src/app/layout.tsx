@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter, Geist_Mono } from 'next/font/google';
 import { NextIntlClientProvider } from 'next-intl';
-import { getLocale } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import './globals.css';
 import 'streamdown/styles.css';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
@@ -16,10 +16,13 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
-export const metadata: Metadata = {
-  title: 'Discover Top MCP Servers | ToolPlane',
-  description: 'Find the best MCP servers, agent skills, and MCP clients.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('metadata');
+  return {
+    title: t('siteTitle'),
+    description: t('siteDescription'),
+  };
+}
 
 export default async function RootLayout({
   children,

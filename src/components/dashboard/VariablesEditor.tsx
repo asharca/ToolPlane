@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState, useRef } from 'react';
 import { Plus, Trash2, Eye, EyeOff } from 'lucide-react';
 import { setDeploymentEnvAction } from '@/lib/workspace/actions';
@@ -18,6 +19,7 @@ export function VariablesEditor({
   initial: { key: string; value: string }[];
   network?: string | null;
 }) {
+  const t = useTranslations('console.common');
   const [rows, setRows] = useState<Row[]>(() =>
     (initial.length ? initial : [{ key: '', value: '' }]).map((r, i) => ({ id: i, ...r })),
   );
@@ -34,8 +36,8 @@ export function VariablesEditor({
   return (
     <form action={setDeploymentEnvAction} className="space-y-4 rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
       <div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">My Credentials</h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Environment variables for this server. Restart to apply.</p>
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('myCredentials')}</h2>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('environmentVariablesForThisServerRestartToApply')}</p>
       </div>
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
@@ -55,13 +57,13 @@ export function VariablesEditor({
                 type={revealed.has(row.id) ? 'text' : 'password'}
                 value={row.value}
                 onChange={(e) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
-                placeholder="value"
+                placeholder={t('value')}
                 className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 pr-9 font-mono text-xs outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900"
               />
               <button
                 type="button"
                 onClick={() => toggleReveal(row.id)}
-                aria-label={revealed.has(row.id) ? 'Hide value' : 'Show value'}
+                aria-label={revealed.has(row.id) ? t('hideValue') : t('showValue')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
               >
                 {revealed.has(row.id) ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
@@ -83,19 +85,18 @@ export function VariablesEditor({
           className="mt-0.5 size-4"
         />
         <span>
-          Disconnect from network
+          {t('disconnectFromNetwork')}
           <span className="block text-xs text-muted-foreground">
-            Runs the server with <code className="font-mono">--network none</code> — full
-            isolation, no internet. Leave off for servers that call external APIs.
+            {t('runsTheServerWith')} <code className="font-mono">{t('networkNone')}</code> {t('fullIsolationNoInternetLeaveOffForServersThatCallExternalApis')}
           </span>
         </span>
       </label>
 
       <div className="flex items-center justify-between">
         <button type="button" onClick={() => setRows((rs) => [...rs, { id: nextId.current++, key: '', value: '' }])} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-          <Plus className="size-3.5" /> Add variable
+          <Plus className="size-3.5" /> {t('addVariable')}
         </button>
-        <SubmitButton className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Save</SubmitButton>
+        <SubmitButton className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">{t('save')}</SubmitButton>
       </div>
     </form>
   );

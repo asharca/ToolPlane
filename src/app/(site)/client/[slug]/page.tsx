@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
@@ -10,6 +11,7 @@ export default async function Page({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations('client');
   const { slug } = await params;
   const client = await getClient(slug);
   if (!client) notFound();
@@ -76,7 +78,7 @@ export default async function Page({
           href="/server"
           className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
         >
-          Browse MCP Servers
+          {t('browseMcpServers')}
         </Link>
       </section>
     </article>

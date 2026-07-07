@@ -138,7 +138,7 @@ export function DashboardSidebar({
           className="ui-button-primary w-full"
         >
           <Store className="size-4" />
-          Sell Skills
+          {t('sellSkills')}
         </Link>
         {isAdmin ? (
           <Link
@@ -147,7 +147,7 @@ export function DashboardSidebar({
             className="flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30"
           >
             <Shield className="size-4" />
-            Admin console
+            {t('adminConsole')}
           </Link>
         ) : null}
         <div className="grid grid-cols-2 gap-2">
@@ -156,14 +156,14 @@ export function DashboardSidebar({
             className="ui-button-secondary ui-button-sm"
           >
             <LifeBuoy className="size-3.5" />
-            Support
+            {t('support')}
           </a>
           <a
             href={mailto(SITE.feedbackEmail)}
             className="ui-button-secondary ui-button-sm"
           >
             <MessageSquare className="size-3.5" />
-            Feedback
+            {t('feedback')}
           </a>
         </div>
         <WorkspaceSwitcher

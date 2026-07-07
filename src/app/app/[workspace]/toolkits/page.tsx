@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -23,6 +24,7 @@ export default async function ToolkitsPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
+  const t = await getTranslations('console.toolkits');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -34,7 +36,7 @@ export default async function ToolkitsPage({
 
   return (
     <>
-      <DashboardHeader title="Toolkits" />
+      <DashboardHeader title={t('toolkits')} />
       <ToolkitsBrowser
         slug={slug}
         toolkits={toolkits.map((t) => ({

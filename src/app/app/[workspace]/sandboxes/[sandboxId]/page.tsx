@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Cpu, Laptop, Terminal } from 'lucide-react';
@@ -88,6 +89,7 @@ export default async function SandboxDetailPage({
   params: Promise<{ workspace: string; sandboxId: string }>;
   searchParams?: Promise<{ token?: string }>;
 }) {
+  const t = await getTranslations('console.sandboxes');
   const { workspace: slug, sandboxId } = await params;
   const token = (await searchParams)?.token?.trim();
   const user = await getCurrentUser();
@@ -141,10 +143,10 @@ export default async function SandboxDetailPage({
                     defaultValue={sandbox.name}
                     maxLength={80}
                     className="ui-input h-8 min-w-0 text-sm"
-                    aria-label="Sandbox name"
+                    aria-label={t('sandboxName')}
                   />
-                  <SubmitButton pendingLabel="Renaming…" className="ui-button-secondary h-8 text-xs">
-                    Rename
+                  <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-8 text-xs">
+                    {t('rename')}
                   </SubmitButton>
                 </form>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -159,29 +161,29 @@ export default async function SandboxDetailPage({
                   <span className="font-mono">
                     {sandbox.kind === 'connector' ? connectorPortLabel(connector) : sandbox.network}
                   </span>
-                  <span>{sandbox.agentLinks.length} agent(s)</span>
+                  <span>{sandbox.agentLinks.length} {t('agents')}</span>
                 </div>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge status={status} />
               <Link href={`/app/${slug}/agents`} className={rowButton}>
-                Attach to agent
+                {t('attachToAgent')}
               </Link>
               {disabledLegacy ? null : running ? (
                 <>
                   <form action={stopSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
-                      Stop
+                    <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                      {t('stop')}
                     </SubmitButton>
                   </form>
                   <form action={restartSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
-                      Restart
+                    <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
+                      {t('restart')}
                     </SubmitButton>
                   </form>
                 </>
@@ -189,22 +191,22 @@ export default async function SandboxDetailPage({
                 <form action={startSandboxAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="sandboxId" value={sandbox.id} />
-                  <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
-                    Start
+                  <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                    {t('start')}
                   </SubmitButton>
                 </form>
               )}
               <form action={deleteSandboxAction}>
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="sandboxId" value={sandbox.id} />
-                <button className="text-xs text-red-600 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300">Delete</button>
+                <button className="text-xs text-red-600 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300">{t('delete')}</button>
               </form>
             </div>
           </div>
 
           {sandbox.agentLinks.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>Attached agents:</span>
+              <span>{t('attachedAgents')}</span>
               {sandbox.agentLinks.map((link) => (
                 <Link key={link.agent.id} href={`/app/${slug}/agents/${link.agent.id}`} className="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted">
                   {link.agent.name}
@@ -218,15 +220,15 @@ export default async function SandboxDetailPage({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">
-                    Preparing {sandbox.kind === 'connector' ? 'connector sandbox' : 'Linux sandbox'}
+                    {t('preparing')} {sandbox.kind === 'connector' ? t('connectorSandbox') : t('linuxSandbox')}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {sandbox.kind === 'connector'
-                      ? 'ToolPlane is waiting for the connector session to come online and will refresh automatically.'
-                      : 'ToolPlane is creating the runtime, attaching storage, and waiting for the MCP endpoint to become ready.'}
+                      ? t('waitingForConnectorSession')
+                      : t('creatingRuntimeAndStorage')}
                   </p>
                 </div>
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">auto-refreshing</span>
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('autorefreshing')}</span>
               </div>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
                 <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
@@ -236,41 +238,41 @@ export default async function SandboxDetailPage({
 
           {sandbox.kind === 'connector' && connector ? (
             <DashboardPanel
-              title="Connector setup"
-              description="Run this command on the user machine. The client connects back to the platform over WebSocket and executes sandbox operations locally."
+              title={t('connectorSetup')}
+              description={t('runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally')}
             >
               <div className="grid gap-4 lg:grid-cols-2">
                 {token ? (
-                  <CommandBlock label="Run on the user machine" command={connectorClientCommand(connector, token)} />
+                  <CommandBlock label={t('runOnTheUserMachine')} command={connectorClientCommand(connector, token)} />
                 ) : (
                   <div className="rounded-md border border-border bg-background px-3 py-3">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Run on the user machine
+                      {t('runOnTheUserMachine')}
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      Generate a fresh connection command to mint a token for this sandbox.
+                      {t('generateAFreshConnectionCommandToMintATokenForThisSandbox')}
                     </p>
                     <form action={generateConnectorCommandAction} className="mt-3">
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="sandboxId" value={sandbox.id} />
-                      <SubmitButton pendingLabel="Generating…" className="ui-button-primary text-sm">
-                        Generate command
+                      <SubmitButton pendingLabel={t('generating')} className="ui-button-primary text-sm">
+                        {t('generateCommand')}
                       </SubmitButton>
                     </form>
                   </div>
                 )}
                 <div className="rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
-                  <div className="font-medium text-foreground">Connection model</div>
+                  <div className="font-medium text-foreground">{t('connectionModel')}</div>
                   <p className="mt-1">
-                    The platform does not dial the user machine. The connector CLI opens a WebSocket session to <span className="font-mono text-foreground">{connector.serverUrl}</span>, then exposes <span className="font-mono text-foreground">{connector.remoteRoot}</span> as this sandbox root.
+                    {t('thePlatformDoesNotDialTheUserMachineTheConnectorCliOpensAWebsocketSessionTo')} <span className="font-mono text-foreground">{connector.serverUrl}</span>{t('thenExposes')} <span className="font-mono text-foreground">{connector.remoteRoot}</span> {t('asThisSandboxRoot')}
                   </p>
                   {token ? (
                     <p className="mt-2 text-foreground">
-                      This generated token is shown only in this URL. Keep the command somewhere safe before leaving the page.
+                      {t('thisGeneratedTokenIsShownOnlyInThisUrlKeepTheCommandSomewhereSafeBeforeLeavingThePage')}
                     </p>
                   ) : (
                     <p className="mt-2">
-                      Tokens are generated server-side and stored only as hashes.
+                      {t('tokensAreGeneratedServersideAndStoredOnlyAsHashes')}
                     </p>
                   )}
                 </div>

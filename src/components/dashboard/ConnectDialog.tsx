@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { ArrowRight, ArrowLeft, X, Copy, Check } from 'lucide-react';
 
@@ -129,6 +130,7 @@ export function ConnectDialog({
   label?: string;
   variant?: 'banner' | 'outline';
 }) {
+  const t = useTranslations('console.common');
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Client | null>(null);
   const [copied, setCopied] = useState(false);
@@ -167,13 +169,13 @@ export function ConnectDialog({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t('close')}
             onClick={close}
             className="absolute inset-0 bg-black/50"
           />
           <div
             role="dialog"
-            aria-label={selected ? selected.label : 'Install server'}
+            aria-label={selected ? selected.label : t('installServer')}
             className="relative z-10 w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
           >
             <div className="mb-4 flex items-center justify-between">
@@ -185,16 +187,16 @@ export function ConnectDialog({
                     className="inline-flex items-center gap-1 text-xs text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
                   >
                     <ArrowLeft className="size-3.5" />
-                    Change client
+                    {t('changeClient')}
                   </button>
                 ) : null}
                 <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                  {selected ? selected.label : 'Install server'}
+                  {selected ? selected.label : t('installServer')}
                 </h2>
               </div>
               <button
                 type="button"
-                aria-label="Close"
+                aria-label={t('close')}
                 onClick={close}
                 className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
               >
@@ -205,7 +207,7 @@ export function ConnectDialog({
             {selected ? (
               <div className="space-y-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                  How to install
+                  {t('howToInstall')}
                 </p>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   {selected.howTo}
@@ -218,7 +220,7 @@ export function ConnectDialog({
                     type="button"
                     onClick={() => copy(selected.snippet(key, endpoint))}
                     className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                    aria-label="Copy snippet"
+                    aria-label={t('copySnippet')}
                   >
                     {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
                   </button>

@@ -87,12 +87,6 @@ function statusLabel(status: string) {
   return status.replace(/_/g, ' ');
 }
 
-function platformBadge(platform: MessagingPlatform) {
-  if (platform.pairing) return 'QR setup';
-  if (platform.slug === 'discord') return 'Bot token';
-  return 'Hosted runner';
-}
-
 function CredentialInput({
   credential,
   required,
@@ -100,6 +94,7 @@ function CredentialInput({
   credential: MessagingCredential;
   required: boolean;
 }) {
+  const t = useTranslations('console.agentMessaging');
   return (
     <label className="block">
       <span className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -107,7 +102,7 @@ function CredentialInput({
         {required ? <span className="text-red-500">*</span> : null}
         {credential.required && credential.requiredAt === 'start' ? (
           <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-            required to start
+            {t('requiredToStart')}
           </span>
         ) : null}
       </span>
@@ -290,7 +285,7 @@ function ChannelConnectionCard({
                 </code>
               ))
             ) : (
-              <span className="text-xs text-muted-foreground">No credentials saved yet</span>
+              <span className="text-xs text-muted-foreground">{t('noCredentialsSavedYet')}</span>
             )}
           </div>
         </div>
@@ -315,7 +310,7 @@ function ChannelConnectionCard({
                 <input type="hidden" name="connectionId" value={connection.id} />
                 <button className="ui-button-secondary h-8 px-2 text-xs" type="submit">
                   <Power className="size-3.5" />
-                  Stop
+                  {t('stop')}
                 </button>
               </form>
             ) : canStart ? (
@@ -325,7 +320,7 @@ function ChannelConnectionCard({
                 <input type="hidden" name="connectionId" value={connection.id} />
                 <button className="ui-button-primary h-8 px-2 text-xs" type="submit">
                   <Play className="size-3.5" />
-                  Start
+                  {t('start')}
                 </button>
               </form>
             ) : null
@@ -336,7 +331,7 @@ function ChannelConnectionCard({
             <input type="hidden" name="connectionId" value={connection.id} />
             <button className="ui-button-secondary h-8 px-2 text-xs text-red-600 dark:text-red-300" type="submit">
               <Trash2 className="size-3.5" />
-              Delete
+              {t('delete')}
             </button>
           </form>
         </div>
@@ -397,6 +392,7 @@ function CreateChannelCard({
   platform: MessagingPlatform;
 }) {
   const runner = hostedRunnerSpec(platform.slug);
+  const t = useTranslations('console.agentMessaging');
   const autoRequestsQr = hasBuiltInPairingProvider(platform);
   const createCredentials = platform.credentials.filter(credentialRequiredAtCreate);
   const startCredentials = platform.credentials.filter((credential) => credential.required && credential.requiredAt === 'start');
@@ -416,18 +412,18 @@ function CreateChannelCard({
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-foreground">{platform.label}</h3>
               <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                {platformBadge(platform)}
+                {platform.pairing ? t('qrSetup') : platform.slug === 'discord' ? t('botToken') : t('hostedRunner')}
               </span>
               {runner ? (
                 <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                  hosted
+                  {t('hosted')}
                 </span>
               ) : null}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{platform.summary}</p>
           </div>
           <span className="shrink-0 rounded-md border border-border bg-muted/25 px-2 py-1 text-[11px] font-medium text-foreground">
-            Select
+            {t('select')}
           </span>
         </div>
       </summary>
@@ -439,7 +435,7 @@ function CreateChannelCard({
 
         <div className="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
           <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Setup flow</div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('setupFlow')}</div>
             <p className="mt-1 text-sm font-medium text-foreground">{platform.primaryAction}</p>
             <p className="mt-1 text-xs text-muted-foreground">{platform.connectionMode}</p>
             {platform.docsUrl ? (
@@ -449,7 +445,7 @@ function CreateChannelCard({
                 rel="noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline"
               >
-                Platform docs
+                {t('platformDocs')}
                 <ExternalLink className="size-3" />
               </Link>
             ) : null}
@@ -467,15 +463,15 @@ function CreateChannelCard({
         </div>
 
         <label className="block">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Connection name</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('connectionName')}</span>
           <input name="name" defaultValue={platform.label} className="ui-input mt-1 h-9 w-full" />
         </label>
 
         {platform.pairing ? (
           <div className="rounded-md border border-teal-500/20 bg-teal-500/10 px-3 py-2 text-xs text-teal-800 dark:text-teal-200">
             {platform.slug === 'telegram'
-              ? 'Use QR setup, or paste a BotFather token below. Leave policy fields blank to use ToolPlane defaults.'
-              : 'Creating this channel requests a fresh QR immediately. Manual credentials can be pasted later from the connected channel.'}
+              ? t('telegramSetupHint')
+              : t('qrSetupHint')}
           </div>
         ) : null}
 
@@ -494,7 +490,7 @@ function CreateChannelCard({
         {advancedStartCredentials.length || optionalCredentials.length ? (
           <details className="rounded-md border border-border bg-muted/15">
             <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-foreground">
-              Manual credentials and policy
+              {t('manualCredentialsAndPolicy')}
             </summary>
             <div className="grid gap-2 border-t border-border px-3 py-3 md:grid-cols-2">
               {advancedStartCredentials.map((credential) => (
@@ -508,7 +504,7 @@ function CreateChannelCard({
         ) : null}
 
         <button className="ui-button-primary h-9" type="submit">
-          {autoRequestsQr ? 'Create and request QR' : `Create ${platform.label} channel`}
+          {autoRequestsQr ? t('createAndRequestQr') : t('createChannel', { platform: platform.label })}
         </button>
       </form>
     </details>
@@ -528,6 +524,7 @@ export function AgentMessagingPanel({
   ready: boolean;
   stats: MessagingStats;
 }) {
+  const t = useTranslations('console.agentMessaging');
   const supportedPlatforms = SUPPORTED_CHANNEL_SLUGS
     .map((platformSlug) => MESSAGING_PLATFORMS.find((platform) => platform.slug === platformSlug))
     .filter((platform): platform is MessagingPlatform => Boolean(platform));
@@ -539,19 +536,19 @@ export function AgentMessagingPanel({
       {!ready ? (
         <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          Configure a model provider before external messages can receive agent replies.
+          {t('configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies')}
         </div>
       ) : null}
 
       <details className="ui-panel overflow-hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Add channel</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Choose one platform and follow its native setup flow.</p>
+            <h2 className="text-sm font-semibold text-foreground">{t('addChannel')}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('chooseOnePlatformAndFollowItsNativeSetupFlow')}</p>
           </div>
           <span className="ui-button-primary h-9 px-3 text-sm">
             <Plus className="size-4" />
-            Add
+            {t('add')}
           </span>
         </summary>
         <div className="grid gap-3 px-4 py-4 xl:grid-cols-2">
@@ -567,8 +564,8 @@ export function AgentMessagingPanel({
       </details>
 
       <DashboardPanel
-        title="Connected channels"
-        description="Native channels attached to this agent."
+        title={t('connectedChannels')}
+        description={t('nativeChannelsAttachedToThisAgent')}
       >
         {visibleConnections.length ? (
           <div className="space-y-3">
@@ -584,14 +581,18 @@ export function AgentMessagingPanel({
         ) : (
           <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-8 text-center">
             <Bot className="mx-auto mb-3 size-8 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">No channels connected</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Use Add to connect WeCom, Weixin, Discord, Telegram, or DingTalk.</p>
+            <h3 className="text-sm font-semibold text-foreground">{t('noChannelsConnected')}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{t('useAddToConnectWecomWeixinDiscordTelegramOrDingtalk')}</p>
           </div>
         )}
         {hiddenConnectionCount > 0 ? (
           <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
             <Clock3 className="size-3.5" />
-            {hiddenConnectionCount} legacy channel{hiddenConnectionCount > 1 ? 's are' : ' is'} hidden because this view now supports only the selected five platforms.
+            {t('legacyChannelCount', {
+              count: hiddenConnectionCount,
+              suffix: hiddenConnectionCount > 1 ? t('legacyChannelsAre') : t('legacyChannelIs'),
+            })}{' '}
+            {t('hiddenBecauseThisViewNowSupportsOnlyTheSelectedFivePlatforms')}
           </div>
         ) : null}
       </DashboardPanel>

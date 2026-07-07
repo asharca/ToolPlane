@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
@@ -34,6 +35,8 @@ export default async function ToolkitDetailPage({
   params: Promise<{ workspace: string; slug: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
+  const t = await getTranslations('console.toolkits');
+  const mcpT = await getTranslations('console.mcp');
   const { workspace: wsSlug, slug: toolkitSlug } = await params;
   const { tab } = await searchParams;
 
@@ -88,7 +91,7 @@ export default async function ToolkitDetailPage({
             className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             <Download className="size-4" />
-            Install script
+            {t('installScript')}
           </a>
         }
       />
@@ -104,7 +107,7 @@ export default async function ToolkitDetailPage({
                   toolkit.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
                 }`}
               />
-              {toolkit.enabled ? 'Enabled' : 'Disabled'}
+              {toolkit.enabled ? t('enabled') : t('disabled')}
             </span>
           </div>
           <code className="block font-mono text-xs text-zinc-400 dark:text-zinc-500">
@@ -128,7 +131,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Connected MCP
+                  {t('connectedMcp')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {toolkit.servers.length}
@@ -136,7 +139,7 @@ export default async function ToolkitDetailPage({
               </header>
               {toolkit.servers.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  No servers attached yet. Add some from the MCPs tab.
+                  {t('noServersAttachedYetAddSomeFromTheMcpsTab')}
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -156,8 +159,8 @@ export default async function ToolkitDetailPage({
                       </Link>
                       <span className="text-sm text-muted-foreground">
                         {toolCounts[i] === null
-                          ? 'stopped'
-                          : `${toolCounts[i]} tools`}
+                          ? mcpT('stopped')
+                          : mcpT('toolsCount', { count: toolCounts[i] })}
                       </span>
                     </li>
                   ))}
@@ -168,7 +171,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Skills
+                  {t('skills')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {toolkit.skills.length}
@@ -176,7 +179,7 @@ export default async function ToolkitDetailPage({
               </header>
               {toolkit.skills.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  No skills attached yet
+                  {t('noSkillsAttachedYet')}
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -207,7 +210,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  In this toolkit
+                  {t('inThisToolkit')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {toolkit.servers.length}
@@ -215,7 +218,7 @@ export default async function ToolkitDetailPage({
               </header>
               {toolkit.servers.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  No servers in this toolkit yet.
+                  {t('noServersInThisToolkitYet')}
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -236,7 +239,7 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="deploymentId" value={s.deployment.id} />
                         <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
                           <X className="size-3.5" />
-                          Remove
+                          {t('remove')}
                         </button>
                       </form>
                     </li>
@@ -248,7 +251,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Available MCP
+                  {t('availableMcp')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {composables.deployments.length}
@@ -256,12 +259,12 @@ export default async function ToolkitDetailPage({
               </header>
               {composables.deployments.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  Every deployed server is already in this toolkit.{' '}
+                  {t('everyDeployedServerIsAlreadyInThisToolkit')}{' '}
                   <Link
                     href={`/app/${wsSlug}/mcp/new`}
                     className="text-zinc-700 underline dark:text-zinc-300"
                   >
-                    Deploy more
+                    {t('deployMore')}
                   </Link>
                   .
                 </p>
@@ -284,7 +287,7 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="deploymentId" value={d.id} />
                         <button className={rowAddButton}>
                           <Plus className="size-3.5" />
-                          Add
+                          {t('add')}
                         </button>
                       </form>
                     </li>
@@ -300,7 +303,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  In this toolkit
+                  {t('inThisToolkit')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {toolkit.skills.length}
@@ -308,7 +311,7 @@ export default async function ToolkitDetailPage({
               </header>
               {toolkit.skills.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  No skills in this toolkit yet.
+                  {t('noSkillsInThisToolkitYet')}
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -333,7 +336,7 @@ export default async function ToolkitDetailPage({
                         />
                         <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
                           <X className="size-3.5" />
-                          Remove
+                          {t('remove')}
                         </button>
                       </form>
                     </li>
@@ -345,7 +348,7 @@ export default async function ToolkitDetailPage({
             <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Available skills
+                  {t('availableSkills')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
                   {composables.skills.length}
@@ -353,12 +356,12 @@ export default async function ToolkitDetailPage({
               </header>
               {composables.skills.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  Every installed skill is already in this toolkit.{' '}
+                  {t('everyInstalledSkillIsAlreadyInThisToolkit')}{' '}
                   <Link
                     href={`/app/${wsSlug}/skills/new`}
                     className="text-zinc-700 underline dark:text-zinc-300"
                   >
-                    Install more
+                    {t('installMore')}
                   </Link>
                   .
                 </p>
@@ -381,7 +384,7 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="installedSkillId" value={s.id} />
                         <button className={rowAddButton}>
                           <Plus className="size-3.5" />
-                          Add
+                          {t('add')}
                         </button>
                       </form>
                     </li>

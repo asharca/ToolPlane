@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { useFormStatus } from 'react-dom';
 import {
   Cable,
@@ -182,6 +183,7 @@ function ImageGroup({
 }
 
 function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
+  const t = useTranslations('console.sandboxes');
   const { pending } = useFormStatus();
 
   return (
@@ -190,12 +192,12 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
         <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Loader2 className="size-4 animate-spin" />
-            {isDocker ? 'Creating sandbox runtime' : 'Creating connector sandbox'}
+            {isDocker ? t('creatingSandboxRuntime') : t('creatingConnectorSandbox')}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {isDocker
-              ? 'Saving the sandbox, starting the runtime, and redirecting to the detail page as soon as provisioning begins.'
-              : 'Minting a one-time connector token and redirecting to the setup page.'}
+              ? t('creatingSandboxRuntimeDescription')
+              : t('creatingConnectorSandboxDescription')}
           </p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
             <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
@@ -205,11 +207,11 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
       <div className="flex justify-end">
         <SubmitButton
           flash={false}
-          pendingLabel={isDocker ? 'Creating container…' : 'Creating connector…'}
+          pendingLabel={isDocker ? t('creatingContainer') : t('creatingConnector')}
           className="ui-button-primary h-9 w-full sm:w-auto"
         >
           <Plus className="size-4" />
-          {isDocker ? 'Create container' : 'Create connector'}
+          {isDocker ? t('createContainer') : t('createConnector')}
         </SubmitButton>
       </div>
     </div>
@@ -229,6 +231,7 @@ export function SandboxCreateForm({
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
   const [customImage, setCustomImage] = useState('');
   const [open, setOpen] = useState(false);
+  const t = useTranslations('console.sandboxes');
   const isDocker = mode === 'docker';
   const customSelected = selectedImage === 'custom';
 
@@ -236,7 +239,7 @@ export function SandboxCreateForm({
     <>
       <button type="button" onClick={() => setOpen(true)} className="ui-button-primary">
         <Plus className="size-4" />
-        New sandbox
+        {t('newSandbox')}
       </button>
 
       {open ? (
@@ -247,21 +250,21 @@ export function SandboxCreateForm({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="New sandbox"
+            aria-label={t('newSandbox')}
             className="flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
-                <h2 className="text-base font-semibold text-foreground">New sandbox</h2>
+                <h2 className="text-base font-semibold text-foreground">{t('newSandbox')}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Choose a Dev Container image or connect a user machine.
+                  {t('chooseADevContainerImageOrConnectAUserMachine')}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                aria-label="Close"
+                aria-label={t('close')}
                 className="ui-button-ghost ui-icon-button shrink-0"
               >
                 <X className="size-4" />
@@ -278,31 +281,31 @@ export function SandboxCreateForm({
                     <ModeButton
                       active={isDocker}
                       icon={Container}
-                      title="Docker container"
-                      description="Managed Linux workspace with persistent files and package installs."
+                      title={t('dockerContainer')}
+                      description={t('managedLinuxWorkspaceWithPersistentFilesAndPackageInstalls')}
                       onClick={() => setMode('docker')}
                     />
                     <ModeButton
                       active={!isDocker}
                       icon={Cable}
-                      title="User connector"
-                      description="A user runs one npx command and connects a local machine over WebSocket."
+                      title={t('userConnector')}
+                      description={t('aUserRunsOneNpxCommandAndConnectsALocalMachineOverWebsocket')}
                       onClick={() => setMode('connector')}
                     />
                   </div>
 
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
-                    <Field label="Name">
-                      <input name="name" placeholder={isDocker ? 'Research container' : 'My laptop'} className={inputClass} />
+                    <Field label={t('name')}>
+                      <input name="name" placeholder={isDocker ? t('researchContainer') : t('myLaptop')} className={inputClass} />
                     </Field>
 
                     {isDocker ? (
-                      <Field label="Network" className="mt-3" hint="Isolated keeps it off the app/database network while allowing internet egress.">
+                      <Field label={t('network')} className="mt-3" hint={t('isolatedKeepsItOffTheAppdatabaseNetworkWhileAllowingInternetEgress')}>
                         <div className="relative">
                           <Network className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                           <select name="network" defaultValue="isolated" className="ui-input ui-input-icon h-9 w-full">
-                            <option value="isolated">Isolated</option>
-                            <option value="none">None</option>
+                            <option value="isolated">{t('isolated')}</option>
+                            <option value="none">{t('none')}</option>
                           </select>
                         </div>
                       </Field>
@@ -311,12 +314,12 @@ export function SandboxCreateForm({
                     <div className="mt-4 rounded-md border border-border bg-background px-3 py-2">
                       <div className="flex items-center gap-2 text-xs font-medium text-foreground">
                         <Sparkles className="size-3.5 text-muted-foreground" />
-                        Recommended choices
+                        {t('recommendedChoices')}
                       </div>
                       <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                        <li>Frontend: JavaScript Node or TypeScript Node.</li>
-                        <li>Lightweight: Debian Base, then install only what you need.</li>
-                        <li>Everything: Universal, larger but broad.</li>
+                        <li>{t('frontendJavascriptNodeOrTypescriptNode')}</li>
+                        <li>{t('lightweightDebianBaseThenInstallOnlyWhatYouNeed')}</li>
+                        <li>{t('everythingUniversalLargerButBroad')}</li>
                       </ul>
                     </div>
                   </div>
@@ -327,28 +330,28 @@ export function SandboxCreateForm({
             <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">Choose a Dev Container image</h2>
+                  <h2 className="text-sm font-semibold text-foreground">{t('chooseADevContainerImage')}</h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Official images from mcr.microsoft.com/devcontainers. You can install more packages after the sandbox starts.
+                    {t('officialImagesFromMcrmicrosoftcomdevcontainersYouCanInstallMorePackagesAfterTheSandboxStarts')}
                   </p>
                 </div>
                 <span className="rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
-                  {customSelected ? customImage || 'custom image' : selectedImage}
+                  {customSelected ? customImage || t('customImage') : selectedImage}
                 </span>
               </div>
             </div>
 
             <ImageGroup
-              title="Most used language stacks"
-              description="Recommended first choices for agent workspaces."
+              title={t('mostUsedLanguageStacks')}
+              description={t('recommendedFirstChoicesForAgentWorkspaces')}
               options={recommendedImages}
               selectedImage={selectedImage}
               onSelect={setSelectedImage}
             />
 
             <ImageGroup
-              title="General purpose images"
-              description="Use these when you want a smaller base or a wider toolset."
+              title={t('generalPurposeImages')}
+              description={t('useTheseWhenYouWantASmallerBaseOrAWiderToolset')}
               options={generalImages}
               selectedImage={selectedImage}
               onSelect={setSelectedImage}
@@ -360,18 +363,18 @@ export function SandboxCreateForm({
                 customSelected ? 'border-brand bg-brand-soft' : 'border-border bg-background',
               )}
             >
-              <span className="flex items-center gap-2">
-                <input
-                  type="radio"
+                <span className="flex items-center gap-2">
+                  <input
+                    type="radio"
                   name="imageChoice"
                   value="custom"
                   checked={customSelected}
                   onChange={() => setSelectedImage('custom')}
                 />
-                <span className="text-sm font-semibold text-foreground">Custom image</span>
+                <span className="text-sm font-semibold text-foreground">{t('customImage1')}</span>
               </span>
               <span className="mt-1 block text-xs text-muted-foreground">
-                Use another Docker image when the official presets do not fit.
+                {t('useAnotherDockerImageWhenTheOfficialPresetsDoNotFit')}
               </span>
               <div className="relative mt-3">
                 <Server className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -382,7 +385,7 @@ export function SandboxCreateForm({
                     setCustomImage(event.target.value);
                     setSelectedImage('custom');
                   }}
-                  placeholder="ghcr.io/org/image:tag"
+                  placeholder={t('ghcrioorgimagetag')}
                   className="ui-input ui-input-icon h-9 w-full font-mono text-xs"
                 />
               </div>
@@ -392,20 +395,20 @@ export function SandboxCreateForm({
                 ) : (
                   <div className="space-y-4">
             <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
-              <h2 className="text-sm font-semibold text-foreground">Connect a user machine</h2>
+              <h2 className="text-sm font-semibold text-foreground">{t('connectAUserMachine')}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                ToolPlane generates a one-time token. The user runs one command and the connector calls back to this server.
+                {t('toolplaneGeneratesAOnetimeTokenTheUserRunsOneCommandAndTheConnectorCallsBackToThisServer')}
               </p>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Platform URL" hint="The connector uses this to discover the WebSocket broker.">
+              <Field label={t('platformUrl')} hint={t('theConnectorUsesThisToDiscoverTheWebsocketBroker')}>
                 <div className="relative">
                   <Globe2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <input name="connectorServerUrl" defaultValue={connectorServerUrl} className="ui-input ui-input-icon h-9 w-full" />
                 </div>
               </Field>
-              <Field label="Local root" hint="Directory on the user's machine exposed to the agent.">
+              <Field label={t('localRoot')} hint={t('directoryOnTheUsersMachineExposedToTheAgent')}>
                 <div className="relative">
                   <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <input name="connectorRemoteRoot" defaultValue={defaultRemoteRoot} className="ui-input ui-input-icon h-9 w-full" />
@@ -415,9 +418,9 @@ export function SandboxCreateForm({
 
             <div className="rounded-md border border-border bg-background px-4 py-3">
               <ol className="space-y-2 text-xs text-muted-foreground">
-                <li>1. Create the connector sandbox.</li>
-                <li>2. Copy the generated npx command from the detail page.</li>
-                <li>3. Run it on the user machine that should become the sandbox.</li>
+                <li>{t('1CreateTheConnectorSandbox')}</li>
+                <li>{t('2CopyTheGeneratedNpxCommandFromTheDetailPage')}</li>
+                <li>{t('3RunItOnTheUserMachineThatShouldBecomeTheSandbox')}</li>
               </ol>
             </div>
 

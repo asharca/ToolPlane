@@ -50,7 +50,7 @@ export default async function SettingsPage({
                 {t('urlSlug')}
               </label>
               <div className="flex items-center rounded-md border border-border bg-muted/60">
-                <span className="px-3 text-sm text-muted-foreground">toolplane.local/</span>
+                <span className="px-3 text-sm text-muted-foreground">{t('toolplanelocal')}</span>
                 <input
                   defaultValue={ws.slug}
                   readOnly

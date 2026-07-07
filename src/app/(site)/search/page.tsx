@@ -51,20 +51,20 @@ export default async function Page({
           type="search"
           name="q"
           defaultValue={query}
-          placeholder="Search MCP servers, skills, and clients…"
-          aria-label="Search"
+          placeholder={t('searchMcpServersSkillsAndClients')}
+          aria-label={t('search')}
           className="h-12 w-full border border-input bg-background pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </form>
 
       {query === '' ? (
         <p className="mt-8 text-sm text-muted-foreground">
-          Enter a search term to find MCP servers, clients, and agent skills.
+          {t('enterASearchTermToFindMcpServersClientsAndAgentSkills')}
         </p>
       ) : (
         <>
           <p className="mt-6 text-sm text-muted-foreground">
-            Search results for{' '}
+            {t('searchResultsFor')}{' '}
             <span className="font-medium text-foreground">
               &ldquo;{query}&rdquo;
             </span>{' '}
@@ -73,7 +73,7 @@ export default async function Page({
 
           {total === 0 ? (
             <p className="mt-6 text-sm text-muted-foreground">
-              No results for &ldquo;{query}&rdquo;.
+              {t('noResultsForQuery', { query })}
             </p>
           ) : (
             <div className="mt-8 space-y-10">

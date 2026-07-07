@@ -1,13 +1,20 @@
+import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'News | ToolPlane' };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('metadata');
+  return {
+    title: t('newsToolplane'),
+  };
+}
 
-export default function Page() {
+export default async function Page() {
+  const t = await getTranslations('news');
   return (
-    <ContentPage title="News">
-      <p>The latest updates from the MCP ecosystem.</p>
-      <p>No articles yet.</p>
+    <ContentPage title={t('news')}>
+      <p>{t('theLatestUpdatesFromTheMcpEcosystem')}</p>
+      <p>{t('noArticlesYet')}</p>
     </ContentPage>
   );
 }

@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { getCategory } from '@/lib/queries/categories';
 import { ServerCard } from '@/components/cards/ServerCard';
@@ -9,6 +10,7 @@ export default async function Page({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations('categories');
   const { slug } = await params;
   const category = await getCategory(slug);
   if (!category) notFound();
@@ -22,7 +24,7 @@ export default async function Page({
         {category.servers.length.toLocaleString()} servers
       </p>
       {category.servers.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No servers in this category yet.</p>
+        <p className="text-sm text-muted-foreground">{t('noServersInThisCategoryYet')}</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {category.servers.map((server) => (

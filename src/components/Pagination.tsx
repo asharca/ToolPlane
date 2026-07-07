@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 
 function pageWindow(page: number, total: number): number[] {
@@ -12,7 +13,7 @@ function pageWindow(page: number, total: number): number[] {
 const itemCls =
   'inline-flex h-9 min-w-9 items-center justify-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent';
 
-export function Pagination({
+export async function Pagination({
   page,
   totalPages,
   basePath,
@@ -23,22 +24,23 @@ export function Pagination({
   basePath: string;
   pagePath: string;
 }) {
+  const t = await getTranslations('common');
   if (totalPages <= 1) return null;
   const href = (p: number) => (p <= 1 ? basePath : `${pagePath}/${p}`);
   const nums = pageWindow(page, totalPages);
 
   return (
     <nav
-      aria-label="Pagination"
+      aria-label={t('pagination')}
       className="mt-10 flex flex-wrap items-center justify-center gap-1"
     >
       {page > 1 ? (
         <Link href={href(page - 1)} className={itemCls}>
-          Previous
+          {t('previous')}
         </Link>
       ) : (
         <span className={`${itemCls} pointer-events-none opacity-40`}>
-          Previous
+          {t('previous')}
         </span>
       )}
 
@@ -78,10 +80,10 @@ export function Pagination({
 
       {page < totalPages ? (
         <Link href={href(page + 1)} className={itemCls}>
-          Next
+          {t('next')}
         </Link>
       ) : (
-        <span className={`${itemCls} pointer-events-none opacity-40`}>Next</span>
+        <span className={`${itemCls} pointer-events-none opacity-40`}>{t('next')}</span>
       )}
     </nav>
   );

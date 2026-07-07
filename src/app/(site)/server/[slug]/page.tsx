@@ -126,21 +126,20 @@ export default async function Page({
         <div className="lg:col-span-2">
           <div className="border-b border-border pb-2">
             <span className="border-b-2 border-foreground pb-2 text-sm font-medium text-foreground">
-              About
+              {t('about')}
             </span>
           </div>
           <p className="mt-5 text-base leading-relaxed text-foreground">
             {server.description ??
-              `${server.name} is a Model Context Protocol server you can deploy to your workspace.`}
+              t('defaultDescription', { name: server.name })}
           </p>
 
           <section className="mt-8 rounded-lg border border-border bg-card p-5">
             <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
-              Deploy &amp; connect
+              {t('deployAmpConnect')}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Deploy {server.name} to a workspace, then reach it over JSON-RPC
-              through the ToolPlane gateway with your API token.
+              {t('workspaceDeployDescription', { name: server.name })}
             </p>
             <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
 {`POST /api/v1/mcp/<deployment-id>/rpc
@@ -159,18 +158,18 @@ Content-Type: application/json
                 href={`/app/login?next=${encodeURIComponent(`/server/${server.slug}`)}`}
                 className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                Sign in to run on ToolPlane
+                {t('signInToRunOnToolplane')}
               </Link>
             ) : (
               <Link
                 href="/app"
                 className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                Open dashboard
+                {t('openDashboard')}
               </Link>
             )}
             <p className="mt-2 text-center text-xs text-muted-foreground">
-              One-click cloud hosting
+              {t('oneclickCloudHosting')}
             </p>
           </div>
 
@@ -178,13 +177,13 @@ Content-Type: application/json
             <div className="overflow-hidden rounded-lg border border-border">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <h2 className="text-sm font-semibold text-foreground">
-                  Related MCPs
+                  {t('relatedMcps')}
                 </h2>
                 <Link
                   href="/server"
                   className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  View more
+                  {t('viewMore')}
                 </Link>
               </div>
               <div className="divide-y divide-border">
@@ -205,7 +204,7 @@ Content-Type: application/json
                   href="/tools/skills"
                   className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  View all
+                  {t('viewAll')}
                 </Link>
               </div>
               <div className="divide-y divide-border">

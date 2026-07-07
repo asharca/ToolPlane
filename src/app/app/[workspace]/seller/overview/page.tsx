@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -18,6 +19,7 @@ export default async function SellerOverviewPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
+  const t = await getTranslations('console.seller');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -35,42 +37,41 @@ export default async function SellerOverviewPage({
 
   return (
     <>
-      <DashboardHeader title="Sell" />
+      <DashboardHeader title={t('sell')} />
       <div className="space-y-12 px-8 py-10">
         <FeatureGateCard
-          kicker="Sell"
-          badge="Marketplace"
-          title="Sell your skills"
-          description="Set up a ToolPlane storefront in minutes and begin monetizing your agent skills."
+          kicker={t('sell')}
+          badge={t('marketplace')}
+          title={t('sellYourSkills')}
+          description={t('setUpAToolplaneStorefrontInMinutesAndBeginMonetizingYourAgentSkills')}
           bullets={[
-            'Reach the 1M+ monthly marketplace visitors',
-            'Your own storefront to share anywhere',
-            'Keep 80% of every sale — flat 20% commission fee',
+            t('reachThe1mMonthlyMarketplaceVisitors'),
+            t('yourOwnStorefrontToShareAnywhere'),
+            t('keep80OfEverySaleFlat20CommissionFee'),
           ]}
-          primaryLabel="Start selling"
+          primaryLabel={t('startSelling')}
           primaryHref="#publish"
         />
 
         <section id="publish" className="mx-auto max-w-3xl scroll-mt-20">
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-            Publish an agent skill
+            {t('publishAnAgentSkill')}
           </h2>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            List a skill in the ToolPlane directory. It goes live immediately
-            under your account.
+            {t('listASkillInTheToolplaneDirectoryItGoesLiveImmediatelyUnderYourAccount')}
           </p>
 
           <form action={submitSkillAction} className="mt-5 space-y-4">
             <input type="hidden" name="workspace" value={slug} />
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Skill name
+                {t('skillName')}
               </label>
               <input name="name" required maxLength={80} className={field} />
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Description
+                {t('description')}
               </label>
               <textarea
                 name="description"
@@ -81,10 +82,10 @@ export default async function SellerOverviewPage({
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Category
+                {t('category')}
               </label>
               <select name="categoryId" className={field} defaultValue="">
-                <option value="">No category</option>
+                <option value="">{t('noCategory')}</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -96,18 +97,18 @@ export default async function SellerOverviewPage({
               type="submit"
               className="inline-flex h-10 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             >
-              Publish skill
+              {t('publishSkill')}
             </button>
           </form>
         </section>
 
         <section className="mx-auto max-w-3xl">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Your listings ({submissions.length})
+            {t('yourListings')}{submissions.length})
           </h2>
           {submissions.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-              You haven&apos;t published any skills yet.
+              {t('youHavenapostPublishedAnySkillsYet')}
             </p>
           ) : (
             <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -138,7 +139,7 @@ export default async function SellerOverviewPage({
                     href={`/tools/skills/${s.slug}`}
                     className="shrink-0 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
                   >
-                    View
+                    {t('view')}
                   </Link>
                 </li>
               ))}

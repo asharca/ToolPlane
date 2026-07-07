@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Lock, Globe, Store, Wrench } from 'lucide-react';
@@ -29,6 +30,7 @@ export function ToolkitsBrowser({
   slug: string;
   toolkits: ToolkitRow[];
 }) {
+  const t = useTranslations('console.toolkits');
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -43,7 +45,7 @@ export function ToolkitsBrowser({
           <>
             <Link href={`/app/${slug}/toolkits/new`} className="ui-button-secondary">
               <Store className="size-4" />
-              Browse Market
+              {t('browseMarket')}
             </Link>
             <div className="relative">
               <button
@@ -52,25 +54,25 @@ export function ToolkitsBrowser({
                 className="ui-button-primary"
               >
                 <Plus className="size-4" />
-                New Toolkit
+                {t('newToolkit')}
               </button>
               {creating ? (
                 <div className="ui-panel absolute right-0 top-11 z-20 w-72 p-3">
                   <form action={createToolkitAction} className="space-y-2">
                     <input type="hidden" name="workspace" value={slug} />
                     <label className="text-xs font-medium text-muted-foreground">
-                      Toolkit name
+                      {t('toolkitName')}
                     </label>
                     <input
                       name="name"
                       autoFocus
                       required
                       maxLength={60}
-                      placeholder="e.g. Research stack"
+                      placeholder={t('egResearchStack')}
                       className="ui-input h-9"
                     />
                     <button className="ui-button-primary w-full">
-                      Create toolkit
+                      {t('createToolkit')}
                     </button>
                   </form>
                 </div>
@@ -80,14 +82,14 @@ export function ToolkitsBrowser({
         }
       >
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Bundle tools into a single endpoint.
+          {t('bundleToolsIntoASingleEndpoint')}
         </p>
       </DashboardToolbar>
 
       {toolkits.length === 0 ? (
         <DashboardEmptyState
           icon={Wrench}
-          description="No toolkits yet."
+          description={t('noToolkitsYet')}
           actions={
             <button
               type="button"
@@ -95,7 +97,7 @@ export function ToolkitsBrowser({
               className="ui-button-primary"
             >
               <Plus className="size-4" />
-              New Toolkit
+              {t('newToolkit')}
             </button>
           }
         />
@@ -105,10 +107,10 @@ export function ToolkitsBrowser({
             <DashboardFilterInput
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search toolkits..."
+              placeholder={t('searchToolkits')}
             />
             <span className="shrink-0 text-sm text-muted-foreground">
-              {filtered.length} toolkit{filtered.length === 1 ? '' : 's'}
+              {t('toolkitCount', { count: filtered.length })}
             </span>
           </div>
 

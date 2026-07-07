@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getWorkspaceMembers } from '@/lib/workspace/queries';
@@ -24,6 +25,7 @@ export default async function MembersPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
+  const t = await getTranslations('console.members');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -33,13 +35,13 @@ export default async function MembersPage({
 
   return (
     <>
-      <DashboardHeader title="Members" />
+      <DashboardHeader title={t('members')} />
       <DashboardPage className="space-y-10 py-10">
         <FeatureGateCard
           kicker="Members"
           badge="Team plan"
-          title="Invite your team"
-          description="Add teammates, manage roles, and share servers across your workspace. Available on the Team plan."
+          title={t('inviteYourTeam')}
+          description={t('addTeammatesManageRolesAndShareServersAcrossYourWorkspaceAvailableOnTheTeamPlan')}
           bullets={[
             'Invite teammates with admin, member, and owner roles',
             'Share toolkits, MCP, and skills across your org',
@@ -51,7 +53,7 @@ export default async function MembersPage({
         />
 
         <div className="mx-auto w-full max-w-xl">
-          <DashboardSection title="Current members" count={members.length}>
+          <DashboardSection title={t('currentMembers')} count={members.length}>
             <DashboardTable
               headers={[
                 { label: 'Member' },

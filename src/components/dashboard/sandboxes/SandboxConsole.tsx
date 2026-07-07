@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
@@ -98,6 +99,7 @@ export function SandboxConsole({
   initialPath: string;
   initialEntries: SandboxFileEntry[];
 }) {
+  const t = useTranslations('console.sandboxes');
   const terminalElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<XtermFitAddon | null>(null);
@@ -291,14 +293,14 @@ export function SandboxConsole({
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Folder className="size-4 text-muted-foreground" />
-            Files
+            {t('files')}
           </div>
           <button
             type="button"
             onClick={() => void refreshDir(dirPath)}
             disabled={!running || loadingPath !== null}
             className="ui-button-ghost ui-button-sm"
-            title="Refresh directory"
+            title={t('refreshDirectory')}
           >
             {loadingPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
           </button>
@@ -314,7 +316,7 @@ export function SandboxConsole({
               disabled={!running || loadingPath !== null || dirPath === '.'}
               className="rounded px-1.5 py-1 hover:bg-muted hover:text-foreground disabled:opacity-40"
             >
-              Up
+              {t('up')}
             </button>
           </div>
         </div>
@@ -322,7 +324,7 @@ export function SandboxConsole({
         <div className="min-h-0 flex-1 overflow-auto p-2">
           {entries.length === 0 ? (
             <p className="px-2 py-6 text-sm text-muted-foreground">
-              {running ? 'No files in this directory.' : 'Start the sandbox to browse files.'}
+              {running ? t('noFilesInThisDirectory') : t('startTheSandboxToBrowseFiles')}
             </p>
           ) : (
             entries.map((entry) => {
@@ -360,7 +362,7 @@ export function SandboxConsole({
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
             <TerminalIcon className="size-4 text-zinc-400" />
-            Terminal
+            {t('terminal')}
           </div>
           <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-400">
             <span>{terminalStatus}</span>

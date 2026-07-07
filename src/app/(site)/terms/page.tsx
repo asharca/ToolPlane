@@ -1,19 +1,23 @@
+import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Terms | ToolPlane' };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('metadata');
+  return {
+    title: t('termsToolplane'),
+  };
+}
 
-export default function Page() {
+export default async function Page() {
+  const t = await getTranslations('terms');
   return (
-    <ContentPage title="Terms of Use">
+    <ContentPage title={t('termsOfUse')}>
       <p>
-        ToolPlane is provided as-is, with no warranties of any kind. Use it only
-        in environments where you control the deployed MCP servers, connectors,
-        and sandbox runtimes.
+        {t('toolplaneIsProvidedAsisWithNoWarrantiesOfAnyKindUseItOnlyInEnvironmentsWhereYouControlTheDeployedMcpServersConnectorsAndSandboxRuntimes')}
       </p>
       <p>
-        Trademarks, package names, and third-party content referenced here belong
-        to their respective owners.
+        {t('trademarksPackageNamesAndThirdpartyContentReferencedHereBelongToTheirRespectiveOwners')}
       </p>
     </ContentPage>
   );

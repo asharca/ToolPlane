@@ -8,7 +8,7 @@ import process from 'node:process';
 import pty from 'node-pty';
 import WebSocket from 'ws';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.6';
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
 const DEFAULT_TIMEOUT_MS = 30_000;

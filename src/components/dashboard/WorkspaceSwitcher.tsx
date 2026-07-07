@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronsUpDown, Plus } from 'lucide-react';
@@ -22,6 +23,7 @@ export function WorkspaceSwitcher({
   userLabel: string;
   workspaces: Workspace[];
 }) {
+  const t = useTranslations('console.workspaceSwitcher');
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -78,7 +80,7 @@ export function WorkspaceSwitcher({
         >
           <div className="max-h-64 overflow-y-auto py-1">
             <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Workspaces
+              {t('workspaces')}
             </p>
             {workspaces.map((w) => {
               const active = w.slug === slug;
@@ -110,14 +112,14 @@ export function WorkspaceSwitcher({
                   autoFocus
                   required
                   maxLength={40}
-                  placeholder="Workspace name"
+                  placeholder={t('workspaceName')}
                   className="h-8 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                 />
                 <button
                   type="submit"
                   className="h-8 shrink-0 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
                 >
-                  Create
+                  {t('create')}
                 </button>
               </form>
             ) : (
@@ -127,7 +129,7 @@ export function WorkspaceSwitcher({
                 className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 <Plus className="size-4 shrink-0" />
-                Create workspace
+                {t('createWorkspace')}
               </button>
             )}
           </div>

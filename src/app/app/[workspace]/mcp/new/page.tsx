@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments, getBrowseServers } from '@/lib/workspace/queries';
@@ -24,6 +25,7 @@ export default async function BrowseMcpPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
+  const t = await getTranslations('console.mcp');
   const { workspace: slug } = await params;
   const { page: pageParam, q: qParam } = await searchParams;
   const page = Math.max(1, Number(pageParam) || 1);
@@ -51,21 +53,21 @@ export default async function BrowseMcpPage({
         >
           <DashboardSearchForm
             defaultValue={q}
-            placeholder="Search MCP..."
+            placeholder={t('searchMcp')}
             clearHref={`/app/${slug}/mcp/new`}
           />
         </DashboardToolbar>
 
         {featured.length > 0 ? (
-          <DashboardSection title="Featured">
+          <DashboardSection title={t('featured')}>
             <BrowseGrid items={featured} installedIds={deployedIds} slug={slug} action={deployServerAction} idField="serverId" actionLabel="Add" installedLabel="Added" />
           </DashboardSection>
         ) : null}
 
-        <DashboardSection title={q ? `Results for "${q}"` : 'All MCPs'} count={total}>
+        <DashboardSection title={q ? `Results for "${q}"` : t('allMcps')} count={total}>
           {all.length === 0 ? (
             <DashboardEmptyState
-              description={q ? `No MCP match "${q}".` : 'No MCP found.'}
+              description={q ? `No MCP match "${q}".` : t('noMcpFound')}
             />
           ) : (
             <>
@@ -84,15 +86,15 @@ export default async function BrowseMcpPage({
                     </td>
                     <td className="px-4 py-3 text-right">
                       {deployedIds.has(s.id) ? (
-                        <span className="text-xs text-muted-foreground">Added</span>
+                        <span className="text-xs text-muted-foreground">{t('added')}</span>
                       ) : s.deployable ? (
                         <form action={deployServerAction} className="inline">
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="serverId" value={s.id} />
-                          <button className="text-xs font-medium text-foreground hover:text-muted-foreground">Add</button>
+                          <button className="text-xs font-medium text-foreground hover:text-muted-foreground">{t('add')}</button>
                         </form>
                       ) : (
-                        <span className="text-xs text-muted-foreground">Demo only</span>
+                        <span className="text-xs text-muted-foreground">{t('demoOnly')}</span>
                       )}
                     </td>
                   </tr>

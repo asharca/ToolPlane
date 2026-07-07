@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -24,6 +25,7 @@ export default async function BrowseSkillsPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
+  const t = await getTranslations('console.skills');
   const { workspace: slug } = await params;
   const { page: pageParam, q: qParam } = await searchParams;
   const page = Math.max(1, Number(pageParam) || 1);
@@ -49,20 +51,20 @@ export default async function BrowseSkillsPage({
         <DashboardToolbar
           actions={
             <Link href={`/app/${slug}/skills`} className="ui-button-ghost">
-              Back to installed
+              {t('backToInstalled')}
             </Link>
           }
         >
           <DashboardSearchForm
             defaultValue={q}
-            placeholder="Search skills..."
+            placeholder={t('searchSkills')}
             clearHref={`/app/${slug}/skills/new`}
             width="sm:w-72"
           />
         </DashboardToolbar>
 
         {featured.length > 0 ? (
-          <DashboardSection title="Featured Skills">
+          <DashboardSection title={t('featuredSkills')}>
             <BrowseGrid
               items={featured}
               installedIds={installedIds}
@@ -75,10 +77,10 @@ export default async function BrowseSkillsPage({
           </DashboardSection>
         ) : null}
 
-        <DashboardSection title={q ? `Results for "${q}"` : 'All Skills'} count={total}>
+        <DashboardSection title={q ? `Results for "${q}"` : t('allSkills')} count={total}>
           {all.length === 0 ? (
             <DashboardEmptyState
-              description={q ? `No skills match "${q}".` : 'No skills found.'}
+              description={q ? `No skills match "${q}".` : t('noSkillsFound')}
             />
           ) : (
             <>
@@ -114,26 +116,26 @@ export default async function BrowseSkillsPage({
                         </Link>
                         {s.curated ? (
                           <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-                            Curated
+                            {t('curated')}
                           </span>
                         ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {s.githubSource ? 'GitHub' : s.author ?? 'Market'}
+                      {s.githubSource ? t('github') : s.author ?? 'Market'}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       <span className="line-clamp-1">{s.description}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       {installedIds.has(s.id) ? (
-                        <span className="text-xs text-muted-foreground">Installed</span>
+                        <span className="text-xs text-muted-foreground">{t('installed')}</span>
                       ) : (
                         <form action={installSkillAction} className="inline">
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="skillId" value={s.id} />
                           <button className="text-xs font-medium text-foreground hover:text-muted-foreground">
-                            Install
+                            {t('install')}
                           </button>
                         </form>
                       )}
@@ -145,7 +147,7 @@ export default async function BrowseSkillsPage({
                 page={page}
                 lastPage={lastPage}
                 total={total}
-                label="skills"
+                label={t('skills')}
                 hrefForPage={(nextPage) => `/app/${slug}/skills/new?${q ? `q=${encodeURIComponent(q)}&` : ''}page=${nextPage}`}
               />
             </>

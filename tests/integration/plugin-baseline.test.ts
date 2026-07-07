@@ -100,7 +100,7 @@ function call(authToken: string | null, ws = wsSlug, tk = tkSlug) {
 }
 
 describe('GET /api/v1/plugin/baseline', () => {
-  it('returns published toolkit skills with slug/version/content and excludes drafts', async () => {
+  it('returns toolkit skills with slug/version/content regardless of legacy draft status', async () => {
     const res = await call(token);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -108,7 +108,7 @@ describe('GET /api/v1/plugin/baseline', () => {
     };
     const slugs = body.data.skills.map((s) => s.slug);
     expect(slugs).toContain('alpha-skill');
-    expect(slugs).not.toContain('draft-skill');
+    expect(slugs).toContain('draft-skill');
 
     const alpha = body.data.skills.find((s) => s.slug === 'alpha-skill')!;
     expect(alpha.content).toContain('name: alpha-skill');

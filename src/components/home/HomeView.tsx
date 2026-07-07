@@ -101,26 +101,25 @@ export function HomeView({
               <strong className="font-semibold">
                 {serverCount.toLocaleString()}
               </strong>{' '}
-              Servers
+              {t('servers')}
             </span>
             <span className="text-border">|</span>
-            <span className="text-muted-foreground">Updated just now</span>
+            <span className="text-muted-foreground">{t('updatedJustNow')}</span>
           </div>
 
           <h1 className="mx-auto max-w-4xl text-balance text-5xl font-black tracking-tight sm:text-7xl">
             <span className="sr-only">
-              Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools
+              {t('findTheBestMcpServersAgentSkillsMcpClientsAgentTools')}
             </span>
             <span aria-hidden className="text-foreground">
-              Find The Best
+              {t('findTheBest')}
               <br />
               <RotatingHeadline />
             </span>
           </h1>
 
           <p className="mx-auto mt-5 max-w-xl text-base text-muted-foreground">
-            Directory of awesome MCP servers and clients to connect AI agents with
-            your favorite tools.
+            {t('directoryOfAwesomeMcpServersAndClientsToConnectAiAgentsWithYourFavoriteTools')}
           </p>
 
           <form action="/search" className="relative mx-auto mt-8 max-w-2xl">

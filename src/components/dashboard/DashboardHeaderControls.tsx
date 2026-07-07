@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
@@ -20,6 +21,7 @@ import {
   Home,
   type LucideIcon,
 } from 'lucide-react';
+import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import { SITE, mailto } from '@/lib/site';
 
 type Command = {
@@ -36,6 +38,7 @@ function workspaceSlug(pathname: string): string | null {
 }
 
 export function DashboardHeaderControls() {
+  const t = useTranslations('console.header');
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const { resolvedTheme, setTheme } = useTheme();
@@ -144,7 +147,7 @@ export function DashboardHeaderControls() {
         className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
       >
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        Search
+        {t('search')}
         <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
           ⌘K
         </kbd>
@@ -152,7 +155,7 @@ export function DashboardHeaderControls() {
 
       <a
         href={mailto(SITE.supportEmail)}
-        aria-label="Get help"
+        aria-label={t('getHelp')}
         className="ui-button-ghost ui-icon-button"
       >
         <HelpCircle className="size-4" />
@@ -160,7 +163,7 @@ export function DashboardHeaderControls() {
 
       <button
         type="button"
-        aria-label="Toggle theme"
+        aria-label={t('toggleTheme')}
         onClick={toggleTheme}
         className="ui-button-ghost ui-icon-button"
       >
@@ -170,6 +173,8 @@ export function DashboardHeaderControls() {
         </span>
       </button>
 
+      <LocaleSwitcher />
+
       {open ? (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh]"
@@ -177,7 +182,7 @@ export function DashboardHeaderControls() {
         >
           <div
             role="dialog"
-            aria-label="Command palette"
+            aria-label={t('commandPalette')}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
           >
@@ -191,14 +196,14 @@ export function DashboardHeaderControls() {
                   setActive(0);
                 }}
                 onKeyDown={onListKey}
-                placeholder="Type a command or search…"
+                placeholder={t('typeACommandOrSearch')}
                 className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
               />
             </div>
             <ul className="max-h-80 overflow-y-auto p-1.5">
               {filtered.length === 0 ? (
                 <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No results
+                  {t('noResults')}
                 </li>
               ) : (
                 filtered.map((c, i) => {

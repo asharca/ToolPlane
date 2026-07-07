@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { Plug, BarChart3 } from 'lucide-react';
@@ -74,6 +75,7 @@ export default async function DeploymentInspectorPage({
   params: Promise<{ workspace: string; deploymentId: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
+  const t = await getTranslations('console.mcp');
   const { workspace: slug, deploymentId } = await params;
   const { tab } = await searchParams;
   const current = TABS.some((t) => t.key === tab) ? tab! : 'overview';
@@ -119,16 +121,16 @@ export default async function DeploymentInspectorPage({
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-500 dark:text-zinc-400">
               <StatusBadge status={status} />
-              <CopyButton text={endpoint} label="Copy endpoint URL" />
+              <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
               <span className="text-zinc-300 dark:text-zinc-600">·</span>
-              <span>Refreshed {fmtDate(dep.updatedAt)}</span>
+              <span>{t('refreshed')} {fmtDate(dep.updatedAt)}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ConnectDialog
               endpoint={endpoint}
               name={label.name}
-              label="Connect"
+              label={t('connect')}
               variant="outline"
             />
             {running ? (
@@ -136,15 +138,15 @@ export default async function DeploymentInspectorPage({
                 <form action={restartDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel="Restarting…" className={actionButton}>
-                    Restart
+                  <SubmitButton flash={false} pendingLabel={t('restarting')} className={actionButton}>
+                    {t('restart')}
                   </SubmitButton>
                 </form>
                 <form action={stopDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel="Stopping…" className={actionButton}>
-                    Stop
+                  <SubmitButton flash={false} pendingLabel={t('stopping')} className={actionButton}>
+                    {t('stop')}
                   </SubmitButton>
                 </form>
               </>
@@ -152,23 +154,23 @@ export default async function DeploymentInspectorPage({
               <form action={startDeploymentAction}>
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
-                <SubmitButton flash={false} pendingLabel="Starting…" className={actionButton}>
-                  Start
+                <SubmitButton flash={false} pendingLabel={t('starting')} className={actionButton}>
+                  {t('start')}
                 </SubmitButton>
               </form>
             )}
             <form action={rebuildDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="deploymentId" value={deploymentId} />
-              <SubmitButton flash={false} pendingLabel="Rebuilding…" className={actionButton}>
-                Rebuild
+              <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={actionButton}>
+                {t('rebuild')}
               </SubmitButton>
             </form>
             <form action={removeDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="deploymentId" value={deploymentId} />
               <button className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10">
-                Remove
+                {t('remove')}
               </button>
             </form>
           </div>
@@ -180,12 +182,12 @@ export default async function DeploymentInspectorPage({
           <section className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-foreground">Starting MCP runtime</p>
+                <p className="text-sm font-semibold text-foreground">{t('startingMcpRuntime')}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  ToolPlane is pulling dependencies and waiting for the server to announce its port.
+                  {t('toolplaneIsPullingDependenciesAndWaitingForTheServerToAnnounceItsPort')}
                 </p>
               </div>
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">auto-refreshing</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('autorefreshing')}</span>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
               <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
@@ -203,13 +205,13 @@ export default async function DeploymentInspectorPage({
             >
               <header className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Identity
+                  {t('identity')}
                 </h2>
               </header>
               <dl className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                   <dt className="text-sm text-zinc-500 dark:text-zinc-400">
-                    Endpoint
+                    {t('endpoint')}
                   </dt>
                   <dd className="flex items-center gap-2">
                     <code className="max-w-[28rem] truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
@@ -220,7 +222,7 @@ export default async function DeploymentInspectorPage({
                 </div>
                 <div className="flex items-center justify-between gap-3 px-4 py-3">
                   <dt className="text-sm text-zinc-500 dark:text-zinc-400">
-                    Created
+                    {t('created')}
                   </dt>
                   <dd className="text-sm text-zinc-700 dark:text-zinc-300">
                     {fmtDate(dep.createdAt)}
@@ -234,10 +236,10 @@ export default async function DeploymentInspectorPage({
                 <BarChart3 className="mt-0.5 size-4 text-muted-foreground" />
                 <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Track requests, latency, and errors
+                    {t('trackRequestsLatencyAndErrors')}
                   </p>
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                    View tool calls, latency, and errors in Observability.
+                    {t('viewToolCallsLatencyAndErrorsInObservability')}
                   </p>
                 </div>
               </div>
@@ -245,7 +247,7 @@ export default async function DeploymentInspectorPage({
                 href={`/app/${slug}/observability?deploymentId=${deploymentId}`}
                 className={actionButton}
               >
-                Open Observability
+                {t('openObservability')}
               </Link>
             </section>
           </div>
@@ -260,7 +262,7 @@ export default async function DeploymentInspectorPage({
             <div className="mb-3 flex items-center gap-2">
               <Plug className="size-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                Tools {tools.length > 0 ? `(${tools.length})` : ''}
+                {t('tools')} {tools.length > 0 ? `(${tools.length})` : ''}
               </h2>
             </div>
             {running ? (
@@ -268,8 +270,7 @@ export default async function DeploymentInspectorPage({
             ) : (
               <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  This deployment is {status}. Start it to inspect and run its
-                  tools.
+                  {t('thisDeploymentIs')} {status}{t('startItToInspectAndRunItsTools')}
                 </p>
               </div>
             )}
@@ -280,8 +281,7 @@ export default async function DeploymentInspectorPage({
           logs.length === 0 ? (
             <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                No requests logged yet. Run a tool in the Tools tab, or connect a
-                client, to see call records here.
+                {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
               </p>
             </div>
           ) : (

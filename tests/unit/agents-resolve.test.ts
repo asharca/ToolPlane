@@ -62,7 +62,7 @@ describe('resolveAgentTools', () => {
     expect(skills[0].skill?.slug).toBe('s1');
   });
 
-  it('excludes draft custom skills and includes published ones', () => {
+  it('does not treat legacy draft status as a visibility gate', () => {
     const draftSkill = {
       installedSkill: {
         id: 'custom-draft',
@@ -94,7 +94,6 @@ describe('resolveAgentTools', () => {
       },
     };
     const { skills } = resolveAgentTools({ servers: [], skills: [draftSkill, publishedSkill], toolkits: [] });
-    expect(skills).toHaveLength(1);
-    expect(skills[0].slug).toBe('published-skill');
+    expect(skills.map((s) => s.slug).sort()).toEqual(['draft-skill', 'published-skill']);
   });
 });

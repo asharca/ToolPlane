@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
 import { Trash2, RefreshCw } from 'lucide-react';
 import {
@@ -22,6 +23,7 @@ const input =
   'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100';
 
 export function ProvidersPanel({ slug, providers }: { slug: string; providers: ProviderRow[] }) {
+  const t = useTranslations('console.agents');
   const [state, formAction] = useActionState<ActionState, FormData>(createProviderAction, {});
   const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
 
@@ -30,44 +32,44 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
       <form action={formAction} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
         <input type="hidden" name="workspace" value={slug} />
         <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          Name
-          <input name="name" required placeholder="OpenAI" className={input} />
+          {t('name')}
+          <input name="name" required placeholder={t('openai')} className={input} />
         </label>
         <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          Format
+          {t('format')}
           <select name="format" className={input} defaultValue="openai">
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
+            <option value="openai">{t('openai')}</option>
+            <option value="anthropic">{t('anthropic')}</option>
           </select>
         </label>
         <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          Base URL
+          {t('baseUrl')}
           <input name="baseUrl" required placeholder="https://api.openai.com/v1" className={input} />
         </label>
         <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          API key
+          {t('apiKey')}
           <input name="apiKey" required type="password" placeholder="sk-…" className={input} />
         </label>
         <SubmitButton
           error={state.error}
-          pendingLabel="Adding…"
-          savedLabel="Added"
+          pendingLabel={t('adding')}
+          savedLabel={t('added')}
           className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
         >
-          Add provider
+          {t('addProvider')}
         </SubmitButton>
       </form>
       {state.error ? <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p> : null}
       {refreshState.error ? <p className="mt-2 text-sm text-red-600" role="alert">{refreshState.error}</p> : null}
 
       <p className="mt-2 text-xs text-muted-foreground">
-        Base URL must include the version segment (e.g. <code>/v1</code>); models are fetched from <code>{'{baseUrl}/models'}</code>.
+        {t('baseUrlMustIncludeTheVersionSegmentEg')} <code>/v1</code>{t('modelsAreFetchedFrom')} <code>{'{baseUrl}/models'}</code>.
       </p>
 
       <ul className="mt-5 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
         {providers.length === 0 ? (
           <li className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-            No providers yet. Add one above, then refresh its models.
+            {t('noProvidersYetAddOneAboveThenRefreshItsModels')}
           </li>
         ) : (
           providers.map((p) => (
@@ -80,7 +82,7 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
                   </span>
                 </p>
                 <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                  {p.baseUrl} · {p.modelCount} models
+                  {p.baseUrl} · {p.modelCount} {t('models')}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -89,18 +91,18 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
                   <input type="hidden" name="providerId" value={p.id} />
                   <SubmitButton
                     error={refreshState.error}
-                    pendingLabel="Refreshing…"
-                    savedLabel="Refreshed"
+                    pendingLabel={t('refreshing')}
+                    savedLabel={t('refreshed')}
                     className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                   >
-                    <RefreshCw className="h-3.5 w-3.5" /> Refresh models
+                    <RefreshCw className="h-3.5 w-3.5" /> {t('refreshModels')}
                   </SubmitButton>
                 </form>
                 <form action={deleteProviderAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="providerId" value={p.id} />
                   <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/30">
-                    <Trash2 className="h-3.5 w-3.5" /> Remove
+                    <Trash2 className="h-3.5 w-3.5" /> {t('remove')}
                   </button>
                 </form>
               </div>

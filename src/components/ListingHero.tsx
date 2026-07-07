@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Search } from 'lucide-react';
 
@@ -24,7 +25,7 @@ function CategoryChip({
 
 // Shared hero header for directory listing pages (servers, skills, clients),
 // mirroring the homepage hero: two-tone mono heading, subtitle, search, chips.
-export function ListingHero({
+export async function ListingHero({
   lead,
   tail,
   subtitle,
@@ -39,6 +40,7 @@ export function ListingHero({
   categories: Category[];
   searchAction?: string;
 }) {
+  const t = await getTranslations('common');
   return (
     <section className="relative py-14 sm:py-20">
       <div className="pointer-events-none absolute inset-0 hero-grid" aria-hidden />
@@ -62,7 +64,7 @@ export function ListingHero({
         </form>
         {categories.length > 0 ? (
           <div className="no-scrollbar mx-auto mt-5 flex max-w-3xl gap-2 overflow-x-auto pb-1">
-            <CategoryChip href="/categories" label="All" active />
+            <CategoryChip href="/categories" label={t('all')} active />
             {categories.map((c) => (
               <CategoryChip
                 key={c.slug}

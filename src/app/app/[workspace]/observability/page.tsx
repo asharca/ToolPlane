@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -61,6 +62,7 @@ export default async function ObservabilityPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
+  const t = await getTranslations('console.observability');
   const { workspace: slug } = await params;
   const { tab } = await searchParams;
   const current = TABS.some((t) => t.key === tab) ? tab! : 'usage';
@@ -78,60 +80,59 @@ export default async function ObservabilityPage({
 
   return (
     <>
-      <DashboardHeader title="Observability" />
+      <DashboardHeader title={t('observability')} />
       <DashboardPage>
         <TabBar tabs={TABS} current={current} basePath={base} />
 
         <p className="text-sm text-muted-foreground">
-          Tool calls, latency, and errors across every server. Aggregated over
-          the last 24 hours.
+          {t('toolCallsLatencyAndErrorsAcrossEveryServerAggregatedOverTheLast24Hours')}
         </p>
 
         {current === 'usage' ? (
           <>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Stat
-                label="Total requests · 24h"
+                label={t('totalRequests24h')}
                 value={compact(o.total)}
-                sub="tool calls received"
+                sub={t('toolCallsReceived')}
               />
               <Stat
-                label="Error rate"
+                label={t('errorRate')}
                 value={errorRate}
                 unit="%"
-                sub={`${o.errors} error${o.errors === 1 ? '' : 's'}`}
+                sub={t('errorCount', { count: o.errors })}
               />
               <Stat
-                label="Avg latency"
+                label={t('avgLatency')}
                 value={o.avgMs}
                 unit="ms"
-                sub="average response"
+                sub={t('averageResponse')}
               />
               <Stat
-                label="P95 latency"
+                label={t('p95Latency')}
                 value={o.p95Ms}
                 unit="ms"
-                sub="95th percentile"
+                sub={t('ninetyFifthPercentile')}
               />
             </div>
 
-            <DashboardPanel title="Requests per hour">
+            <DashboardPanel title={t('requestsPerHour')}>
               <div className="mb-4 flex items-center justify-between">
                 <div />
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm bg-sky-500" />
-                    requests
+                    {t('requests')}
                   </span>
                   <span className="flex items-center gap-1.5">
                     <span className="size-2.5 rounded-sm bg-red-400" />
-                    errors
+                    {t('errors')}
                   </span>
                 </div>
               </div>
               {o.total === 0 ? (
                 <DashboardEmptyState
-                  description="No traffic yet. Call a deployment's gateway endpoint to see activity here."
+                  description={t('noTrafficYetCallADeploymentsGatewayEndpointToSeeActivityHere')}
                   className="min-h-48"
                 />
               ) : (
@@ -172,21 +173,21 @@ export default async function ObservabilityPage({
             </DashboardPanel>
           </>
         ) : current === 'audit' ? (
-          <DashboardPanel title="Audit log" padded={false}>
+          <DashboardPanel title={t('auditLog')} padded={false}>
             {o.recent.length === 0 ? (
               <DashboardEmptyState
-                description="No requests logged in the last 24 hours."
+                description={t('noRequestsLoggedInTheLast24Hours')}
                 className="min-h-48 rounded-none border-0"
               />
             ) : (
-              <DashboardTable
-                panel={false}
-                headers={[
-                  { label: 'Method' },
-                  { label: 'Path' },
-                  { label: 'Status' },
-                  { label: 'Duration' },
-                  { label: 'Time' },
+                <DashboardTable
+                  panel={false}
+                  headers={[
+                  { label: t('method') },
+                  { label: t('path') },
+                  { label: t('status') },
+                  { label: t('duration') },
+                  { label: t('time') },
                 ]}
               >
                 {o.recent.map((l) => (
@@ -209,7 +210,7 @@ export default async function ObservabilityPage({
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
-                      {l.durationMs}ms
+                      {l.durationMs}{t('ms')}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {l.createdAt.toLocaleTimeString('en-US', {
@@ -226,31 +227,31 @@ export default async function ObservabilityPage({
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Stat
-                label="Skill calls · 24h"
+                label={t('skillCalls24h')}
                 value={compact(pt.skill.total)}
-                sub="across installed plugins"
+                sub={t('acrossInstalledPlugins')}
               />
               <Stat
-                label="User / agent"
+                label={t('userAgent')}
                 value={`${pt.skill.byUser} / ${pt.skill.byAgent}`}
-                sub="slash vs. autonomous"
+                sub={t('slashVsAutonomous')}
               />
               <Stat
-                label="Skill errors"
+                label={t('skillErrors')}
                 value={pt.skill.errors}
-                sub="failed invocations"
+                sub={t('failedInvocations')}
               />
               <Stat
-                label="Skill syncs"
+                label={t('skillSyncs')}
                 value={pt.sync.applied}
-                sub={`${pt.sync.failures} failed`}
+                sub={t('failedCount', { count: pt.sync.failures })}
               />
             </div>
 
-            <DashboardPanel title="Recent skill invocations" padded={false}>
+            <DashboardPanel title={t('recentSkillInvocations')} padded={false}>
               {pt.skill.recent.length === 0 ? (
                 <DashboardEmptyState
-                  description="No skill invocations yet. Install a toolkit as an auto-sync plugin and run one of its skills."
+                  description={t('noSkillInvocationsYetInstallAToolkitAsAnAutosyncPluginAndRunOneOfItsSkills')}
                   className="min-h-48 rounded-none border-0"
                 />
               ) : (
@@ -295,10 +296,10 @@ export default async function ObservabilityPage({
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="Recent skill syncs" padded={false}>
+            <DashboardPanel title={t('recentSkillSyncs')} padded={false}>
               {pt.sync.recent.length === 0 ? (
                 <DashboardEmptyState
-                  description="No syncs recorded yet."
+                  description={t('noSyncsRecordedYet')}
                   className="min-h-48 rounded-none border-0"
                 />
               ) : (
@@ -323,8 +324,8 @@ export default async function ObservabilityPage({
                           }
                         >
                           {s.outcome === 'failure'
-                            ? `failure${s.reason ? ` · ${s.reason}` : ''}`
-                            : 'applied'}
+                            ? `${t('failure')}${s.reason ? ` · ${s.reason}` : ''}`
+                            : t('applied')}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">

@@ -1,16 +1,22 @@
+import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Sell Skills | ToolPlane' };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('metadata');
+  return {
+    title: t('sellSkillsToolplane'),
+  };
+}
 
-export default function Page() {
+export default async function Page() {
+  const t = await getTranslations('sell');
   return (
-    <ContentPage title="Sell Your Agent Skills">
+    <ContentPage title={t('sellYourAgentSkills')}>
       <p>
-        List your agent skills in the marketplace and reach developers building
-        with the Model Context Protocol.
+        {t('listYourAgentSkillsInTheMarketplaceAndReachDevelopersBuildingWithTheModelContextProtocol')}
       </p>
-      <p>The seller workflow is planned but not yet wired up.</p>
+      <p>{t('theSellerWorkflowIsPlannedButNotYetWiredUp')}</p>
     </ContentPage>
   );
 }

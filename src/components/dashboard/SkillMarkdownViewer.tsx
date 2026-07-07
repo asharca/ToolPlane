@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { Code2, Download, Eye } from 'lucide-react';
 import { Streamdown } from 'streamdown';
@@ -20,6 +21,7 @@ export function SkillMarkdownViewer({
     content: string;
   };
 }) {
+  const t = useTranslations('console.skills');
   const [mode, setMode] = useState<'rendered' | 'source'>('rendered');
   const [content, setContent] = useState(editable?.content ?? markdown);
   const renderedMarkdown = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '').trim() || markdown;
@@ -44,7 +46,7 @@ export function SkillMarkdownViewer({
               }`}
             >
               <Eye className="size-3.5" />
-              Rendered
+              {t('rendered')}
             </button>
             <button
               type="button"
@@ -56,13 +58,13 @@ export function SkillMarkdownViewer({
               }`}
             >
               <Code2 className="size-3.5" />
-              Source
+              {t('source')}
             </button>
           </div>
-          <CopyButton text={markdown} label="Copy" />
+          <CopyButton text={markdown} label={t('copy')} />
           <a href={downloadHref} className="ui-button-secondary">
             <Download className="size-4" />
-            Download
+            {t('download')}
           </a>
         </div>
       </div>
@@ -84,7 +86,7 @@ export function SkillMarkdownViewer({
             rows={24}
             className="min-h-[28rem] w-full resize-y rounded-md border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-100 outline-none transition-colors focus:border-zinc-500"
           />
-          <button className="ui-button-primary">Save source</button>
+          <button className="ui-button-primary">{t('saveSource')}</button>
         </form>
       ) : (
         <pre className="max-h-[34rem] overflow-auto bg-zinc-950 p-5 font-mono text-xs leading-6 text-zinc-100 sm:p-6">

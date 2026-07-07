@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -18,6 +19,7 @@ export default async function TokensPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
+  const t = await getTranslations('console.tokens');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -35,7 +37,7 @@ export default async function TokensPage({
 
   return (
     <>
-      <DashboardHeader title="Settings" />
+      <DashboardHeader title={t('settings')} />
       <DashboardPage className="max-w-2xl">
         <SettingsTabs slug={slug} />
         <TokenManager tokens={view} workspaceSlug={slug} />

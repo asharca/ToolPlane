@@ -8,8 +8,8 @@ import { logRequest } from '@/lib/observability/log';
 export const runtime = 'nodejs';
 
 // The plugin's SessionStart sync hook GETs this each session to refresh the
-// toolkit's skills on disk. One SKILL.md per non-draft skill. version is a
-// content hash so a future client can skip rewrites when unchanged.
+// toolkit's skills on disk. version is a content hash so a future client can
+// skip rewrites when unchanged.
 function safeSlug(raw: string): string {
   const s = raw
     .toLowerCase()
@@ -83,7 +83,6 @@ export async function GET(req: Request) {
   }[] = [];
   for (const ts of toolkit.skills) {
     const s = ts.installedSkill;
-    if (s.status === 'draft') continue;
     const slug = safeSlug(skillLabel(s).slug);
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);

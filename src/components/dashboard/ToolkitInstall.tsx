@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { RefreshCw, Link2, ExternalLink } from 'lucide-react';
 import { CopyButton } from './CopyButton';
@@ -65,6 +66,7 @@ export function ToolkitInstall({
   serverCount: number;
   skillCount: number;
 }) {
+  const t = useTranslations('console.toolkits');
   const [tab, setTab] = useState<TabKey>('auto-sync');
   const [autoClient, setAutoClient] = useState<InstallClient>('claude-code');
   const [client, setClient] = useState<DirectClient>('claude-code');
@@ -88,17 +90,17 @@ export function ToolkitInstall({
         <div className={pillGroup}>
           <Pill active={tab === 'auto-sync'} onClick={() => setTab('auto-sync')}>
             <RefreshCw className="size-3.5" />
-            Auto-sync
+            {t('autosync')}
           </Pill>
           <Pill active={tab === 'direct'} onClick={() => setTab('direct')}>
             <Link2 className="size-3.5" />
-            Direct connection
+            {t('directConnection')}
           </Pill>
         </div>
         {tab === 'auto-sync' ? (
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Client
+              {t('client')}
             </span>
             <div className={pillGroup}>
               {INSTALLERS.map((c) => (
@@ -115,7 +117,7 @@ export function ToolkitInstall({
         ) : (
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Client
+              {t('client')}
             </span>
             <div className={pillGroup}>
               {CLIENTS.map((c) => (
@@ -133,24 +135,22 @@ export function ToolkitInstall({
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-zinc-700 dark:text-zinc-200">
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                Auto-sync for {installClientLabel(autoClient)}.
+                {t('autosyncFor')} {installClientLabel(autoClient)}.
               </span>{' '}
-              {autoDescription} This toolkit contains {serverCount} MCP and {skillCount} skill
-              {skillCount === 1 ? '' : 's'}.
+              {autoDescription} {t('containsSummary', { serverCount, skillCount })}
             </p>
-            <CopyButton text={autoSyncCmd} label="Copy" />
+            <CopyButton text={autoSyncCmd} label={t('copy')} />
           </div>
           <pre className={codeBlock}>{autoSyncCmd}</pre>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Paste this in your terminal to install — no token needed. The link mints a private
-            API token for {installClientLabel(autoClient)}, so keep it secret.{' '}
+            {t('pasteThisInYourTerminalToInstallNoTokenNeededTheLinkMintsAPrivateApiTokenFor')} {installClientLabel(autoClient)}{t('soKeepItSecret')}{' '}
             <a
               href={installUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 underline"
             >
-              Inspect the script first <ExternalLink className="size-3" />
+              {t('inspectTheScriptFirst')} <ExternalLink className="size-3" />
             </a>
           </p>
         </div>
@@ -159,34 +159,32 @@ export function ToolkitInstall({
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-zinc-700 dark:text-zinc-200">
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                Direct connection.
+                {t('directConnection1')}
               </span>{' '}
-              Add the toolkit&apos;s MCP endpoint to {directClientLabel(client)} manually.
+              {t('addTheToolkitapossMcpEndpointTo')} {directClientLabel(client)} {t('manually')}
             </p>
-            <CopyButton text={directSnippet} label="Copy" />
+            <CopyButton text={directSnippet} label={t('copy')} />
           </div>
           <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
-            Direct connections expose MCP tools only. Use Auto-sync to sync skills too.
+            {t('directConnectionsExposeMcpToolsOnlyUseAutosyncToSyncSkillsToo')}
           </p>
           <pre className={codeBlock}>{directSnippet}</pre>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Endpoint <code className="font-mono break-all">{mcpUrl}</code>. Replace{' '}
-            <code className="font-mono">YOUR_TOKEN</code> with an API token. MCP must be
-            running to expose their tools.
+            {t('endpoint')} <code className="font-mono break-all">{mcpUrl}</code>{t('replace')}{' '}
+            <code className="font-mono">YOUR_TOKEN</code> {t('withAnApiTokenMcpMustBeRunningToExposeTheirTools')}
           </p>
         </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-3 dark:border-sky-500/20">
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">Uninstall</span> — removes
-          managed client config, local synced skills, and all install keys for this toolkit:
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">{t('uninstall')}</span> {t('removesManagedClientConfigLocalSyncedSkillsAndAllInstallKeysForThisToolkit')}
         </p>
         <div className="flex items-center gap-2">
           <code className="rounded bg-white/70 px-2 py-1 font-mono text-[11px] text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
             {uninstallCmd}
           </code>
-          <CopyButton text={uninstallCmd} label="Copy" />
+          <CopyButton text={uninstallCmd} label={t('copy')} />
         </div>
       </div>
     </div>

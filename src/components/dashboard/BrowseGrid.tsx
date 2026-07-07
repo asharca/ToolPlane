@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 type BrowseItem = {
   id: string;
   name: string;
@@ -9,7 +10,7 @@ type BrowseItem = {
   deployable?: boolean;
 };
 
-export function BrowseGrid({
+export async function BrowseGrid({
   items,
   installedIds,
   slug,
@@ -26,6 +27,7 @@ export function BrowseGrid({
   actionLabel: string;
   installedLabel: string;
 }) {
+  const t = await getTranslations('console.common');
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((it) => (
@@ -57,7 +59,7 @@ export function BrowseGrid({
             </span>
           ) : it.deployable === false ? (
             <span className="inline-flex min-h-8 w-fit items-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
-              Demo only
+              {t('demoOnly')}
             </span>
           ) : (
             <form action={action}>

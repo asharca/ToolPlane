@@ -19,6 +19,21 @@ async function main(): Promise<void> {
     },
   });
 
+  const ws = await db.workspace.create({
+    data: {
+      slug: 'smoke',
+      name: 'Smoke Workspace',
+      ownerId: user.id,
+    },
+  });
+
+  await db.membership.create({
+    data: {
+      userId: user.id,
+      workspaceId: ws.id,
+      role: 'owner',
+    },
+  });
 
   const token = generateToken();
   await db.apiToken.create({

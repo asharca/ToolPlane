@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
 import {
@@ -69,6 +70,7 @@ function InventoryMetric({
 }
 
 export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow[] }) {
+  const t = useTranslations('console.agents');
   const [creating, setCreating] = useState(false);
   const readyCount = agents.filter((agent) => agent.model).length;
   const setupCount = agents.length - readyCount;
@@ -85,7 +87,7 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
               onClick={() => setCreating((v) => !v)}
               className="ui-button-primary"
             >
-              <Plus className="size-4" /> New agent
+              <Plus className="size-4" /> {t('newAgent')}
             </button>
             {creating ? (
               <div className="ui-panel absolute right-0 top-11 z-20 w-72 p-3">
@@ -96,11 +98,11 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
                     autoFocus
                     required
                     maxLength={60}
-                    placeholder="e.g. Research assistant"
+                    placeholder={t('egResearchAssistant')}
                     className="ui-input h-9"
                   />
                   <button className="ui-button-primary w-full">
-                    Create agent
+                    {t('createAgent')}
                   </button>
                 </form>
               </div>
@@ -110,10 +112,10 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
       >
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">
-            Manage the agents that own model selection, tools, sandboxes, sub-agents, and external channels.
+            {t('manageTheAgentsThatOwnModelSelectionToolsSandboxesSubagentsAndExternalChannels')}
           </p>
           <p className="text-sm text-muted-foreground">
-            Use this view to spot setup gaps, jump into a conversation, or tune an agent&apos;s runtime.
+            {t('useThisViewToSpotSetupGapsJumpIntoAConversationOrTuneAnAgentapossRuntime')}
           </p>
         </div>
       </DashboardToolbar>
@@ -121,26 +123,26 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
       {agents.length === 0 ? (
         <DashboardEmptyState
           icon={Bot}
-          title="No agents yet"
-          description="Add a model provider, create an agent, then connect it to tools and external messaging adapters."
+          title={t('noAgentsYet')}
+          description={t('addAModelProviderCreateAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
         />
       ) : (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <AgentStat icon={Bot} label="Agents" value={agents.length} />
-            <AgentStat icon={CheckCircle2} label="Ready" value={readyCount} />
-            <AgentStat icon={Wrench} label="Tool bindings" value={toolCount} />
-            <AgentStat icon={MessageSquare} label="Sessions" value={conversationCount} />
+            <AgentStat icon={Bot} label={t('agents')} value={agents.length} />
+            <AgentStat icon={CheckCircle2} label={t('ready')} value={readyCount} />
+            <AgentStat icon={Wrench} label={t('toolBindings')} value={toolCount} />
+            <AgentStat icon={MessageSquare} label={t('sessions')} value={conversationCount} />
           </div>
 
           <div className="ui-panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
               <div>
-                <h2 className="text-sm font-semibold text-foreground">Agent inventory</h2>
+                <h2 className="text-sm font-semibold text-foreground">{t('agentInventory')}</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {setupCount > 0
-                    ? `${setupCount} agent${setupCount > 1 ? 's need' : ' needs'} a model before it can reply.`
-                    : 'All agents have a model selected.'}
+                    ? t('agentsNeedModel', { count: setupCount })
+                    : t('allAgentsHaveModel')}
                 </p>
               </div>
             </div>
@@ -164,33 +166,33 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
                             {agent.name}
                           </Link>
                           <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${ready ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
-                            {ready ? 'ready' : 'needs model'}
+                            {ready ? t('ready1') : t('needsModel')}
                           </span>
                         </div>
                         <p className="mt-1 truncate text-xs text-muted-foreground">{provider}</p>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs xl:flex-nowrap xl:justify-self-end">
-                        <InventoryMetric icon={Route} label="Tools" value={agent.toolCount} />
-                        <InventoryMetric icon={Users} label="Sub-agents" value={agent.subAgentCount} />
-                        <InventoryMetric icon={MessageSquare} label="Sessions" value={agent.conversationCount} />
+                        <InventoryMetric icon={Route} label={t('tools')} value={agent.toolCount} />
+                        <InventoryMetric icon={Users} label={t('subagents')} value={agent.subAgentCount} />
+                        <InventoryMetric icon={MessageSquare} label={t('sessions')} value={agent.conversationCount} />
                       </div>
 
                       <div className="flex flex-wrap gap-2 xl:flex-nowrap xl:justify-end">
                         <Link href={`${detailsHref}?tab=chat`} className="ui-button-secondary h-8 px-2 text-xs">
                           <MessageSquare className="size-3.5" />
-                          Chat
+                          {t('chat')}
                         </Link>
                         <Link href={`${detailsHref}?tab=messaging`} className="ui-button-secondary h-8 px-2 text-xs">
                           <Route className="size-3.5" />
-                          Channels
+                          {t('channels')}
                         </Link>
                         <Link href={`${detailsHref}?tab=settings`} className="ui-button-secondary h-8 px-2 text-xs">
                           <Settings className="size-3.5" />
-                          Settings
+                          {t('settings')}
                         </Link>
                         <Link href={detailsHref} className="ui-button-primary h-8 px-2 text-xs">
-                          Open
+                          {t('open')}
                           <ArrowRight className="size-3.5" />
                         </Link>
                       </div>

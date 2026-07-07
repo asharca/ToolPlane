@@ -63,20 +63,20 @@ export default async function McpServersPage({
             <>
               <Link href={`/app/${slug}/mcp/new`} className="ui-button-secondary">
                 <Store className="size-4" />
-                Browse ToolPlane
+                {t('browseToolplane')}
               </Link>
               <DeployCustomMcpDialog slug={slug} />
             </>
           }
         >
           <p className="text-sm text-muted-foreground">
-            Servers deployed to your org. {deployments.length} server{deployments.length === 1 ? '' : 's'} deployed.
+            {t('deploymentCountSummary', { count: deployments.length })}
           </p>
         </DashboardToolbar>
 
         {deployments.length === 0 ? (
           <DashboardEmptyState
-            description="No servers deployed yet."
+            description={t('noServersDeployedYet')}
             actions={
               <>
                 <Link
@@ -84,7 +84,7 @@ export default async function McpServersPage({
                   className="ui-button-secondary"
                 >
                   <Store className="size-4" />
-                  Browse ToolPlane
+                  {t('browseToolplane')}
                 </Link>
                 <DeployCustomMcpDialog slug={slug} />
               </>
@@ -144,22 +144,22 @@ export default async function McpServersPage({
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">
                       <Link href={`/app/${slug}/mcp/${d.id}`} className={rowButton}>
-                        Inspect
+                        {t('inspect')}
                       </Link>
                       {isUp ? (
                         <>
                           <form action={stopDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
-                              Stop
+                            <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                              {t('stop')}
                             </SubmitButton>
                           </form>
                           <form action={restartDeploymentAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="deploymentId" value={d.id} />
-                            <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
-                              Restart
+                            <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
+                              {t('restart')}
                             </SubmitButton>
                           </form>
                         </>
@@ -167,8 +167,8 @@ export default async function McpServersPage({
                         <form action={startDeploymentAction}>
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="deploymentId" value={d.id} />
-                          <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
-                            Start
+                          <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                            {t('start')}
                           </SubmitButton>
                         </form>
                       )}
@@ -176,7 +176,7 @@ export default async function McpServersPage({
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="deploymentId" value={d.id} />
                         <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                          Remove
+                          {t('remove')}
                         </button>
                       </form>
                     </div>

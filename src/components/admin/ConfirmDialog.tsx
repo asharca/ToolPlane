@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import type { AdminActionState } from '@/lib/admin/user-actions';
@@ -23,6 +24,7 @@ export function ConfirmDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
+  const t = useTranslations('admin');
 
   if (!open) {
     return (
@@ -55,10 +57,10 @@ export function ConfirmDialog({
         pendingLabel={pendingLabel ?? 'Working…'}
         className="inline-flex h-8 items-center rounded-md bg-red-600 px-2.5 text-xs font-medium text-white hover:bg-red-700"
       >
-        Confirm
+        {t('confirm')}
       </SubmitButton>
       <button type="button" onClick={() => setOpen(false)} className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-        Cancel
+        {t('cancel')}
       </button>
       {state.error ? <span className="text-xs text-red-600" role="alert">{state.error}</span> : null}
     </form>

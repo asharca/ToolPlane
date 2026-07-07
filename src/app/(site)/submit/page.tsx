@@ -1,16 +1,22 @@
+import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { ContentPage } from '@/components/theme/ContentPage';
 
-export const metadata: Metadata = { title: 'Submit | ToolPlane' };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('metadata');
+  return {
+    title: t('submitToolplane'),
+  };
+}
 
-export default function Page() {
+export default async function Page() {
+  const t = await getTranslations('submit');
   return (
-    <ContentPage title="Submit an MCP Server">
+    <ContentPage title={t('submitAnMcpServer')}>
       <p>
-        Know a great MCP server that should be listed? Community submissions
-        help others discover new tools and capabilities.
+        {t('knowAGreatMcpServerThatShouldBeListedCommunitySubmissionsHelpOthersDiscoverNewToolsAndCapabilities')}
       </p>
-      <p>The submission workflow is planned but not yet active.</p>
+      <p>{t('theSubmissionWorkflowIsPlannedButNotYetActive')}</p>
     </ContentPage>
   );
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, AlertTriangle } from 'lucide-react';
@@ -18,6 +19,7 @@ const field =
 const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
 
 export function DeployCustomMcpDialog({ slug }: { slug: string }) {
+  const t = useTranslations('console.mcp');
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState('npm');
   const [name, setName] = useState('');
@@ -33,7 +35,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
         className="ui-button-primary"
       >
         <Plus className="size-4" />
-        Add custom MCP
+        {t('addCustomMcp')}
       </button>
 
       {open
@@ -44,16 +46,16 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="mb-1 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Deploy custom MCP</h2>
+                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('deployCustomMcp')}</h2>
                   <button type="button" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
                     <X className="size-5" />
                   </button>
                 </div>
-                <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">Deploy custom MCP</p>
+                <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">{t('deployCustomMcp')}</p>
 
                 <div className="mb-5 flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                  <span>MCP can access your data and execute arbitrary code. Only install sources you trust.</span>
+                  <span>{t('mcpCanAccessYourDataAndExecuteArbitraryCodeOnlyInstallSourcesYouTrust')}</span>
                 </div>
 
                 <form action={deployCustomServerAction} className="space-y-5">
@@ -61,7 +63,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                   <input type="hidden" name="source" value={source} />
 
                   <div>
-                    <p className={labelCls}>Source</p>
+                    <p className={labelCls}>{t('source')}</p>
                     <div className="flex gap-1 rounded-md border border-zinc-200 p-1 dark:border-zinc-700">
                       {SOURCES.map((s) => (
                         <button
@@ -85,20 +87,20 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
 
                   {source === 'docker' ? (
                     <div>
-                      <label htmlFor="startCommand" className={labelCls}>Start Command</label>
+                      <label htmlFor="startCommand" className={labelCls}>{t('startCommand')}</label>
                       <input id="startCommand" name="startCommand" placeholder="node dist/index.js" className={`${field} font-mono`} />
                     </div>
                   ) : null}
 
                   <div>
-                    <label htmlFor="name" className={labelCls}>Server Name</label>
-                    <input id="name" name="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Weather API" className={field} />
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">/{slug}/mcp/{slugPreview}</p>
+                    <label htmlFor="name" className={labelCls}>{t('serverName')}</label>
+                    <input id="name" name="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder={t('weatherApi')} className={field} />
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">/{slug}{t('mcp')}{slugPreview}</p>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">
-                    <button type="button" onClick={() => setOpen(false)} className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">Cancel</button>
-                    <SubmitButton pendingLabel="Deploying…" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">Deploy</SubmitButton>
+                    <button type="button" onClick={() => setOpen(false)} className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">{t('cancel')}</button>
+                    <SubmitButton pendingLabel={t('deploying')} className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">{t('deploy')}</SubmitButton>
                   </div>
                 </form>
               </div>

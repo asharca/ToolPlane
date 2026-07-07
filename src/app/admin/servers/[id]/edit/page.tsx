@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getDirectoryServer } from '@/lib/admin/market';
@@ -11,6 +12,7 @@ import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 export const dynamic = 'force-dynamic';
 
 export default async function EditServerPage({ params }: { params: Promise<{ id: string }> }) {
+  const t = await getTranslations('admin');
   await requireAdmin();
   const { id } = await params;
   const [server, categories] = await Promise.all([getDirectoryServer(id), listCategories()]);
@@ -19,7 +21,7 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="space-y-6 px-8 py-6">
-      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Edit {server.name}</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('edit')} {server.name}</h1>
       <ServerForm
         action={updateServerAction}
         initial={{
@@ -47,9 +49,9 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
         verifiedTools={server.verifiedTools ?? null}
       />
       <section className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
-        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Delete</h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">Refused while any deployment references this server ({server._count.deployments} now).</p>
-        <ConfirmDialog label="Delete server" prompt="Delete this directory entry?" action={deleteServerAction} hidden={{ id: server.id }} pendingLabel="Deleting…" />
+        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">{t('delete')}</h2>
+        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{t('refusedWhileAnyDeploymentReferencesThisServer')}{server._count.deployments} {t('now')}</p>
+        <ConfirmDialog label={t('deleteServer')} prompt={t('deleteThisDirectoryEntry')} action={deleteServerAction} hidden={{ id: server.id }} pendingLabel={t('deleting')} />
       </section>
     </div>
   );

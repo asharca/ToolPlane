@@ -4,6 +4,8 @@ import {
   normalizeSkillFiles,
   parseGithubSkillSource,
   parseSkillFrontmatter,
+  parseUploadedSkillBundle,
+  parseUploadedSkillBundles,
   safeSkillFilePath,
 } from '@/lib/skills/bundle';
 
@@ -66,6 +68,61 @@ describe('parseSkillFrontmatter', () => {
     expect(
       parseSkillFrontmatter('---\nname: "pdf"\ndescription: "Work with PDFs"\nauthor: Anthropic\n---\n# PDF'),
     ).toEqual({ name: 'pdf', description: 'Work with PDFs', author: 'Anthropic' });
+  });
+});
+
+describe('parseUploadedSkillBundle', () => {
+  it('strips the selected folder root and keeps nested bundled files', () => {
+    const bundle = parseUploadedSkillBundle([
+      {
+        path: 'pdf/SKILL.md',
+        content: '---\nname: pdf\ndescription: Work with PDFs\nauthor: Anthropic\n---\n# PDF',
+      },
+      { path: 'pdf/reference.md', content: 'reference' },
+      { path: 'pdf/assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
+      { path: 'other/ignored.md', content: 'ignored' },
+    ]);
+
+    expect(bundle).toMatchObject({
+      name: 'pdf',
+      description: 'Work with PDFs',
+      author: 'Anthropic',
+      rootPath: 'pdf',
+      content: expect.stringContaining('# PDF'),
+    });
+    expect(bundle.files).toEqual([
+      { path: 'reference.md', content: 'reference' },
+      { path: 'assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
+    ]);
+  });
+
+  it('requires a SKILL.md file', () => {
+    expect(() => parseUploadedSkillBundle([{ path: 'README.md', content: 'No skill here' }])).toThrow(
+      'SKILL.md not found',
+    );
+  });
+
+  it('imports each child folder with a SKILL.md as its own skill', () => {
+    const bundles = parseUploadedSkillBundles([
+      {
+        path: 'yibao-shenji/skill_data_reader/SKILL.md',
+        content: '---\nname: skill_data_reader\ndescription: Read fee details\n---\n# Reader',
+      },
+      { path: 'yibao-shenji/skill_data_reader/scripts/read.py', content: 'print(1)' },
+      {
+        path: 'yibao-shenji/step_1_读取项目明细表费用明细层/SKILL.md',
+        content: '# Step 1',
+      },
+      { path: 'yibao-shenji/step_1_读取项目明细表费用明细层/reference.md', content: 'rules' },
+      { path: 'yibao-shenji/README.md', content: 'collection readme' },
+    ]);
+
+    expect(bundles.map((bundle) => ({ name: bundle.name, rootPath: bundle.rootPath }))).toEqual([
+      { name: 'skill_data_reader', rootPath: 'yibao-shenji/skill_data_reader' },
+      { name: 'step_1_读取项目明细表费用明细层', rootPath: 'yibao-shenji/step_1_读取项目明细表费用明细层' },
+    ]);
+    expect(bundles[0].files).toEqual([{ path: 'scripts/read.py', content: 'print(1)' }]);
+    expect(bundles[1].files).toEqual([{ path: 'reference.md', content: 'rules' }]);
   });
 });
 

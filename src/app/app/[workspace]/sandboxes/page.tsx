@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import Link from 'next/link';
@@ -102,6 +103,7 @@ export default async function SandboxesPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
+  const t = await getTranslations('console.sandboxes');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -122,7 +124,7 @@ export default async function SandboxesPage({
   return (
     <>
       <ProvisioningRefresher active={anyProvisioning} />
-      <DashboardHeader title="Sandboxes" />
+      <DashboardHeader title={t('sandboxes')} />
       <DashboardPage>
         <DashboardToolbar
           actions={
@@ -134,22 +136,22 @@ export default async function SandboxesPage({
           }
         >
           <p className="text-sm text-muted-foreground">
-            Docker Linux workspaces and user machines connected by one-command WebSocket agents.
+            {t('dockerLinuxWorkspacesAndUserMachinesConnectedByOnecommandWebsocketAgents')}
           </p>
         </DashboardToolbar>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SandboxStat label="Docker" value={dockerCount} icon={Cpu} />
-          <SandboxStat label="Connectors" value={connectorCount} icon={Laptop} />
-          <SandboxStat label="Running" value={runningCount} icon={Terminal} />
-          <SandboxStat label="Agent links" value={agentLinkCount} icon={Boxes} />
+          <SandboxStat label={t('docker')} value={dockerCount} icon={Cpu} />
+          <SandboxStat label={t('connectors')} value={connectorCount} icon={Laptop} />
+          <SandboxStat label={t('running')} value={runningCount} icon={Terminal} />
+          <SandboxStat label={t('agentLinks')} value={agentLinkCount} icon={Boxes} />
         </div>
 
         {sandboxes.length === 0 ? (
           <DashboardEmptyState
             icon={Boxes}
-            title="No sandboxes yet"
-            description="Create a Linux sandbox, then attach it to an agent from the agent settings page."
+            title={t('noSandboxesYet')}
+            description={t('createALinuxSandboxThenAttachItToAnAgentFromTheAgentSettingsPage')}
           />
         ) : (
           <DashboardTable
@@ -214,22 +216,22 @@ export default async function SandboxesPage({
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">
                       <Link href={`/app/${slug}/sandboxes/${s.id}`} className={rowButton}>
-                        Inspect
+                        {t('inspect')}
                       </Link>
                       {disabledLegacy ? null : running ? (
                         <>
                           <form action={stopSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="sandboxId" value={s.id} />
-                            <SubmitButton flash={false} pendingLabel="Stopping…" className={rowButton}>
-                              Stop
+                            <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                              {t('stop')}
                             </SubmitButton>
                           </form>
                           <form action={restartSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="sandboxId" value={s.id} />
-                            <SubmitButton flash={false} pendingLabel="Restarting…" className={rowButton}>
-                              Restart
+                            <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
+                              {t('restart')}
                             </SubmitButton>
                           </form>
                         </>
@@ -237,8 +239,8 @@ export default async function SandboxesPage({
                         <form action={startSandboxAction}>
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="sandboxId" value={s.id} />
-                          <SubmitButton flash={false} pendingLabel="Starting…" className={rowButton}>
-                            Start
+                          <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                            {t('start')}
                           </SubmitButton>
                         </form>
                       )}
@@ -246,7 +248,7 @@ export default async function SandboxesPage({
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="sandboxId" value={s.id} />
                         <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                          Delete
+                          {t('delete')}
                         </button>
                       </form>
                     </div>

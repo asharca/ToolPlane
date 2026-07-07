@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
@@ -13,6 +14,7 @@ export default async function Page({
 }: {
   params: Promise<{ slug: string }>;
 }) {
+  const t = await getTranslations('skills');
   const { slug } = await params;
   const skill = await getSkill(slug);
   if (!skill) notFound();
@@ -75,26 +77,26 @@ export default async function Page({
               href={`/app/login?next=${encodeURIComponent(`/tools/skills/${skill.slug}`)}`}
               className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
-              Sign in to add
+              {t('signInToAdd')}
             </Link>
           ) : (
             <form action={addSkillToWorkspaceAction}>
               <input type="hidden" name="skillId" value={skill.id} />
               <input type="hidden" name="slug" value={skill.slug} />
               <SubmitButton
-                pendingLabel="Adding…"
+                pendingLabel={t('adding')}
                 className="flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
-                Add to my workspace
+                {t('addToMyWorkspace')}
               </SubmitButton>
             </form>
           )}
-          <p className="mt-2 text-center text-xs text-muted-foreground">One-click install</p>
+          <p className="mt-2 text-center text-xs text-muted-foreground">{t('oneclickInstall')}</p>
         </div>
 
       <section className="mt-10 rounded-lg border border-border bg-card p-5">
         <h2 className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
-          Install this skill
+          {t('installThisSkill')}
         </h2>
         {skill.githubSource ? (
           <div className="mt-3 space-y-3">
@@ -108,11 +110,11 @@ export default async function Page({
             <pre className="overflow-x-auto rounded-md bg-muted px-4 py-3 font-mono text-sm text-foreground">
               <code>npx skillfish add {skill.githubSource}</code>
             </pre>
-            <p className="text-xs text-muted-foreground">Or install into your ToolPlane workspace:</p>
+            <p className="text-xs text-muted-foreground">{t('orInstallIntoYourToolplaneWorkspace')}</p>
           </div>
         ) : (
           <p className="mt-1 text-sm text-muted-foreground">
-            Install {skill.name} into a workspace, then export it as a
+            {t('install')} {skill.name} into a workspace, then export it as a
             ready-to-use <code className="font-mono">SKILL.md</code> for your agent.
           </p>
         )}
@@ -120,7 +122,7 @@ export default async function Page({
           href="/app"
           className="mt-3 inline-flex h-9 items-center rounded-md border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent"
         >
-          Open dashboard
+          {t('openDashboard')}
         </Link>
       </section>
     </article>
