@@ -1,8 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Download, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+
+export const SYSTEM_UPDATE_LOCAL_STATUS_PATH = '/api/v1/admin/system/update?local=1';
+const RESTART_POLL_INTERVAL_MS = 1_500;
+const RESTART_TIMEOUT_MS = 180_000;
 
 type UpdateStatus = {
   enabled: boolean;
@@ -25,13 +29,77 @@ type UpdateResult = {
   message?: string;
 };
 
+type LocalUpdateStatus = {
+  currentVersion: string;
+  artifactName: string;
+};
+
 type UiState = 'idle' | 'checking' | 'updating' | 'restarting' | 'error';
+
+function versionsMatch(current: string, expected: string | null): boolean {
+  return Boolean(expected && current.trim() === expected.trim());
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = window.setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+export async function waitForSystemUpdateReady(
+  expectedVersion: string | null,
+  options: {
+    signal?: AbortSignal;
+    fetchImpl?: typeof fetch;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<boolean> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const pollIntervalMs = options.pollIntervalMs ?? RESTART_POLL_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? RESTART_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (options.signal?.aborted) return false;
+    try {
+      const response = await fetchImpl(SYSTEM_UPDATE_LOCAL_STATUS_PATH, {
+        cache: 'no-store',
+        signal: options.signal,
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LocalUpdateStatus;
+        if (!expectedVersion || versionsMatch(data.currentVersion, expectedVersion)) {
+          return true;
+        }
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return false;
+    }
+    await wait(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal).catch(() => undefined);
+  }
+
+  return false;
+}
 
 export function SystemUpdateButton() {
   const t = useTranslations('console.systemUpdate');
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [uiState, setUiState] = useState<UiState>('checking');
   const [message, setMessage] = useState<string | null>(null);
+  const restartPollRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
     setUiState((state) => (state === 'updating' || state === 'restarting' ? state : 'checking'));
@@ -69,8 +137,26 @@ export function SystemUpdateButton() {
     void loadStatus();
     return () => {
       cancelled = true;
+      restartPollRef.current?.abort();
     };
   }, []);
+
+  const waitForRestart = useCallback(
+    async (latestVersion: string | null) => {
+      restartPollRef.current?.abort();
+      const controller = new AbortController();
+      restartPollRef.current = controller;
+      const ready = await waitForSystemUpdateReady(latestVersion, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (ready) {
+        window.location.reload();
+        return;
+      }
+      setMessage(t('restartTimeout'));
+      setUiState('error');
+    },
+    [t],
+  );
 
   const runUpdate = async () => {
     if (uiState === 'updating' || uiState === 'restarting') return;
@@ -87,6 +173,7 @@ export function SystemUpdateButton() {
       if (result.status === 'restarting') {
         setUiState('restarting');
         setMessage(result.message ?? t('restarting'));
+        void waitForRestart(result.latestVersion);
         return;
       }
       setUiState('idle');

@@ -365,6 +365,7 @@
       "updating": "Downloading update",
       "restarting": "Restarting ToolPlane with the downloaded release.",
       "restartingShort": "Restarting",
+      "restartTimeout": "ToolPlane did not report the new version yet. Refresh the page to check again.",
       "failed": "Update failed",
       "unavailable": "Update unavailable",
       "upToDate": "Up to date",

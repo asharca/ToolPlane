@@ -52,6 +52,11 @@ export type SystemUpdateStatus = {
   reason: string | null;
 };
 
+export type LocalSystemUpdateStatus = {
+  currentVersion: string;
+  artifactName: string;
+};
+
 export type SystemUpdateResult =
   | {
       ok: true;
@@ -211,6 +216,13 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
   } catch (error) {
     return disabledStatus(currentVersion, artifactName, displayError(error));
   }
+}
+
+export async function getLocalSystemUpdateStatus(): Promise<LocalSystemUpdateStatus> {
+  return {
+    currentVersion: await readCurrentVersion(),
+    artifactName: updateArtifactName(),
+  };
 }
 
 function disabledStatus(currentVersion: string, artifactName: string, reason: string): SystemUpdateStatus {

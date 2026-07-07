@@ -365,6 +365,7 @@
       "updating": "下载更新",
       "restarting": "正在使用下载的 Release 重启 ToolPlane。",
       "restartingShort": "正在重启",
+      "restartTimeout": "ToolPlane 暂未上报新版本，请刷新页面再检查。",
       "failed": "更新失败",
       "unavailable": "无法更新",
       "upToDate": "已是最新",

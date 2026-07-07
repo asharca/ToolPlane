@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminGate } from '@/lib/auth/admin-policy';
 import { getCurrentUser } from '@/lib/auth/current-user';
-import { applySystemUpdate, getSystemUpdateStatus } from '@/lib/system/release-update';
+import { applySystemUpdate, getLocalSystemUpdateStatus, getSystemUpdateStatus } from '@/lib/system/release-update';
 
 export const runtime = 'nodejs';
 
@@ -17,9 +17,13 @@ async function requireApiAdmin() {
   return null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const denied = await requireApiAdmin();
   if (denied) return denied;
+  const url = new URL(request.url);
+  if (url.searchParams.get('local') === '1') {
+    return NextResponse.json(await getLocalSystemUpdateStatus());
+  }
   return NextResponse.json(await getSystemUpdateStatus());
 }
 

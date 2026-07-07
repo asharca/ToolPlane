@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getLocalSystemUpdateStatus,
   getSystemUpdateStatus,
   parseChecksum,
   readCurrentVersion,
@@ -37,6 +38,20 @@ describe('release artifact updater', () => {
     await expect(readCurrentVersion('/definitely/missing/toolplane')).resolves.toBe('sha-test');
     if (previous === undefined) delete process.env.TOOLPLANE_VERSION;
     else process.env.TOOLPLANE_VERSION = previous;
+  });
+
+  it('returns local version status without requiring a configured runtime root', async () => {
+    const previous = process.env.TOOLPLANE_VERSION;
+    try {
+      process.env.TOOLPLANE_VERSION = 'v-local';
+      await expect(getLocalSystemUpdateStatus()).resolves.toMatchObject({
+        currentVersion: 'v-local',
+        artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TOOLPLANE_VERSION;
+      else process.env.TOOLPLANE_VERSION = previous;
+    }
   });
 
   it('does not update an unconfigured runtime root', async () => {
