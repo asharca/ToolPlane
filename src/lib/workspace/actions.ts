@@ -17,6 +17,10 @@ import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
+export type WorkspaceInviteState = { error?: string; message?: string };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
   if (!user) return null;
@@ -291,6 +295,53 @@ export async function deleteWorkspaceAction(formData: FormData) {
 
   await db.workspace.delete({ where: { id: ctx.ws.id } });
   redirect('/app');
+}
+
+export async function inviteWorkspaceMemberAction(
+  _prev: WorkspaceInviteState,
+  formData: FormData,
+): Promise<WorkspaceInviteState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const email = String(formData.get('email') ?? '').trim().toLowerCase();
+  if (!slug) return { error: 'Workspace is missing.' };
+  if (!EMAIL_RE.test(email)) return { error: 'Enter a valid email address.' };
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'You do not have access to this workspace.' };
+  if (ctx.ws.ownerId !== ctx.user.id) {
+    return { error: 'Only the workspace owner can invite members.' };
+  }
+
+  const invitee = await db.user.findUnique({
+    where: { email },
+    select: { id: true, email: true },
+  });
+  if (!invitee) return { error: 'No user with that email exists yet.' };
+
+  const existing = await db.membership.findUnique({
+    where: {
+      workspaceId_userId: {
+        workspaceId: ctx.ws.id,
+        userId: invitee.id,
+      },
+    },
+    select: { id: true },
+  });
+  if (existing || invitee.id === ctx.ws.ownerId) {
+    return { message: `${invitee.email} is already a member.` };
+  }
+
+  await db.membership.create({
+    data: {
+      workspaceId: ctx.ws.id,
+      userId: invitee.id,
+      role: 'member',
+    },
+  });
+
+  revalidatePath(`/app/${slug}/members`);
+  revalidatePath(`/app/${slug}`, 'layout');
+  return { message: `${invitee.email} joined this workspace.` };
 }
 
 function slugifyName(input: string): string {

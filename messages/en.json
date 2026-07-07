@@ -615,7 +615,19 @@
       "members": "Members",
       "inviteYourTeam": "Invite your team",
       "addTeammatesManageRolesAndShareServersAcrossYourWorkspaceAvailableOnTheTeamPlan": "Add teammates, manage roles, and share servers across your workspace. Available on the Team plan.",
-      "currentMembers": "Current members"
+      "currentMembers": "Current members",
+      "membersDescription": "Invite registered teammates into this workspace so they can share MCP servers, skills, toolkits, sandboxes, agents, and observability.",
+      "inviteMember": "Invite member",
+      "inviteMemberDescription": "Add an existing ToolPlane user by email. New members join with member access.",
+      "onlyWorkspaceOwnerCanInviteMembers": "Only the workspace owner can invite new members.",
+      "askOwnerToInviteMembers": "Ask the workspace owner to invite more teammates.",
+      "emailAddress": "Email address",
+      "invite": "Invite",
+      "inviting": "Inviting...",
+      "invited": "Invited",
+      "member": "Member",
+      "role": "Role",
+      "joined": "Joined"
     },
     "settings": {
       "title": "Settings",

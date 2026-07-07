@@ -615,7 +615,19 @@
       "members": "成员",
       "inviteYourTeam": "邀请团队",
       "addTeammatesManageRolesAndShareServersAcrossYourWorkspaceAvailableOnTheTeamPlan": "添加队友、管理角色并在工作区中共享服务器。团队版可用。",
-      "currentMembers": "当前成员"
+      "currentMembers": "当前成员",
+      "membersDescription": "邀请已注册的队友加入此工作区，共享 MCP 服务器、skills、toolkits、沙箱、智能体和可观测性数据。",
+      "inviteMember": "邀请成员",
+      "inviteMemberDescription": "通过邮箱添加现有 ToolPlane 用户。新成员会以 member 权限加入。",
+      "onlyWorkspaceOwnerCanInviteMembers": "只有工作区所有者可以邀请新成员。",
+      "askOwnerToInviteMembers": "请工作区所有者邀请更多队友。",
+      "emailAddress": "邮箱地址",
+      "invite": "邀请",
+      "inviting": "邀请中...",
+      "invited": "已邀请",
+      "member": "成员",
+      "role": "角色",
+      "joined": "加入时间"
     },
     "settings": {
       "title": "设置",
