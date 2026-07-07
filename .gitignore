@@ -55,3 +55,4 @@ e2e/failure.png
 # Serena tool cache
 .serena/
 .worktree/
+.remember/

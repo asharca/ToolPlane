@@ -34,7 +34,10 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).not.toContain('container_name: toolplane-app');
     expect(compose).toContain('VOLUMES: 1');
     expect(compose).toContain('EXEC: 1');
-    expect(compose).toContain("- '${APP_HOST_PORT:-10030}:3000'");
+    expect(compose).toContain("expose:");
+    expect(compose).toContain("- '3000'");
+    expect(compose).toContain("- '9321'");
+    expect(compose).toContain('production compose file intentionally does not publish host ports');
     expect(compose).toContain('http://127.0.0.1:3000/api/v1/health');
     expect(compose).toContain('TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
     expect(compose).toContain('TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}');
