@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.0...toolplane-v0.2.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* harden Hermes toolkit sync and cleanup ([307e5d9](https://github.com/asharca/ToolPlane/commit/307e5d9fbf15cc5d3376b64005151f1325e83b26))
+
 ## [0.2.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.1.6...toolplane-v0.2.0) (2026-07-08)
 
 
