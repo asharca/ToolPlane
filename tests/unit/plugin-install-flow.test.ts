@@ -150,7 +150,9 @@ describe('generated Codex installer', () => {
     };
     expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_CODEX');
     expect(statSync(path.join(tmp, '.codex/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
-    expect(readFileSync(path.join(tmp, '.agents/skills/toolplane-tk-alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
+    const skill = readFileSync(path.join(tmp, '.agents/skills/toolplane-tk-alpha/SKILL.md'), 'utf8');
+    expect(skill).not.toContain('name: toolplane-tk-alpha');
+    expect(skill).toContain('# Alpha');
     expect(readFileSync(path.join(tmp, '.agents/skills/toolplane-tk-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
   });
 });
@@ -237,7 +239,9 @@ describe('generated Hermes installer', () => {
     };
     expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
     expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
-    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
+    const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/SKILL.md'), 'utf8');
+    expect(skill).toContain('name: toolplane-tk-alpha');
+    expect(skill).toContain('# Alpha');
     expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
 
     const bundle = readFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'utf8');

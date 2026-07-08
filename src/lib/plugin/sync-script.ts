@@ -114,13 +114,26 @@ if [ -n "$RECORDS" ]; then
     fi
     rm -rf "$SKILLS_DIR/$DIR_NAME"
     mkdir -p "$SKILLS_DIR/$DIR_NAME"
-    SKILL_TARGET_DIR="$SKILLS_DIR/$DIR_NAME" RECORD_B64="$RECORD_B64" node -e '
+    CLIENT="$CLIENT" SKILL_TARGET_DIR="$SKILLS_DIR/$DIR_NAME" RECORD_B64="$RECORD_B64" node -e '
       const fs = require("fs");
       const path = require("path");
       const root = path.resolve(process.env.SKILL_TARGET_DIR || ".");
       const rec = JSON.parse(Buffer.from(process.env.RECORD_B64 || "", "base64").toString("utf8"));
+      const client = String(process.env.CLIENT || "");
+      const dirName = path.basename(root);
+      const rewriteHermesName = (content) => {
+        if (client !== "hermes") return String(content || "");
+        const text = String(content || "");
+        const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+        if (!m) return "---\nname: " + dirName + "\n---\n\n" + text;
+        const fm = m[1];
+        const rewritten = /^name\s*:/m.test(fm)
+          ? fm.replace(/^name\s*:.*$/m, "name: " + dirName)
+          : "name: " + dirName + "\n" + fm;
+        return "---\n" + rewritten + "\n---" + text.slice(m[0].length);
+      };
       fs.mkdirSync(root, { recursive: true });
-      fs.writeFileSync(path.join(root, "SKILL.md"), String(rec.content || ""));
+      fs.writeFileSync(path.join(root, "SKILL.md"), rewriteHermesName(rec.content));
       const safePath = (raw) => {
         const rel = String(raw || "").replace(/\\/g, "/").replace(/^\.\/+/, "").trim();
         if (!rel || rel.startsWith("/") || rel.includes("\0")) return "";
