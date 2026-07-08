@@ -1,9 +1,10 @@
-export const DIRECT_CLIENTS = ['claude-code', 'claude', 'codex', 'opencode'] as const;
+export const DIRECT_CLIENTS = ['claude-code', 'claude', 'codex', 'opencode', 'hermes'] as const;
 export type DirectClient = (typeof DIRECT_CLIENTS)[number];
 
 export function directClientLabel(client: DirectClient): string {
   if (client === 'claude') return 'Claude';
   if (client === 'codex') return 'Codex';
+  if (client === 'hermes') return 'Hermes';
   if (client === 'opencode') return 'opencode';
   return 'Claude Code';
 }
@@ -48,6 +49,17 @@ export function buildDirectSnippet(client: DirectClient, key: string, url: strin
       '    }',
       '  }',
       '}',
+    ].join('\n');
+  }
+  if (client === 'hermes') {
+    return [
+      '# ~/.hermes/config.yaml',
+      '# After editing, run /reload-mcp in Hermes or restart Hermes.',
+      'mcp_servers:',
+      `  toolplane-${key}:`,
+      `    url: "${url}"`,
+      '    headers:',
+      '      Authorization: "Bearer YOUR_TOKEN"',
     ].join('\n');
   }
   return genericJsonConfig(key, url);

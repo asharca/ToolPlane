@@ -1,6 +1,6 @@
 # Toolkit 同步机制
 
-> 本文说明 Toolkit 如何同步到 Claude Code、Codex 和 opencode，包括 MCP 工具、Skills、安装 token、客户端本地文件和测试覆盖。
+> 本文说明 Toolkit 如何同步到 Claude Code、Codex、opencode 和 Hermes，包括 MCP 工具、Skills、安装 token、客户端本地文件和测试覆盖。
 
 ---
 
@@ -68,6 +68,7 @@ Toolkit 页面会生成一个 opaque install link：
    - `claude-code`
    - `codex`
    - `opencode`
+   - `hermes`
 3. `issueInstallToken(id, client)` 给当前 toolkit 和客户端 mint 一个新的 API token。
 4. 同名旧 token 会先删除，再创建新 token。
 5. 明文 token 只会被嵌入这一次返回的 bash 安装脚本。
@@ -84,6 +85,7 @@ ToolPlane plugin - <toolkitSlug> (<Client Label>)
 ToolPlane plugin - devtools (Claude Code)
 ToolPlane plugin - devtools (Codex)
 ToolPlane plugin - devtools (opencode)
+ToolPlane plugin - devtools (Hermes)
 ```
 
 这样同一个 toolkit 可以同时安装到多个客户端，互相不会覆盖 token。
@@ -232,7 +234,7 @@ https://github.com/anthropics/skills/tree/main/skills/pdf
 3. 不允许绝对路径、空路径、路径穿越、`.git`、`node_modules`。
 4. 同步到客户端时会再次校验路径，即使服务端数据异常也不会写到 skill 目录外。
 
-因此，像 Anthropic PDF skill 这种包含 `scripts/` 的仓库可以作为 bundle 导入，脚本会原样随 skill 同步到 Claude Code、Codex 或 opencode cache。需要通过 `npx` 调用的能力应写在 `SKILL.md` 指令里，或者建成 MCP server 的 `installCommand`/部署配置；market 导入本身只负责保存和分发 skill 文件，不负责执行远端包安装。
+因此，像 Anthropic PDF skill 这种包含 `scripts/` 的仓库可以作为 bundle 导入，脚本会原样随 skill 同步到 Claude Code、Codex、opencode cache 或 Hermes skills 目录。需要通过 `npx` 调用的能力应写在 `SKILL.md` 指令里，或者建成 MCP server 的 `installCommand`/部署配置；market 导入本身只负责保存和分发 skill 文件，不负责执行远端包安装。
 
 ---
 
@@ -488,7 +490,108 @@ $OPENCODE_CONFIG_DIR/opencode.json
 
 ---
 
-## 9. Direct connection 与 Auto-sync 的区别
+## 9. Hermes 自动同步
+
+Hermes 原生支持 remote HTTP MCP，也有本地 skills 目录和 skill bundles。因此这里采用：
+
+1. MCP tools：写入 `~/.hermes/config.yaml` 的 `mcp_servers`。
+2. Skills：同步到 `~/.hermes/skills/toolplane/` 下的 ToolPlane category。
+3. Bundle：写入 `~/.hermes/skill-bundles/toolplane-<toolkit>.yaml`，把本 toolkit 同步出的 skills 组织成一个 Hermes bundle。
+
+安装后文件结构：
+
+```txt
+$HERMES_HOME or ~/.hermes/
+├─ config.yaml
+├─ skill-bundles/
+│  └─ toolplane-<toolkit>.yaml
+├─ skills/
+│  └─ toolplane/
+│     └─ toolplane-<toolkit>-<skill-slug>/
+│        ├─ SKILL.md
+│        └─ scripts/...
+└─ toolplane/
+   └─ toolplane-<toolkit>/
+      ├─ .mcp.json
+      └─ shared/
+         └─ sync.sh
+```
+
+如果设置了 `HERMES_CONFIG`，则配置写入该路径；否则写入：
+
+```txt
+$HERMES_HOME/config.yaml
+```
+
+如果没有设置 `HERMES_HOME`，默认是：
+
+```txt
+~/.hermes/config.yaml
+```
+
+### MCP tools
+
+安装脚本会在 `config.yaml` 的 `mcp_servers` 下写入一个 marker block：
+
+```yaml
+mcp_servers:
+  # BEGIN TOOLPLANE toolplane-devtools
+  toolplane-devtools:
+    url: "https://app/api/v1/workspaces/ws/toolkits/devtools/mcp"
+    headers:
+      Authorization: "Bearer <token>"
+  # END TOOLPLANE toolplane-devtools
+```
+
+重新安装同一个 toolkit 时，会先删除旧 marker block，再写新 block，避免重复配置。
+
+### Skills 与 bundle
+
+`sync.sh` 会把 skills 写入：
+
+```txt
+~/.hermes/skills/toolplane/toolplane-<toolkit>-<skill-slug>/SKILL.md
+```
+
+如果 skill 有 bundle 附带文件，它们会写在同一个 skill 目录下。
+
+同步完成后安装脚本会扫描这些目录并写入 bundle：
+
+```yaml
+name: toolplane-devtools
+description: "ToolPlane toolkit devtools"
+skills:
+  - toolplane-devtools-pdf
+  - toolplane-devtools-github
+instruction: |
+  Use the ToolPlane toolkit "devtools".
+  Its MCP tools are available through the "toolplane-devtools" MCP server.
+```
+
+如果本机有 `hermes` CLI，安装脚本会执行：
+
+```bash
+hermes bundles reload
+```
+
+Hermes 文档暴露的是运行中 slash command，而不是可写入的 SessionStart hook。因此安装脚本会安装时同步一次，并留下：
+
+```bash
+~/.hermes/toolplane/toolplane-<toolkit>/shared/sync.sh
+```
+
+运行中的 Hermes session 需要手动执行：
+
+```txt
+/reload-mcp
+/reload-skills
+```
+
+如果后续 Hermes 支持启动 hook 或后台 sync command，可以把这层升级成真正的 session-start 自动刷新。
+
+---
+
+## 10. Direct connection 与 Auto-sync 的区别
 
 Toolkit 安装面板有两个 tab：
 
@@ -503,9 +606,9 @@ Auto-sync 才是完整的“tools + skills”同步路径。
 
 ---
 
-## 10. 卸载行为
+## 11. 卸载行为
 
-卸载脚本会尽量清理三类客户端：
+卸载脚本会尽量清理四类客户端：
 
 1. Claude Code：
    - `claude plugin uninstall`
@@ -523,11 +626,17 @@ Auto-sync 才是完整的“tools + skills”同步路径。
    - 删除 `command[server]`
    - 删除本地 cache bundle
 
+4. Hermes：
+   - 删除 `config.yaml` 中的 marker block
+   - 删除 `~/.hermes/skills/toolplane/toolplane-<toolkit>-*`
+   - 删除 `~/.hermes/skill-bundles/toolplane-<toolkit>.yaml`
+   - 删除 `~/.hermes/toolplane/toolplane-<toolkit>`
+
 服务端会同时 revoke 这个 toolkit 下所有 install token。
 
 ---
 
-## 11. 安全边界
+## 12. 安全边界
 
 必须保持这些约束：
 
@@ -538,17 +647,17 @@ Auto-sync 才是完整的“tools + skills”同步路径。
 5. MCP gateway 必须校验 toolkit 属于调用者 workspace。
 6. `sync.sh` 必须校验 skill slug 和 bundle 文件路径，防止路径穿越。
 7. uninstall 应该 revoke toolkit 下全部 install token。
-8. 本地配置合并必须尽量局部：Codex 使用 marker block，opencode 只覆盖对应 `mcp[server]` 和 `command[server]`。
+8. 本地配置合并必须尽量局部：Codex 和 Hermes 使用 marker block，opencode 只覆盖对应 `mcp[server]` 和 `command[server]`。
 
 ---
 
-## 12. 测试覆盖
+## 13. 测试覆盖
 
 相关测试：
 
 | 测试 | 覆盖点 |
 |---|---|
-| `tests/unit/plugin-install-script.test.ts` | client 解析、脚本内容、Codex/opencode 分发 |
+| `tests/unit/plugin-install-script.test.ts` | client 解析、脚本内容、Codex/opencode/Hermes 分发 |
 | `tests/unit/plugin-install-flow.test.ts` | 真实执行生成的 bash installer，验证本地文件落盘 |
 | `tests/unit/plugin-direct-config.test.ts` | Direct connection 配置片段 |
 | `tests/unit/plugin-telemetry-scripts.test.ts` | sync 和 skill invocation shell 脚本内容 |
@@ -577,7 +686,7 @@ pnpm test
 
 ---
 
-## 13. 后续可优化点
+## 14. 后续可优化点
 
 1. `sync.sh` 可以利用 baseline `version` 跳过未变化的 `SKILL.md` 写入。
 2. Codex 可以进一步改成本地 plugin 分发，但目前 `config.toml + hooks.json + ~/.agents/skills` 更直接、可测试。

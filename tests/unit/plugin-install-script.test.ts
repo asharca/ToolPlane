@@ -27,6 +27,7 @@ describe('resolveClient', () => {
   it('accepts supported auto-sync clients and falls back to Claude Code', () => {
     expect(resolveClient('claude-code')).toBe('claude-code');
     expect(resolveClient('codex')).toBe('codex');
+    expect(resolveClient('hermes')).toBe('hermes');
     expect(resolveClient('opencode')).toBe('opencode');
     expect(resolveClient('bogus')).toBe('claude-code');
     expect(resolveClient(null)).toBe('claude-code');
@@ -148,6 +149,29 @@ describe('buildToolkitInstallScript', () => {
     expect(sync).toContain('DEFAULT_SKILLS_DIR="$PLUGIN_ROOT/skills"');
   });
 
+  it('dispatches Hermes installs to config.yaml + ~/.hermes skills', () => {
+    const script = buildToolkitInstallScript({
+      base: BASE,
+      workspaceSlug: 'ws',
+      toolkitSlug: 'tk',
+      token: 'sk_user_HERMES',
+      client: 'hermes',
+    });
+
+    expect(script).toContain('config.yaml');
+    expect(script).toContain('skill-bundles');
+    expect(script).toContain('mcp_servers:');
+    expect(script).not.toContain('claude plugin install');
+
+    const mcp = JSON.parse(decodeFile(script, '.mcp.json', 'BUNDLE_DIR'));
+    expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
+
+    const sync = decodeFile(script, 'shared/sync.sh', 'BUNDLE_DIR');
+    expect(sync).toContain('CLIENT="hermes"');
+    expect(sync).toContain('DEFAULT_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills/toolplane"');
+    expect(sync).toContain('DEFAULT_SKILL_DIR_PREFIX="toolplane-tk-"');
+  });
+
   it('falls back to Claude Code for unknown clients', () => {
     const script = buildToolkitInstallScript({
       base: BASE,
@@ -166,6 +190,7 @@ describe('buildPluginUninstallScript', () => {
     expect(script).toContain('$HOME/.claude/plugins/toolplane-tk');
     expect(script).toContain('$HOME/.codex');
     expect(script).toContain('$HOME/.config/opencode');
+    expect(script).toContain('$HOME/.hermes');
     expect(script).toContain('claude plugin uninstall toolplane-tk@toolplane-tk');
     expect(script).toContain('claude plugin marketplace remove toolplane-tk');
     expect(script).toContain('rm -rf "$PLUGIN_DIR"');

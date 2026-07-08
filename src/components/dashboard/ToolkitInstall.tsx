@@ -80,6 +80,8 @@ export function ToolkitInstall({
   const autoDescription =
     autoClient === 'codex'
       ? 'Configures Codex MCP, installs a SessionStart sync hook, and syncs skills into your user skills folder.'
+      : autoClient === 'hermes'
+        ? 'Configures Hermes MCP, syncs skills into ~/.hermes/skills/toolplane, and writes a Hermes skill bundle.'
       : autoClient === 'opencode'
         ? 'Configures opencode remote MCP and a toolkit command backed by synced local skill files.'
         : 'Installs as one Claude Code plugin with MCP tools, synced skills, and skill telemetry hooks.';
