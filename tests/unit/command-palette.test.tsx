@@ -38,8 +38,8 @@ describe('DashboardHeaderControls (command palette)', () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(screen.getByRole('button', { name: /search/i }));
     const input = screen.getByPlaceholderText(/type a command/i);
-    await userEvent.type(input, 'observ');
-    expect(screen.getByRole('button', { name: /Observability/ })).toBeInTheDocument();
+    await userEvent.type(input, 'logs');
+    expect(screen.getByRole('button', { name: /Logs/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Members/ })).toBeNull();
   });
 

@@ -75,7 +75,7 @@ export function DashboardHeaderControls() {
         { id: 'toolkits', label: 'Toolkits', group: 'Manage', icon: Wrench, run: go(`${b}/toolkits`) },
         { id: 'sandboxes', label: 'Sandboxes', group: 'Manage', icon: Boxes, run: go(`${b}/sandboxes`) },
         { id: 'agents', label: 'Agents', group: 'Manage', icon: Bot, run: go(`${b}/agents`) },
-        { id: 'obs', label: 'Observability', group: 'Monitor', icon: BarChart3, run: go(`${b}/observability`) },
+        { id: 'obs', label: 'Logs', group: 'Monitor', icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: 'Members', group: 'Workspace', icon: Users, run: go(`${b}/members`) },
         { id: 'settings', label: 'Settings', group: 'Workspace', icon: Settings, run: go(`${b}/settings`) },
         { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/mcp/new`) },

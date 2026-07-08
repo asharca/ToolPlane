@@ -201,7 +201,7 @@
       "skills": "Skills",
       "toolkits": "工具包",
       "sandboxes": "沙箱",
-      "observability": "可观测性",
+      "observability": "日志",
       "members": "成员",
       "settings": "设置",
       "openMenu": "打开菜单",
@@ -423,8 +423,8 @@
       "created": "创建时间",
       "tools": "工具",
       "trackRequestsLatencyAndErrors": "跟踪请求、延迟和错误",
-      "viewToolCallsLatencyAndErrorsInObservability": "在“可观测性”中查看工具调用、延迟和错误。",
-      "openObservability": "打开可观测性",
+      "viewToolCallsLatencyAndErrorsInObservability": "在“日志”中查看工具调用、延迟和错误。",
+      "openObservability": "打开日志",
       "thisDeploymentIs": "此部署处于",
       "startItToInspectAndRunItsTools": "状态。启动它以检查并运行其工具。",
       "noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere": "暂无请求记录。请在“工具”标签页运行工具，或连接客户端以在此查看调用记录。",
@@ -572,8 +572,8 @@
       "remove": "移除"
     },
     "observability": {
-      "observability": "可观测性",
-      "title": "可观测性",
+      "observability": "日志",
+      "title": "日志",
       "toolCallsLatencyAndErrorsAcrossEveryServerAggregatedOverTheLast24Hours": "所有服务器的工具调用、延迟和错误。汇总最近 24 小时。",
       "totalRequests24h": "总请求数 · 24h",
       "errorRate": "错误率",
@@ -616,7 +616,7 @@
       "inviteYourTeam": "邀请团队",
       "addTeammatesManageRolesAndShareServersAcrossYourWorkspaceAvailableOnTheTeamPlan": "添加队友、管理角色并在工作区中共享服务器。团队版可用。",
       "currentMembers": "当前成员",
-      "membersDescription": "邀请已注册的队友加入此工作区，共享 MCP 服务器、skills、toolkits、沙箱、智能体和可观测性数据。",
+      "membersDescription": "邀请已注册的队友加入此工作区，共享 MCP 服务器、skills、toolkits、沙箱、智能体和日志数据。",
       "inviteMember": "邀请成员",
       "inviteMemberDescription": "通过邮箱添加现有 ToolPlane 用户。新成员会以 member 权限加入。",
       "onlyWorkspaceOwnerCanInviteMembers": "只有工作区所有者可以邀请新成员。",
@@ -826,7 +826,7 @@
   },
   "privacy": {
     "privacyPolicy": "隐私政策",
-    "toolplaneStoresTheAccountWorkspaceRuntimeAndObservabilityDataNeededToOperateAgentToolchainsItDoesNotUseAdvertisingCookiesOrThirdpartyTracking": "ToolPlane 存储运营智能工具链所需的账户、工作区、运行时可观测性数据。不使用广告 Cookie 或第三方跟踪。"
+    "toolplaneStoresTheAccountWorkspaceRuntimeAndObservabilityDataNeededToOperateAgentToolchainsItDoesNotUseAdvertisingCookiesOrThirdpartyTracking": "ToolPlane 存储运营智能工具链所需的账户、工作区、运行时和日志数据。不使用广告 Cookie 或第三方跟踪。"
   },
   "submit": {
     "submitAnMcpServer": "提交 MCP 服务器",
