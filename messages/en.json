@@ -201,7 +201,7 @@
       "skills": "Skills",
       "toolkits": "Toolkits",
       "sandboxes": "Sandboxes",
-      "observability": "Observability",
+      "observability": "Logs",
       "members": "Members",
       "settings": "Settings",
       "openMenu": "Open menu",
@@ -473,8 +473,8 @@
       "created": "Created",
       "tools": "Tools",
       "trackRequestsLatencyAndErrors": "Track requests, latency, and errors",
-      "viewToolCallsLatencyAndErrorsInObservability": "View tool calls, latency, and errors in Observability.",
-      "openObservability": "Open Observability",
+      "viewToolCallsLatencyAndErrorsInObservability": "View tool calls, latency, and errors in Logs.",
+      "openObservability": "Open Logs",
       "thisDeploymentIs": "This deployment is",
       "startItToInspectAndRunItsTools": ". Start it to inspect and run its\n                  tools.",
       "noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere": "No requests logged yet. Run a tool in the Tools tab, or connect a\n                client, to see call records here.",
@@ -622,8 +622,8 @@
       "remove": "Remove"
     },
     "observability": {
-      "observability": "Observability",
-      "title": "Observability",
+      "observability": "Logs",
+      "title": "Logs",
       "toolCallsLatencyAndErrorsAcrossEveryServerAggregatedOverTheLast24Hours": "Tool calls, latency, and errors across every server. Aggregated over\n          the last 24 hours.",
       "totalRequests24h": "Total requests · 24h",
       "errorRate": "Error rate",
@@ -666,7 +666,7 @@
       "inviteYourTeam": "Invite your team",
       "addTeammatesManageRolesAndShareServersAcrossYourWorkspaceAvailableOnTheTeamPlan": "Add teammates, manage roles, and share servers across your workspace. Available on the Team plan.",
       "currentMembers": "Current members",
-      "membersDescription": "Invite registered teammates into this workspace so they can share MCP servers, skills, toolkits, sandboxes, agents, and observability.",
+      "membersDescription": "Invite registered teammates into this workspace so they can share MCP servers, skills, toolkits, sandboxes, agents, and logs.",
       "inviteMember": "Invite member",
       "inviteMemberDescription": "Add an existing ToolPlane user by email. New members join with member access.",
       "onlyWorkspaceOwnerCanInviteMembers": "Only the workspace owner can invite new members.",
@@ -876,7 +876,7 @@
   },
   "privacy": {
     "privacyPolicy": "Privacy Policy",
-    "toolplaneStoresTheAccountWorkspaceRuntimeAndObservabilityDataNeededToOperateAgentToolchainsItDoesNotUseAdvertisingCookiesOrThirdpartyTracking": "ToolPlane stores the account, workspace, runtime, and observability data\n        needed to operate agent toolchains. It does not use advertising cookies\n        or third-party tracking."
+    "toolplaneStoresTheAccountWorkspaceRuntimeAndObservabilityDataNeededToOperateAgentToolchainsItDoesNotUseAdvertisingCookiesOrThirdpartyTracking": "ToolPlane stores the account, workspace, runtime, and log data\n        needed to operate agent toolchains. It does not use advertising cookies\n        or third-party tracking."
   },
   "submit": {
     "submitAnMcpServer": "Submit an MCP Server",
