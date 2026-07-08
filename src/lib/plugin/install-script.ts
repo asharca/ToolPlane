@@ -43,6 +43,7 @@ function mcpJson(pluginName: string, mcpUrl: string, token: string): string {
 export function buildToolkitInstallScript(opts: InstallScriptOptions): string {
   const client = resolveClient(opts.client);
   if (client === 'codex') return buildCodexInstallScript(opts);
+  if (client === 'hermes') return buildHermesInstallScript(opts);
   if (client === 'opencode') return buildOpenCodeInstallScript(opts);
   return buildPluginInstallScript({ ...opts, client: 'claude-code' });
 }
@@ -411,6 +412,141 @@ main "$@"
 `;
 }
 
+export function buildHermesInstallScript(opts: InstallScriptOptions): string {
+  const { base, workspaceSlug, toolkitSlug, token } = opts;
+  const client = 'hermes';
+  const pluginName = `toolplane-${toolkitSlug}`;
+  const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
+  const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
+  const syncSh = buildSyncScript({
+    apiBase: base,
+    workspaceSlug,
+    toolkitSlug,
+    client,
+    defaultSkillsDir: '${HERMES_HOME:-$HOME/.hermes}/skills/toolplane',
+    defaultSkillDirPrefix: `${pluginName}-`,
+  });
+
+  return String.raw`#!/usr/bin/env bash
+set -eo pipefail
+
+main() {
+  HERMES_HOME_DIR="$HERMES_HOME"
+  if [ -z "$HERMES_HOME_DIR" ]; then
+    HERMES_HOME_DIR="$HOME/.hermes"
+  fi
+  CONFIG_PATH="$HERMES_CONFIG"
+  if [ -z "$CONFIG_PATH" ]; then
+    CONFIG_PATH="$HERMES_HOME_DIR/config.yaml"
+  fi
+  BUNDLE_DIR="$HERMES_HOME_DIR/toolplane/${pluginName}"
+  SKILLS_DIR="$HERMES_HOME_DIR/skills/toolplane"
+  BUNDLES_DIR="$HERMES_HOME_DIR/skill-bundles"
+  BUNDLE_FILE="$BUNDLES_DIR/${pluginName}.yaml"
+
+  echo "${SITE.compactName} install — toolkit ${toolkitSlug} (client: ${installClientLabel('hermes')})"
+  echo ""
+
+  command -v node >/dev/null 2>&1 || { echo "  ✗ node not found on PATH" >&2; exit 1; }
+  command -v curl >/dev/null 2>&1 || { echo "  ✗ curl not found on PATH" >&2; exit 1; }
+
+  mkdir -p "$BUNDLE_DIR/shared" "$SKILLS_DIR" "$BUNDLES_DIR" "$(dirname "$CONFIG_PATH")"
+  printf '%s' '${b64(mcpConfigJson)}' | base64 -d > "$BUNDLE_DIR/.mcp.json"
+  printf '%s' '${b64(syncSh)}' | base64 -d > "$BUNDLE_DIR/shared/sync.sh"
+  chmod 755 "$BUNDLE_DIR/shared/sync.sh"
+  echo "  ✓ sync bundle ready at $BUNDLE_DIR"
+
+  CONFIG_PATH="$CONFIG_PATH" SERVER_NAME="${pluginName}" MCP_URL="${mcpUrl}" TOKEN="${token}" node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const file = process.env.CONFIG_PATH;
+const server = process.env.SERVER_NAME;
+const url = process.env.MCP_URL;
+const token = process.env.TOKEN;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+let src = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+const begin = '# BEGIN TOOLPLANE ' + server;
+const end = '# END TOOLPLANE ' + server;
+const withoutOld = [];
+let skip = false;
+for (const line of src.split(/\r?\n/)) {
+  if (line.trim() === begin) {
+    skip = true;
+    continue;
+  }
+  if (skip && line.trim() === end) {
+    skip = false;
+    continue;
+  }
+  if (!skip) withoutOld.push(line);
+}
+const lines = withoutOld.join('\n').replace(/\s+$/g, '').split(/\r?\n/);
+const entry = [
+  '  ' + begin,
+  '  ' + server + ':',
+  '    url: ' + JSON.stringify(url),
+  '    headers:',
+  '      Authorization: ' + JSON.stringify('Bearer ' + token),
+  '  ' + end,
+];
+const idx = lines.findIndex((line) => /^mcp_servers:\s*(?:#.*)?$/.test(line));
+let out;
+if (idx >= 0) {
+  out = [...lines.slice(0, idx + 1), ...entry, ...lines.slice(idx + 1)];
+} else {
+  out = [...(lines.length === 1 && lines[0] === '' ? [] : lines), '', 'mcp_servers:', ...entry];
+}
+fs.writeFileSync(file, out.join('\n').replace(/^\n+/, '') + '\n');
+NODE
+  echo "  ✓ Hermes MCP server configured in $CONFIG_PATH"
+
+  TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR" TOOLPLANE_SKILLS_DIR="$SKILLS_DIR" TOOLPLANE_SKILL_DIR_PREFIX="${pluginName}-" bash "$BUNDLE_DIR/shared/sync.sh" || true
+
+  SKILLS_DIR="$SKILLS_DIR" PREFIX="${pluginName}-" BUNDLE_FILE="$BUNDLE_FILE" TOOLKIT="${toolkitSlug}" SERVER_NAME="${pluginName}" node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const skillsDir = process.env.SKILLS_DIR;
+const prefix = process.env.PREFIX;
+const bundleFile = process.env.BUNDLE_FILE;
+const toolkit = process.env.TOOLKIT;
+const server = process.env.SERVER_NAME;
+fs.mkdirSync(path.dirname(bundleFile), { recursive: true });
+const skills = fs.existsSync(skillsDir)
+  ? fs.readdirSync(skillsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name.startsWith(prefix))
+      .map((d) => d.name)
+      .sort()
+  : [];
+const q = (value) => JSON.stringify(String(value));
+const yaml = [
+  'name: ' + server,
+  'description: ' + q('ToolPlane toolkit ' + toolkit),
+  'skills:',
+  ...skills.map((skill) => '  - ' + skill),
+  'instruction: |',
+  '  Use the ToolPlane toolkit "' + toolkit + '".',
+  '  Its MCP tools are available through the "' + server + '" MCP server.',
+  '',
+].join('\n');
+fs.writeFileSync(bundleFile, yaml);
+NODE
+  echo "  ✓ Hermes skill bundle written to $BUNDLE_FILE"
+
+  if command -v hermes >/dev/null 2>&1; then
+    hermes bundles reload >/dev/null 2>&1 || true
+    echo "  ✓ asked Hermes to reload skill bundles"
+  fi
+
+  echo ""
+  echo "Done. In a running Hermes session, run /reload-mcp and /reload-skills."
+  echo "Skills are synced under $SKILLS_DIR/${pluginName}-*/SKILL.md."
+  echo "Re-run sync later with: bash \"$BUNDLE_DIR/shared/sync.sh\""
+}
+
+main "$@"
+`;
+}
+
 // `curl … | bash` uninstaller: unregister the plugin from Claude Code and remove
 // its directory (which also removes the synced skills). The toolkit's API key is
 // revoked server-side when this endpoint is fetched.
@@ -436,6 +572,17 @@ if [ -z "$OPENCODE_CONFIG_PATH_VALUE" ]; then
   OPENCODE_CONFIG_PATH_VALUE="$OPENCODE_CONFIG_DIR_VALUE/opencode.json"
 fi
 OPENCODE_BUNDLE_DIR="$OPENCODE_CONFIG_DIR_VALUE/toolplane/${pluginName}"
+HERMES_HOME_DIR="$HERMES_HOME"
+if [ -z "$HERMES_HOME_DIR" ]; then
+  HERMES_HOME_DIR="$HOME/.hermes"
+fi
+HERMES_CONFIG_PATH="$HERMES_CONFIG"
+if [ -z "$HERMES_CONFIG_PATH" ]; then
+  HERMES_CONFIG_PATH="$HERMES_HOME_DIR/config.yaml"
+fi
+HERMES_BUNDLE_DIR="$HERMES_HOME_DIR/toolplane/${pluginName}"
+HERMES_SKILLS_DIR="$HERMES_HOME_DIR/skills/toolplane"
+HERMES_BUNDLE_FILE="$HERMES_HOME_DIR/skill-bundles/${pluginName}.yaml"
 
 echo "${SITE.compactName} uninstall — toolkit ${opts.toolkitSlug}"
 
@@ -446,7 +593,7 @@ if command -v claude >/dev/null 2>&1; then
 fi
 
 if command -v node >/dev/null 2>&1; then
-  CODEX_CONFIG_PATH="$CODEX_CONFIG_PATH" CODEX_HOOKS_PATH="$CODEX_HOOKS_PATH" SYNC_PATH="$CODEX_BUNDLE_DIR/shared/sync.sh" SERVER_NAME="${pluginName}" SKILLS_DIR="$HOME/.agents/skills" PREFIX="${pluginName}-" OPENCODE_CONFIG_PATH="$OPENCODE_CONFIG_PATH_VALUE" node <<'NODE'
+  CODEX_CONFIG_PATH="$CODEX_CONFIG_PATH" CODEX_HOOKS_PATH="$CODEX_HOOKS_PATH" SYNC_PATH="$CODEX_BUNDLE_DIR/shared/sync.sh" SERVER_NAME="${pluginName}" SKILLS_DIR="$HOME/.agents/skills" PREFIX="${pluginName}-" OPENCODE_CONFIG_PATH="$OPENCODE_CONFIG_PATH_VALUE" HERMES_CONFIG_PATH="$HERMES_CONFIG_PATH" HERMES_SKILLS_DIR="$HERMES_SKILLS_DIR" HERMES_BUNDLE_FILE="$HERMES_BUNDLE_FILE" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const server = process.env.SERVER_NAME;
@@ -508,16 +655,40 @@ function removeOpenCodeConfig(file) {
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
 }
 
+function removeMarkerBlock(file) {
+  if (!fs.existsSync(file)) return;
+  const begin = '# BEGIN TOOLPLANE ' + server;
+  const end = '# END TOOLPLANE ' + server;
+  const src = fs.readFileSync(file, 'utf8');
+  const out = [];
+  let skip = false;
+  for (const line of src.split(/\r?\n/)) {
+    if (line.trim() === begin) {
+      skip = true;
+      continue;
+    }
+    if (skip && line.trim() === end) {
+      skip = false;
+      continue;
+    }
+    if (!skip) out.push(line);
+  }
+  fs.writeFileSync(file, out.join('\n').replace(/\s+$/g, '') + '\n');
+}
+
 removeCodexMcpBlock(process.env.CODEX_CONFIG_PATH);
 removeCodexHook(process.env.CODEX_HOOKS_PATH, process.env.SYNC_PATH);
 removePrefixedSkills(process.env.SKILLS_DIR, process.env.PREFIX);
 removeOpenCodeConfig(process.env.OPENCODE_CONFIG_PATH);
+removeMarkerBlock(process.env.HERMES_CONFIG_PATH);
+removePrefixedSkills(process.env.HERMES_SKILLS_DIR, process.env.PREFIX);
+if (process.env.HERMES_BUNDLE_FILE) fs.rmSync(process.env.HERMES_BUNDLE_FILE, { force: true });
 NODE
-  echo "  ✓ removed Codex/opencode config entries where present"
+  echo "  ✓ removed Codex/opencode/Hermes config entries where present"
 fi
 
 rm -rf "$PLUGIN_DIR"
-rm -rf "$CODEX_BUNDLE_DIR" "$OPENCODE_BUNDLE_DIR"
+rm -rf "$CODEX_BUNDLE_DIR" "$OPENCODE_BUNDLE_DIR" "$HERMES_BUNDLE_DIR"
 echo "  ✓ removed managed local bundles"
 echo "Done. The toolkit's install API key has been revoked."
 `;

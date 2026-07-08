@@ -9,8 +9,9 @@ const URL = 'https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp';
 
 describe('direct MCP client config snippets', () => {
   it('lists the direct clients shown in the toolkit installer', () => {
-    expect(DIRECT_CLIENTS).toEqual(['claude-code', 'claude', 'codex', 'opencode']);
+    expect(DIRECT_CLIENTS).toEqual(['claude-code', 'claude', 'codex', 'opencode', 'hermes']);
     expect(directClientLabel('opencode')).toBe('opencode');
+    expect(directClientLabel('hermes')).toBe('Hermes');
   });
 
   it('builds a Codex CLI TOML snippet with http_headers', () => {
@@ -33,6 +34,20 @@ describe('direct MCP client config snippets', () => {
   it('keeps Claude Code as a direct CLI command', () => {
     expect(buildDirectSnippet('claude-code', 'tk', URL)).toBe(
       `claude mcp add --transport http "tk" "${URL}" --header "Authorization: Bearer YOUR_TOKEN"`,
+    );
+  });
+
+  it('builds a Hermes config.yaml snippet with a Bearer header', () => {
+    expect(buildDirectSnippet('hermes', 'tk', URL)).toBe(
+      [
+        '# ~/.hermes/config.yaml',
+        '# After editing, run /reload-mcp in Hermes or restart Hermes.',
+        'mcp_servers:',
+        '  toolplane-tk:',
+        `    url: "${URL}"`,
+        '    headers:',
+        '      Authorization: "Bearer YOUR_TOKEN"',
+      ].join('\n'),
     );
   });
 });

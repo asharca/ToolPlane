@@ -196,3 +196,49 @@ describe('generated opencode installer', () => {
     expect(readFileSync(path.join(configDir, 'toolplane/toolplane-tk/skills/alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
   });
 });
+
+describe('generated Hermes installer', () => {
+  it('configures remote MCP, syncs skills, and writes a skill bundle', () => {
+    tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-hermes-install-'));
+    const bin = path.join(tmp, 'bin');
+    mkdirSync(bin);
+    writeFakeCurl(bin);
+
+    const installer = path.join(tmp, 'install-hermes.sh');
+    writeFileSync(
+      installer,
+      buildToolkitInstallScript({
+        base: 'https://mcp.example.com',
+        workspaceSlug: 'ws',
+        toolkitSlug: 'tk',
+        token: 'sk_user_HERMES',
+        client: 'hermes',
+      }),
+      { mode: 0o755 },
+    );
+
+    execFileSync('/bin/bash', [installer], {
+      env: { ...process.env, HOME: tmp, PATH: `${bin}:${process.env.PATH ?? ''}` },
+      stdio: 'pipe',
+    });
+
+    const config = readFileSync(path.join(tmp, '.hermes/config.yaml'), 'utf8');
+    expect(config).toContain('mcp_servers:');
+    expect(config).toContain('  toolplane-tk:');
+    expect(config).toContain('    url: "https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp"');
+    expect(config).toContain('      Authorization: "Bearer sk_user_HERMES"');
+
+    const mcp = readJson('.hermes/toolplane/toolplane-tk/.mcp.json') as {
+      mcpServers: Record<string, { headers: { Authorization: string } }>;
+    };
+    expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
+    expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
+    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
+    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
+
+    const bundle = readFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'utf8');
+    expect(bundle).toContain('name: toolplane-tk');
+    expect(bundle).toContain('  - toolplane-tk-alpha');
+    expect(bundle).toContain('Its MCP tools are available through the "toolplane-tk" MCP server.');
+  });
+});
