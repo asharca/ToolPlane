@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.1...toolplane-v0.2.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* align Hermes synced skill names ([18e028c](https://github.com/asharca/ToolPlane/commit/18e028c8bd0d3c0900a4699ae89aae4d8110740d))
+* use Hermes skill names for toolkit sync ([2fa43a4](https://github.com/asharca/ToolPlane/commit/2fa43a41dac00e7b30db19d7d42f05be52ff033b))
+
 ## [0.2.1](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.0...toolplane-v0.2.1) (2026-07-08)
 
 
