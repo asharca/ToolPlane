@@ -169,8 +169,8 @@ describe('buildToolkitInstallScript', () => {
     const sync = decodeFile(script, 'shared/sync.sh', 'BUNDLE_DIR');
     expect(sync).toContain('CLIENT="hermes"');
     expect(sync).toContain('PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"');
-    expect(sync).toContain('DEFAULT_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills/toolplane"');
-    expect(sync).toContain('DEFAULT_SKILL_DIR_PREFIX="toolplane-tk-"');
+    expect(sync).toContain('DEFAULT_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills/toolplane-tk"');
+    expect(sync).toContain('DEFAULT_SKILL_DIR_PREFIX=""');
     expect(script).toContain('$HOME/.local/bin/hermes');
   });
 

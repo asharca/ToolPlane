@@ -20,14 +20,22 @@ function readJson(rel: string): unknown {
   return JSON.parse(readFileSync(path.join(tmp, rel), 'utf8'));
 }
 
-function writeFakeCurl(bin: string) {
+function writeFakeCurl(
+  bin: string,
+  skill = {
+    slug: 'alpha',
+    content: '# Alpha\n\nBody',
+    filePath: 'scripts/alpha.py',
+    fileContent: 'print(1)',
+  },
+) {
   writeFileSync(
     path.join(bin, 'curl'),
     [
       '#!/usr/bin/env bash',
       'case "$*" in',
       '  *"/api/v1/plugin/baseline"*)',
-      '    printf "%s\\n" \'{"data":{"skills":[{"slug":"alpha","content":"# Alpha\\\\n\\\\nBody","files":[{"path":"scripts/alpha.py","content":"print(1)"}]}]}}\'',
+      `    printf "%s\\n" '${JSON.stringify({ data: { skills: [{ slug: skill.slug, content: skill.content, files: [{ path: skill.filePath, content: skill.fileContent }] }] } }).replace(/'/g, "'\\''")}'`,
       '    ;;',
       '  *)',
       '    exit 0',
@@ -208,7 +216,12 @@ describe('generated Hermes installer', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-hermes-install-'));
     const bin = path.join(tmp, 'bin');
     mkdirSync(bin);
-    writeFakeCurl(bin);
+    writeFakeCurl(bin, {
+      slug: 'anthropic-pdf',
+      content: '---\nname: pdf\ndescription: PDF work\n---\n\n# PDF',
+      filePath: 'scripts/pdf.py',
+      fileContent: 'print("pdf")',
+    });
 
     const installer = path.join(tmp, 'install-hermes.sh');
     writeFileSync(
@@ -239,14 +252,15 @@ describe('generated Hermes installer', () => {
     };
     expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
     expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
-    const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/SKILL.md'), 'utf8');
-    expect(skill).toContain('name: toolplane-tk-alpha');
-    expect(skill).toContain('# Alpha');
-    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
+    const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane-tk/pdf/SKILL.md'), 'utf8');
+    expect(skill).not.toContain('name: toolplane-tk-alpha');
+    expect(skill).toContain('name: pdf');
+    expect(skill).toContain('# PDF');
+    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane-tk/pdf/scripts/pdf.py'), 'utf8')).toBe('print("pdf")');
 
     const bundle = readFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'utf8');
     expect(bundle).toContain('name: toolplane-tk');
-    expect(bundle).toContain('  - toolplane-tk-alpha');
+    expect(bundle).toContain('  - toolplane-tk/pdf');
     expect(bundle).toContain('Its MCP tools are available through the "toolplane-tk" MCP server.');
   });
 });
@@ -255,7 +269,7 @@ describe('generated toolkit uninstaller', () => {
   it('removes only ToolPlane-prefixed Hermes skills for the toolkit', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-uninstall-'));
 
-    mkdirSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/skills/toolplane-tk/alpha'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skills/apple/apple-notes'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skill-bundles'), { recursive: true });
@@ -286,7 +300,7 @@ describe('generated toolkit uninstaller', () => {
       stdio: 'pipe',
     });
 
-    expect(() => statSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha'))).toThrow();
+    expect(() => statSync(path.join(tmp, '.hermes/skills/toolplane-tk'))).toThrow();
     expect(statSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta')).isDirectory()).toBe(true);
     expect(statSync(path.join(tmp, '.hermes/skills/apple/apple-notes')).isDirectory()).toBe(true);
     expect(() => statSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'))).toThrow();

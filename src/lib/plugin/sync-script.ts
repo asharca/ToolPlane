@@ -106,7 +106,22 @@ REMOVED=0
 if [ -n "$RECORDS" ]; then
   while IFS="|" read -r SLUG RECORD_B64; do
     [ -n "$SLUG" ] || continue
-    DIR_NAME="$SKILL_DIR_PREFIX$SLUG"
+    DIR_NAME=$(CLIENT="$CLIENT" SKILL_DIR_PREFIX="$SKILL_DIR_PREFIX" SLUG="$SLUG" RECORD_B64="$RECORD_B64" node -e '
+      const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+      const slug = String(process.env.SLUG || "");
+      const prefix = String(process.env.SKILL_DIR_PREFIX || "");
+      let name = slug;
+      if (process.env.CLIENT === "hermes") {
+        try {
+          const rec = JSON.parse(Buffer.from(process.env.RECORD_B64 || "", "base64").toString("utf8"));
+          const text = String(rec.content || "");
+          const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+          const found = m && /^name\s*:\s*["'\'']?([^"'\''\r\n]+)["'\'']?\s*$/m.exec(m[1]);
+          if (found && SLUG_RE.test(found[1].trim())) name = found[1].trim();
+        } catch {}
+      }
+      process.stdout.write(prefix + (SLUG_RE.test(name) ? name : slug));
+    ')
     if [ -d "$SKILLS_DIR/$DIR_NAME" ]; then
       UPDATED=$((UPDATED + 1))
     else
@@ -114,26 +129,13 @@ if [ -n "$RECORDS" ]; then
     fi
     rm -rf "$SKILLS_DIR/$DIR_NAME"
     mkdir -p "$SKILLS_DIR/$DIR_NAME"
-    CLIENT="$CLIENT" SKILL_TARGET_DIR="$SKILLS_DIR/$DIR_NAME" RECORD_B64="$RECORD_B64" node -e '
+    SKILL_TARGET_DIR="$SKILLS_DIR/$DIR_NAME" RECORD_B64="$RECORD_B64" node -e '
       const fs = require("fs");
       const path = require("path");
       const root = path.resolve(process.env.SKILL_TARGET_DIR || ".");
       const rec = JSON.parse(Buffer.from(process.env.RECORD_B64 || "", "base64").toString("utf8"));
-      const client = String(process.env.CLIENT || "");
-      const dirName = path.basename(root);
-      const rewriteHermesName = (content) => {
-        if (client !== "hermes") return String(content || "");
-        const text = String(content || "");
-        const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-        if (!m) return "---\nname: " + dirName + "\n---\n\n" + text;
-        const fm = m[1];
-        const rewritten = /^name\s*:/m.test(fm)
-          ? fm.replace(/^name\s*:.*$/m, "name: " + dirName)
-          : "name: " + dirName + "\n" + fm;
-        return "---\n" + rewritten + "\n---" + text.slice(m[0].length);
-      };
       fs.mkdirSync(root, { recursive: true });
-      fs.writeFileSync(path.join(root, "SKILL.md"), rewriteHermesName(rec.content));
+      fs.writeFileSync(path.join(root, "SKILL.md"), String(rec.content || ""));
       const safePath = (raw) => {
         const rel = String(raw || "").replace(/\\/g, "/").replace(/^\.\/+/, "").trim();
         if (!rel || rel.startsWith("/") || rel.includes("\0")) return "";

@@ -423,8 +423,7 @@ export function buildHermesInstallScript(opts: InstallScriptOptions): string {
     workspaceSlug,
     toolkitSlug,
     client,
-    defaultSkillsDir: '${HERMES_HOME:-$HOME/.hermes}/skills/toolplane',
-    defaultSkillDirPrefix: `${pluginName}-`,
+    defaultSkillsDir: `\${HERMES_HOME:-$HOME/.hermes}/skills/${pluginName}`,
   });
 
   return String.raw`#!/usr/bin/env bash
@@ -440,7 +439,7 @@ main() {
     CONFIG_PATH="$HERMES_HOME_DIR/config.yaml"
   fi
   BUNDLE_DIR="$HERMES_HOME_DIR/toolplane/${pluginName}"
-  SKILLS_DIR="$HERMES_HOME_DIR/skills/toolplane"
+  SKILLS_DIR="$HERMES_HOME_DIR/skills/${pluginName}"
   BUNDLES_DIR="$HERMES_HOME_DIR/skill-bundles"
   BUNDLE_FILE="$BUNDLES_DIR/${pluginName}.yaml"
 
@@ -500,20 +499,19 @@ fs.writeFileSync(file, out.join('\n').replace(/^\n+/, '') + '\n');
 NODE
   echo "  ✓ Hermes MCP server configured in $CONFIG_PATH"
 
-  TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR" TOOLPLANE_SKILLS_DIR="$SKILLS_DIR" TOOLPLANE_SKILL_DIR_PREFIX="${pluginName}-" bash "$BUNDLE_DIR/shared/sync.sh" || true
+  TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR" TOOLPLANE_SKILLS_DIR="$SKILLS_DIR" bash "$BUNDLE_DIR/shared/sync.sh" || true
 
-  SKILLS_DIR="$SKILLS_DIR" PREFIX="${pluginName}-" BUNDLE_FILE="$BUNDLE_FILE" TOOLKIT="${toolkitSlug}" SERVER_NAME="${pluginName}" node <<'NODE'
+  SKILLS_DIR="$SKILLS_DIR" BUNDLE_FILE="$BUNDLE_FILE" TOOLKIT="${toolkitSlug}" SERVER_NAME="${pluginName}" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const skillsDir = process.env.SKILLS_DIR;
-const prefix = process.env.PREFIX;
 const bundleFile = process.env.BUNDLE_FILE;
 const toolkit = process.env.TOOLKIT;
 const server = process.env.SERVER_NAME;
 fs.mkdirSync(path.dirname(bundleFile), { recursive: true });
 const skills = fs.existsSync(skillsDir)
   ? fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && d.name.startsWith(prefix))
+      .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort()
   : [];
@@ -522,7 +520,7 @@ const yaml = [
   'name: ' + server,
   'description: ' + q('ToolPlane toolkit ' + toolkit),
   'skills:',
-  ...skills.map((skill) => '  - ' + skill),
+  ...skills.map((skill) => '  - ' + server + '/' + skill),
   'instruction: |',
   '  Use the ToolPlane toolkit "' + toolkit + '".',
   '  Its MCP tools are available through the "' + server + '" MCP server.',
@@ -545,7 +543,7 @@ NODE
 
   echo ""
   echo "Done. In a running Hermes session, run /reload-mcp and /reload-skills."
-  echo "Skills are synced under $SKILLS_DIR/${pluginName}-*/SKILL.md."
+  echo "Skills are synced under $SKILLS_DIR/*/SKILL.md."
   echo "Re-run sync later with: bash \"$BUNDLE_DIR/shared/sync.sh\""
 }
 
@@ -589,7 +587,7 @@ if [ -z "$HERMES_CONFIG_PATH" ]; then
   HERMES_CONFIG_PATH="$HERMES_HOME_DIR/config.yaml"
 fi
 HERMES_BUNDLE_DIR="$HERMES_HOME_DIR/toolplane/${pluginName}"
-HERMES_SKILLS_DIR="$HERMES_HOME_DIR/skills/toolplane"
+HERMES_SKILLS_DIR="$HERMES_HOME_DIR/skills/${pluginName}"
 HERMES_BUNDLE_FILE="$HERMES_HOME_DIR/skill-bundles/${pluginName}.yaml"
 
 echo "${SITE.compactName} uninstall — toolkit ${opts.toolkitSlug}"
@@ -689,7 +687,7 @@ removeCodexHook(process.env.CODEX_HOOKS_PATH, process.env.SYNC_PATH);
 removePrefixedSkills(process.env.SKILLS_DIR, process.env.PREFIX);
 removeOpenCodeConfig(process.env.OPENCODE_CONFIG_PATH);
 removeMarkerBlock(process.env.HERMES_CONFIG_PATH);
-removePrefixedSkills(process.env.HERMES_SKILLS_DIR, process.env.PREFIX);
+if (process.env.HERMES_SKILLS_DIR) fs.rmSync(process.env.HERMES_SKILLS_DIR, { recursive: true, force: true });
 if (process.env.HERMES_BUNDLE_FILE) fs.rmSync(process.env.HERMES_BUNDLE_FILE, { force: true });
 NODE
   echo "  ✓ removed Codex/opencode/Hermes config entries where present"
