@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildPluginInstallScript, buildToolkitInstallScript } from '@/lib/plugin/install-script';
+import {
+  buildPluginInstallScript,
+  buildPluginUninstallScript,
+  buildToolkitInstallScript,
+} from '@/lib/plugin/install-script';
 
 let tmp = '';
 
@@ -240,5 +244,51 @@ describe('generated Hermes installer', () => {
     expect(bundle).toContain('name: toolplane-tk');
     expect(bundle).toContain('  - toolplane-tk-alpha');
     expect(bundle).toContain('Its MCP tools are available through the "toolplane-tk" MCP server.');
+  });
+});
+
+describe('generated toolkit uninstaller', () => {
+  it('removes only ToolPlane-prefixed Hermes skills for the toolkit', () => {
+    tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-uninstall-'));
+
+    mkdirSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/skills/apple/apple-notes'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/skill-bundles'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared'), { recursive: true });
+    writeFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'name: toolplane-tk\n');
+    writeFileSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh'), '#!/usr/bin/env bash\n');
+    writeFileSync(
+      path.join(tmp, '.hermes/config.yaml'),
+      [
+        'mcp_servers:',
+        '  # BEGIN TOOLPLANE toolplane-tk',
+        '  toolplane-tk:',
+        '    url: "https://mcp.example.com"',
+        '  # END TOOLPLANE toolplane-tk',
+        '  other-server:',
+        '    url: "https://other.example.com"',
+        '',
+      ].join('\n'),
+    );
+
+    const uninstaller = path.join(tmp, 'uninstall.sh');
+    writeFileSync(uninstaller, buildPluginUninstallScript({ toolkitSlug: 'tk' }), {
+      mode: 0o755,
+    });
+
+    execFileSync('/bin/bash', [uninstaller], {
+      env: { ...process.env, HOME: tmp },
+      stdio: 'pipe',
+    });
+
+    expect(() => statSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-tk-alpha'))).toThrow();
+    expect(statSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta')).isDirectory()).toBe(true);
+    expect(statSync(path.join(tmp, '.hermes/skills/apple/apple-notes')).isDirectory()).toBe(true);
+    expect(() => statSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'))).toThrow();
+    expect(() => statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk'))).toThrow();
+    const config = readFileSync(path.join(tmp, '.hermes/config.yaml'), 'utf8');
+    expect(config).not.toContain('toolplane-tk');
+    expect(config).toContain('other-server');
   });
 });

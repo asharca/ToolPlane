@@ -561,6 +561,8 @@ export function buildPluginUninstallScript(opts: { toolkitSlug: string }): strin
   return String.raw`#!/usr/bin/env bash
 set -eo pipefail
 
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 PLUGIN_DIR="$HOME/.claude/plugins/${pluginName}"
 CODEX_HOME_DIR="$CODEX_HOME"
 if [ -z "$CODEX_HOME_DIR" ]; then
