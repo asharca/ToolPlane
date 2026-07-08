@@ -2,7 +2,16 @@
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
-import { Trash2, RefreshCw } from 'lucide-react';
+import type { ReactNode } from 'react';
+import {
+  Braces,
+  Cpu,
+  KeyRound,
+  Link2,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import {
   createProviderAction,
   deleteProviderAction,
@@ -19,8 +28,25 @@ export type ProviderRow = {
   modelCount: number;
 };
 
-const input =
-  'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100';
+function Field({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Cpu;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <Icon className="size-4 shrink-0" />
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
 
 export function ProvidersPanel({ slug, providers }: { slug: string; providers: ProviderRow[] }) {
   const t = useTranslations('console.agents');
@@ -28,88 +54,115 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
   const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
 
   return (
-    <div className="px-8 py-6">
-      <form action={formAction} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
-        <input type="hidden" name="workspace" value={slug} />
-        <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          {t('name')}
-          <input name="name" required placeholder={t('openai')} className={input} />
-        </label>
-        <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          {t('format')}
-          <select name="format" className={input} defaultValue="openai">
-            <option value="openai">{t('openai')}</option>
-            <option value="anthropic">{t('anthropic')}</option>
-          </select>
-        </label>
-        <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          {t('baseUrl')}
-          <input name="baseUrl" required placeholder="https://api.openai.com/v1" className={input} />
-        </label>
-        <label className="space-y-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          {t('apiKey')}
-          <input name="apiKey" required type="password" placeholder="sk-…" className={input} />
-        </label>
-        <SubmitButton
-          error={state.error}
-          pendingLabel={t('adding')}
-          savedLabel={t('added')}
-          className="inline-flex h-9 items-center justify-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-        >
-          {t('addProvider')}
-        </SubmitButton>
-      </form>
-      {state.error ? <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p> : null}
-      {refreshState.error ? <p className="mt-2 text-sm text-red-600" role="alert">{refreshState.error}</p> : null}
+    <div className="space-y-5 px-4 py-5 sm:px-6 lg:px-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('model')}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t('modelDescription')}</p>
+      </div>
 
-      <p className="mt-2 text-xs text-muted-foreground">
-        {t('baseUrlMustIncludeTheVersionSegmentEg')} <code>/v1</code>{t('modelsAreFetchedFrom')} <code>{'{baseUrl}/models'}</code>.
-      </p>
+      <section className="ui-panel overflow-hidden">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-foreground">{t('addModelProvider')}</h2>
+        </div>
+        <form action={formAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
+          <input type="hidden" name="workspace" value={slug} />
+          <Field icon={Cpu} label={t('name')}>
+            <input name="name" required placeholder={t('openai')} className="ui-input h-10 w-full" />
+          </Field>
+          <Field icon={Braces} label={t('format')}>
+            <select name="format" className="ui-input h-10 w-full" defaultValue="openai">
+              <option value="openai">{t('openai')}</option>
+              <option value="anthropic">{t('anthropic')}</option>
+            </select>
+          </Field>
+          <Field icon={Link2} label={t('baseUrl')}>
+            <input name="baseUrl" required placeholder="https://api.openai.com/v1" className="ui-input h-10 w-full" />
+          </Field>
+          <Field icon={KeyRound} label={t('apiKey')}>
+            <input name="apiKey" required type="password" placeholder="sk-..." className="ui-input h-10 w-full" />
+          </Field>
+          <div className="xl:col-span-2">
+            <SubmitButton
+              error={state.error}
+              pendingLabel={t('adding')}
+              savedLabel={t('added')}
+              className="ui-button-primary h-10 gap-2 px-4"
+            >
+              <Plus className="size-[18px] shrink-0" />
+              {t('addProvider')}
+            </SubmitButton>
+            {state.error ? <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p> : null}
+            <p className="mt-3 text-xs text-muted-foreground">
+              {t('baseUrlMustIncludeTheVersionSegmentEg')} <code>/v1</code>{t('modelsAreFetchedFrom')} <code>{'{baseUrl}/models'}</code>.
+            </p>
+          </div>
+        </form>
+      </section>
 
-      <ul className="mt-5 divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+      {refreshState.error ? <p className="text-sm text-red-600" role="alert">{refreshState.error}</p> : null}
+
+      <section className="ui-panel overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h2 className="text-sm font-semibold text-foreground">{t('modelProviders')}</h2>
+          <span className="inline-flex h-7 items-center rounded-md border border-border bg-muted/25 px-2.5 text-xs font-medium text-muted-foreground">
+            {providers.length} {t('providers')}
+          </span>
+        </div>
         {providers.length === 0 ? (
-          <li className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-            {t('noProvidersYetAddOneAboveThenRefreshItsModels')}
-          </li>
+          <div className="px-5 py-10 text-center">
+            <Cpu className="mx-auto mb-3 size-8 text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">{t('noProvidersYet')}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{t('noProvidersYetAddOneAboveThenRefreshItsModels')}</p>
+          </div>
         ) : (
-          providers.map((p) => (
-            <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  {p.name}
-                  <span className="ml-2 rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] font-medium uppercase text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                    {p.format}
-                  </span>
-                </p>
-                <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                  {p.baseUrl} · {p.modelCount} {t('models')}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <form action={refreshAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="providerId" value={p.id} />
-                  <SubmitButton
-                    error={refreshState.error}
-                    pendingLabel={t('refreshing')}
-                    savedLabel={t('refreshed')}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" /> {t('refreshModels')}
-                  </SubmitButton>
-                </form>
-                <form action={deleteProviderAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="providerId" value={p.id} />
-                  <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/30">
-                    <Trash2 className="h-3.5 w-3.5" /> {t('remove')}
-                  </button>
-                </form>
-              </div>
-            </li>
-          ))
+          <ul className="divide-y divide-border">
+            {providers.map((provider) => (
+              <li key={provider.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <div className="flex size-10 items-center justify-center rounded-md border border-border bg-muted/25 text-muted-foreground">
+                      <Cpu className="size-[18px]" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{provider.baseUrl}</p>
+                    </div>
+                    <span className="inline-flex h-6 items-center rounded-md border border-border bg-background px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {provider.format}
+                    </span>
+                    <span className="inline-flex h-6 items-center rounded-md bg-accent px-2 text-[11px] font-semibold uppercase tracking-wide text-accent-foreground">
+                      {provider.modelCount} {t('models')}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2.5 lg:justify-end">
+                  <form action={refreshAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="providerId" value={provider.id} />
+                    <SubmitButton
+                      error={refreshState.error}
+                      pendingLabel={t('refreshing')}
+                      savedLabel={t('refreshed')}
+                      className="ui-button-secondary h-10 gap-2 px-4 text-sm"
+                    >
+                      <RefreshCw className="size-[18px] shrink-0" />
+                      {t('refreshModels')}
+                    </SubmitButton>
+                  </form>
+                  <form action={deleteProviderAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="providerId" value={provider.id} />
+                    <button className="ui-button-secondary h-10 gap-2 px-4 text-sm text-red-600 dark:text-red-300">
+                      <Trash2 className="size-[18px] shrink-0" />
+                      {t('remove')}
+                    </button>
+                  </form>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
-      </ul>
+      </section>
     </div>
   );
 }

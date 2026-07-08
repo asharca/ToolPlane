@@ -37,7 +37,7 @@ async function authorizedWorkspace(slug: string) {
   return { user, ws };
 }
 
-export type ActionState = { error?: string };
+export type ActionState = { error?: string; savedAt?: number };
 
 export async function createProviderAction(
   _prev: ActionState,
@@ -147,7 +147,7 @@ export async function updateAgentAction(
     subAgentIds: formData.getAll('subAgentId').map(String),
   });
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  return {};
+  return { savedAt: Date.now() };
 }
 
 export async function createConversationAction(formData: FormData) {

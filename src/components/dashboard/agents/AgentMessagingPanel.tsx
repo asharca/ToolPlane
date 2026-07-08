@@ -13,7 +13,6 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { CopyButton } from '@/components/dashboard/CopyButton';
-import { DashboardPanel } from '@/components/dashboard/DashboardUI';
 import { QrPairingDisplay } from '@/components/dashboard/agents/QrPairingDisplay';
 import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
 import {
@@ -97,11 +96,11 @@ function CredentialInput({
   const t = useTranslations('console.agentMessaging');
   return (
     <label className="block">
-      <span className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <span className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {credential.name}
         {required ? <span className="text-red-500">*</span> : null}
         {credential.required && credential.requiredAt === 'start' ? (
-          <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+          <span className="inline-flex h-6 items-center rounded-md bg-amber-500/10 px-2 text-[11px] text-amber-700 dark:text-amber-300">
             {t('requiredToStart')}
           </span>
         ) : null}
@@ -160,10 +159,10 @@ function ActivePairingPanel({
       <div className="min-w-0 space-y-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <QrCode className="size-4 text-foreground" />
+            <QrCode className="size-[18px] shrink-0 text-foreground" />
             <div className="text-sm font-semibold text-foreground">{platform.pairing.label}</div>
             {pairing?.status ? (
-              <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${statusTone(pairing.status)}`}>
+              <span className={`inline-flex h-6 items-center rounded-md px-2 text-[11px] font-medium uppercase tracking-wide ${statusTone(pairing.status)}`}>
                 {statusLabel(pairing.status)}
               </span>
             ) : null}
@@ -176,7 +175,7 @@ function ActivePairingPanel({
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="agentId" value={agentId} />
             <input type="hidden" name="connectionId" value={connection.id} />
-            <button className="ui-button-primary h-8 px-2 text-xs" type="submit">
+            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">
               {platform.pairing.requestLabel ?? 'Request QR'}
             </button>
           </form>
@@ -185,15 +184,15 @@ function ActivePairingPanel({
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="connectionId" value={connection.id} />
-              <button className="ui-button-secondary h-8 px-2 text-xs" type="submit">
+              <button className="ui-button-secondary h-9 px-3 text-xs" type="submit">
                 {platform.pairing.checkLabel ?? 'Check setup'}
               </button>
             </form>
           ) : null}
           {pairing?.scanUrl && !isReady ? <CopyButton text={pairing.scanUrl} label="Copy URL" /> : null}
           {pairing?.scanUrl && !isReady ? (
-            <Link href={pairing.scanUrl} target="_blank" rel="noreferrer" className="ui-button-secondary h-8 px-2 text-xs">
-              <ExternalLink className="size-3.5" />
+            <Link href={pairing.scanUrl} target="_blank" rel="noreferrer" className="ui-button-secondary h-9 gap-2 px-3 text-xs">
+              <ExternalLink className="size-4 shrink-0" />
               Open
             </Link>
           ) : null}
@@ -211,7 +210,7 @@ function ActivePairingPanel({
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold text-foreground">Telegram bot is ready</span>
               {pairing.extra?.botUsername ? (
-                <code className="rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                <code className="inline-flex h-6 items-center rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground">
                   @{pairing.extra.botUsername}
                 </code>
               ) : null}
@@ -227,7 +226,7 @@ function ActivePairingPanel({
                 className="ui-input mt-1 h-9 w-full"
               />
             </label>
-            <button className="ui-button-primary h-8 px-2 text-xs" type="submit">Save Telegram setup</button>
+            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">Save Telegram setup</button>
           </form>
         ) : null}
 
@@ -267,20 +266,20 @@ function ChannelConnectionCard({
     <div className="rounded-md border border-border bg-background px-4 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h3 className="text-sm font-semibold text-foreground">{connection.name}</h3>
-            <span className="rounded-md border border-border bg-muted/20 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="inline-flex h-6 items-center rounded-md border border-border bg-muted/20 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {connection.platformLabel}
             </span>
-            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${statusTone(connection.status)}`}>
+            <span className={`inline-flex h-6 items-center rounded-md px-2 text-[11px] font-medium uppercase tracking-wide ${statusTone(connection.status)}`}>
               {statusLabel(connection.status)}
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{connection.connectionMode}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-2 flex flex-wrap gap-2">
             {connection.credentialNames.length ? (
               connection.credentialNames.map((name) => (
-                <code key={name} className="rounded-md border border-border bg-muted/25 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <code key={name} className="inline-flex h-6 items-center rounded-md border border-border bg-muted/25 px-2 text-[11px] text-muted-foreground">
                   {name}
                 </code>
               ))
@@ -290,14 +289,14 @@ function ChannelConnectionCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           {showReauthenticate ? (
             <form action={requestAgentChannelPairingAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="connectionId" value={connection.id} />
-              <button className="ui-button-secondary h-8 px-2 text-xs" type="submit">
-                <QrCode className="size-3.5" />
+              <button className="ui-button-secondary h-9 gap-2 px-3 text-xs" type="submit">
+                <QrCode className="size-4 shrink-0" />
                 {t('reauthenticate')}
               </button>
             </form>
@@ -308,8 +307,8 @@ function ChannelConnectionCard({
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="agentId" value={agentId} />
                 <input type="hidden" name="connectionId" value={connection.id} />
-                <button className="ui-button-secondary h-8 px-2 text-xs" type="submit">
-                  <Power className="size-3.5" />
+                <button className="ui-button-secondary h-9 gap-2 px-3 text-xs" type="submit">
+                  <Power className="size-4 shrink-0" />
                   {t('stop')}
                 </button>
               </form>
@@ -318,8 +317,8 @@ function ChannelConnectionCard({
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="agentId" value={agentId} />
                 <input type="hidden" name="connectionId" value={connection.id} />
-                <button className="ui-button-primary h-8 px-2 text-xs" type="submit">
-                  <Play className="size-3.5" />
+                <button className="ui-button-primary h-9 gap-2 px-3 text-xs" type="submit">
+                  <Play className="size-4 shrink-0" />
                   {t('start')}
                 </button>
               </form>
@@ -329,8 +328,8 @@ function ChannelConnectionCard({
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="agentId" value={agentId} />
             <input type="hidden" name="connectionId" value={connection.id} />
-            <button className="ui-button-secondary h-8 px-2 text-xs text-red-600 dark:text-red-300" type="submit">
-              <Trash2 className="size-3.5" />
+            <button className="ui-button-secondary h-9 gap-2 px-3 text-xs text-red-600 dark:text-red-300" type="submit">
+              <Trash2 className="size-4 shrink-0" />
               {t('delete')}
             </button>
           </form>
@@ -351,11 +350,11 @@ function ChannelConnectionCard({
         <details className="mt-4 rounded-md border border-border bg-muted/15">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-foreground">
             <span className="inline-flex items-center gap-2">
-              <KeyRound className="size-3.5" />
+              <KeyRound className="size-4 shrink-0" />
               Credentials and policy
             </span>
             {missingCredentialDefs.length ? (
-              <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              <span className="inline-flex h-6 items-center rounded-md bg-amber-500/10 px-2 text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
                 missing {missingCredentialDefs.length}
               </span>
             ) : null}
@@ -374,7 +373,7 @@ function ChannelConnectionCard({
                 />
               ))}
             </div>
-            <button className="ui-button-primary h-8 px-2 text-xs" type="submit">Save credentials</button>
+            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">Save credentials</button>
           </form>
         </details>
       ) : null}
@@ -409,20 +408,20 @@ function CreateChannelCard({
       <summary className="cursor-pointer list-none px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-sm font-semibold text-foreground">{platform.label}</h3>
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="inline-flex h-6 items-center rounded-md bg-muted px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 {platform.pairing ? t('qrSetup') : platform.slug === 'discord' ? t('botToken') : t('hostedRunner')}
               </span>
               {runner ? (
-                <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                <span className="inline-flex h-6 items-center rounded-md bg-emerald-500/10 px-2 text-[11px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                   {t('hosted')}
                 </span>
               ) : null}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{platform.summary}</p>
           </div>
-          <span className="shrink-0 rounded-md border border-border bg-muted/25 px-2 py-1 text-[11px] font-medium text-foreground">
+          <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-muted/25 px-2.5 text-[11px] font-medium text-foreground">
             {t('select')}
           </span>
         </div>
@@ -443,17 +442,17 @@ function CreateChannelCard({
                 href={platform.docsUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline"
+                className="mt-2 inline-flex items-center gap-2 text-xs font-medium text-foreground hover:underline"
               >
                 {t('platformDocs')}
-                <ExternalLink className="size-3" />
+                <ExternalLink className="size-4 shrink-0" />
               </Link>
             ) : null}
           </div>
           <ol className="space-y-1.5 text-xs text-muted-foreground">
             {platform.setupSteps.map((step, index) => (
               <li key={step} className="flex gap-2">
-                <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground">
+                <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-medium text-foreground">
                   {index + 1}
                 </span>
                 <span>{step}</span>
@@ -503,7 +502,7 @@ function CreateChannelCard({
           </details>
         ) : null}
 
-        <button className="ui-button-primary h-9" type="submit">
+        <button className="ui-button-primary h-10 px-4" type="submit">
           {autoRequestsQr ? t('createAndRequestQr') : t('createChannel', { platform: platform.label })}
         </button>
       </form>
@@ -532,22 +531,22 @@ export function AgentMessagingPanel({
   const hiddenConnectionCount = connections.length - visibleConnections.length;
 
   return (
-    <div className="space-y-4 px-8 py-4">
+    <div className="space-y-4 px-5 py-5">
       {!ready ? (
-        <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+        <div className="flex gap-2.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <TriangleAlert className="mt-0.5 size-[18px] shrink-0" />
           {t('configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies')}
         </div>
       ) : null}
 
-      <details className="ui-panel overflow-hidden">
+      <details className="overflow-hidden rounded-md border border-border bg-background">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">{t('addChannel')}</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">{t('chooseOnePlatformAndFollowItsNativeSetupFlow')}</p>
           </div>
-          <span className="ui-button-primary h-9 px-3 text-sm">
-            <Plus className="size-4" />
+          <span className="ui-button-primary h-10 gap-2 px-4 text-sm">
+            <Plus className="size-[18px] shrink-0" />
             {t('add')}
           </span>
         </summary>
@@ -563,10 +562,12 @@ export function AgentMessagingPanel({
         </div>
       </details>
 
-      <DashboardPanel
-        title={t('connectedChannels')}
-        description={t('nativeChannelsAttachedToThisAgent')}
-      >
+      <section className="overflow-hidden rounded-md border border-border bg-background">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-foreground">{t('connectedChannels')}</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('nativeChannelsAttachedToThisAgent')}</p>
+        </div>
+        <div className="px-4 py-4">
         {visibleConnections.length ? (
           <div className="space-y-3">
             {visibleConnections.map((connection) => (
@@ -587,7 +588,7 @@ export function AgentMessagingPanel({
         )}
         {hiddenConnectionCount > 0 ? (
           <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            <Clock3 className="size-3.5" />
+            <Clock3 className="size-4 shrink-0" />
             {t('legacyChannelCount', {
               count: hiddenConnectionCount,
               suffix: hiddenConnectionCount > 1 ? t('legacyChannelsAre') : t('legacyChannelIs'),
@@ -595,7 +596,8 @@ export function AgentMessagingPanel({
             {t('hiddenBecauseThisViewNowSupportsOnlyTheSelectedFivePlatforms')}
           </div>
         ) : null}
-      </DashboardPanel>
+        </div>
+      </section>
 
     </div>
   );

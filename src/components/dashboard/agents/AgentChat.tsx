@@ -7,18 +7,24 @@ import { DefaultChatTransport, type UIMessage } from 'ai';
 import Link from 'next/link';
 import {
   Bot,
-  CheckCircle2,
   Clock3,
-  MessageSquare,
+  MessageCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Radio,
+  Route,
   Send,
-  TerminalSquare,
+  Settings2,
   Wrench,
+  X,
 } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import { createConversationAction } from '@/lib/agents/actions';
+import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
+import { AgentMessagingPanel } from '@/components/dashboard/agents/AgentMessagingPanel';
+import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
 
 type Conversation = {
@@ -30,13 +36,30 @@ type Conversation = {
   source: ParsedMessagingSession | null;
 };
 
-type ChannelSummary = {
-  id: string;
-  platform: string;
-  platformLabel: string;
+type SettingsData = {
   name: string;
-  status: string;
-  lastEventAt: string | null;
+  systemPrompt: string;
+  providerId: string | null;
+  model: string | null;
+  maxSteps: number;
+  providers: Array<{ id: string; name: string; models: string[] }>;
+  deployments: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+  skills: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+  toolkits: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+  sandboxes: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+  subAgents: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+};
+
+type ChannelSettingsData = {
+  endpoint: string;
+  connections: Array<AgentChannelConnectionView & { callbackUrl: string }>;
+  stats: {
+    mcp: number;
+    skills: number;
+    toolkits: number;
+    sandboxes: number;
+    subAgents: number;
+  };
 };
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -52,20 +75,13 @@ function titleCase(value: string) {
 }
 
 function sourceLabel(source: ParsedMessagingSession | null) {
-  if (!source) return 'Console chat';
+  if (!source) return 'Chat';
   return `${titleCase(source.platform)} ${source.chatType.toUpperCase()}`;
 }
 
 function sourceDetail(source: ParsedMessagingSession | null) {
-  if (!source) return 'Started from the ToolPlane console';
+  if (!source) return 'ToolPlane';
   return [source.chatId, source.contextId ? `context ${source.contextId}` : null].filter(Boolean).join(' · ');
-}
-
-function channelStatusTone(status: string) {
-  if (status === 'running') return 'bg-emerald-500';
-  if (status === 'error') return 'bg-red-500';
-  if (status === 'setup_required' || status === 'waiting_callback') return 'bg-amber-500';
-  return 'bg-muted-foreground';
 }
 
 function displayUserText(text: string) {
@@ -78,23 +94,33 @@ export function AgentChat({
   conversationId,
   initialMessages,
   conversations,
-  channels,
+  settings,
+  channelSettings,
   ready,
   agentName,
   providerLabel,
+  initialSettingsTab,
 }: {
   slug: string;
   agentId: string;
   conversationId: string | null;
   initialMessages: UIMessage[];
   conversations: Conversation[];
-  channels: ChannelSummary[];
+  settings: SettingsData;
+  channelSettings: ChannelSettingsData;
   ready: boolean;
   agentName: string;
   providerLabel: string;
+  initialSettingsTab?: 'agent' | 'channels' | null;
 }) {
   const t = useTranslations('console.agents');
   const [text, setText] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(Boolean(initialSettingsTab));
+  const [settingsTab, setSettingsTab] = useState<'agent' | 'channels'>(initialSettingsTab ?? 'agent');
+  const [createdConversationId, setCreatedConversationId] = useState<string | null>(null);
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const { messages, sendMessage, setMessages, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/v1/agents/${agentId}/chat`,
@@ -103,13 +129,9 @@ export function AgentChat({
   });
 
   const busy = status === 'streaming' || status === 'submitted';
-  const activeConversation = conversations.find((conversation) => conversation.id === conversationId) ?? null;
-  const activeSource = activeConversation?.source ?? null;
-  const matchedChannel = activeSource
-    ? channels.find((channel) => channel.platform === activeSource.platform) ?? null
-    : null;
-  const runningChannels = channels.filter((channel) => channel.status === 'running').length;
-  const canSend = Boolean(text.trim() && ready && conversationId && !busy);
+  const sending = busy || creatingConversation;
+  const canSend = Boolean(text.trim() && ready && !sending);
+  const activeConversationId = createdConversationId ?? conversationId;
 
   const conversationGroups = useMemo(() => {
     const external = conversations.filter((conversation) => conversation.source);
@@ -121,50 +143,91 @@ export function AgentChat({
     setMessages(initialMessages);
   }, [conversationId, initialMessages, setMessages]);
 
-  function submitMessage() {
+  async function ensureConversation() {
+    if (activeConversationId) return activeConversationId;
+
+    setCreatingConversation(true);
+    try {
+      const response = await fetch(`/api/v1/agents/${agentId}/conversations`, {
+        method: 'POST',
+      });
+      if (!response.ok) throw new Error('conversation');
+      const body = await response.json() as { conversationId?: string };
+      if (!body.conversationId) throw new Error('conversation');
+      setCreatedConversationId(body.conversationId);
+      return body.conversationId;
+    } finally {
+      setCreatingConversation(false);
+    }
+  }
+
+  async function submitMessage() {
     if (!canSend) return;
-    sendMessage({ text }, { body: { conversationId } });
-    setText('');
+    const nextText = text;
+    setSubmitError(null);
+    try {
+      const activeConversationId = await ensureConversation();
+      sendMessage({ text: nextText }, { body: { conversationId: activeConversationId } });
+      setText('');
+    } catch {
+      setSubmitError(t('couldNotCreateConversation'));
+    }
   }
 
   return (
-    <div className="px-8 py-6">
-      <div className="grid gap-4 xl:h-[calc(100dvh-17rem)] xl:min-h-[36rem] xl:grid-cols-[20rem_minmax(0,1fr)]">
+    <div className="box-border flex h-[calc(100dvh-3.5rem)] min-h-0 p-3 sm:p-4 lg:h-dvh lg:p-3">
+      <div
+        className={cx(
+          'grid min-h-0 flex-1 gap-3',
+          sidebarCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[14rem_minmax(0,1fr)]',
+        )}
+      >
+        {!sidebarCollapsed ? (
         <aside className="ui-panel flex min-h-0 flex-col overflow-hidden">
           <div className="border-b border-border px-4 py-3">
-            <form action={createConversationAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="agentId" value={agentId} />
-              <button className="ui-button-primary h-9 w-full" type="submit">
-                <Plus className="size-4" />
-                {t('newChat')}
+            <div className="flex items-center gap-2.5">
+              <form action={createConversationAction} className="min-w-0 flex-1">
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="agentId" value={agentId} />
+                <button className="ui-button-primary h-10 w-full gap-2" type="submit">
+                  <Plus className="size-[18px] shrink-0" />
+                  {t('newChat')}
+                </button>
+              </form>
+              <button
+                type="button"
+                aria-label={t('hideConversations')}
+                title={t('hideConversations')}
+                onClick={() => setSidebarCollapsed(true)}
+                className="ui-button-secondary h-11 w-11 shrink-0 px-0"
+              >
+                <PanelLeftClose className="size-5" />
               </button>
-            </form>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             <section className="border-b border-border px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('channelSessions')}</div>
-                <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {conversationGroups.external.length}
-                </span>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Radio className="size-4 shrink-0" />
+                  {t('channels')}
+                </div>
               </div>
               <ul className="space-y-1">
                 {conversationGroups.external.map((conversation) => (
                   <li key={conversation.id}>
                     <Link
-                      href={`/app/${slug}/agents/${agentId}?tab=chat&c=${conversation.id}`}
+                      href={`/app/${slug}/agents/${agentId}?c=${conversation.id}`}
                       className={cx(
-                        'block rounded-md px-3 py-2 text-sm transition-colors',
-                        conversation.id === conversationId
+                        'block rounded-md px-3 py-2.5 text-sm transition-colors',
+                        conversation.id === activeConversationId
                           ? 'bg-accent text-foreground'
                           : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{sourceLabel(conversation.source)}</span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">{conversation.messageCount}</span>
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                         {sourceDetail(conversation.source)}
@@ -182,26 +245,25 @@ export function AgentChat({
 
             <section className="border-b border-border px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('consoleChats')}</div>
-                <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {conversationGroups.consoleChats.length}
-                </span>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <MessageCircle className="size-4 shrink-0" />
+                  {t('conversations')}
+                </div>
               </div>
               <ul className="space-y-1">
                 {conversationGroups.consoleChats.map((conversation) => (
                   <li key={conversation.id}>
                     <Link
-                      href={`/app/${slug}/agents/${agentId}?tab=chat&c=${conversation.id}`}
+                      href={`/app/${slug}/agents/${agentId}?c=${conversation.id}`}
                       className={cx(
-                        'block rounded-md px-3 py-2 text-sm transition-colors',
-                        conversation.id === conversationId
+                        'block rounded-md px-3 py-2.5 text-sm transition-colors',
+                        conversation.id === activeConversationId
                           ? 'bg-accent text-foreground'
                           : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{conversation.title ?? `Chat ${conversation.createdAt}`}</span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground">{conversation.messageCount}</span>
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                         {conversation.lastMessageAt ? `Last message ${conversation.lastMessageAt}` : t('noMessagesYet')}
@@ -212,86 +274,53 @@ export function AgentChat({
               </ul>
             </section>
 
-            <section className="px-3 py-3">
-              <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('connectedChannels')}</div>
-                <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {runningChannels}/{channels.length}
-                </span>
-              </div>
-              <ul className="space-y-1">
-                {channels.map((channel) => (
-                  <li key={channel.id}>
-                    <Link
-                      href={`/app/${slug}/agents/${agentId}?tab=messaging`}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                    >
-                      <span className={cx('size-2 rounded-full', channelStatusTone(channel.status))} />
-                      <span className="min-w-0 flex-1 truncate">{channel.name}</span>
-                      <span className="shrink-0 text-[11px]">{channel.platformLabel}</span>
-                    </Link>
-                  </li>
-                ))}
-                {channels.length === 0 ? (
-                  <li className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    {t('addTelegramWeixinWecomDiscordOrDingtalkFromChannels')}
-                  </li>
-                ) : null}
-              </ul>
-            </section>
           </div>
         </aside>
+        ) : null}
 
-        <section className="ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden">
-          <header className="border-b border-border px-5 py-4">
+        <section className="ui-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <header className="shrink-0 border-b border-border px-4 py-3 sm:px-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-base font-semibold text-foreground">{agentName}</h2>
-                  <span
-                    className={cx(
-                      'rounded-md px-2 py-1 text-[11px] font-medium',
-                      ready ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-                    )}
+              <div className="flex min-w-0 items-start gap-3">
+                {sidebarCollapsed ? (
+                  <button
+                    type="button"
+                    aria-label={t('showConversations')}
+                    title={t('showConversations')}
+                    onClick={() => setSidebarCollapsed(false)}
+                    className="ui-button-secondary h-11 w-11 shrink-0 px-0"
                   >
-                    {ready ? t('ready2') : t('needsModel')}
-                  </span>
-                </div>
-                <p className="mt-1 truncate text-xs text-muted-foreground">{providerLabel}</p>
-              </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1 text-muted-foreground">
-                  <MessageSquare className="size-3.5" />
-                  {messages.length} {t('visible')}
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1 text-muted-foreground">
-                  <Radio className="size-3.5" />
-                  {matchedChannel ? `${matchedChannel.platformLabel} · ${matchedChannel.status}` : sourceLabel(activeSource)}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              <div className="rounded-md border border-border bg-muted/15 px-3 py-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-                  {activeSource ? <Radio className="size-3.5" /> : <TerminalSquare className="size-3.5" />}
-                  {sourceLabel(activeSource)}
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">{sourceDetail(activeSource)}</div>
-              </div>
-              <div className="rounded-md border border-border bg-muted/15 px-3 py-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-                  <CheckCircle2 className="size-3.5" />
-                  {matchedChannel ? t('matchedChannel') : t('deliveryPath')}
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {matchedChannel
-                    ? `${matchedChannel.name} · ${matchedChannel.platformLabel} · ${matchedChannel.status}`
-                    : activeSource
-                      ? t('noActiveChannelRecord')
-                      : t('consoleConversation')}
+                    <PanelLeftOpen className="size-5" />
+                  </button>
+                ) : null}
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h2 className="truncate text-base font-semibold text-foreground">{agentName}</h2>
+                    <span
+                      className={cx(
+                        'inline-flex h-6 items-center rounded-md px-2.5 text-xs font-medium',
+                        ready ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+                      )}
+                    >
+                      {ready ? t('ready2') : t('needsModel')}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{providerLabel}</p>
                 </div>
               </div>
+              <button
+                type="button"
+                aria-label={t('settings')}
+                title={t('settings')}
+                onClick={() => {
+                  setSettingsTab('agent');
+                  setSettingsOpen(true);
+                }}
+                className="ui-button-secondary h-10 shrink-0 gap-2 px-4"
+              >
+                <Settings2 className="size-[18px] shrink-0" />
+                {t('settings')}
+              </button>
             </div>
           </header>
 
@@ -301,11 +330,13 @@ export function AgentChat({
             </div>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-5">
             {messages.length === 0 ? (
               <div className="flex min-h-full items-center justify-center">
-                <div className="max-w-md rounded-md border border-dashed border-border bg-card px-5 py-6 text-center">
-                  <Bot className="mx-auto mb-3 size-8 text-muted-foreground" />
+                <div className="max-w-md px-5 py-6 text-center">
+                  <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+                    <MessageCircle className="size-6" />
+                  </div>
                   <h3 className="text-sm font-semibold text-foreground">{t('startAConversation')}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {t('sendAConsoleMessageHereOrLetAConnectedChannelCreateItsOwnSessionAfterTheFirstInboundMessage')}
@@ -319,11 +350,11 @@ export function AgentChat({
                   return (
                     <article key={message.id} className={cx('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
                       {!isUser ? (
-                        <div className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-                          <Bot className="size-4" />
+                        <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+                          <Bot className="size-[18px]" />
                         </div>
                       ) : null}
-                      <div className={cx('min-w-0 max-w-[min(48rem,85%)]', isUser && 'order-first')}>
+                      <div className={cx('min-w-0 max-w-[min(72rem,94%)]', isUser && 'order-first')}>
                         <div className={cx('mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground', isUser && 'text-right')}>
                           {isUser ? t('user') : agentName}
                         </div>
@@ -358,8 +389,8 @@ export function AgentChat({
                               const toolPart = part as { type: string; state?: string; input?: unknown; output?: unknown };
                               return (
                                 <div key={index} className="my-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
-                                  <div className="flex items-center gap-1.5 font-medium text-foreground">
-                                    <Wrench className="size-3.5" />
+                                  <div className="flex items-center gap-2 font-medium text-foreground">
+                                    <Wrench className="size-4 shrink-0" />
                                     {toolPart.type.replace(/^tool-/, '')} {toolPart.state ? `(${toolPart.state})` : ''}
                                   </div>
                                   {toolPart.output !== undefined ? (
@@ -378,8 +409,8 @@ export function AgentChat({
                   );
                 })}
                 {busy ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock3 className="size-4 animate-pulse" />
+                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+                    <Clock3 className="size-[18px] shrink-0 animate-pulse" />
                     {t('agentIsResponding')}
                   </div>
                 ) : null}
@@ -396,34 +427,138 @@ export function AgentChat({
             </p>
           ) : null}
 
+          {submitError ? (
+            <p
+              role="alert"
+              className="mx-5 mt-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+            >
+              {submitError}
+            </p>
+          ) : null}
+
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              submitMessage();
+              void submitMessage();
             }}
-            className="border-t border-border bg-card px-4 py-3"
+            className="shrink-0 border-t border-border bg-card px-4 py-4"
           >
-            <div className="flex gap-2">
+            <div className="rounded-md border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
               <textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}
-                placeholder={conversationId ? t('messageThisAgent') : t('createOrSelectAChatFirst')}
-                disabled={!ready || !conversationId || busy}
-                rows={1}
-                className="ui-input min-h-10 flex-1 resize-none py-2 disabled:opacity-60"
+                placeholder={t('messageThisAgent')}
+                disabled={sending}
+                rows={3}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void submitMessage();
+                  }
+                }}
+                className="min-h-24 w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
               />
+              <div className="flex items-center justify-between gap-3 border-t border-border/70 px-2 pt-2">
+                <div className="min-w-0 text-xs text-muted-foreground">
+                  {!ready ? t('chooseAModelBeforeSending') : activeConversationId ? t('conversationSelected') : t('conversationWillBeCreated')}
+                </div>
               <button
                 type="submit"
                 disabled={!canSend}
-                className="ui-button-primary h-10 self-end disabled:opacity-60"
+                aria-label={t('send')}
+                title={t('send')}
+                className="ui-button-primary h-10 gap-2 px-4 disabled:opacity-60"
               >
-                <Send className="size-4" />
-                {t('send')}
+                  <Send className="size-[18px] shrink-0" />
+                  {creatingConversation ? t('creating') : t('send')}
               </button>
+              </div>
             </div>
           </form>
         </section>
       </div>
+
+      {settingsOpen ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-end bg-background/70 p-3 backdrop-blur-sm sm:p-5">
+          <section className="ui-panel flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col overflow-hidden shadow-xl">
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-2.5 truncate text-sm font-semibold text-foreground">
+                  <Settings2 className="size-[18px] shrink-0 text-muted-foreground" />
+                  {t('settings')}
+                </h2>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">{agentName}</p>
+              </div>
+              <button
+                type="button"
+                aria-label={t('closeSettings')}
+                title={t('closeSettings')}
+                onClick={() => setSettingsOpen(false)}
+                className="ui-button-secondary h-11 w-11 shrink-0 px-0"
+              >
+                <X className="size-5" />
+              </button>
+            </header>
+            <div className="flex shrink-0 gap-2 border-b border-border px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setSettingsTab('agent')}
+                className={cx(
+                  'inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-sm font-medium transition-colors',
+                  settingsTab === 'agent'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+              >
+                <Settings2 className="size-4 shrink-0" />
+                {t('agentSettingsTab')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsTab('channels')}
+                className={cx(
+                  'inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-sm font-medium transition-colors',
+                  settingsTab === 'channels'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                )}
+              >
+                <Route className="size-4 shrink-0" />
+                {t('channelSettingsTab')}
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {settingsTab === 'agent' ? (
+                <AgentSettingsForm
+                  slug={slug}
+                  agentId={agentId}
+                  name={settings.name}
+                  systemPrompt={settings.systemPrompt}
+                  providerId={settings.providerId}
+                  model={settings.model}
+                  maxSteps={settings.maxSteps}
+                  providers={settings.providers}
+                  deployments={settings.deployments}
+                  skills={settings.skills}
+                  toolkits={settings.toolkits}
+                  sandboxes={settings.sandboxes}
+                  subAgents={settings.subAgents}
+                  className="space-y-4 px-5 py-5"
+                />
+              ) : (
+                <AgentMessagingPanel
+                  slug={slug}
+                  agentId={agentId}
+                  endpoint={channelSettings.endpoint}
+                  connections={channelSettings.connections}
+                  ready={ready}
+                  stats={channelSettings.stats}
+                />
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
