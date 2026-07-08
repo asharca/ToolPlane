@@ -532,8 +532,14 @@ fs.writeFileSync(bundleFile, yaml);
 NODE
   echo "  ✓ Hermes skill bundle written to $BUNDLE_FILE"
 
+  HERMES_CLI=""
   if command -v hermes >/dev/null 2>&1; then
-    hermes bundles reload >/dev/null 2>&1 || true
+    HERMES_CLI="$(command -v hermes)"
+  elif [ -x "$HOME/.local/bin/hermes" ]; then
+    HERMES_CLI="$HOME/.local/bin/hermes"
+  fi
+  if [ -n "$HERMES_CLI" ]; then
+    "$HERMES_CLI" bundles reload >/dev/null 2>&1 || true
     echo "  ✓ asked Hermes to reload skill bundles"
   fi
 

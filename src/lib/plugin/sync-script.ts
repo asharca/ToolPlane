@@ -42,6 +42,8 @@ WORKSPACE="${workspaceSlug}"
 TOOLKIT="${toolkitSlug}"
 CLIENT="${client}"
 
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 PLUGIN_ROOT="$TOOLPLANE_SYNC_ROOT"
 if [ -z "$PLUGIN_ROOT" ]; then
   PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT"
