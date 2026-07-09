@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/asharca/ToolPlane/compare/toolplane-v0.3.0...toolplane-v0.3.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* auto-sync Hermes toolkits on session start ([7bf2c71](https://github.com/asharca/ToolPlane/commit/7bf2c719cffacab5d1ae569f6c8a6712b208e2e4))
+
 ## [0.3.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.2...toolplane-v0.3.0) (2026-07-09)
 
 
