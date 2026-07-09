@@ -12,6 +12,7 @@ import {
 import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 import { validateServerRecipe } from '@/lib/admin/recipe-validate';
 import { fetchGithubSkillBundle } from '@/lib/skills/bundle';
+import { syncGithubSkillRegistry } from '@/lib/skills/registry';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
@@ -19,6 +20,15 @@ const str = (fd: FormData, k: string) => String(fd.get(k) ?? '').trim();
 const nul = (v: string) => (v === '' ? null : v);
 const num = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : 0; };
 const ids = (fd: FormData) => fd.getAll('categoryIds').map((v) => String(v));
+
+export type SkillRegistrySyncActionState = {
+  error?: string;
+  ok?: boolean;
+  found?: number;
+  created?: number;
+  updated?: number;
+  failed?: number;
+};
 
 export async function createServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
@@ -110,6 +120,35 @@ export async function importSkillFromGithubAction(_prev: AdminActionState, fd: F
 
   revalidatePath('/admin/skills');
   redirect('/admin/skills');
+}
+
+export async function syncSkillRegistryAction(
+  _prev: SkillRegistrySyncActionState,
+  fd: FormData,
+): Promise<SkillRegistrySyncActionState> {
+  await requireAdmin();
+  const owner = str(fd, 'owner');
+  const repo = str(fd, 'repo');
+  const ref = str(fd, 'ref') || 'main';
+  const rootPath = str(fd, 'rootPath') || 'skills';
+  const slugPrefix = str(fd, 'slugPrefix');
+  if (!owner || !repo) return { error: 'Owner and repo are required.' };
+
+  try {
+    const result = await syncGithubSkillRegistry(db, { owner, repo, ref, rootPath, slugPrefix });
+    revalidatePath('/admin/skills');
+    revalidatePath('/tools/skills');
+    return {
+      ok: true,
+      found: result.found,
+      created: result.created,
+      updated: result.updated,
+      failed: result.failed.length,
+      error: result.failed.length > 0 ? `${result.failed.length} skill(s) failed to sync.` : undefined,
+    };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Failed to sync skill registry.' };
+  }
 }
 
 export async function createSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
