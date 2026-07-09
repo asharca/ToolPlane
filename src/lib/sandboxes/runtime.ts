@@ -31,3 +31,7 @@ export async function removeDockerSandboxRuntime(sandboxId: string, volumeName?:
   await docker(['rm', '-f', sandboxContainerName(sandboxId)]);
   await docker(['volume', 'rm', '-f', volumeName || sandboxVolumeName(sandboxId)]);
 }
+
+export async function removeDockerSandboxContainer(sandboxId: string): Promise<void> {
+  await docker(['rm', '-f', sandboxContainerName(sandboxId)]);
+}

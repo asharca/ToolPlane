@@ -148,6 +148,7 @@ describe('resolveSpawnSpec', () => {
         image: 'node:24-bookworm-slim',
         volumeName: 'vol1',
         network: 'none',
+        env: { A: '1' },
       },
     });
     expect(spec).toEqual({
@@ -158,6 +159,7 @@ describe('resolveSpawnSpec', () => {
       image: 'node:24-bookworm-slim',
       volumeName: 'vol1',
       network: 'none',
+      env: { A: '1' },
     });
   });
 
@@ -191,6 +193,7 @@ describe('resolveSpawnSpec', () => {
       sandboxId: 'sb-connector',
       sandboxKind: 'connector',
       network: 'isolated',
+      env: {},
       connector: {
         provider: 'websocket',
         protocolVersion: '2026-07-connector-ws',

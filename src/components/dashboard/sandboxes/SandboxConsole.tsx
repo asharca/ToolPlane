@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ChevronRight, FileText, Folder, Loader2, RefreshCw, TerminalIcon } from 'lucide-react';
+import { ChevronRight, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2 } from 'lucide-react';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 
 type RpcResult = {
@@ -14,6 +14,12 @@ type RpcResult = {
 
 type TerminalSession = {
   id: string;
+};
+
+type DownloadPayload = {
+  filename?: string;
+  content?: string;
+  encoding?: string;
 };
 
 function textFromResult(result: RpcResult | null): string {
@@ -58,6 +64,21 @@ function formatSize(size: number | null): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 102.4) / 10} KB`;
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
+}
+
+function downloadBase64File(payload: DownloadPayload, fallbackName: string) {
+  if (payload.encoding !== 'base64' || typeof payload.content !== 'string') {
+    throw new Error('Download response was not base64.');
+  }
+  const binary = atob(payload.content);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = payload.filename || fallbackName;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 async function callTool(deploymentId: string, name: string, args: Record<string, unknown>): Promise<string> {
@@ -287,6 +308,33 @@ export function SandboxConsole({
     queueInput(`sed -n '1,160p' ${shellEscape(absoluteWorkspacePath(path))}\r`);
   }
 
+  async function downloadFile(path: string) {
+    setLoadingPath(path);
+    try {
+      const raw = await callTool(deploymentId, 'download_file', { path });
+      downloadBase64File(JSON.parse(raw) as DownloadPayload, path.split('/').pop() || 'sandbox-file');
+      setFileStatus(t('downloadFile'));
+    } catch (error) {
+      setFileStatus(String(error instanceof Error ? error.message : error));
+    } finally {
+      setLoadingPath(null);
+    }
+  }
+
+  async function deleteFile(path: string) {
+    if (!window.confirm(t('deleteThisFile'))) return;
+    setLoadingPath(path);
+    try {
+      await callTool(deploymentId, 'delete_file', { path });
+      if (selectedPath === path) setSelectedPath('');
+      await refreshDir(dirPath);
+    } catch (error) {
+      setFileStatus(String(error instanceof Error ? error.message : error));
+    } finally {
+      setLoadingPath(null);
+    }
+  }
+
   return (
     <div className="grid min-h-[calc(100vh-13rem)] gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
       <aside className="ui-panel flex min-h-96 flex-col overflow-hidden">
@@ -332,26 +380,54 @@ export function SandboxConsole({
               const selected = selectedPath === fullPath;
               const loading = loadingPath === fullPath;
               return (
-                <button
+                <div
                   key={`${entry.type}:${entry.name}`}
-                  type="button"
-                  onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : openFile(fullPath))}
-                  disabled={!running || loadingPath !== null}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-mono text-xs transition-colors disabled:opacity-50 ${
+                  className={`group flex items-center gap-1 rounded-md transition-colors ${
                     selected ? 'bg-brand-soft text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}
                 >
-                  {loading ? (
-                    <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                  ) : entry.type === 'dir' ? (
-                    <Folder className="size-3.5 shrink-0" />
-                  ) : (
-                    <FileText className="size-3.5 shrink-0" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                  {entry.type === 'dir' ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
-                  {entry.type === 'file' ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : openFile(fullPath))}
+                    disabled={!running || loadingPath !== null}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left font-mono text-xs disabled:opacity-50"
+                  >
+                    {loading ? (
+                      <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                    ) : entry.type === 'dir' ? (
+                      <Folder className="size-3.5 shrink-0" />
+                    ) : (
+                      <FileText className="size-3.5 shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                    {entry.type === 'dir' ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
+                    {entry.type === 'file' ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
+                  </button>
+                  {entry.type === 'file' ? (
+                    <div className="flex shrink-0 items-center pr-1">
+                      <button
+                        type="button"
+                        onClick={() => void downloadFile(fullPath)}
+                        disabled={!running || loadingPath !== null}
+                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
+                        title={t('downloadFile')}
+                        aria-label={t('downloadFile')}
+                      >
+                        <Download className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteFile(fullPath)}
+                        disabled={!running || loadingPath !== null}
+                        className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300"
+                        title={t('deleteFile')}
+                        aria-label={t('deleteFile')}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               );
             })
           )}

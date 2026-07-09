@@ -19,11 +19,14 @@ const CONNECTOR_REMOTE_ROOT = (process.env.SANDBOX_CONNECTOR_REMOTE_ROOT || '/tm
 const CONNECTOR_BROKER_URL = (process.env.SANDBOX_CONNECTOR_BROKER_URL || 'http://127.0.0.1:9321').replace(/\/+$/, '');
 const CONNECTOR_BROKER_TOKEN = process.env.SANDBOX_CONNECTOR_BROKER_TOKEN || '';
 const CONTAINER = `toolplane-sandbox-${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+const USER_ENV = parseEnvJson(process.env.SANDBOX_ENV_JSON || '{}');
 const PROTOCOL_VERSION = '2025-06-18';
 const VERSION = '1.0.0';
 const MAX_BODY = 2_000_000;
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
+const MAX_DOWNLOAD = 5_000_000;
+const MAX_DOWNLOAD_BASE64 = Math.ceil(MAX_DOWNLOAD * 4 / 3) + 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
@@ -79,6 +82,24 @@ const TOOLS = [
       required: ['path', 'content'],
     },
   },
+  {
+    name: 'download_file',
+    description: 'Return a file from the sandbox workspace as base64 content for download.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Relative file path.' } },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'delete_file',
+    description: 'Delete one file from the sandbox workspace.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Relative file path.' } },
+      required: ['path'],
+    },
+  },
 ];
 
 function textResult(value, isError = false) {
@@ -88,10 +109,10 @@ function textResult(value, isError = false) {
   return result;
 }
 
-function truncate(value) {
+function truncate(value, max = MAX_OUTPUT) {
   const text = String(value ?? '');
-  if (Buffer.byteLength(text, 'utf8') <= MAX_OUTPUT) return text;
-  return `${Buffer.from(text, 'utf8').subarray(0, MAX_OUTPUT).toString('utf8')}\n[output truncated]`;
+  if (Buffer.byteLength(text, 'utf8') <= max) return text;
+  return `${Buffer.from(text, 'utf8').subarray(0, max).toString('utf8')}\n[output truncated]`;
 }
 
 function shQuote(value) {
@@ -104,6 +125,20 @@ function safeRel(raw = '.') {
   const normal = path.posix.normalize(input);
   if (normal === '..' || normal.startsWith('../')) return null;
   return normal === '.' ? '' : normal;
+}
+
+function parseEnvJson(raw) {
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof value === 'string') out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 async function run(command, args, opts = {}) {
@@ -122,10 +157,10 @@ async function run(command, args, opts = {}) {
       child.kill('SIGKILL');
     }, timeout);
     child.stdout.on('data', (b) => {
-      stdout = truncate(stdout + b.toString('utf8'));
+      stdout = truncate(stdout + b.toString('utf8'), opts.maxOutput ?? MAX_OUTPUT);
     });
     child.stderr.on('data', (b) => {
-      stderr = truncate(stderr + b.toString('utf8'));
+      stderr = truncate(stderr + b.toString('utf8'), opts.maxOutput ?? MAX_OUTPUT);
     });
     child.on('error', (error) => {
       clearTimeout(timer);
@@ -248,6 +283,7 @@ function dockerCreateArgs() {
     '--cap-drop',
     'ALL',
     ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap]),
+    ...Object.entries(USER_ENV).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
     '-v',
     `${VOLUME}:/workspace`,
     IMAGE,
@@ -353,6 +389,40 @@ async function writeSandboxFile(args = {}) {
   return textResult({ path: rel, bytes: Buffer.byteLength(content, 'utf8'), stderr: result.stderr }, result.exitCode !== 0);
 }
 
+async function downloadSandboxFile(args = {}) {
+  const rel = safeRel(args.path);
+  if (!rel) return textResult('Invalid path.', true);
+  if (KIND === 'connector') {
+    return connectorTool('download_file', { ...args, path: rel }, 30_000);
+  }
+  const p = workspacePath(rel);
+  const stat = await run('docker', ['exec', CONTAINER, 'sh', '-lc', `test -f ${shQuote(p)} && wc -c < ${shQuote(p)}`], {
+    env: dockerEnv(),
+  });
+  const size = Number(String(stat.stdout).trim());
+  if (stat.exitCode !== 0 || !Number.isFinite(size)) return textResult(stat.stderr || 'File not found.', true);
+  if (size > MAX_DOWNLOAD) return textResult(`File is too large to download from the sidebar. Max ${MAX_DOWNLOAD} bytes.`, true);
+  const result = await run('docker', ['exec', CONTAINER, 'sh', '-lc', `base64 -w 0 ${shQuote(p)}`], {
+    env: dockerEnv(),
+    timeoutMs: 30_000,
+    maxOutput: MAX_DOWNLOAD_BASE64,
+  });
+  return textResult({ path: rel, filename: path.posix.basename(rel), encoding: 'base64', content: result.stdout, size, stderr: result.stderr }, result.exitCode !== 0);
+}
+
+async function deleteSandboxFile(args = {}) {
+  const rel = safeRel(args.path);
+  if (!rel) return textResult('Invalid path.', true);
+  if (KIND === 'connector') {
+    return connectorTool('delete_file', { ...args, path: rel }, 10_000);
+  }
+  const p = workspacePath(rel);
+  const result = await run('docker', ['exec', CONTAINER, 'sh', '-lc', `test -f ${shQuote(p)} && rm -f -- ${shQuote(p)}`], {
+    env: dockerEnv(),
+  });
+  return textResult({ path: rel, deleted: result.exitCode === 0, stderr: result.stderr }, result.exitCode !== 0);
+}
+
 const terminalSessions = new Map();
 
 function pushTerminalEvent(session, event, value) {
@@ -440,11 +510,11 @@ async function pipeConnectorStream(upstream, req, res) {
 async function proxyConnectorTerminal(req, res) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   if (req.method === 'POST' && url.pathname === '/terminal/session') {
-    const body = await readBody(req).catch(() => '{}');
+    const body = await readJson(req).catch(() => ({}));
     const upstream = await connectorFetch(`/internal/connectors/${encodeURIComponent(SANDBOX_ID)}/terminal/session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: body || '{}',
+      body: JSON.stringify({ ...body, env: USER_ENV }),
       signal: AbortSignal.timeout(10_000),
     });
     sendJson(res, upstream.status, await upstream.json().catch(() => ({})));
@@ -572,7 +642,7 @@ async function callTool(name, args = {}) {
     case 'shell_exec':
       if (!args.command) return textResult('command is required.', true);
       return KIND === 'connector'
-        ? connectorTool('shell_exec', args, Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), (result) => Boolean(result?.timedOut) || Number(result?.exitCode ?? 0) !== 0)
+        ? connectorTool('shell_exec', { ...args, env: USER_ENV }, Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), (result) => Boolean(result?.timedOut) || Number(result?.exitCode ?? 0) !== 0)
         : dockerShell(args);
     case 'list_dir':
       return listDir(args);
@@ -580,6 +650,10 @@ async function callTool(name, args = {}) {
       return readSandboxFile(args);
     case 'write_file':
       return writeSandboxFile(args);
+    case 'download_file':
+      return downloadSandboxFile(args);
+    case 'delete_file':
+      return deleteSandboxFile(args);
     default:
       return null;
   }

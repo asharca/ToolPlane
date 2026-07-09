@@ -6,12 +6,14 @@ import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { startProcess, stopProcess, restartProcess, killProcess } from '@/lib/process/supervisor';
+import { effectiveStatus, startProcess, stopProcess, restartProcess, killProcess } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import {
+  removeDockerSandboxContainer,
   removeDockerSandboxRuntime,
   sandboxVolumeName,
 } from './runtime';
+import { parseSandboxEnvText, readSandboxEnv, sandboxConfigWithEnv } from './env';
 import { resolveSandboxImage } from './images';
 import {
   connectorFromConfig,
@@ -58,6 +60,7 @@ function installCfgForSandbox(sandbox: {
   config: Prisma.JsonValue | null;
 }): Prisma.InputJsonValue {
   const connector = connectorFromConfig(sandbox.config);
+  const env = readSandboxEnv(sandbox.config);
   return {
     sandboxId: sandbox.id,
     kind: sandbox.kind,
@@ -65,6 +68,7 @@ function installCfgForSandbox(sandbox: {
     network: sandbox.network,
     volumeName: sandboxVolumeName(sandbox.id),
     connector: connector ?? undefined,
+    env,
   };
 }
 
@@ -78,6 +82,7 @@ export async function createSandboxAction(formData: FormData) {
   const kind = String(formData.get('kind') ?? 'docker') === 'connector' ? 'connector' : 'docker';
   const sandboxSlug = await uniqueSlug(ctx.ws.id, name);
   const network = String(formData.get('network') ?? 'isolated') === 'none' ? 'none' : 'isolated';
+  const env = parseSandboxEnvText(formData.get('env'));
   const image = kind === 'docker'
     ? resolveSandboxImage(formData.get('imageChoice'), formData.get('customImage') ?? formData.get('image'))
     : null;
@@ -110,7 +115,7 @@ export async function createSandboxAction(formData: FormData) {
       kind,
       image,
       network,
-      config: connectorConfig ? { connector: connectorConfig } : undefined,
+      config: sandboxConfigWithEnv(connectorConfig ? { connector: connectorConfig } : undefined, env),
     },
   });
   const installCfg = installCfgForSandbox(sandbox);
@@ -126,6 +131,46 @@ export async function createSandboxAction(formData: FormData) {
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
   const tokenQuery = connectorBundle ? `?token=${encodeURIComponent(connectorBundle.token)}` : '';
   redirect(`/app/${slug}/sandboxes/${sandbox.id}${tokenQuery}`);
+}
+
+export async function updateSandboxEnvAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !sandboxId) return;
+
+  const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+  if (!sandbox) return;
+
+  const env = parseSandboxEnvText(formData.get('env'));
+  const config = sandboxConfigWithEnv(sandbox.config, env);
+  const installCfg = installCfgForSandbox({ ...sandbox, config: (config ?? null) as Prisma.JsonValue | null });
+  const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
+  const wasActive = status === 'running' || status === 'provisioning';
+
+  const [, updatedDeployment] = await db.$transaction([
+    db.sandbox.update({
+      where: { id: sandbox.id },
+      data: { config: config ?? {} },
+    }),
+    db.deployment.update({
+      where: { id: sandbox.deploymentId },
+      data: { installCfg },
+    }),
+  ]);
+
+  if (sandbox.kind === 'docker') {
+    killProcess(sandbox.deploymentId);
+    await removeDockerSandboxContainer(sandbox.id);
+    if (wasActive) {
+      await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), { awaitReady: false });
+    }
+  } else if (sandbox.kind === 'connector' && connectorFromConfig(config) && wasActive) {
+    await restartProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), { awaitReady: false });
+  }
+
+  revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function renameSandboxAction(formData: FormData) {

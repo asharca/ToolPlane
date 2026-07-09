@@ -8,9 +8,10 @@ import process from 'node:process';
 import pty from 'node-pty';
 import WebSocket from 'ws';
 
-const VERSION = '0.1.6';
+const VERSION = '0.1.7';
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
+const MAX_DOWNLOAD = 5_000_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 
@@ -67,6 +68,15 @@ function truncate(value) {
   return `${Buffer.from(text, 'utf8').subarray(0, MAX_OUTPUT).toString('utf8')}\n[output truncated]`;
 }
 
+function cleanEnv(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const env = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof raw === 'string') env[key] = raw;
+  }
+  return env;
+}
+
 function normalizeSandboxPath(raw = '.') {
   const input = String(raw || '.')
     .replace(/\\/g, '/')
@@ -105,7 +115,7 @@ function createRuntime(rootInput) {
       let timedOut = false;
       const child = spawn(shell, ['-lc', command], {
         cwd,
-        env: { ...process.env, TERM: process.env.TERM || 'xterm-256color' },
+        env: { ...process.env, ...cleanEnv(args.env), TERM: process.env.TERM || 'xterm-256color' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       const timer = setTimeout(() => {
@@ -161,6 +171,29 @@ function createRuntime(rootInput) {
     return { path: target.rel, bytes: Buffer.byteLength(content, 'utf8') };
   }
 
+  async function downloadFile(args = {}) {
+    const target = resolvePath(args.path);
+    const stat = await fs.stat(target.absolute);
+    if (!stat.isFile()) throw new Error('Path is not a file.');
+    if (stat.size > MAX_DOWNLOAD) throw new Error(`File is too large to download from the sidebar. Max ${MAX_DOWNLOAD} bytes.`);
+    const content = await fs.readFile(target.absolute);
+    return {
+      path: target.rel,
+      filename: path.basename(target.absolute),
+      encoding: 'base64',
+      content: content.toString('base64'),
+      size: stat.size,
+    };
+  }
+
+  async function deleteFile(args = {}) {
+    const target = resolvePath(args.path);
+    const stat = await fs.stat(target.absolute);
+    if (!stat.isFile()) throw new Error('Path is not a file.');
+    await fs.rm(target.absolute, { force: true });
+    return { path: target.rel, deleted: true };
+  }
+
   async function terminalCreate(ws, args = {}) {
     const terminalId = randomUUID();
     const cols = Math.min(Math.max(Number(args.cols) || 80, 20), 240);
@@ -173,6 +206,7 @@ function createRuntime(rootInput) {
       cwd: root,
       env: {
         ...process.env,
+        ...cleanEnv(args.env),
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
         LANG: process.env.LANG || 'C.UTF-8',
@@ -238,6 +272,10 @@ function createRuntime(rootInput) {
         return readFile(args);
       case 'write_file':
         return writeFile(args);
+      case 'download_file':
+        return downloadFile(args);
+      case 'delete_file':
+        return deleteFile(args);
       case 'terminal_create':
         return terminalCreate(ws, args);
       case 'terminal_input':
