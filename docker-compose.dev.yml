@@ -7,5 +7,4 @@ services:
 
   app:
     ports:
-      - '127.0.0.1:${APP_HOST_PORT:-10030}:3000'
       - '127.0.0.1:${CONNECTOR_WS_HOST_PORT:-9321}:9321'

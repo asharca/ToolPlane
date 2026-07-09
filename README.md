@@ -108,8 +108,9 @@ docker compose pull app
 docker compose up -d
 ```
 
-The Compose app is published on `http://localhost:10030` by default. Override
-`APP_HOST_PORT` if the host already uses that port.
+The Compose app is published on host port `10030` by default. Override
+`APP_HOST_PORT` if the host already uses that port, or set `APP_HOST_BIND` to
+bind a specific interface such as `127.0.0.1`.
 
 Set `TOOLPLANE_IMAGE` when you want to pin a specific tag, for example
 `ghcr.io/asharca/toolplane:sha-dc33d7f`. The published deployment image is

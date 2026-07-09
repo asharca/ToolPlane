@@ -37,14 +37,15 @@ services:
       # timeouts, which makes those MCPs exit with "unexpected EOF".
       - ./infra/socket-proxy/haproxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
 
-  # The app. Coolify routes to these container ports through its proxy; this
-  # production compose file intentionally does not publish host ports.
+  # The app. Publish the HTTP port so an external proxy can route to this host.
   app:
     image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
     expose:
       - '3000'
       - '9321'
+    ports:
+      - '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'
     restart: unless-stopped
     healthcheck:
       test:
