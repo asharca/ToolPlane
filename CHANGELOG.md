@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.3.1...toolplane-v0.4.0) (2026-07-09)
+
+
+### Features
+
+* extend sandbox env and file actions ([#16](https://github.com/asharca/ToolPlane/issues/16)) ([dfaca95](https://github.com/asharca/ToolPlane/commit/dfaca95b64d108690fc6bf888ffd9d149bbc23e2))
+
 ## [0.3.1](https://github.com/asharca/ToolPlane/compare/toolplane-v0.3.0...toolplane-v0.3.1) (2026-07-09)
 
 
