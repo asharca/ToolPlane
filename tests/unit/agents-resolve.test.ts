@@ -54,6 +54,25 @@ describe('resolveAgentTools', () => {
     expect(sandboxDeploymentIds).toEqual(['sandbox1']);
   });
 
+  it('uses a sandbox-native MCP linked sandbox as the default skill runtime target', () => {
+    const { deploymentIds, sandboxDeploymentIds } = resolveAgentTools({
+      servers: [
+        {
+          deploymentId: 'ocr-mcp',
+          deployment: {
+            id: 'ocr-mcp',
+            source: 'sandbox-mcp',
+            installCfg: { sandboxDeploymentId: 'sandbox1' },
+          },
+        },
+      ],
+      skills: [],
+      toolkits: [],
+    });
+    expect(deploymentIds).toEqual(['ocr-mcp']);
+    expect(sandboxDeploymentIds).toEqual(['sandbox1']);
+  });
+
   it('filters out skills where agentInvocable is false', () => {
     const s1 = skill('s1');
     const s2 = { installedSkill: { ...skill('s2').installedSkill, agentInvocable: false } };

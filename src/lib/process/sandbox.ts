@@ -8,6 +8,7 @@ export type McpNetwork = 'isolated' | 'none';
 // Dedicated bridge network for MCP containers — present egress to the internet
 // but not on the app/db compose network. `ensureSandboxNetwork()` creates it.
 export const MCP_NETWORK = 'mcp-sandbox';
+export const SANDBOX_WORKDIR = '/workspace';
 
 export const SANDBOX = {
   memory: '512m',
@@ -55,4 +56,12 @@ export function sandboxFlags(network: McpNetwork): string[] {
 
 export function envFlags(env: Record<string, string>): string[] {
   return Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+}
+
+export function sandboxContainerName(sandboxId: string): string {
+  return `toolplane-sandbox-${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+}
+
+export function sandboxVolumeName(sandboxId: string): string {
+  return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 }

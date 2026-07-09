@@ -8,7 +8,7 @@ const INSTALLED_SKILL_INCLUDE = {
 } as const;
 
 const TOOL_INCLUDE = {
-  servers: { select: { deploymentId: true } },
+  servers: { select: { deploymentId: true, deployment: { select: { id: true, source: true, installCfg: true } } } },
   skills: {
     select: {
       installedSkill: INSTALLED_SKILL_INCLUDE,
@@ -20,7 +20,7 @@ const TOOL_INCLUDE = {
         select: {
           id: true,
           name: true,
-          servers: { select: { deploymentId: true } },
+          servers: { select: { deploymentId: true, deployment: { select: { id: true, source: true, installCfg: true } } } },
           skills: {
             select: {
               installedSkill: INSTALLED_SKILL_INCLUDE,

@@ -22,6 +22,7 @@ const schema = z
     ref: z.string().trim().min(1),
     name: z.string().trim().min(1, 'name is required').max(80),
     startCommand: z.string().trim().default(''),
+    sandboxId: z.string().trim().default(''),
   })
   .superRefine((v, ctx) => {
     if (!isValidMcpRef(v.source, v.ref))
@@ -32,11 +33,16 @@ export type ParsedCustomMcp = {
   source: 'npm' | 'pypi' | 'github' | 'docker';
   ref: string;
   name: string;
-  installCfg: { startCommand: string } | null;
+  sandboxId: string | null;
+  installCfg: { startCommand?: string; mcpSource?: McpSource; sandboxId?: string } | null;
 };
 
 export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
   const v = schema.parse(raw);
-  const installCfg = v.source === 'docker' && v.startCommand ? { startCommand: v.startCommand } : null;
-  return { source: v.source, ref: v.ref, name: v.name, installCfg };
+  const startCommand = v.source === 'docker' && v.startCommand ? v.startCommand : undefined;
+  const sandboxId = v.sandboxId || null;
+  const installCfg = sandboxId
+    ? { ...(startCommand ? { startCommand } : {}), mcpSource: v.source, sandboxId }
+    : startCommand ? { startCommand } : null;
+  return { source: v.source, ref: v.ref, name: v.name, sandboxId, installCfg };
 }

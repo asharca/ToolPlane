@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
-import { MCP_NETWORK } from '@/lib/process/sandbox';
+import { buildSandboxMcpSpawnSpec, buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import { MCP_NETWORK, SANDBOX_WORKDIR } from '@/lib/process/sandbox';
 import {
   buildConnectorConfig,
   connectorClientCommand,
@@ -133,6 +133,42 @@ describe('resolveSpawnSpec', () => {
       expect(spec.args).toContain('none');
       expect(spec.args).not.toContain(MCP_NETWORK);
     }
+  });
+
+  it('sandbox MCP npm source runs inside the sandbox container workspace', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Fetch in lab',
+      source: 'sandbox-mcp',
+      sourceRef: 'mcp-server-fetch',
+      installCfg: {
+        mcpSource: 'npm',
+        sandboxId: 'sb1',
+        sandboxDeploymentId: 'sandbox-dep',
+        env: { TOKEN: 'x' },
+      },
+    });
+    expect(spec.kind).toBe('bridge');
+    if (spec.kind === 'bridge') {
+      expect(spec.command).toBe('docker');
+      expect(spec.args).toEqual(
+        expect.arrayContaining(['exec', '-i', '-w', SANDBOX_WORKDIR, 'TOKEN=x', 'toolplane-sandbox-sb1', 'npx', '-y', 'mcp-server-fetch']),
+      );
+    }
+  });
+
+  it('sandbox MCP docker source mounts the sandbox volume at /workspace', () => {
+    const { args } = buildSandboxMcpSpawnSpec({
+      source: 'docker',
+      ref: 'ghcr.io/acme/ocr-mcp:latest',
+      sandboxId: 'sb1',
+      volumeName: 'vol1',
+      env: { OCRPLANE_API_KEY: 'mk_x' },
+    });
+    expect(args).toEqual(
+      expect.arrayContaining(['run', '--rm', '-i', '--network', MCP_NETWORK, '--workdir', SANDBOX_WORKDIR, '-v', `vol1:${SANDBOX_WORKDIR}`, 'OCRPLANE_API_KEY=mk_x', 'ghcr.io/acme/ocr-mcp:latest']),
+    );
   });
 
   it('sandbox source resolves to the sandbox MCP server spec', () => {
