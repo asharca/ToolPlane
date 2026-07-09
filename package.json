@@ -13,6 +13,7 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
+    "skills:sync:tp": "tsx scripts/sync-tp-skills.ts",
     "skills:import:anthropic": "tsx scripts/import-anthropic-skills.ts",
     "mcp:import:common": "tsx scripts/import-common-mcp-servers.ts",
     "connector:dev": "node packages/connector/bin/connector.mjs",

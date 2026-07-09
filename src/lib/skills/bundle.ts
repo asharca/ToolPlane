@@ -273,13 +273,26 @@ type GithubEntry = {
 };
 
 async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { headers: { 'user-agent': 'toolplane-skill-import' } });
+  const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
+  const res = await fetch(url, {
+    headers: {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'toolplane-skill-import',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
   if (!res.ok) throw new Error(`GitHub request failed (${res.status}).`);
   return res.json();
 }
 
 async function fetchFile(url: string, filePath: string): Promise<Pick<SkillBundleFile, 'content' | 'encoding'>> {
-  const res = await fetch(url, { headers: { 'user-agent': 'toolplane-skill-import' } });
+  const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
+  const res = await fetch(url, {
+    headers: {
+      'user-agent': 'toolplane-skill-import',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
   if (!res.ok) throw new Error(`GitHub file download failed (${res.status}).`);
   const buffer = Buffer.from(await res.arrayBuffer());
   const contentType = res.headers.get('content-type') ?? '';

@@ -2,6 +2,8 @@ import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/auth/admin';
 import { listDirectorySkills } from '@/lib/admin/market';
+import { defaultTpSkillsSource } from '@/lib/skills/registry';
+import { SkillRegistrySync } from '@/components/admin/SkillRegistrySync';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +12,7 @@ export default async function AdminSkillsPage({ searchParams }: { searchParams: 
   await requireAdmin();
   const { q = '', page = '1' } = await searchParams;
   const { items, total, pageSize } = await listDirectorySkills({ page: Number(page) || 1, q });
+  const tpSkillsSource = defaultTpSkillsSource();
 
   return (
     <div className="space-y-4 px-8 py-6">
@@ -20,6 +23,7 @@ export default async function AdminSkillsPage({ searchParams }: { searchParams: 
           <Link href="/admin/skills/new" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{t('addSkill')}</Link>
         </div>
       </div>
+      <SkillRegistrySync source={tpSkillsSource} />
       <form className="flex gap-2"><input name="q" defaultValue={q} placeholder={t('search')} className="h-9 w-72 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" /><button className="h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700">{t('search')}</button></form>
       <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
         {items.map((s) => (
