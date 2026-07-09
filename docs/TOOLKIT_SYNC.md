@@ -495,8 +495,9 @@ $OPENCODE_CONFIG_DIR/opencode.json
 Hermes 原生支持 remote HTTP MCP，也有本地 skills 目录和 skill bundles。因此这里采用：
 
 1. MCP tools：写入 `~/.hermes/config.yaml` 的 `mcp_servers`。
-2. Skills：同步到 `~/.hermes/skills/toolplane/` 下的 ToolPlane category。
+2. Skills：同步到 `~/.hermes/skills/toolplane-<toolkit>/` 下；目录名优先使用 `SKILL.md` frontmatter 的 `name`，避免 Hermes prompt 里显示长 slug。
 3. Bundle：写入 `~/.hermes/skill-bundles/toolplane-<toolkit>.yaml`，把本 toolkit 同步出的 skills 组织成一个 Hermes bundle。
+4. Hook：写入 `hooks.on_session_start`，新 session 开始时静默运行同步脚本。
 
 安装后文件结构：
 
@@ -506,14 +507,15 @@ $HERMES_HOME or ~/.hermes/
 ├─ skill-bundles/
 │  └─ toolplane-<toolkit>.yaml
 ├─ skills/
-│  └─ toolplane/
-│     └─ toolplane-<toolkit>-<skill-slug>/
+│  └─ toolplane-<toolkit>/
+│     └─ <skill-name>/
 │        ├─ SKILL.md
 │        └─ scripts/...
 └─ toolplane/
    └─ toolplane-<toolkit>/
       ├─ .mcp.json
       └─ shared/
+         ├─ hook-sync.sh
          └─ sync.sh
 ```
 
@@ -550,10 +552,10 @@ mcp_servers:
 `sync.sh` 会把 skills 写入：
 
 ```txt
-~/.hermes/skills/toolplane/toolplane-<toolkit>-<skill-slug>/SKILL.md
+~/.hermes/skills/toolplane-<toolkit>/<skill-name>/SKILL.md
 ```
 
-如果 skill 有 bundle 附带文件，它们会写在同一个 skill 目录下。
+Hermes 查找 skill 时目录名很重要，但 prompt 展示又使用 `SKILL.md` 的 `name`。因此 Hermes 同步路径会读取 frontmatter `name` 作为目录名；如果缺失或不安全，再退回 baseline slug。如果 skill 有 bundle 附带文件，它们会写在同一个 skill 目录下。
 
 同步完成后安装脚本会扫描这些目录并写入 bundle：
 
@@ -561,8 +563,8 @@ mcp_servers:
 name: toolplane-devtools
 description: "ToolPlane toolkit devtools"
 skills:
-  - toolplane-devtools-pdf
-  - toolplane-devtools-github
+  - toolplane-devtools/pdf
+  - toolplane-devtools/github
 instruction: |
   Use the ToolPlane toolkit "devtools".
   Its MCP tools are available through the "toolplane-devtools" MCP server.
@@ -574,7 +576,28 @@ instruction: |
 hermes bundles reload
 ```
 
-Hermes 文档暴露的是运行中 slash command，而不是可写入的 SessionStart hook。因此安装脚本会安装时同步一次，并留下：
+### 自动同步 hook
+
+安装脚本还会在 `config.yaml` 里写入同一个 marker block 下的 shell hook：
+
+```yaml
+hooks:
+  on_session_start:
+    # BEGIN TOOLPLANE toolplane-devtools
+    - command: "bash ~/.hermes/toolplane/toolplane-devtools/shared/hook-sync.sh"
+      timeout: 30
+    # END TOOLPLANE toolplane-devtools
+```
+
+`hook-sync.sh` 会：
+
+1. 丢弃 Hermes 传入的 hook JSON payload。
+2. 静默运行 `shared/sync.sh`。
+3. 按同步后的 skill 目录重写 `skill-bundles/toolplane-<toolkit>.yaml`。
+4. 删除 `.skills_prompt_snapshot.json`，让下一次 prompt 重新读取最新 skills index。
+5. 输出 `{}`，满足 Hermes shell hook stdout JSON 协议且不注入额外上下文。
+
+首次运行该 hook 时，Hermes 可能要求用户 approve；也可以用 `--accept-hooks` 或 `HERMES_ACCEPT_HOOKS=1` 预批准。安装脚本仍会安装时同步一次，并留下手动同步入口：
 
 ```bash
 ~/.hermes/toolplane/toolplane-<toolkit>/shared/sync.sh
@@ -586,8 +609,6 @@ Hermes 文档暴露的是运行中 slash command，而不是可写入的 Session
 /reload-mcp
 /reload-skills
 ```
-
-如果后续 Hermes 支持启动 hook 或后台 sync command，可以把这层升级成真正的 session-start 自动刷新。
 
 ---
 

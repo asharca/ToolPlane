@@ -171,6 +171,12 @@ describe('buildToolkitInstallScript', () => {
     expect(sync).toContain('PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"');
     expect(sync).toContain('DEFAULT_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills/toolplane-tk"');
     expect(sync).toContain('DEFAULT_SKILL_DIR_PREFIX=""');
+    const hookSync = decodeFile(script, 'shared/hook-sync.sh', 'BUNDLE_DIR');
+    expect(hookSync).toContain('TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR"');
+    expect(hookSync).toContain('rm -f "$HERMES_HOME_DIR/.skills_prompt_snapshot.json"');
+    expect(script).toContain('on_session_start:');
+    expect(script).toContain('HOOK_COMMAND=');
+    expect(script).toContain('shared/hook-sync.sh');
     expect(script).toContain('$HOME/.local/bin/hermes');
   });
 

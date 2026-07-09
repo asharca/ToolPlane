@@ -40,6 +40,59 @@ function mcpJson(pluginName: string, mcpUrl: string, token: string): string {
   );
 }
 
+function buildHermesHookSyncScript(pluginName: string, toolkitSlug: string): string {
+  return String.raw`#!/usr/bin/env bash
+# ${SITE.compactName} Hermes hook sync — stdout must stay JSON for shell hooks.
+set -eo pipefail
+
+cat >/dev/null || true
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+BUNDLE_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+HERMES_HOME_DIR="$HERMES_HOME"
+if [ -z "$HERMES_HOME_DIR" ]; then
+  HERMES_HOME_DIR="$HOME/.hermes"
+fi
+SKILLS_DIR="$HERMES_HOME_DIR/skills/${pluginName}"
+BUNDLE_FILE="$HERMES_HOME_DIR/skill-bundles/${pluginName}.yaml"
+
+TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR" TOOLPLANE_SKILLS_DIR="$SKILLS_DIR" bash "$BUNDLE_DIR/shared/sync.sh" >/dev/null 2>&1 || true
+
+if command -v node >/dev/null 2>&1; then
+  SKILLS_DIR="$SKILLS_DIR" BUNDLE_FILE="$BUNDLE_FILE" TOOLKIT="${toolkitSlug}" SERVER_NAME="${pluginName}" node <<'NODE' >/dev/null 2>&1 || true
+const fs = require('fs');
+const path = require('path');
+const skillsDir = process.env.SKILLS_DIR;
+const bundleFile = process.env.BUNDLE_FILE;
+const toolkit = process.env.TOOLKIT;
+const server = process.env.SERVER_NAME;
+fs.mkdirSync(path.dirname(bundleFile), { recursive: true });
+const skills = fs.existsSync(skillsDir)
+  ? fs.readdirSync(skillsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+  : [];
+const q = (value) => JSON.stringify(String(value));
+const yaml = [
+  'name: ' + server,
+  'description: ' + q('ToolPlane toolkit ' + toolkit),
+  'skills:',
+  ...skills.map((skill) => '  - ' + server + '/' + skill),
+  'instruction: |',
+  '  Use the ToolPlane toolkit "' + toolkit + '".',
+  '  Its MCP tools are available through the "' + server + '" MCP server.',
+  '',
+].join('\n');
+fs.writeFileSync(bundleFile, yaml);
+NODE
+fi
+
+rm -f "$HERMES_HOME_DIR/.skills_prompt_snapshot.json" 2>/dev/null || true
+printf '{}\n'
+`;
+}
+
 export function buildToolkitInstallScript(opts: InstallScriptOptions): string {
   const client = resolveClient(opts.client);
   if (client === 'codex') return buildCodexInstallScript(opts);
@@ -418,6 +471,7 @@ export function buildHermesInstallScript(opts: InstallScriptOptions): string {
   const pluginName = `toolplane-${toolkitSlug}`;
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
+  const hookSyncSh = buildHermesHookSyncScript(pluginName, toolkitSlug);
   const syncSh = buildSyncScript({
     apiBase: base,
     workspaceSlug,
@@ -452,16 +506,18 @@ main() {
   mkdir -p "$BUNDLE_DIR/shared" "$SKILLS_DIR" "$BUNDLES_DIR" "$(dirname "$CONFIG_PATH")"
   printf '%s' '${b64(mcpConfigJson)}' | base64 -d > "$BUNDLE_DIR/.mcp.json"
   printf '%s' '${b64(syncSh)}' | base64 -d > "$BUNDLE_DIR/shared/sync.sh"
-  chmod 755 "$BUNDLE_DIR/shared/sync.sh"
+  printf '%s' '${b64(hookSyncSh)}' | base64 -d > "$BUNDLE_DIR/shared/hook-sync.sh"
+  chmod 755 "$BUNDLE_DIR/shared/sync.sh" "$BUNDLE_DIR/shared/hook-sync.sh"
   echo "  ✓ sync bundle ready at $BUNDLE_DIR"
 
-  CONFIG_PATH="$CONFIG_PATH" SERVER_NAME="${pluginName}" MCP_URL="${mcpUrl}" TOKEN="${token}" node <<'NODE'
+  CONFIG_PATH="$CONFIG_PATH" SERVER_NAME="${pluginName}" MCP_URL="${mcpUrl}" TOKEN="${token}" HOOK_COMMAND="bash \"$BUNDLE_DIR/shared/hook-sync.sh\"" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const file = process.env.CONFIG_PATH;
 const server = process.env.SERVER_NAME;
 const url = process.env.MCP_URL;
 const token = process.env.TOKEN;
+const hookCommand = process.env.HOOK_COMMAND;
 fs.mkdirSync(path.dirname(file), { recursive: true });
 let src = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 const begin = '# BEGIN TOOLPLANE ' + server;
@@ -496,8 +552,38 @@ if (idx >= 0) {
   out = [...(lines.length === 1 && lines[0] === '' ? [] : lines), '', 'mcp_servers:', ...entry];
 }
 fs.writeFileSync(file, out.join('\n').replace(/^\n+/, '') + '\n');
+
+src = fs.readFileSync(file, 'utf8').replace(/\s+$/g, '');
+let hookLines = src ? src.split(/\r?\n/) : [];
+const hookBlock = [
+  '    ' + begin,
+  '    - command: ' + JSON.stringify(hookCommand),
+  '      timeout: 30',
+  '    ' + end,
+];
+let hooksIdx = hookLines.findIndex((line) => /^hooks:\s*(?:\{\}\s*)?(?:#.*)?$/.test(line));
+if (hooksIdx < 0) {
+  hookLines = [...(hookLines.length ? hookLines : []), '', 'hooks:', '  on_session_start:', ...hookBlock];
+} else {
+  hookLines[hooksIdx] = 'hooks:';
+  let nextTop = hookLines.length;
+  for (let i = hooksIdx + 1; i < hookLines.length; i += 1) {
+    if (/^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(hookLines[i])) {
+      nextTop = i;
+      break;
+    }
+  }
+  const eventIdx = hookLines.findIndex((line, i) => i > hooksIdx && i < nextTop && /^  on_session_start:\s*(?:#.*)?$/.test(line));
+  if (eventIdx >= 0) {
+    hookLines.splice(eventIdx + 1, 0, ...hookBlock);
+  } else {
+    hookLines.splice(hooksIdx + 1, 0, '  on_session_start:', ...hookBlock);
+  }
+}
+fs.writeFileSync(file, hookLines.join('\n').replace(/^\n+/, '') + '\n');
 NODE
   echo "  ✓ Hermes MCP server configured in $CONFIG_PATH"
+  echo "  ✓ Hermes on_session_start sync hook configured in $CONFIG_PATH"
 
   TOOLPLANE_SYNC_ROOT="$BUNDLE_DIR" TOOLPLANE_SKILLS_DIR="$SKILLS_DIR" bash "$BUNDLE_DIR/shared/sync.sh" || true
 

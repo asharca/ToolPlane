@@ -216,6 +216,8 @@ describe('generated Hermes installer', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-hermes-install-'));
     const bin = path.join(tmp, 'bin');
     mkdirSync(bin);
+    mkdirSync(path.join(tmp, '.hermes'), { recursive: true });
+    writeFileSync(path.join(tmp, '.hermes/config.yaml'), 'hooks: {}\n');
     writeFakeCurl(bin, {
       slug: 'anthropic-pdf',
       content: '---\nname: pdf\ndescription: PDF work\n---\n\n# PDF',
@@ -246,12 +248,24 @@ describe('generated Hermes installer', () => {
     expect(config).toContain('  toolplane-tk:');
     expect(config).toContain('    url: "https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp"');
     expect(config).toContain('      Authorization: "Bearer sk_user_HERMES"');
+    expect(config).toContain('hooks:');
+    expect(config).toContain('  on_session_start:');
+    expect(config).toContain('    - command: "bash \\"');
+    expect(config).toContain('/.hermes/toolplane/toolplane-tk/shared/hook-sync.sh\\""');
 
     const mcp = readJson('.hermes/toolplane/toolplane-tk/.mcp.json') as {
       mcpServers: Record<string, { headers: { Authorization: string } }>;
     };
     expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
     expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
+    const hookSync = path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/hook-sync.sh');
+    expect(statSync(hookSync).mode & 0o111).toBeTruthy();
+    const hookOut = execFileSync('/bin/bash', [hookSync], {
+      env: { ...process.env, HOME: tmp, PATH: `${bin}:${process.env.PATH ?? ''}` },
+      input: '{}\n',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString();
+    expect(hookOut).toBe('{}\n');
     const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane-tk/pdf/SKILL.md'), 'utf8');
     expect(skill).not.toContain('name: toolplane-tk-alpha');
     expect(skill).toContain('name: pdf');
