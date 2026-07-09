@@ -215,6 +215,7 @@ export async function startProcess(
             SANDBOX_IMAGE: spec.image ?? '',
             SANDBOX_VOLUME: spec.volumeName ?? '',
             SANDBOX_NETWORK: spec.network,
+            SANDBOX_ENV_JSON: JSON.stringify(spec.env ?? {}),
             SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
             SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
             SANDBOX_CONNECTOR_REMOTE_ROOT: spec.connector?.remoteRoot ?? '',

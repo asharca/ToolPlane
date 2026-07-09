@@ -18,7 +18,9 @@ import {
   restartSandboxAction,
   startSandboxAction,
   stopSandboxAction,
+  updateSandboxEnvAction,
 } from '@/lib/sandboxes/actions';
+import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { mcpRpc } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -103,6 +105,7 @@ export default async function SandboxDetailPage({
   const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
   const running = status === 'running' || status === 'provisioning';
   const connector = connectorFromConfig(sandbox.config);
+  const envText = sandboxEnvToText(readSandboxEnv(sandbox.config));
   const disabledLegacy = sandbox.kind === 'host' || sandbox.kind === 'ssh' || (sandbox.kind === 'connector' && !connector);
   const canUseConsole = status === 'running' && !disabledLegacy;
   const initialDirectory =
@@ -279,6 +282,31 @@ export default async function SandboxDetailPage({
               </div>
             </DashboardPanel>
           ) : null}
+
+          <DashboardPanel
+            title={t('environmentVariables')}
+            description={t('changesRestartTheSandboxContainerButKeepFiles')}
+          >
+            <form action={updateSandboxEnvAction} className="space-y-3">
+              <input type="hidden" name="workspace" value={slug} />
+              <input type="hidden" name="sandboxId" value={sandbox.id} />
+              <textarea
+                name="env"
+                defaultValue={envText}
+                rows={5}
+                spellCheck={false}
+                placeholder={t('envPlaceholder')}
+                className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                aria-label={t('environmentVariables')}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
+                <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+                  {t('saveEnvironment')}
+                </SubmitButton>
+              </div>
+            </form>
+          </DashboardPanel>
 
           <SandboxConsole
             deploymentId={sandbox.deploymentId}

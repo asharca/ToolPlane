@@ -9,6 +9,7 @@ import {
   resolveSandboxImage,
 } from '@/lib/sandboxes/images';
 import { parseSandboxDirectoryText } from '@/lib/sandboxes/file-list';
+import { parseSandboxEnvText, readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 
 describe('sandboxFlags', () => {
   it('isolated: hardening flags + the dedicated sandbox network', () => {
@@ -42,6 +43,22 @@ describe('envFlags', () => {
   });
   it('empty for no env', () => {
     expect(envFlags({})).toEqual([]);
+  });
+});
+
+describe('sandbox env config', () => {
+  it('parses KEY=value lines, comments, and empty lines', () => {
+    expect(parseSandboxEnvText('A=1\n# comment\n\nB=two=parts')).toEqual({
+      A: '1',
+      B: 'two=parts',
+    });
+  });
+
+  it('round-trips stored env as sorted text', () => {
+    const env = readSandboxEnv({ env: { ZED: 'last', A: 'first', 'invalid-key': 'nope', N: 42 } });
+
+    expect(env).toEqual({ A: 'first', ZED: 'last' });
+    expect(sandboxEnvToText(env)).toBe('A=first\nZED=last');
   });
 });
 

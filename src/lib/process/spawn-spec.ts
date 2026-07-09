@@ -18,6 +18,7 @@ export type SpawnSpec =
       image?: string;
       volumeName?: string;
       network: McpNetwork;
+      env: Record<string, string>;
       connector?: SandboxConnectorConfig;
     };
 
@@ -104,6 +105,7 @@ function readSandboxCfg(installCfg: unknown): {
   image?: string;
   volumeName?: string;
   network: McpNetwork;
+  env: Record<string, string>;
   connector?: SandboxConnectorConfig;
 } {
   const c = (installCfg ?? {}) as {
@@ -112,6 +114,7 @@ function readSandboxCfg(installCfg: unknown): {
     image?: string;
     volumeName?: string;
     network?: string;
+    env?: Record<string, string>;
   };
   const connector = connectorFromConfig(installCfg);
   return {
@@ -120,6 +123,7 @@ function readSandboxCfg(installCfg: unknown): {
     image: c.image,
     volumeName: c.volumeName,
     network: c.network === 'none' ? 'none' : 'isolated',
+    env: c.env ?? {},
     connector: connector ?? undefined,
   };
 }
@@ -132,10 +136,11 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       name: d.name ?? 'Sandbox',
       sandboxId: cfg.sandboxId,
       sandboxKind: cfg.kind,
-      image: cfg.image,
-      volumeName: cfg.volumeName,
       network: cfg.network,
-      connector: cfg.connector,
+      env: cfg.env,
+      ...(cfg.image ? { image: cfg.image } : {}),
+      ...(cfg.volumeName ? { volumeName: cfg.volumeName } : {}),
+      ...(cfg.connector ? { connector: cfg.connector } : {}),
     };
   }
 
