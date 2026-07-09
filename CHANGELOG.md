@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.2...toolplane-v0.3.0) (2026-07-09)
+
+
+### Features
+
+* add tp-skills registry sync ([#12](https://github.com/asharca/ToolPlane/issues/12)) ([f8aa555](https://github.com/asharca/ToolPlane/commit/f8aa5550a644c0b4144404829c329e71ab4123dc))
+
+
+### Bug Fixes
+
+* expose compose app port ([c71d1fe](https://github.com/asharca/ToolPlane/commit/c71d1fe9350d626150ee5c8beff557e93e0924f8))
+* update compose port contract test ([cde4ca7](https://github.com/asharca/ToolPlane/commit/cde4ca71c474eb15f3c8d0c8d2e11394bf7ff48d))
+
 ## [0.2.2](https://github.com/asharca/ToolPlane/compare/toolplane-v0.2.1...toolplane-v0.2.2) (2026-07-08)
 
 
