@@ -110,16 +110,17 @@ CONNECTOR_WS_PORT        default 9321
 CONNECTOR_WS_PUBLIC_URL  optional explicit public ws:// or wss:// URL
 ```
 
-For local Docker debugging, `docker-compose.dev.yml` publishes the broker port:
+`docker-compose.yml` publishes the app HTTP port with `APP_HOST_PORT`, defaulting
+to `10030`. For local Docker debugging, `docker-compose.dev.yml` also publishes
+the broker port:
 
 ```yaml
 app:
   ports:
-    - '3000:3000'
-    - '${CONNECTOR_WS_PORT:-9321}:${CONNECTOR_WS_PORT:-9321}'
+    - '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'
+    - '127.0.0.1:${CONNECTOR_WS_HOST_PORT:-9321}:9321'
 ```
 
-The production `docker-compose.yml` intentionally does not publish host ports.
 For production behind Coolify or another reverse proxy, route the broker's
 container port and set `CONNECTOR_WS_PUBLIC_URL` to the public WebSocket
 endpoint, for example:
