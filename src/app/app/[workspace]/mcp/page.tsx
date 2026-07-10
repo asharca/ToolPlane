@@ -4,6 +4,7 @@ import { getTranslations } from 'next-intl/server';
 import { Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
+import { listSandboxes } from '@/lib/sandboxes/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
@@ -48,7 +49,17 @@ export default async function McpServersPage({
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
-  const deployments = await getDeployments(ws.id);
+  const [deployments, sandboxes] = await Promise.all([
+    getDeployments(ws.id),
+    listSandboxes(ws.id),
+  ]);
+  const dockerSandboxOptions = sandboxes
+    .filter((sandbox) => sandbox.kind === 'docker')
+    .map((sandbox) => ({
+      id: sandbox.id,
+      name: sandbox.name,
+      status: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status),
+    }));
   const anyProvisioning = deployments.some(
     (d) => effectiveStatus(d.id, d.status) === 'provisioning',
   );
@@ -65,7 +76,7 @@ export default async function McpServersPage({
                 <Store className="size-4" />
                 {t('browseToolplane')}
               </Link>
-              <DeployCustomMcpDialog slug={slug} />
+              <DeployCustomMcpDialog slug={slug} sandboxes={dockerSandboxOptions} />
             </>
           }
         >
@@ -86,7 +97,7 @@ export default async function McpServersPage({
                   <Store className="size-4" />
                   {t('browseToolplane')}
                 </Link>
-                <DeployCustomMcpDialog slug={slug} />
+                <DeployCustomMcpDialog slug={slug} sandboxes={dockerSandboxOptions} />
               </>
             }
           />

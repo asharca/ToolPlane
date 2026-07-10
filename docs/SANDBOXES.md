@@ -129,6 +129,24 @@ endpoint, for example:
 wss://example.com/connect
 ```
 
+## Sandbox-native MCP deployments
+
+Custom MCP deployments can be attached to a Docker sandbox at creation time.
+ToolPlane still exposes them as ordinary MCP deployments, but their file
+workspace is the sandbox workspace:
+
+- npm, GitHub, and PyPI sources are started with `docker exec` inside the
+  sandbox container at `/workspace`.
+- Docker-image MCP sources run as a sidecar with the sandbox volume mounted at
+  `/workspace`, so file paths match the sandbox even though the process is in
+  its own image.
+- Skill scripts attached to the same agent also use that linked sandbox by
+  default, so `skill_run_script` and MCP tools see the same files.
+
+This is the preferred pattern for tools that accept paths, such as OCR or code
+analysis MCPs. The agent should pass `/workspace/...` or relative sandbox paths
+instead of copying large files through chat context.
+
 and route that endpoint to the broker.
 
 All generated connector sandboxes store:

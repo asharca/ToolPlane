@@ -4,7 +4,7 @@ import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
 describe('parseCustomMcpInput', () => {
   it('npm package', () => {
     expect(parseCustomMcpInput({ source: 'npm', ref: '@scope/server', name: 'S' })).toEqual({
-      source: 'npm', ref: '@scope/server', name: 'S', installCfg: null,
+      source: 'npm', ref: '@scope/server', name: 'S', sandboxId: null, installCfg: null,
     });
   });
   it('pypi package', () => {
@@ -15,6 +15,15 @@ describe('parseCustomMcpInput', () => {
   });
   it('docker image + startCommand stored in installCfg', () => {
     expect(parseCustomMcpInput({ source: 'docker', ref: 'mcp/slack', name: 'D', startCommand: 'node a.js' }).installCfg).toEqual({ startCommand: 'node a.js' });
+  });
+  it('sandbox id stores the underlying MCP source in installCfg', () => {
+    expect(parseCustomMcpInput({ source: 'docker', ref: 'ghcr.io/acme/ocr-mcp:latest', name: 'OCR', sandboxId: 'sb1' })).toEqual({
+      source: 'docker',
+      ref: 'ghcr.io/acme/ocr-mcp:latest',
+      name: 'OCR',
+      sandboxId: 'sb1',
+      installCfg: { mcpSource: 'docker', sandboxId: 'sb1' },
+    });
   });
   it('rejects non-github url for github source', () => {
     expect(() => parseCustomMcpInput({ source: 'github', ref: 'https://evil.com/x/y', name: 'G' })).toThrow();

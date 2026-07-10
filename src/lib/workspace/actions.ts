@@ -16,6 +16,7 @@ import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
+import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -34,6 +35,21 @@ async function deploymentInWorkspace(deploymentId: string, workspaceId: string) 
     where: { id: deploymentId, workspaceId },
     include: { server: { select: { name: true } } },
   });
+}
+
+async function ensureLinkedSandboxRunning(
+  deployment: { source: string | null; installCfg: unknown },
+  workspaceId: string,
+) {
+  if (deployment.source !== 'sandbox-mcp') return;
+  const cfg = (deployment.installCfg ?? {}) as { sandboxId?: string };
+  if (!cfg.sandboxId) return;
+  const sandbox = await db.sandbox.findFirst({
+    where: { id: cfg.sandboxId, workspaceId, kind: 'docker' },
+    include: { deployment: true },
+  });
+  if (!sandbox) return;
+  await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: true });
 }
 
 export async function deployServerAction(formData: FormData) {
@@ -99,9 +115,26 @@ export async function deployCustomServerAction(formData: FormData) {
       ref: String(formData.get('ref') ?? ''),
       name: String(formData.get('name') ?? ''),
       startCommand: String(formData.get('startCommand') ?? ''),
+      sandboxId: String(formData.get('sandboxId') ?? ''),
     });
   } catch {
     return;
+  }
+
+  let installCfg: Record<string, unknown> | null = parsed.installCfg;
+  if (parsed.sandboxId) {
+    const sandbox = await db.sandbox.findFirst({
+      where: { id: parsed.sandboxId, workspaceId: ctx.ws.id, kind: 'docker' },
+      include: { deployment: true },
+    });
+    if (!sandbox) return;
+    installCfg = {
+      ...(installCfg ?? {}),
+      sandboxId: sandbox.id,
+      sandboxDeploymentId: sandbox.deploymentId,
+      sandboxVolumeName: sandboxVolumeName(sandbox.id),
+    };
+    await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: true });
   }
 
   const dep = await db.deployment.create({
@@ -109,9 +142,9 @@ export async function deployCustomServerAction(formData: FormData) {
       workspaceId: ctx.ws.id,
       serverId: null,
       name: parsed.name,
-      source: parsed.source,
+      source: parsed.sandboxId ? 'sandbox-mcp' : parsed.source,
       sourceRef: parsed.ref,
-      installCfg: parsed.installCfg ?? undefined,
+      installCfg: installCfg ? (installCfg as Prisma.InputJsonValue) : undefined,
       status: 'provisioning',
     },
   });
@@ -196,6 +229,7 @@ export async function startDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
+  await ensureLinkedSandboxRunning(dep, ctx.ws.id);
   await startProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
@@ -224,6 +258,7 @@ export async function restartDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
+  await ensureLinkedSandboxRunning(dep, ctx.ws.id);
   await restartProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
@@ -240,6 +275,7 @@ export async function rebuildDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
+  await ensureLinkedSandboxRunning(dep, ctx.ws.id);
   await restartProcess(dep.id, resolveSpawnSpec(dep, true), { awaitReady: false });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);

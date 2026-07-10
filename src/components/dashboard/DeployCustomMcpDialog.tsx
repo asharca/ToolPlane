@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, AlertTriangle } from 'lucide-react';
+import { Plus, X, AlertTriangle, Box } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
 import { SubmitButton } from './SubmitButton';
 
@@ -18,14 +18,18 @@ const field =
   'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
 
-export function DeployCustomMcpDialog({ slug }: { slug: string }) {
+type SandboxOption = { id: string; name: string; status: string };
+
+export function DeployCustomMcpDialog({ slug, sandboxes = [] }: { slug: string; sandboxes?: SandboxOption[] }) {
   const t = useTranslations('console.mcp');
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState('npm');
   const [name, setName] = useState('');
+  const [runInSandbox, setRunInSandbox] = useState(false);
   const current = SOURCES.find((s) => s.key === source) ?? SOURCES[0];
   const slugPreview =
     name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mcp-server';
+  const canRunInSandbox = sandboxes.length > 0;
 
   return (
     <>
@@ -91,6 +95,39 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                       <input id="startCommand" name="startCommand" placeholder="node dist/index.js" className={`${field} font-mono`} />
                     </div>
                   ) : null}
+
+                  <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
+                    <label className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 size-4 rounded border-zinc-300"
+                        checked={runInSandbox}
+                        disabled={!canRunInSandbox}
+                        onChange={(e) => setRunInSandbox(e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                          <Box className="size-4" />
+                          {t('runInsideSandbox')}
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                          {canRunInSandbox ? t('runInsideSandboxDescription') : t('noDockerSandboxesAvailable')}
+                        </span>
+                      </span>
+                    </label>
+                    {runInSandbox && canRunInSandbox ? (
+                      <div className="mt-3">
+                        <label htmlFor="sandboxId" className={labelCls}>{t('sandbox')}</label>
+                        <select id="sandboxId" name="sandboxId" required className={field} defaultValue={sandboxes[0]?.id ?? ''}>
+                          {sandboxes.map((sandbox) => (
+                            <option key={sandbox.id} value={sandbox.id}>
+                              {sandbox.name} ({sandbox.status})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
 
                   <div>
                     <label htmlFor="name" className={labelCls}>{t('serverName')}</label>

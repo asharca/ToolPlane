@@ -1,15 +1,9 @@
 import 'server-only';
 import { spawn } from 'node:child_process';
+import { sandboxContainerName, sandboxVolumeName } from '@/lib/process/sandbox';
 
 export { DEFAULT_SANDBOX_IMAGE } from './images';
-
-export function sandboxVolumeName(sandboxId: string): string {
-  return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-}
-
-export function sandboxContainerName(sandboxId: string): string {
-  return `toolplane-sandbox-${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-}
+export { sandboxContainerName, sandboxVolumeName };
 
 function dockerEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'production' };
