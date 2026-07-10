@@ -4,7 +4,7 @@ import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
 import { appendMessage } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
-import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
+import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { buildModel } from '@/lib/agents/model';
 import { resolveMaxSteps } from '@/lib/agents/constants';
@@ -62,11 +62,11 @@ export async function POST(
   const model = buildModel(agent.provider, agent.model);
 
   // v6: convertToModelMessages is async (returns Promise<ModelMessage[]>)
-  const modelMessages = await convertToModelMessages(messages);
+  const modelMessages = prependSystemModelMessage(system, await convertToModelMessages(messages));
 
   const result = streamText({
     model,
-    system: system || undefined,
+    allowSystemInMessages: true,
     messages: modelMessages,
     tools,
     stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),
