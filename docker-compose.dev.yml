@@ -4,7 +4,3 @@ services:
       # Bind to localhost only so the dev database is reachable from the host
       # without exposing it to the LAN.
       - '127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432'
-
-  app:
-    ports:
-      - '127.0.0.1:${CONNECTOR_WS_HOST_PORT:-9321}:9321'

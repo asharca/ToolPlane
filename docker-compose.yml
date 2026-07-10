@@ -46,6 +46,7 @@ services:
       - '9321'
     ports:
       - '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'
+      - '${CONNECTOR_WS_HOST_BIND:-0.0.0.0}:${CONNECTOR_WS_HOST_PORT:-9321}:9321'
     restart: unless-stopped
     healthcheck:
       test:
