@@ -844,6 +844,8 @@
       "connectorSetup": "连接器设置",
       "runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally": "在用户机器上运行此命令。客户端通过 WebSocket 回连平台并在本地执行沙箱操作。",
       "runOnTheUserMachine": "在用户机器上运行",
+      "macosLinuxShell": "macOS / Linux shell",
+      "windowsPowerShell": "Windows PowerShell",
       "generateAFreshConnectionCommandToMintATokenForThisSandbox": "生成新的连接命令以为此沙箱铸造令牌。",
       "generating": "生成中…",
       "generateCommand": "生成命令",

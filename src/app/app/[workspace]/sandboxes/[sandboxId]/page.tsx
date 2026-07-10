@@ -9,6 +9,7 @@ import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxe
 import {
   connectorClientCommand,
   connectorFromConfig,
+  connectorPowerShellCommand,
   type SandboxConnectorConfig,
 } from '@/lib/sandboxes/connector';
 import {
@@ -246,7 +247,10 @@ export default async function SandboxDetailPage({
             >
               <div className="grid gap-4 lg:grid-cols-2">
                 {token ? (
-                  <CommandBlock label={t('runOnTheUserMachine')} command={connectorClientCommand(connector, token)} />
+                  <div className="space-y-3">
+                    <CommandBlock label={t('macosLinuxShell')} command={connectorClientCommand(connector, token)} />
+                    <CommandBlock label={t('windowsPowerShell')} command={connectorPowerShellCommand(connector, token)} />
+                  </div>
                 ) : (
                   <div className="rounded-md border border-border bg-background px-3 py-3">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

@@ -97,7 +97,11 @@ function shellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
+function powershellArg(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function connectorClientCommandParts(config: SandboxConnectorConfig, token: string): string[] {
   return [
     'npx',
     '-y',
@@ -110,8 +114,16 @@ export function connectorClientCommand(config: SandboxConnectorConfig, token: st
     '--token',
     shellArg(token),
     '--root',
-    shellArg(config.remoteRoot),
-  ].join(' ');
+    config.remoteRoot,
+  ];
+}
+
+export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
+  return connectorClientCommandParts(config, token).map(shellArg).join(' ');
+}
+
+export function connectorPowerShellCommand(config: SandboxConnectorConfig, token: string): string {
+  return connectorClientCommandParts(config, token).map(powershellArg).join(' ');
 }
 
 export function connectorSourceRef(config: SandboxConnectorConfig): string {
