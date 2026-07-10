@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.4.0...toolplane-v0.5.0) (2026-07-10)
+
+
+### Features
+
+* add powershell connector support ([#19](https://github.com/asharca/ToolPlane/issues/19)) ([6ab6f58](https://github.com/asharca/ToolPlane/commit/6ab6f58aaff3b344c08a1ef3d8190b51f841dc7c))
+* streamline UI and source links ([#21](https://github.com/asharca/ToolPlane/issues/21)) ([4eee90f](https://github.com/asharca/ToolPlane/commit/4eee90fa114fc5f4648e0b8f947cdbf3fe09505b))
+
+
+### Bug Fixes
+
+* publish connector broker port ([#20](https://github.com/asharca/ToolPlane/issues/20)) ([a33af0b](https://github.com/asharca/ToolPlane/commit/a33af0b643353dd61fd21b2164aab555683466ac))
+* send agent system prompt as chat message ([#18](https://github.com/asharca/ToolPlane/issues/18)) ([f4cbe1c](https://github.com/asharca/ToolPlane/commit/f4cbe1c609b998043622d7ab270d14af077a2d94))
+
 ## [0.4.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.3.1...toolplane-v0.4.0) (2026-07-09)
 
 
