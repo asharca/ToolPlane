@@ -39,6 +39,7 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).toContain("- '9321'");
     expect(compose).toContain('ports:');
     expect(compose).toContain("- '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'");
+    expect(compose).toContain("- '${CONNECTOR_WS_HOST_BIND:-0.0.0.0}:${CONNECTOR_WS_HOST_PORT:-9321}:9321'");
     expect(compose).toContain('http://127.0.0.1:3000/api/v1/health');
     expect(compose).toContain('TOOLPLANE_IMAGE: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
     expect(compose).toContain('TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}');
