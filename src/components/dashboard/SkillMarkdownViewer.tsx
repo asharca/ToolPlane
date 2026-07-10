@@ -3,9 +3,9 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { Code2, Download, Eye } from 'lucide-react';
-import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import { CopyButton } from './CopyButton';
+import { SafeStreamdown } from './SafeStreamdown';
 import { updateSkillContentAction } from '@/lib/skills/actions';
 
 export function SkillMarkdownViewer({
@@ -71,9 +71,9 @@ export function SkillMarkdownViewer({
 
       {mode === 'rendered' ? (
         <div className="prose prose-sm max-w-none bg-card p-5 leading-7 dark:prose-invert sm:p-6">
-          <Streamdown mode="static" plugins={{ code }}>
+          <SafeStreamdown mode="static" plugins={{ code }}>
             {renderedMarkdown}
-          </Streamdown>
+          </SafeStreamdown>
         </div>
       ) : editable ? (
         <form action={updateSkillContentAction} className="space-y-3 bg-zinc-950 p-5 sm:p-6">

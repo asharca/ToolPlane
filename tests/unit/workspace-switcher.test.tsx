@@ -6,6 +6,10 @@ vi.mock('@/lib/workspace/actions', () => ({
   createWorkspaceAction: vi.fn(),
 }));
 
+vi.mock('@/lib/auth/actions', () => ({
+  logoutAction: vi.fn(),
+}));
+
 import { WorkspaceSwitcher } from '@/components/dashboard/WorkspaceSwitcher';
 
 const workspaces = [
@@ -46,8 +50,23 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
     await userEvent.click(screen.getByRole('button', { name: /Acme/ }));
-    await userEvent.click(screen.getByRole('button', { name: /create workspace/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /create workspace/i }));
     expect(screen.getByPlaceholderText(/workspace name/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create' })).toBeInTheDocument();
+  });
+
+  it('shows a sign out action in the account menu', async () => {
+    render(
+      <WorkspaceSwitcher
+        slug="acme"
+        workspaceName="Acme"
+        userLabel="me@x.com"
+        workspaces={workspaces}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /Acme/ }));
+
+    expect(screen.getByRole('menuitem', { name: /sign out/i })).toBeInTheDocument();
   });
 });

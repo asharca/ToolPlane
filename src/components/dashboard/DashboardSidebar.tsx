@@ -12,13 +12,11 @@ import {
   BarChart3,
   Users,
   Settings,
-  Store,
-  LifeBuoy,
-  MessageSquare,
   Shield,
   type LucideIcon,
 } from 'lucide-react';
-import { SITE, mailto } from '@/lib/site';
+import { FaGithub } from 'react-icons/fa';
+import { SITE } from '@/lib/site';
 import { DashboardLogo } from './DashboardLogo';
 import { SystemUpdateButton } from './SystemUpdateButton';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
@@ -132,14 +130,16 @@ export function DashboardSidebar({
       </nav>
 
       <div className="space-y-2 border-t border-border p-3">
-        <Link
-          href={`${base}/seller/overview`}
+        <a
+          href={SITE.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
           onClick={onClose}
-          className="ui-button-primary w-full"
+          className="ui-button-secondary w-full"
         >
-          <Store className="size-4" />
-          {t('sellSkills')}
-        </Link>
+          <FaGithub className="size-4" />
+          {t('sourceCode')}
+        </a>
         {isAdmin ? (
           <Link
             href="/admin"
@@ -150,22 +150,6 @@ export function DashboardSidebar({
             {t('adminConsole')}
           </Link>
         ) : null}
-        <div className="grid grid-cols-2 gap-2">
-          <a
-            href={mailto(SITE.supportEmail)}
-            className="ui-button-secondary ui-button-sm"
-          >
-            <LifeBuoy className="size-3.5" />
-            {t('support')}
-          </a>
-          <a
-            href={mailto(SITE.feedbackEmail)}
-            className="ui-button-secondary ui-button-sm"
-          >
-            <MessageSquare className="size-3.5" />
-            {t('feedback')}
-          </a>
-        </div>
         <WorkspaceSwitcher
           slug={slug}
           workspaceName={workspaceName}
