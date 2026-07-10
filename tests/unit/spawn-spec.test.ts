@@ -5,6 +5,7 @@ import {
   buildConnectorConfig,
   connectorClientCommand,
   connectorFromConfig,
+  connectorPowerShellCommand,
   hashConnectorToken,
 } from '@/lib/sandboxes/connector';
 
@@ -218,6 +219,20 @@ describe('resolveSpawnSpec', () => {
 
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
       'npx -y --package https://app.example.com/api/v1/connectors/package.tgz connector connect --server https://app.example.com --token mcpcon_deadbeef --root /srv/workspace',
+    );
+  });
+
+  it('generates a Windows PowerShell connector command', () => {
+    const connector = buildConnectorConfig(
+      {
+        serverUrl: 'https://app.example.com/',
+        remoteRoot: 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox',
+      },
+      'mcpcon_deadbeef',
+    );
+
+    expect(connectorPowerShellCommand(connector, 'mcpcon_deadbeef')).toBe(
+      "'npx' '-y' '--package' 'https://app.example.com/api/v1/connectors/package.tgz' 'connector' 'connect' '--server' 'https://app.example.com' '--token' 'mcpcon_deadbeef' '--root' 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox'",
     );
   });
 

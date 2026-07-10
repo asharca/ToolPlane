@@ -8,7 +8,7 @@ import process from 'node:process';
 import pty from 'node-pty';
 import WebSocket from 'ws';
 
-const VERSION = '0.1.7';
+const VERSION = '0.1.8';
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
 const MAX_DOWNLOAD = 5_000_000;
@@ -59,6 +59,7 @@ function parseArgs(argv) {
 function expandHome(value) {
   if (value === '~') return os.homedir();
   if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
+  if (value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
   return value;
 }
 
@@ -75,6 +76,25 @@ function cleanEnv(value) {
     if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof raw === 'string') env[key] = raw;
   }
   return env;
+}
+
+function isWindows() {
+  return process.platform === 'win32';
+}
+
+function connectorShell() {
+  if (process.env.TOOLPLANE_CONNECTOR_SHELL) return process.env.TOOLPLANE_CONNECTOR_SHELL;
+  return isWindows() ? 'powershell.exe' : (process.env.SHELL || '/bin/sh');
+}
+
+function shellExecArgs(command) {
+  return isWindows()
+    ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command]
+    : ['-lc', command];
+}
+
+function terminalShellArgs() {
+  return isWindows() ? ['-NoLogo'] : [];
 }
 
 function normalizeSandboxPath(raw = '.') {
@@ -107,13 +127,13 @@ function createRuntime(rootInput) {
     if (!command) throw new Error('command is required.');
     const cwd = resolvePath(args.cwd ?? '.').absolute;
     const timeout = Math.min(Math.max(Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), 1), MAX_TIMEOUT_MS);
-    const shell = process.env.SHELL || '/bin/sh';
+    const shell = connectorShell();
 
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
-      const child = spawn(shell, ['-lc', command], {
+      const child = spawn(shell, shellExecArgs(command), {
         cwd,
         env: { ...process.env, ...cleanEnv(args.env), TERM: process.env.TERM || 'xterm-256color' },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -198,8 +218,8 @@ function createRuntime(rootInput) {
     const terminalId = randomUUID();
     const cols = Math.min(Math.max(Number(args.cols) || 80, 20), 240);
     const rows = Math.min(Math.max(Number(args.rows) || 24, 6), 80);
-    const shell = process.env.SHELL || '/bin/sh';
-    const term = pty.spawn(shell, [], {
+    const shell = connectorShell();
+    const term = pty.spawn(shell, terminalShellArgs(), {
       name: 'xterm-256color',
       cols,
       rows,

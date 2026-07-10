@@ -844,6 +844,8 @@
       "connectorSetup": "Connector setup",
       "runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally": "Run this command on the user machine. The client connects back to the platform over WebSocket and executes sandbox operations locally.",
       "runOnTheUserMachine": "Run on the user machine",
+      "macosLinuxShell": "macOS / Linux shell",
+      "windowsPowerShell": "Windows PowerShell",
       "generateAFreshConnectionCommandToMintATokenForThisSandbox": "Generate a fresh connection command to mint a token for this sandbox.",
       "generating": "Generating…",
       "generateCommand": "Generate command",

@@ -1,6 +1,6 @@
 {
   "name": "@toolplane/connector",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "User-machine WebSocket connector for ToolPlane sandboxes.",
   "type": "module",
   "bin": "./bin/connector.mjs",
