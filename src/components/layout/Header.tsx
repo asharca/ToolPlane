@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { ChevronDown } from 'lucide-react';
+import { FaGithub } from 'react-icons/fa';
 import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { SITE } from '@/lib/site';
 import { Logo } from './Logo';
 import { LocaleSwitcher } from './LocaleSwitcher';
 
@@ -37,12 +39,15 @@ export async function Header() {
 
           <div className="flex items-center gap-1 sm:gap-2">
             <LocaleSwitcher />
-            <Link
-              href="/sell"
-              className="hidden px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+            <a
+              href={SITE.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
             >
-              {t('sellSkills')}
-            </Link>
+              <FaGithub className="size-4" />
+              {t('sourceCode')}
+            </a>
             <Link
               href={user ? '/app' : '/app/login'}
               className="ui-button-secondary"

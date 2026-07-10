@@ -6,5 +6,5 @@ export default async function SellerRedirect({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
-  redirect(`/app/${slug}/seller/overview`);
+  redirect(`/app/${slug}/skills`);
 }

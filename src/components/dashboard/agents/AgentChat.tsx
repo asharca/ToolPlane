@@ -19,11 +19,11 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import { createConversationAction } from '@/lib/agents/actions';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
 import { AgentMessagingPanel } from '@/components/dashboard/agents/AgentMessagingPanel';
+import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
 import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
 
@@ -376,13 +376,13 @@ export function AgentChat({
                                 );
                               }
                               return (
-                                <Streamdown
+                                <SafeStreamdown
                                   key={index}
                                   plugins={{ code }}
                                   className="space-y-2 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5"
                                 >
                                   {part.text}
-                                </Streamdown>
+                                </SafeStreamdown>
                               );
                             }
                             if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {

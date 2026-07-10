@@ -1,22 +1,13 @@
-import { getTranslations } from 'next-intl/server';
 import type { Metadata } from 'next';
-import { ContentPage } from '@/components/theme/ContentPage';
+import { redirect } from 'next/navigation';
+import { SITE } from '@/lib/site';
 
-export async function generateMetadata(): Promise<Metadata> {
-  const t = await getTranslations('metadata');
+export function generateMetadata(): Metadata {
   return {
-    title: t('sellSkillsToolplane'),
+    title: `Source code | ${SITE.name}`,
   };
 }
 
-export default async function Page() {
-  const t = await getTranslations('sell');
-  return (
-    <ContentPage title={t('sellYourAgentSkills')}>
-      <p>
-        {t('listYourAgentSkillsInTheMarketplaceAndReachDevelopersBuildingWithTheModelContextProtocol')}
-      </p>
-      <p>{t('theSellerWorkflowIsPlannedButNotYetWiredUp')}</p>
-    </ContentPage>
-  );
+export default function Page() {
+  redirect(SITE.sourceUrl);
 }

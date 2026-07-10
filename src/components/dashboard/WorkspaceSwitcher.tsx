@@ -3,7 +3,8 @@
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronsUpDown, Plus } from 'lucide-react';
+import { Check, ChevronsUpDown, LogOut, Plus } from 'lucide-react';
+import { logoutAction } from '@/lib/auth/actions';
 import { createWorkspaceAction } from '@/lib/workspace/actions';
 
 type Workspace = { id: string; slug: string; name: string };
@@ -125,6 +126,7 @@ export function WorkspaceSwitcher({
             ) : (
               <button
                 type="button"
+                role="menuitem"
                 onClick={() => setCreating(true)}
                 className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
@@ -132,6 +134,16 @@ export function WorkspaceSwitcher({
                 {t('createWorkspace')}
               </button>
             )}
+            <form action={logoutAction} className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800">
+              <button
+                type="submit"
+                role="menuitem"
+                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+              >
+                <LogOut className="size-4 shrink-0" />
+                {t('signOut')}
+              </button>
+            </form>
           </div>
         </div>
       ) : null}

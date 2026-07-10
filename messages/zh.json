@@ -38,6 +38,7 @@
     "mcpServers": "MCP 服务器",
     "agentSkills": "Agent Skills",
     "sellSkills": "Sell Skills",
+    "sourceCode": "源码",
     "signIn": "登录",
     "dashboard": "控制台"
   },
@@ -59,6 +60,7 @@
       "top100Servers": "MCP 服务器 Top 100",
       "news": "资讯",
       "submit": "提交",
+      "sourceCode": "源码仓库",
       "contact": "联系我们"
     },
     "allRightsReserved": "。保留所有权利。",
@@ -209,7 +211,8 @@
       "adminConsole": "管理控制台",
       "support": "支持",
       "feedback": "反馈",
-      "sellSkills": "Sell Skills"
+      "sellSkills": "Sell Skills",
+      "sourceCode": "源码仓库"
     },
     "agents": {
       "title": "智能体",
@@ -714,7 +717,8 @@
       "workspaces": "工作区",
       "workspaceName": "工作区名称",
       "create": "创建",
-      "createWorkspace": "创建工作区"
+      "createWorkspace": "创建工作区",
+      "signOut": "注销"
     },
     "common": {
       "myCredentials": "我的凭据",

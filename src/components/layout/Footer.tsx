@@ -25,7 +25,7 @@ const RANKINGS: FooterLink[] = [
 
 const ABOUT: FooterLink[] = [
   { labelKey: 'news', href: '/news' },
-  { labelKey: 'submit', href: '/submit' },
+  { labelKey: 'sourceCode', href: SITE.sourceUrl },
   { labelKey: 'contact', href: mailto(SITE.supportEmail) },
 ];
 
@@ -41,9 +41,15 @@ function FooterItem({
 }) {
   const isExternal =
     link.href.startsWith('http') || link.href.startsWith('mailto:');
+  const isHttp = link.href.startsWith('http');
   if (isExternal) {
     return (
-      <a href={link.href} className={itemClass} rel="noopener noreferrer">
+      <a
+        href={link.href}
+        className={itemClass}
+        target={isHttp ? '_blank' : undefined}
+        rel={isHttp ? 'noopener noreferrer' : undefined}
+      >
         {label}
       </a>
     );

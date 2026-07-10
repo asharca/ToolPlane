@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
@@ -17,10 +17,9 @@ import {
   BarChart3,
   Users,
   Settings,
-  Store,
   Home,
-  type LucideIcon,
 } from 'lucide-react';
+import { FaGithub } from 'react-icons/fa';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import { SITE, mailto } from '@/lib/site';
 
@@ -28,7 +27,7 @@ type Command = {
   id: string;
   label: string;
   group: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }>;
   run: () => void;
 };
 
@@ -66,6 +65,10 @@ export function DashboardHeaderControls() {
       closePalette();
       router.push(href);
     };
+    const openExternal = (href: string) => () => {
+      closePalette();
+      window.open(href, '_blank', 'noopener,noreferrer');
+    };
     const list: Command[] = [];
     if (slug) {
       const b = `/app/${slug}`;
@@ -80,11 +83,11 @@ export function DashboardHeaderControls() {
         { id: 'settings', label: 'Settings', group: 'Workspace', icon: Settings, run: go(`${b}/settings`) },
         { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/mcp/new`) },
         { id: 'browse-skills', label: 'Browse Skills', group: 'Actions', icon: Brain, run: go(`${b}/skills/new`) },
-        { id: 'sell', label: 'Sell Skills', group: 'Actions', icon: Store, run: go(`${b}/seller`) },
       );
     }
     list.push(
       { id: 'home', label: 'Back to ToolPlane', group: 'Actions', icon: Home, run: go('/') },
+      { id: 'source', label: 'Source code', group: 'Project', icon: FaGithub, run: openExternal(SITE.sourceUrl) },
       {
         id: 'theme',
         label: 'Toggle dark mode',

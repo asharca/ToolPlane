@@ -5,6 +5,7 @@ export const SITE = {
   feedbackEmail: 'feedback@toolplane.local',
   protocolUrl: 'https://modelcontextprotocol.io',
   claudeCodeUrl: 'https://claude.com/claude-code',
+  sourceUrl: 'https://github.com/asharca/ToolPlane',
 } as const;
 
 export function mailto(email: string): string {

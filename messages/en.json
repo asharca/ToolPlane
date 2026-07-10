@@ -38,6 +38,7 @@
     "mcpServers": "MCP Servers",
     "agentSkills": "Agent Skills",
     "sellSkills": "Sell Skills",
+    "sourceCode": "Source",
     "signIn": "Sign in",
     "dashboard": "Dashboard"
   },
@@ -59,6 +60,7 @@
       "top100Servers": "Top 100 MCP Servers",
       "news": "News",
       "submit": "Submit",
+      "sourceCode": "Source code",
       "contact": "Contact"
     },
     "allRightsReserved": ". All rights reserved.",
@@ -209,7 +211,8 @@
       "adminConsole": "Admin console",
       "support": "Support",
       "feedback": "Feedback",
-      "sellSkills": "Sell Skills"
+      "sellSkills": "Sell Skills",
+      "sourceCode": "Source code"
     },
     "agents": {
       "title": "Agents",
@@ -714,7 +717,8 @@
       "workspaces": "Workspaces",
       "workspaceName": "Workspace name",
       "create": "Create",
-      "createWorkspace": "Create workspace"
+      "createWorkspace": "Create workspace",
+      "signOut": "Sign out"
     },
     "common": {
       "myCredentials": "My Credentials",
