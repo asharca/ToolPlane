@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { getAgent, getAgentForRequest } from '@/lib/agents/queries';
 import { appendMessage, createConversation } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
-import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
+import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { buildModel } from '@/lib/agents/model';
 import { resolveMaxSteps } from '@/lib/agents/constants';
@@ -118,11 +118,14 @@ async function runLoadedAgentMessage(params: {
   });
   const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
   const model = buildModel(agent.provider, agent.model);
-  const modelMessages = await convertToModelMessages([...priorMessages, userMessage]);
+  const modelMessages = prependSystemModelMessage(
+    system,
+    await convertToModelMessages([...priorMessages, userMessage]),
+  );
 
   const result = await generateText({
     model,
-    system: system || undefined,
+    allowSystemInMessages: true,
     messages: modelMessages,
     tools,
     stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),

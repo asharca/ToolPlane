@@ -26,6 +26,7 @@ describe('parseAgentChatBody', () => {
   it('rejects malformed payloads', () => {
     expect(parseAgentChatBody({ messages: 'hello' })).toBeNull();
     expect(parseAgentChatBody({ messages: [{ id: 'msg1', role: 'robot', parts: [] }] })).toBeNull();
+    expect(parseAgentChatBody({ messages: [{ id: 'msg1', role: 'system', parts: [] }] })).toBeNull();
     expect(parseAgentChatBody({ messages: [{ id: 'msg1', role: 'user', parts: 'hello' }] })).toBeNull();
     expect(parseAgentChatBody({ messages: [{ role: 'user', parts: [] }] })).toBeNull();
   });

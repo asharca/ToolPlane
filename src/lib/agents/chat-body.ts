@@ -4,7 +4,7 @@ import { z } from 'zod';
 const ChatMessage = z
   .object({
     id: z.string().min(1),
-    role: z.enum(['system', 'user', 'assistant']),
+    role: z.enum(['user', 'assistant']),
     parts: z.custom<UIMessage['parts']>((value) => Array.isArray(value)),
   })
   .passthrough();

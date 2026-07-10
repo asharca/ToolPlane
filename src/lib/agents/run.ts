@@ -9,7 +9,7 @@ import {
 } from 'ai';
 import { AGENT_MAX_DEPTH, resolveMaxSteps } from './constants';
 import { resolveAgentTools, type LoadedAgentTools, type SkillForPrompt, type SubAgentRef } from './resolve';
-import { assembleSystemPrompt } from './system-prompt';
+import { assembleSystemPrompt, prependSystemModelMessage } from './system-prompt';
 import { buildModel, type ProviderConfig } from './model';
 import { buildToolSet } from './tools';
 import { buildSkillToolSet } from './skill-tools';
@@ -47,10 +47,11 @@ export type RunDeps = {
 const defaultDeps: RunDeps = {
   loadAgent: (id, workspaceId) => getAgentForRun(id, workspaceId),
   runModel: async ({ model, system, prompt, tools, maxSteps }) => {
+    const messages = prependSystemModelMessage(system, [{ role: 'user', content: prompt }]);
     const { text } = await generateText({
       model,
-      system: system || undefined,
-      prompt,
+      allowSystemInMessages: true,
+      messages,
       tools,
       stopWhen: stepCountIs(resolveMaxSteps(maxSteps)),
     });
