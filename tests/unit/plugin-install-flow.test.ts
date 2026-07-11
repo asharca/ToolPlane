@@ -217,7 +217,20 @@ describe('generated Hermes installer', () => {
     const bin = path.join(tmp, 'bin');
     mkdirSync(bin);
     mkdirSync(path.join(tmp, '.hermes'), { recursive: true });
-    writeFileSync(path.join(tmp, '.hermes/config.yaml'), 'hooks: {}\n');
+    writeFileSync(
+      path.join(tmp, '.hermes/config.yaml'),
+      [
+        'mcp_servers:',
+        '  other-server:',
+        '    url: "https://other.example.com"',
+        '  toolplane-tk:',
+        '    url: "https://old.example.com"',
+        '    headers:',
+        '      Authorization: "Bearer stale-token"',
+        'hooks: {}',
+        '',
+      ].join('\n'),
+    );
     writeFakeCurl(bin, {
       slug: 'anthropic-pdf',
       content: '---\nname: pdf\ndescription: PDF work\n---\n\n# PDF',
@@ -248,6 +261,9 @@ describe('generated Hermes installer', () => {
     expect(config).toContain('  toolplane-tk:');
     expect(config).toContain('    url: "https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp"');
     expect(config).toContain('      Authorization: "Bearer sk_user_HERMES"');
+    expect(config).not.toContain('stale-token');
+    expect(config.match(/^  toolplane-tk:/gm)).toHaveLength(1);
+    expect(config).toContain('  other-server:');
     expect(config).toContain('hooks:');
     expect(config).toContain('  on_session_start:');
     expect(config).toContain('    - command: "bash \\"');

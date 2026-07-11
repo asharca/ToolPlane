@@ -535,7 +535,39 @@ for (const line of src.split(/\r?\n/)) {
   }
   if (!skip) withoutOld.push(line);
 }
-const lines = withoutOld.join('\n').replace(/\s+$/g, '').split(/\r?\n/);
+function removeLegacyMcpServer(lines, server) {
+  const out = [];
+  let inMcp = false;
+  let skipServer = false;
+  for (const line of lines) {
+    if (/^mcp_servers:\s*(?:#.*)?$/.test(line)) {
+      inMcp = true;
+      out.push(line);
+      continue;
+    }
+    if (inMcp && line && !line.startsWith(' ') && !line.startsWith('#')) {
+      inMcp = false;
+      skipServer = false;
+    }
+    if (inMcp && line === '  ' + server + ':') {
+      skipServer = true;
+      continue;
+    }
+    if (skipServer) {
+      if (/^  [^\s].*:\s*(?:#.*)?$/.test(line)) {
+        skipServer = false;
+        out.push(line);
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+const lines = removeLegacyMcpServer(
+  withoutOld.join('\n').replace(/\s+$/g, '').split(/\r?\n/),
+  server,
+);
 const entry = [
   '  ' + begin,
   '  ' + server + ':',

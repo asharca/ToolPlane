@@ -221,6 +221,20 @@ describe('resolveSpawnSpec', () => {
     );
   });
 
+  it('uses the same npx connector command for Windows paths', () => {
+    const connector = buildConnectorConfig(
+      {
+        serverUrl: 'https://app.example.com/',
+        remoteRoot: 'C:\\Users\\Ren He\\toolplane-sandbox',
+      },
+      'mcpcon_deadbeef',
+    );
+
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+      'npx -y --package https://app.example.com/api/v1/connectors/package.tgz connector connect --server https://app.example.com --token mcpcon_deadbeef --root "C:\\Users\\Ren He\\toolplane-sandbox"',
+    );
+  });
+
   it('normalizes legacy connector package and root names', () => {
     const legacyPackage = `@${['mcp', 'market'].join('-')}/connector`;
     const legacyRoot = `~/${['mcp', 'market'].join('')}-sandbox`;

@@ -93,8 +93,8 @@ export function createConnectorConfig(input: ConnectorInput): {
 }
 
 function shellArg(value: string): string {
-  if (/^[A-Za-z0-9_./:@?=&%+,\-~]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  if (/^[A-Za-z0-9_./:@?=%+,\-~]+$/.test(value)) return value;
+  return `"${value.replace(/(["$`])/g, '\\$1')}"`;
 }
 
 export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
