@@ -4,13 +4,15 @@ import Link from 'next/link';
 import { Bot, Cpu } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { listAgents, listProviders } from '@/lib/agents/queries';
+import {
+  listAgentDeploymentOptions,
+  listAgents,
+  listAgentSkillOptions,
+  listProviders,
+} from '@/lib/agents/queries';
 import { AgentsBrowser } from '@/components/dashboard/agents/AgentsBrowser';
 import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
-import { getDeployments, getInstalledSkills } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
-import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { skillLabel } from '@/lib/workspace/skill-label';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 
@@ -38,11 +40,11 @@ export default async function AgentsPage({
   if (!ws) redirect('/app');
 
   const [agents, providers, deployments, skills, toolkits] = await Promise.all([
-    listAgents(ws.id),
+    current === 'agents' ? listAgents(ws.id) : Promise.resolve([]),
     listProviders(ws.id),
-    getDeployments(ws.id),
-    getInstalledSkills(ws.id),
-    listToolkits(ws.id),
+    current === 'agents' ? listAgentDeploymentOptions(ws.id) : Promise.resolve([]),
+    current === 'agents' ? listAgentSkillOptions(ws.id) : Promise.resolve([]),
+    current === 'agents' ? listToolkits(ws.id) : Promise.resolve([]),
   ]);
 
   return (
@@ -95,12 +97,13 @@ export default async function AgentsPage({
               name: provider.name,
               models: provider.models,
             })),
-            deployments: deployments.map((deployment) => ({
-              id: deployment.id,
-              label: deploymentLabel(deployment).name,
+            deployments,
+            skills,
+            toolkits: toolkits.map((toolkit) => ({
+              id: toolkit.id,
+              label: toolkit.name,
+              status: toolkit.enabled ? 'enabled' : 'disabled',
             })),
-            skills: skills.map((skill) => ({ id: skill.id, label: skillLabel(skill).name })),
-            toolkits: toolkits.map((toolkit) => ({ id: toolkit.id, label: toolkit.name })),
           }}
         />
       ) : (

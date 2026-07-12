@@ -3,7 +3,12 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { effectiveStatus, livePort, liveStatus } from '@/lib/process/supervisor';
+import {
+  effectiveStatus,
+  effectiveStatuses,
+  livePort,
+  liveStatus,
+} from '@/lib/process/supervisor';
 
 // With no live process in the (empty) supervisor table, an active DB status is
 // stale and must downgrade to 'stopped'; terminal states pass through.
@@ -39,6 +44,37 @@ describe('effectiveStatus (no live process)', () => {
       expect(liveStatus(deploymentId)).toBe('running');
       expect(livePort(deploymentId)).toBe(45678);
       expect(effectiveStatus(deploymentId, 'stopped')).toBe('running');
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it('resolves a batch from one registry snapshot and downgrades stale active states', () => {
+    const deploymentId = `registry-batch-test-${Date.now()}`;
+    const dir = path.join(os.tmpdir(), 'toolplane-supervisor');
+    const file = path.join(dir, `${deploymentId}.json`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        deploymentId,
+        name: 'batch test',
+        pid: process.pid,
+        port: 45679,
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    try {
+      const statuses = effectiveStatuses([
+        { id: deploymentId, status: 'stopped' },
+        { id: 'missing-active', status: 'running' },
+        { id: 'missing-error', status: 'error' },
+      ]);
+      expect(statuses.get(deploymentId)).toBe('running');
+      expect(statuses.get('missing-active')).toBe('stopped');
+      expect(statuses.get('missing-error')).toBe('error');
     } finally {
       rmSync(file, { force: true });
     }

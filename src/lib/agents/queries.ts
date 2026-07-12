@@ -1,5 +1,18 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { effectiveStatuses } from '@/lib/process/supervisor';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
+
+export type AgentResourceOption = {
+  id: string;
+  label: string;
+  description: string | null;
+  source: string;
+  status: string;
+  keywords: string[];
+  checked: boolean;
+};
 
 const INSTALLED_SKILL_INCLUDE = {
   include: {
@@ -59,8 +72,124 @@ export async function listProviders(workspaceId: string) {
   return db.modelProvider.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
 }
 
+export async function listAgentDeploymentOptions(
+  workspaceId: string,
+  selectedIds?: ReadonlySet<string>,
+): Promise<AgentResourceOption[]> {
+  const deployments = await db.deployment.findMany({
+    where: {
+      workspaceId,
+      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      status: true,
+      serverId: true,
+      name: true,
+      source: true,
+      sourceRef: true,
+      server: { select: { name: true, slug: true, description: true } },
+    },
+  });
+  const statuses = effectiveStatuses(deployments);
+
+  return deployments.map((deployment) => {
+    const label = deploymentLabel(deployment);
+    return {
+      id: deployment.id,
+      label: label.name,
+      description: deployment.server?.description ?? label.ref,
+      source: label.source,
+      status: statuses.get(deployment.id) ?? deployment.status,
+      keywords: [deployment.server?.slug ?? '', deployment.sourceRef ?? '', deployment.source ?? '']
+        .filter((keyword) => keyword.length > 0),
+      checked: selectedIds?.has(deployment.id) ?? false,
+    };
+  });
+}
+
+export async function listAgentSkillOptions(
+  workspaceId: string,
+  selectedIds?: ReadonlySet<string>,
+): Promise<AgentResourceOption[]> {
+  const skills = await db.installedSkill.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      skillId: true,
+      name: true,
+      slug: true,
+      description: true,
+      source: true,
+      sourceRef: true,
+      status: true,
+      userInvocable: true,
+      agentInvocable: true,
+      skill: { select: { name: true, slug: true, description: true } },
+    },
+  });
+
+  return skills.map((skill) => {
+    const label = skillLabel(skill);
+    return {
+      id: skill.id,
+      label: label.name,
+      description: skill.skill?.description ?? skill.description,
+      source: label.source,
+      status: skill.status,
+      keywords: [
+        label.slug,
+        skill.sourceRef ?? '',
+        skill.source ?? '',
+        skill.userInvocable ? 'user' : '',
+        skill.agentInvocable ? 'agent' : '',
+      ].filter((keyword) => keyword.length > 0),
+      checked: selectedIds?.has(skill.id) ?? false,
+    };
+  });
+}
+
 export async function getProvider(workspaceId: string, providerId: string) {
   return db.modelProvider.findFirst({ where: { id: providerId, workspaceId } });
+}
+
+export async function getAgentPageData(workspaceId: string, agentId: string) {
+  return db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: {
+      id: true,
+      name: true,
+      systemPrompt: true,
+      providerId: true,
+      model: true,
+      maxSteps: true,
+      provider: { select: { name: true } },
+      servers: { select: { deploymentId: true } },
+      skills: { select: { installedSkillId: true } },
+      toolkits: { select: { toolkitId: true } },
+      sandboxes: { select: { sandboxId: true } },
+      subAgents: { select: { childId: true } },
+      runtime: {
+        select: {
+          id: true,
+          kind: true,
+          image: true,
+          status: true,
+          lastError: true,
+          lastSyncedAt: true,
+          sandboxId: true,
+          sandbox: {
+            select: {
+              deploymentId: true,
+              deployment: { select: { status: true } },
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 export async function listAgents(workspaceId: string) {

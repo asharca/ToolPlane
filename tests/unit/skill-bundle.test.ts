@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchGithubSkillBundle,
+  fetchGithubSkillBundles,
   normalizeSkillFiles,
   parseGithubSkillSource,
   parseSkillFrontmatter,
@@ -132,49 +133,40 @@ describe('fetchGithubSkillBundle', () => {
       'fetch',
       vi.fn(async (url: string | URL | Request) => {
         const href = String(url);
-        if (href.includes('/contents/skills/pdf?')) {
-          return Response.json([
-            {
-              type: 'file',
-              name: 'SKILL.md',
-              path: 'skills/pdf/SKILL.md',
-              size: 42,
-              download_url: 'https://raw.test/SKILL.md',
-            },
-            {
-              type: 'file',
-              name: 'reference.md',
-              path: 'skills/pdf/reference.md',
-              size: 12,
-              download_url: 'https://raw.test/reference.md',
-            },
-            {
-              type: 'file',
-              name: 'font.ttf',
-              path: 'skills/pdf/font.ttf',
-              size: 4,
-              download_url: 'https://raw.test/font.ttf',
-            },
-            { type: 'dir', name: 'scripts', path: 'skills/pdf/scripts' },
-          ]);
+        if (href.includes('/git/trees/HEAD?recursive=1')) {
+          return Response.json({
+            truncated: false,
+            tree: [
+              {
+                type: 'blob',
+                path: 'skills/pdf/SKILL.md',
+                size: 42,
+              },
+              {
+                type: 'blob',
+                path: 'skills/pdf/reference.md',
+                size: 12,
+              },
+              {
+                type: 'blob',
+                path: 'skills/pdf/font.ttf',
+                size: 4,
+              },
+              {
+                type: 'blob',
+                path: 'skills/pdf/scripts/convert.py',
+                size: 8,
+              },
+              { type: 'blob', path: 'skills/other/SKILL.md', size: 20 },
+            ],
+          });
         }
-        if (href.includes('/contents/skills/pdf/scripts?')) {
-          return Response.json([
-            {
-              type: 'file',
-              name: 'convert.py',
-              path: 'skills/pdf/scripts/convert.py',
-              size: 8,
-              download_url: 'https://raw.test/convert.py',
-            },
-          ]);
-        }
-        if (href === 'https://raw.test/SKILL.md') {
+        if (href.endsWith('/skills/pdf/SKILL.md')) {
           return new Response('---\nname: pdf\ndescription: Work with PDFs\n---\n# PDF');
         }
-        if (href === 'https://raw.test/reference.md') return new Response('reference');
-        if (href === 'https://raw.test/convert.py') return new Response('print(1)');
-        if (href === 'https://raw.test/font.ttf') return new Response(Buffer.from('font'));
+        if (href.endsWith('/skills/pdf/reference.md')) return new Response('reference');
+        if (href.endsWith('/skills/pdf/scripts/convert.py')) return new Response('print(1)');
+        if (href.endsWith('/skills/pdf/font.ttf')) return new Response(Buffer.from('font'));
         return new Response('not found', { status: 404 });
       }),
     );
@@ -187,5 +179,46 @@ describe('fetchGithubSkillBundle', () => {
       { path: 'font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
       { path: 'scripts/convert.py', content: 'print(1)' },
     ]);
+  });
+
+  it('imports each SKILL.md subtree from a repository root', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes('/git/trees/HEAD?recursive=1')) {
+        return Response.json({
+          truncated: false,
+          tree: [
+            { type: 'blob', path: 'README.md', size: 3_000_000 },
+            { type: 'blob', path: 'routeros-firewall/SKILL.md', size: 80 },
+            { type: 'blob', path: 'routeros-firewall/references/dos.md', size: 12 },
+            { type: 'blob', path: 'routeros-scripting/SKILL.md', size: 80 },
+          ],
+        });
+      }
+      if (href.endsWith('/routeros-firewall/SKILL.md')) {
+        return new Response('---\nname: routeros-firewall\ndescription: Firewall rules\n---\n# Firewall');
+      }
+      if (href.endsWith('/routeros-firewall/references/dos.md')) return new Response('dos reference');
+      if (href.endsWith('/routeros-scripting/SKILL.md')) {
+        return new Response('---\nname: routeros-scripting\ndescription: Router scripts\n---\n# Scripting');
+      }
+      return new Response('not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const bundles = await fetchGithubSkillBundles('https://github.com/tikoci/routeros-skills');
+
+    expect(bundles.map((bundle) => bundle.name)).toEqual([
+      'routeros-firewall',
+      'routeros-scripting',
+    ]);
+    expect(bundles[0].files).toEqual([{ path: 'references/dos.md', content: 'dos reference' }]);
+    expect(bundles[1].files).toEqual([]);
+    expect(bundles.map((bundle) => bundle.source.normalized)).toEqual([
+      'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-firewall',
+      'https://github.com/tikoci/routeros-skills/tree/HEAD/routeros-scripting',
+    ]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/README.md'))).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('api.github.com'))).toHaveLength(1);
   });
 });

@@ -7,6 +7,7 @@ import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
+import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -236,6 +237,110 @@ export async function setToolkitVisibilityAction(formData: FormData) {
   revalidatePath(`/app/${slug}/toolkits/${toolkitSlug}`);
 }
 
+export type ToolkitBatchActionState = { error?: string; added?: number };
+
+const MAX_RESOURCE_ID_LENGTH = 128;
+
+function parseBatchResourceIds(formData: FormData): { ids: string[] } | { error: string } {
+  const raw = formData.getAll('resourceId');
+  if (raw.length === 0) return { error: 'Select at least one item.' };
+  if (raw.length > MAX_TOOLKIT_BATCH_ITEMS) {
+    return { error: `Select no more than ${MAX_TOOLKIT_BATCH_ITEMS} items at once.` };
+  }
+
+  const ids: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') return { error: 'Invalid resource selection.' };
+    const id = value.trim();
+    if (!id || id.length > MAX_RESOURCE_ID_LENGTH) return { error: 'Invalid resource selection.' };
+    ids.push(id);
+  }
+  return { ids: [...new Set(ids)] };
+}
+
+async function addToolkitResources(
+  kind: 'mcp' | 'skill',
+  workspaceSlug: string,
+  toolkitSlug: string,
+  ids: string[],
+): Promise<ToolkitBatchActionState> {
+  const ctx = await authorizedWorkspace(workspaceSlug);
+  if (!ctx) return { error: 'Workspace not found or access denied.' };
+
+  try {
+    const result = await db.$transaction(async (tx) => {
+      const toolkit = await tx.toolkit.findFirst({
+        where: { slug: toolkitSlug, workspaceId: ctx.ws.id },
+        select: { id: true },
+      });
+      if (!toolkit) return { error: 'Toolkit not found.' };
+
+      if (kind === 'mcp') {
+        const owned = await tx.deployment.findMany({
+          where: {
+            workspaceId: ctx.ws.id,
+            id: { in: ids },
+            OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+          },
+          select: { id: true },
+        });
+        if (owned.length !== ids.length) return { error: 'One or more selected MCPs are unavailable.' };
+        const created = await tx.toolkitServer.createMany({
+          data: owned.map(({ id }) => ({ toolkitId: toolkit.id, deploymentId: id })),
+          skipDuplicates: true,
+        });
+        return { added: created.count };
+      }
+
+      const owned = await tx.installedSkill.findMany({
+        where: { workspaceId: ctx.ws.id, id: { in: ids } },
+        select: { id: true },
+      });
+      if (owned.length !== ids.length) return { error: 'One or more selected skills are unavailable.' };
+      const created = await tx.toolkitSkill.createMany({
+        data: owned.map(({ id }) => ({ toolkitId: toolkit.id, installedSkillId: id })),
+        skipDuplicates: true,
+      });
+      return { added: created.count };
+    });
+
+    if (!('error' in result)) {
+      revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
+    }
+    return result;
+  } catch {
+    return { error: 'Failed to add selected items.' };
+  }
+}
+
+export async function addServersToToolkitAction(
+  _previous: ToolkitBatchActionState,
+  formData: FormData,
+): Promise<ToolkitBatchActionState> {
+  const parsed = parseBatchResourceIds(formData);
+  if ('error' in parsed) return parsed;
+  return addToolkitResources(
+    'mcp',
+    String(formData.get('workspace') ?? ''),
+    String(formData.get('toolkitSlug') ?? ''),
+    parsed.ids,
+  );
+}
+
+export async function addSkillsToToolkitAction(
+  _previous: ToolkitBatchActionState,
+  formData: FormData,
+): Promise<ToolkitBatchActionState> {
+  const parsed = parseBatchResourceIds(formData);
+  if ('error' in parsed) return parsed;
+  return addToolkitResources(
+    'skill',
+    String(formData.get('workspace') ?? ''),
+    String(formData.get('toolkitSlug') ?? ''),
+    parsed.ids,
+  );
+}
+
 export async function addServerToToolkitAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
@@ -245,7 +350,11 @@ export async function addServerToToolkitAction(formData: FormData) {
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
   const dep = await db.deployment.findFirst({
-    where: { id: deploymentId, workspaceId: ctx.ws.id },
+    where: {
+      id: deploymentId,
+      workspaceId: ctx.ws.id,
+      OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+    },
     select: { id: true },
   });
   if (!dep) return;

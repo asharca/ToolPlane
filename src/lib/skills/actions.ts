@@ -5,8 +5,9 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { parseCreateSkill, isGithubUrl, githubRawSkillUrl, slugify } from './custom-skill';
+import { parseCreateSkill, isGithubUrl, slugify } from './custom-skill';
 import {
+  fetchGithubSkillBundles,
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_IMPORT_BYTES,
   MAX_SKILL_IMPORT_FILES,
@@ -160,24 +161,58 @@ export async function deleteCustomSkillAction(formData: FormData) {
   redirect(`/app/${slug}/skills`);
 }
 
-export async function importSkillFromGithubAction(formData: FormData) {
+export type GithubSkillImportState = { error?: string };
+
+export async function importSkillFromGithubAction(
+  _previous: GithubSkillImportState,
+  formData: FormData,
+): Promise<GithubSkillImportState> {
   const slug = String(formData.get('workspace') ?? '');
   const repo = String(formData.get('repo') ?? '').trim();
   const ctx = await authedWs(slug);
-  if (!ctx || !isGithubUrl(repo)) return;
-  let content = '';
+  if (!ctx) return { error: 'Workspace not found or access denied.' };
+  if (!isGithubUrl(repo)) return { error: 'Enter a valid github.com repository or folder URL.' };
+  let bundles;
   try {
-    const res = await fetch(githubRawSkillUrl(repo), { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return;
-    content = (await res.text()).slice(0, 200_000);
-  } catch {
-    return;
+    bundles = await fetchGithubSkillBundles(repo);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Failed to fetch skills from GitHub.' };
   }
-  const name = repo.replace(/\/$/, '').split('/').pop() || 'skill';
-  const created = await db.installedSkill.create({
-    data: { workspaceId: ctx.ws.id, skillId: null, source: 'github', sourceRef: repo, name, slug: slugify(name), content, status: 'published' },
+  const existing = await db.installedSkill.findMany({
+    where: { workspaceId: ctx.ws.id },
+    select: { slug: true, skill: { select: { slug: true } } },
   });
-  redirect(`/app/${slug}/skills/${created.id}`);
+  const usedSlugs = new Set(
+    existing
+      .map((skill) => skill.slug || skill.skill?.slug || null)
+      .filter((value): value is string => Boolean(value)),
+  );
+  let created;
+  try {
+    created = await db.$transaction(
+      bundles.map((bundle) =>
+        db.installedSkill.create({
+          data: {
+            workspaceId: ctx.ws.id,
+            skillId: null,
+            source: 'github',
+            sourceRef: bundle.source.normalized,
+            name: bundle.name,
+            slug: uniqueSkillSlug(bundle.name, usedSlugs),
+            description: bundle.description,
+            content: bundle.content,
+            files: bundle.files.length ? bundle.files : undefined,
+            status: 'published',
+          },
+        }),
+      ),
+    );
+  } catch {
+    return { error: 'Failed to save imported skills.' };
+  }
+  revalidatePath(`/app/${slug}/skills`);
+  if (created.length === 1) redirect(`/app/${slug}/skills/${created[0].id}`);
+  redirect(`/app/${slug}/skills?imported=${encodeURIComponent(created.map((skill) => skill.id).join(','))}`);
 }
 
 export async function uploadSkillFolderAction(formData: FormData) {

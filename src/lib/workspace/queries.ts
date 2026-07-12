@@ -1,4 +1,5 @@
 import 'server-only';
+import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 
 function slugifyEmail(email: string): string {
@@ -94,6 +95,7 @@ const SKILL_BROWSE_SELECT = {
   iconUrl: true,
   githubSource: true,
   curated: true,
+  categories: { select: { name: true, slug: true } },
 } as const;
 
 type RawBrowse = { id: string; name: string; description: string | null; iconUrl: string | null; verifiedAt: Date | null };
@@ -107,6 +109,16 @@ export type BrowseSkill = {
   iconUrl: string | null;
   githubSource: string | null;
   curated: boolean;
+  categories: { name: string; slug: string }[];
+  installed: boolean;
+};
+
+export type SkillBrowseFilters = {
+  workspaceId: string;
+  source: 'all' | 'github' | 'other';
+  installation: 'all' | 'available' | 'installed';
+  category: string;
+  sort: 'top' | 'newest' | 'name';
 };
 
 // A catalog server is deployable only once an admin has wired up a recipe and
@@ -148,38 +160,92 @@ export async function getBrowseServers(page: number, q = '') {
   return { featured: toBrowse(featured), all: toBrowse(all), total, pageSize: BROWSE_PAGE_SIZE };
 }
 
-export async function getBrowseSkills(page: number, q = '') {
+type RawBrowseSkill = Omit<BrowseSkill, 'installed'> & { installs: { id: string }[] };
+
+function toBrowseSkills(rows: RawBrowseSkill[]): BrowseSkill[] {
+  return rows.map(({ installs, ...skill }) => ({ ...skill, installed: installs.length > 0 }));
+}
+
+export async function getSkillBrowseCategories() {
+  return db.category.findMany({
+    where: { skills: { some: {} } },
+    orderBy: { name: 'asc' },
+    select: { name: true, slug: true, _count: { select: { skills: true } } },
+  });
+}
+
+export async function getBrowseSkills(page: number, q: string, filters: SkillBrowseFilters) {
   const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
-  const where = term
-    ? {
-        OR: [
-          { name: { contains: term, mode: 'insensitive' as const } },
-          { description: { contains: term, mode: 'insensitive' as const } },
-          { author: { contains: term, mode: 'insensitive' as const } },
-          { slug: { contains: term, mode: 'insensitive' as const } },
-        ],
-      }
-    : {};
+  const whereParts: Prisma.SkillWhereInput[] = [];
+  if (term) {
+    whereParts.push({
+      OR: [
+        { name: { contains: term, mode: 'insensitive' as const } },
+        { description: { contains: term, mode: 'insensitive' as const } },
+        { author: { contains: term, mode: 'insensitive' as const } },
+        { slug: { contains: term, mode: 'insensitive' as const } },
+      ],
+    });
+  }
+  if (filters.source === 'github') whereParts.push({ githubSource: { not: null } });
+  if (filters.source === 'other') whereParts.push({ githubSource: null });
+  if (filters.installation === 'installed') {
+    whereParts.push({ installs: { some: { workspaceId: filters.workspaceId } } });
+  }
+  if (filters.installation === 'available') {
+    whereParts.push({ installs: { none: { workspaceId: filters.workspaceId } } });
+  }
+  if (filters.category === 'uncategorized') whereParts.push({ categories: { none: {} } });
+  else if (filters.category !== 'all') {
+    whereParts.push({ categories: { some: { slug: filters.category } } });
+  }
 
-  const [featured, total, all] = await Promise.all([
-    term
-      ? Promise.resolve([] as BrowseSkill[])
+  const where: Prisma.SkillWhereInput = whereParts.length ? { AND: whereParts } : {};
+  const orderBy: Prisma.SkillOrderByWithRelationInput[] = filters.sort === 'newest'
+    ? [{ createdAt: 'desc' }]
+    : filters.sort === 'name'
+      ? [{ name: 'asc' }]
+      : [{ score: 'desc' }, { name: 'asc' }];
+  const select = {
+    ...SKILL_BROWSE_SELECT,
+    installs: {
+      where: { workspaceId: filters.workspaceId },
+      select: { id: true },
+      take: 1,
+    },
+  } as const;
+  const isFiltered = Boolean(
+    term ||
+      filters.source !== 'all' ||
+      filters.installation !== 'all' ||
+      filters.category !== 'all' ||
+      filters.sort !== 'top',
+  );
+
+  const [featuredRows, total, allRows] = await Promise.all([
+    isFiltered
+      ? Promise.resolve([] as RawBrowseSkill[])
       : db.skill.findMany({
           where: { curated: true },
           orderBy: { score: 'desc' },
           take: 12,
-          select: SKILL_BROWSE_SELECT,
+          select,
         }),
     db.skill.count({ where }),
     db.skill.findMany({
       where,
-      orderBy: { score: 'desc' },
+      orderBy,
       skip,
       take: BROWSE_PAGE_SIZE,
-      select: SKILL_BROWSE_SELECT,
+      select,
     }),
   ]);
 
-  return { featured, all, total, pageSize: BROWSE_PAGE_SIZE };
+  return {
+    featured: toBrowseSkills(featuredRows),
+    all: toBrowseSkills(allRows),
+    total,
+    pageSize: BROWSE_PAGE_SIZE,
+  };
 }
