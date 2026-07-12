@@ -4,8 +4,6 @@ import type { Ref } from 'react';
 import { useTranslations } from 'next-intl';
 import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
 
-export const HERMES_EMBED_CLOSE_MESSAGE = 'toolplane:close-agent-settings';
-
 export type HermesRuntimeView = 'web' | 'terminal';
 
 export function HermesRuntimePanel({

@@ -21,31 +21,31 @@ vi.mock('next-intl/server', async () => {
   return { getTranslations: (ns: string) => Promise.resolve((k: string) => getNs(ns)[k] ?? k) };
 });
 
-vi.mock('@/lib/auth/current-user', () => ({
-  getCurrentUser: vi.fn().mockResolvedValue(null),
-}));
-
 import { Header } from '@/components/layout/Header';
 
 describe('Header', () => {
-  it('renders logo, nav, and CTAs when logged out', async () => {
+  it('renders desktop and mobile navigation with a stable console entry', async () => {
     render(await Header());
 
     expect(screen.getByRole('link', { name: /ToolPlane/ })).toHaveAttribute(
       'href',
       '/',
     );
-    expect(screen.getByRole('link', { name: 'MCP Servers' })).toHaveAttribute(
-      'href',
-      '/server',
-    );
-    expect(screen.getByRole('link', { name: 'Agent Skills' })).toHaveAttribute(
-      'href',
-      '/tools/skills',
-    );
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute(
-      'href',
-      '/app/login',
-    );
+    expect(
+      screen
+        .getAllByRole('link', { name: 'MCP Servers' })
+        .every((link) => link.getAttribute('href') === '/server'),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('link', { name: 'Agent Skills' })
+        .every((link) => link.getAttribute('href') === '/tools/skills'),
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('link', { name: 'Dashboard' })
+        .every((link) => link.getAttribute('href') === '/app'),
+    ).toBe(true);
+    expect(document.querySelector('summary[aria-label="Menu"]')).toBeInTheDocument();
   });
 });

@@ -4,10 +4,10 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Container, Monitor, Terminal, X } from 'lucide-react';
 import {
-  HERMES_EMBED_CLOSE_MESSAGE,
   HermesRuntimePanel,
   type HermesRuntimeView,
 } from '@/components/dashboard/agents/HermesRuntimePanel';
+import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 
 const FOCUSABLE_ELEMENTS = [
   'button:not([disabled])',

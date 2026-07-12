@@ -31,6 +31,8 @@
     "previous": "上一页",
     "next": "下一页",
     "noEntriesYet": "暂无条目。",
+    "browseCategories": "浏览分类",
+    "language": "语言",
     "en": "EN",
     "zh": "中"
   },
@@ -40,7 +42,8 @@
     "sellSkills": "Sell Skills",
     "sourceCode": "源码",
     "signIn": "登录",
-    "dashboard": "控制台"
+    "dashboard": "控制台",
+    "menu": "菜单"
   },
   "footer": {
     "browse": "浏览",
@@ -86,6 +89,10 @@
     "servers": "服务器",
     "frequentlyAskedQuestions": "常见问题",
     "updatedJustNow": "刚刚更新",
+    "headlineMcpServers": "MCP 服务器",
+    "headlineAgentSkills": "Agent Skills",
+    "headlineMcpClients": "MCP 客户端",
+    "headlineAgentTools": "Agent Tools",
     "findTheBestMcpServersAgentSkillsMcpClientsAgentTools": "发现最佳 MCP 服务器、Agent Skills、MCP 客户端和 Agent Tools",
     "findTheBest": "发现最佳",
     "directoryOfAwesomeMcpServersAndClientsToConnectAiAgentsWithYourFavoriteTools": "精选 MCP 服务器和客户端目录，将 AI 智能体与您常用的工具连接起来。",
@@ -208,6 +215,7 @@
       "settings": "设置",
       "openMenu": "打开菜单",
       "closeMenu": "关闭菜单",
+      "navigation": "工作区导航",
       "collapseSidebar": "收起侧边栏",
       "expandSidebar": "展开侧边栏",
       "adminConsole": "管理控制台",

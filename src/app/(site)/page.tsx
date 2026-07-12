@@ -14,6 +14,7 @@ export default async function Home() {
 
   const categories = [...cats]
     .sort((a, b) => b._count.servers - a._count.servers)
+    .slice(0, 8)
     .map((c) => ({ slug: c.slug, name: c.name }));
 
   return (

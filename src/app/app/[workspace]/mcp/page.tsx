@@ -23,6 +23,7 @@ import {
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,7 @@ export default async function McpServersPage({
 }) {
   const { workspace: slug } = await params;
   const t = await getTranslations('console.mcp');
+  const common = await getTranslations('common');
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -175,9 +177,18 @@ export default async function McpServersPage({
                       <form action={removeDeploymentAction}>
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="deploymentId" value={d.id} />
-                        <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                          {t('remove')}
-                        </button>
+                        <ConfirmSubmitButton
+                          triggerLabel={t('remove')}
+                          confirmLabel={common('confirm')}
+                          cancelLabel={common('cancel')}
+                          prompt={`${t('remove')} ${label.name}?`}
+                          pendingLabel={`${t('remove')}…`}
+                          className="items-center justify-end"
+                          triggerClassName={rowButton + ' hover:text-red-600'}
+                          confirmClassName="text-xs font-medium text-red-600 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                          cancelClassName={rowButton}
+                          promptClassName="max-w-40 truncate text-xs text-muted-foreground"
+                        />
                       </form>
                     </div>
                   </td>

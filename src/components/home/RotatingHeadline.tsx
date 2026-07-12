@@ -2,42 +2,36 @@
 
 import { useEffect, useState } from 'react';
 
-const WORDS = ['MCP Servers', 'Agent Skills', 'MCP Clients', 'Agent Tools'];
-
-export function RotatingHeadline() {
+export function RotatingHeadline({ words }: { words: string[] }) {
   const [wordIndex, setWordIndex] = useState(0);
-  const [text, setText] = useState(WORDS[0]);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    const word = WORDS[wordIndex];
-    const done = text === word;
-    const empty = text === '';
+    if (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return;
+    }
 
-    let delay = deleting ? 45 : 90;
-    if (done && !deleting) delay = 1400;
-    if (empty && deleting) delay = 250;
+    const timers = words.slice(1).map((_, index) =>
+      window.setTimeout(() => setWordIndex(index + 1), (index + 1) * 950),
+    );
 
-    const timer = setTimeout(() => {
-      if (!deleting && done) {
-        setDeleting(true);
-      } else if (deleting && empty) {
-        setDeleting(false);
-        setWordIndex((i) => (i + 1) % WORDS.length);
-      } else {
-        setText(
-          deleting ? word.slice(0, text.length - 1) : word.slice(0, text.length + 1),
-        );
-      }
-    }, delay);
+    return () => timers.forEach(window.clearTimeout);
+  }, [words]);
 
-    return () => clearTimeout(timer);
-  }, [text, deleting, wordIndex]);
+  const activeWord = words[wordIndex] ?? words[0] ?? '';
 
   return (
-    <span className="text-muted-foreground">
-      {text}
-      <span className="animate-caret font-normal">|</span>
+    <span className="relative inline-grid text-muted-foreground">
+      {words.map((word) => (
+        <span key={word} aria-hidden className="invisible col-start-1 row-start-1">
+          {word}
+        </span>
+      ))}
+      <span key={activeWord} aria-hidden className="animate-word-swap col-start-1 row-start-1">
+        {activeWord}
+      </span>
     </span>
   );
 }

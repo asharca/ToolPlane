@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Star, ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, Gauge, Star, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 export interface EntityCardProps {
@@ -18,20 +18,50 @@ export function formatCount(n: number): string {
   return String(n);
 }
 
-export function StarStat({ value }: { value: number }) {
+function MetricStat({
+  value,
+  label,
+  icon: Icon,
+}: {
+  value: number;
+  label: string;
+  icon: LucideIcon;
+}) {
   return (
-    <div className="flex items-center font-mono text-xs text-muted-foreground">
-      <Star className="mr-1 h-3 w-3 fill-muted-foreground/30 text-muted-foreground" />
-      {formatCount(value)}
-    </div>
+    <span className="flex items-center font-mono text-xs text-muted-foreground">
+      <Icon aria-hidden="true" className="mr-1 size-3 text-muted-foreground" />
+      <span aria-hidden="true">{formatCount(value)}</span>
+      <span className="sr-only">
+        {label}: {value.toLocaleString()}
+      </span>
+    </span>
   );
+}
+
+export function StarStat({
+  value,
+  label = 'Stars',
+}: {
+  value: number;
+  label?: string;
+}) {
+  return <MetricStat value={value} label={label} icon={Star} />;
+}
+
+export function ScoreStat({
+  value,
+  label = 'Score',
+}: {
+  value: number;
+  label?: string;
+}) {
+  return <MetricStat value={value} label={label} icon={Gauge} />;
 }
 
 export function EntityCard({
   href,
   name,
   description,
-  author,
   iconUrl,
   category,
   stat,
@@ -55,14 +85,18 @@ export function EntityCard({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={iconUrl}
-                  alt={author ?? name}
-                  width={20}
-                  height={20}
+                  alt=""
+                  width={32}
+                  height={32}
                   loading="lazy"
-                  className="size-5 shrink-0 rounded-full object-cover opacity-50 grayscale transition-all duration-200 group-hover:opacity-100 group-hover:grayscale-0"
+                  decoding="async"
+                  className="size-8 shrink-0 rounded-full object-cover"
                 />
               ) : (
-                <div className="size-5 shrink-0 rounded-full bg-muted" />
+                <div
+                  aria-hidden="true"
+                  className="size-8 shrink-0 rounded-full bg-muted"
+                />
               )}
               <h3 className="line-clamp-1 text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
                 {name}

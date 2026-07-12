@@ -1,5 +1,5 @@
 import type { Skill } from '@prisma/client';
-import { EntityCard, StarStat } from './EntityCard';
+import { EntityCard, ScoreStat } from './EntityCard';
 
 type SkillCardData = Pick<
   Skill,
@@ -15,7 +15,7 @@ export function SkillCard({ skill }: { skill: SkillCardData }) {
       author={skill.author}
       iconUrl={skill.iconUrl}
       category={skill.categories?.[0]?.name ?? null}
-      stat={<StarStat value={skill.score} />}
+      stat={<ScoreStat value={skill.score} />}
     />
   );
 }

@@ -1,5 +1,4 @@
 import { redirect, notFound } from 'next/navigation';
-import { headers } from 'next/headers';
 import { getTranslations } from 'next-intl/server';
 import type { UIMessage } from 'ai';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -11,8 +10,8 @@ import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
-import { originFromHeaders } from '@/lib/http/origin';
 import { listAgentChannelConnections } from '@/lib/agents/channel-connections';
+import { toAgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -46,8 +45,6 @@ export default async function AgentDetailPage({
   const providerLabel = agent.provider
     ? `${agent.provider.name} · ${agent.model ?? 'no model selected'}`
     : 'No model provider selected';
-  const origin = originFromHeaders(await headers());
-
   const [
     conversations,
     channelConnections,
@@ -157,18 +154,7 @@ export default async function AgentDetailPage({
           })() : null,
         }}
         channelSettings={{
-          endpoint: `${origin}/api/v1/agents/${agentId}/messages`,
-          connections: channelConnections.map((connection) => ({
-            ...connection,
-            callbackUrl: `${origin}/api/v1/agent-channels/${connection.id}/events?token=${encodeURIComponent(connection.inboundToken)}`,
-          })),
-          stats: {
-            mcp: agent.servers.length,
-            skills: agent.skills.length,
-            toolkits: agent.toolkits.length,
-            sandboxes: agent.sandboxes.length + (agent.runtime ? 1 : 0),
-            subAgents: agent.subAgents.length,
-          },
+          connections: channelConnections.map(toAgentChannelConnectionClientView),
         }}
         ready={ready}
         agentName={agent.name}

@@ -72,7 +72,7 @@ function CategoryChip({
   return (
     <Link
       href={href}
-      className={`ui-chip ${active ? 'ui-chip-active' : ''}`}
+      className={`ui-chip snap-start ${active ? 'ui-chip-active' : ''}`}
     >
       {label}
     </Link>
@@ -90,10 +90,17 @@ export function HomeView({
   serverCount,
 }: HomeViewProps) {
   const t = useTranslations('home');
+  const common = useTranslations('common');
+  const headlineWords = [
+    t('headlineMcpServers'),
+    t('headlineAgentSkills'),
+    t('headlineMcpClients'),
+    t('headlineAgentTools'),
+  ];
+
   return (
     <div className="mx-auto max-w-screen-xl px-4">
-      <section className="relative py-16 sm:py-24">
-        <div className="pointer-events-none absolute inset-0 hero-grid" aria-hidden />
+      <section className="relative py-16 sm:py-20">
         <div className="relative text-center">
           <div className="ui-panel mx-auto mb-6 inline-flex items-center gap-2 px-3 py-1 text-sm">
             <span className="inline-flex items-center gap-1.5 text-foreground">
@@ -114,7 +121,7 @@ export function HomeView({
             <span aria-hidden className="text-foreground">
               {t('findTheBest')}
               <br />
-              <RotatingHeadline />
+              <RotatingHeadline key={headlineWords.join('|')} words={headlineWords} />
             </span>
           </h1>
 
@@ -133,8 +140,11 @@ export function HomeView({
             />
           </form>
 
-          <div className="no-scrollbar mx-auto mt-5 flex max-w-3xl gap-2 overflow-x-auto pb-1">
-            <CategoryChip href="/categories" label={t('allCategories')} active />
+          <nav
+            aria-label={common('browseCategories')}
+            className="mx-auto mt-5 flex max-w-3xl snap-x gap-2 overflow-x-auto pb-2 sm:flex-wrap sm:justify-center sm:overflow-visible"
+          >
+            <CategoryChip href="/categories" label={t('allCategories')} />
             {categories.map((c) => (
               <CategoryChip
                 key={c.slug}
@@ -142,7 +152,7 @@ export function HomeView({
                 label={c.name}
               />
             ))}
-          </div>
+          </nav>
         </div>
       </section>
 
