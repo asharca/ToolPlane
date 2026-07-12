@@ -1,18 +1,21 @@
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
+import { getTranslations } from 'next-intl/server';
 import type { UIMessage } from 'ai';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments, getInstalledSkills } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
 import { listSandboxes } from '@/lib/sandboxes/queries';
 import { getAgent, listAgents, listProviders, listConversations, getConversation } from '@/lib/agents/queries';
-import { liveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
 import { originFromHeaders } from '@/lib/http/origin';
 import { listAgentChannelConnections } from '@/lib/agents/channel-connections';
 import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
+import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
+import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +32,7 @@ export default async function AgentDetailPage({
 }) {
   const { workspace: slug, agentId } = await params;
   const { c, settings } = await searchParams;
+  const t = await getTranslations('console.agents');
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -80,75 +84,97 @@ export default async function AgentDetailPage({
   const selectedSubAgents = new Set(agent.subAgents.map((s) => s.child.id));
 
   return (
-    <AgentChat
-      key={`${conv?.id ?? 'empty'}-${settings ?? 'chat'}`}
-      slug={slug}
-      agentId={agentId}
-      conversationId={conv?.id ?? null}
-      initialMessages={initialMessages}
-      conversations={conversations.map((cv) => ({
-        id: cv.id,
-        title: cv.title,
-        createdAt: fmtDate(cv.createdAt),
-        messageCount: cv._count.messages,
-        lastMessageAt: cv.messages[0]?.createdAt ? fmtDate(cv.messages[0].createdAt) : null,
-        source: parseMessagingSessionTitle(cv.title),
-      }))}
-      settings={{
-        name: agent.name,
-        systemPrompt: agent.systemPrompt ?? '',
-        providerId: agent.providerId,
-        model: agent.model,
-        maxSteps: agent.maxSteps,
-        providers: providers.map((p) => ({ id: p.id, name: p.name, models: p.models })),
-        deployments: deployments.map((d) => ({
-          id: d.id,
-          label: deploymentLabel(d).name,
-          checked: selectedDeps.has(d.id),
-          running: liveStatus(d.id) === 'running',
-        })),
-        skills: skills.map((s) => ({
-          id: s.id,
-          label: skillLabel(s).name,
-          checked: selectedSkills.has(s.id),
-        })),
-        toolkits: toolkits.map((t) => ({
-          id: t.id,
-          label: t.name,
-          checked: selectedToolkits.has(t.id),
-        })),
-        sandboxes: sandboxes.map((s) => ({
-          id: s.id,
-          label: s.name,
-          checked: selectedSandboxes.has(s.id),
-          running: liveStatus(s.deploymentId) === 'running',
-        })),
-        subAgents: agents
-          .filter((a) => a.id !== agentId)
-          .map((a) => ({
-            id: a.id,
-            label: a.name,
-            checked: selectedSubAgents.has(a.id),
+    <>
+      <DashboardHeader
+        breadcrumb={[
+          { label: t('title'), href: `/app/${slug}/agents` },
+          { label: agent.name },
+        ]}
+      />
+      <AgentChat
+        key={`${conv?.id ?? 'empty'}-${settings ?? 'chat'}`}
+        slug={slug}
+        agentId={agentId}
+        conversationId={conv?.id ?? null}
+        initialMessages={initialMessages}
+        conversations={conversations.map((cv) => ({
+          id: cv.id,
+          title: cv.title,
+          createdAt: fmtDate(cv.createdAt),
+          messageCount: cv._count.messages,
+          lastMessageAt: cv.messages[0]?.createdAt ? fmtDate(cv.messages[0].createdAt) : null,
+          source: parseMessagingSessionTitle(cv.title),
+        }))}
+        settings={{
+          name: agent.name,
+          systemPrompt: agent.systemPrompt ?? '',
+          providerId: agent.providerId,
+          model: agent.model,
+          maxSteps: agent.maxSteps,
+          providers: providers.map((p) => ({ id: p.id, name: p.name, models: p.models })),
+          deployments: deployments.map((d) => ({
+            id: d.id,
+            label: deploymentLabel(d).name,
+            checked: selectedDeps.has(d.id),
+            running: liveStatus(d.id) === 'running',
           })),
-      }}
-      channelSettings={{
-        endpoint: `${origin}/api/v1/agents/${agentId}/messages`,
-        connections: channelConnections.map((connection) => ({
-          ...connection,
-          callbackUrl: `${origin}/api/v1/agent-channels/${connection.id}/events?token=${encodeURIComponent(connection.inboundToken)}`,
-        })),
-        stats: {
-          mcp: agent.servers.length,
-          skills: agent.skills.length,
-          toolkits: agent.toolkits.length,
-          sandboxes: agent.sandboxes.length,
-          subAgents: agent.subAgents.length,
-        },
-      }}
-      ready={ready}
-      agentName={agent.name}
-      providerLabel={providerLabel}
-      initialSettingsTab={settings === 'channels' ? 'channels' : settings === 'agent' ? 'agent' : null}
-    />
+          skills: skills.map((s) => ({
+            id: s.id,
+            label: skillLabel(s).name,
+            checked: selectedSkills.has(s.id),
+          })),
+          toolkits: toolkits.map((t) => ({
+            id: t.id,
+            label: t.name,
+            checked: selectedToolkits.has(t.id),
+          })),
+          sandboxes: sandboxes.filter((s) => s.id !== agent.runtime?.sandboxId).map((s) => ({
+            id: s.id,
+            label: s.name,
+            checked: selectedSandboxes.has(s.id),
+            running: liveStatus(s.deploymentId) === 'running',
+          })),
+          subAgents: agents
+            .filter((a) => a.id !== agentId)
+            .map((a) => ({
+              id: a.id,
+              label: a.name,
+              checked: selectedSubAgents.has(a.id),
+            })),
+          runtime: agent.runtime ? (() => {
+            return {
+              kind: agent.runtime.kind,
+              image: agent.runtime.image,
+              status: ['error', 'setup_required'].includes(agent.runtime.status)
+                ? agent.runtime.status
+                : effectiveStatus(agent.runtime.sandbox.deploymentId, agent.runtime.sandbox.deployment.status),
+              lastError: agent.runtime.lastError,
+              lastSyncedAt: agent.runtime.lastSyncedAt?.toISOString() ?? null,
+              sandboxId: agent.runtime.sandboxId,
+              deploymentId: agent.runtime.sandbox.deploymentId,
+              dashboardUrl: createHermesDashboardPath(agent.runtime.id),
+            };
+          })() : null,
+        }}
+        channelSettings={{
+          endpoint: `${origin}/api/v1/agents/${agentId}/messages`,
+          connections: channelConnections.map((connection) => ({
+            ...connection,
+            callbackUrl: `${origin}/api/v1/agent-channels/${connection.id}/events?token=${encodeURIComponent(connection.inboundToken)}`,
+          })),
+          stats: {
+            mcp: agent.servers.length,
+            skills: agent.skills.length,
+            toolkits: agent.toolkits.length,
+            sandboxes: agent.sandboxes.length + (agent.runtime ? 1 : 0),
+            subAgents: agent.subAgents.length,
+          },
+        }}
+        ready={ready}
+        agentName={agent.name}
+        providerLabel={providerLabel}
+        initialSettingsTab={settings === 'channels' ? 'channels' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+      />
+    </>
   );
 }

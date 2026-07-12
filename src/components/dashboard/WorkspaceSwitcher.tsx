@@ -18,11 +18,13 @@ export function WorkspaceSwitcher({
   workspaceName,
   userLabel,
   workspaces,
+  compact = false,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  compact?: boolean;
 }) {
   const t = useTranslations('console.workspaceSwitcher');
   const [open, setOpen] = useState(false);
@@ -58,12 +60,14 @@ export function WorkspaceSwitcher({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
+        title={compact ? workspaceName : undefined}
+        className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
           {initialsOf(workspaceName)}
         </span>
-        <span className="min-w-0 flex-1">
+        <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
           <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
             {workspaceName}
           </span>
@@ -71,13 +75,17 @@ export function WorkspaceSwitcher({
             {userLabel}
           </span>
         </span>
-        <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+        <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
       </button>
 
       {open ? (
         <div
           role="menu"
-          className="absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          className={`absolute z-20 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 ${
+            compact
+              ? 'bottom-full left-0 mb-2 w-full lg:bottom-0 lg:left-full lg:mb-0 lg:ml-2 lg:w-64'
+              : 'bottom-full left-0 mb-2 w-full'
+          }`}
         >
           <div className="max-h-64 overflow-y-auto py-1">
             <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

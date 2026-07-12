@@ -18,7 +18,7 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   killMany(deploymentIds);
   await Promise.all(
     sandboxes
-      .filter((s) => s.kind === 'docker')
+      .filter((s) => s.kind === 'docker' || s.kind === 'hermes')
       .map((s) => {
         const cfg = (s.deployment.installCfg ?? {}) as { volumeName?: string };
         return removeDockerSandboxRuntime(s.id, cfg.volumeName);

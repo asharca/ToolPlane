@@ -1,4 +1,5 @@
 import 'server-only';
+import { randomUUID } from 'node:crypto';
 import {
   generateText,
   jsonSchema,
@@ -14,6 +15,7 @@ import { buildModel, type ProviderConfig } from './model';
 import { buildToolSet } from './tools';
 import { buildSkillToolSet } from './skill-tools';
 import { getAgentForRun } from './queries';
+import { runHermesText } from './hermes/client';
 
 export type AgentRunContext = {
   workspaceId: string;
@@ -24,11 +26,15 @@ export type AgentRunContext = {
 // What runAgentTurn needs from a loaded sub-agent: its identity, model config,
 // and tool relations (for resolveAgentTools).
 export type RunAgent = LoadedAgentTools & {
+  id?: string;
+  slug?: string;
+  workspaceId?: string;
   name: string;
   systemPrompt: string | null;
   model: string | null;
   maxSteps: number;
   provider: ProviderConfig | null;
+  runtime?: { id: string; kind: string } | null;
 };
 
 // Injectable so unit tests can exercise the cycle/depth guards and delegation
@@ -111,6 +117,25 @@ export async function runAgentTurn(
   if (!agent) return `Sub-agent ${agentId} not found in this workspace.`;
   if (!agent.provider || !agent.model) {
     return `Sub-agent "${agent.name}" has no model configured.`;
+  }
+
+  if (agent.runtime?.kind === 'hermes') {
+    const sessionId = randomUUID();
+    try {
+      return await runHermesText({
+        agent: {
+          id: agentId,
+          slug: agent.slug ?? agentId,
+          workspaceId: ctx.workspaceId,
+          runtime: agent.runtime,
+        },
+        messages: [{ id: randomUUID(), role: 'user', parts: [{ type: 'text', text: prompt }] }],
+        sessionId,
+        sessionKey: `agent:${agentId}:subagent:${sessionId}`,
+      });
+    } catch (error) {
+      return `Hermes sub-agent failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   const resolved = resolveAgentTools(agent);

@@ -1,4 +1,12 @@
-import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai';
+import { randomUUID } from 'node:crypto';
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  streamText,
+  convertToModelMessages,
+  stepCountIs,
+  type UIMessage,
+} from 'ai';
 import { db } from '@/lib/db';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
@@ -9,6 +17,7 @@ import { buildAgentToolSet } from '@/lib/agents/run';
 import { buildModel } from '@/lib/agents/model';
 import { resolveMaxSteps } from '@/lib/agents/constants';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
+import { writeHermesChatStream } from '@/lib/agents/hermes/client';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -51,6 +60,28 @@ export async function POST(
     : null;
 
   const last = messages[messages.length - 1];
+
+  if (agent.runtime?.kind === 'hermes') {
+    const runtimeSessionId = conversationId ?? randomUUID();
+    const stream = createUIMessageStream({
+      originalMessages: messages,
+      execute: ({ writer }) => writeHermesChatStream({
+        agent,
+        messages,
+        conversationId: runtimeSessionId,
+        writer,
+      }),
+      onError: (error) => error instanceof Error ? error.message : 'Hermes runtime request failed.',
+      onFinish: async ({ responseMessage, isAborted }) => {
+        if (!conversationId || isAborted) return;
+        if (last?.role === 'user') {
+          await appendMessage(conversationId, 'user', last.parts as never);
+        }
+        await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
 
   const resolved = resolveAgentTools(agent);
   const tools = await buildAgentToolSet(resolved, {

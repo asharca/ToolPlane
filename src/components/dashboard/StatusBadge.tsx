@@ -2,6 +2,7 @@ const STYLES: Record<string, { dot: string; label: string }> = {
   running: { dot: 'bg-emerald-500', label: 'Running' },
   error: { dot: 'bg-red-500', label: 'Error' },
   provisioning: { dot: 'bg-amber-500', label: 'Provisioning' },
+  setup_required: { dot: 'bg-amber-500', label: 'Setup required' },
   stopped: { dot: 'bg-zinc-400', label: 'Stopped' },
 };
 

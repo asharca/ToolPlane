@@ -40,6 +40,11 @@ const TOOL_INCLUDE = {
       sandbox: { select: { id: true, name: true, slug: true, deploymentId: true } },
     },
   },
+  runtime: {
+    include: {
+      sandbox: { include: { deployment: true } },
+    },
+  },
 } as const;
 
 export async function listProviders(workspaceId: string) {
@@ -56,6 +61,16 @@ export async function listAgents(workspaceId: string) {
     orderBy: { createdAt: 'desc' },
     include: {
       provider: { select: { name: true } },
+      runtime: {
+        select: {
+          id: true,
+          kind: true,
+          image: true,
+          status: true,
+          lastError: true,
+          sandbox: { select: { deploymentId: true, deployment: { select: { status: true } } } },
+        },
+      },
       _count: {
         select: {
           servers: true,
@@ -95,6 +110,26 @@ export async function getAgentForRequest(agentId: string, userId: string) {
       workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: { provider: true, ...TOOL_INCLUDE },
+  });
+}
+
+export async function getHermesTerminalForRequest(agentId: string, userId: string) {
+  return db.agent.findFirst({
+    where: {
+      id: agentId,
+      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      runtime: { is: { kind: 'hermes' } },
+    },
+    select: {
+      id: true,
+      workspaceId: true,
+      runtime: {
+        select: {
+          id: true,
+          sandbox: { select: { deploymentId: true } },
+        },
+      },
+    },
   });
 }
 

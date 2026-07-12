@@ -14,12 +14,14 @@ export type SpawnSpec =
       kind: 'sandbox';
       name: string;
       sandboxId: string;
-      sandboxKind: 'docker' | 'connector';
+      sandboxKind: 'docker' | 'connector' | 'hermes';
       image?: string;
       volumeName?: string;
       network: McpNetwork;
       env: Record<string, string>;
       connector?: SandboxConnectorConfig;
+      runtimeId?: string;
+      runtimeModelName?: string;
     };
 
 export type DeploymentForSpawn = {
@@ -101,12 +103,14 @@ function readCfg(installCfg: unknown): {
 
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
-  kind: 'docker' | 'connector';
+  kind: 'docker' | 'connector' | 'hermes';
   image?: string;
   volumeName?: string;
   network: McpNetwork;
   env: Record<string, string>;
   connector?: SandboxConnectorConfig;
+  runtimeId?: string;
+  runtimeModelName?: string;
 } {
   const c = (installCfg ?? {}) as {
     sandboxId?: string;
@@ -115,16 +119,25 @@ function readSandboxCfg(installCfg: unknown): {
     volumeName?: string;
     network?: string;
     env?: Record<string, string>;
+    runtimeId?: string;
+    runtimeModelName?: string;
   };
   const connector = connectorFromConfig(installCfg);
+  const kind = c.kind === 'hermes' && c.runtimeId
+    ? 'hermes'
+    : c.kind === 'connector' && connector
+      ? 'connector'
+      : 'docker';
   return {
     sandboxId: c.sandboxId ?? '',
-    kind: c.kind === 'connector' && connector ? 'connector' : 'docker',
+    kind,
     image: c.image,
     volumeName: c.volumeName,
     network: c.network === 'none' ? 'none' : 'isolated',
     env: c.env ?? {},
     connector: connector ?? undefined,
+    runtimeId: c.runtimeId,
+    runtimeModelName: c.runtimeModelName,
   };
 }
 
@@ -141,6 +154,8 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       ...(cfg.image ? { image: cfg.image } : {}),
       ...(cfg.volumeName ? { volumeName: cfg.volumeName } : {}),
       ...(cfg.connector ? { connector: cfg.connector } : {}),
+      ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
+      ...(cfg.runtimeModelName ? { runtimeModelName: cfg.runtimeModelName } : {}),
     };
   }
 

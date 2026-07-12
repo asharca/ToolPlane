@@ -44,9 +44,11 @@ services:
     expose:
       - '3000'
       - '9321'
+      - '9332'
     ports:
       - '${APP_HOST_BIND:-0.0.0.0}:${APP_HOST_PORT:-10030}:3000'
       - '${CONNECTOR_WS_HOST_BIND:-0.0.0.0}:${CONNECTOR_WS_HOST_PORT:-9321}:9321'
+      - '${HERMES_DASHBOARD_HOST_BIND:-0.0.0.0}:${HERMES_DASHBOARD_HOST_PORT:-9332}:9332'
     restart: unless-stopped
     healthcheck:
       test:
@@ -71,6 +73,9 @@ services:
       CONNECTOR_WS_BIND: 0.0.0.0
       CONNECTOR_WS_PORT: ${CONNECTOR_WS_PORT:-9321}
       CONNECTOR_WS_PUBLIC_URL: ${CONNECTOR_WS_PUBLIC_URL:-}
+      HERMES_DASHBOARD_BIND: 0.0.0.0
+      HERMES_DASHBOARD_PORT: ${HERMES_DASHBOARD_PORT:-9332}
+      HERMES_DASHBOARD_PUBLIC_URL: ${HERMES_DASHBOARD_PUBLIC_URL:-}
       # Reach the Docker daemon through the restricted proxy, not the raw socket.
       DOCKER_HOST: tcp://socket-proxy:2375
       # Admin-only online updates download a GitHub Release runtime artifact,

@@ -10,7 +10,9 @@ import path from 'node:path';
 import pty from 'node-pty';
 
 const NAME = process.env.MCP_NAME || 'sandbox';
-const KIND = process.env.SANDBOX_KIND === 'connector' ? 'connector' : 'docker';
+const KIND = ['connector', 'hermes'].includes(process.env.SANDBOX_KIND)
+  ? process.env.SANDBOX_KIND
+  : 'docker';
 const SANDBOX_ID = process.env.SANDBOX_ID || 'sandbox';
 const IMAGE = process.env.SANDBOX_IMAGE || 'mcr.microsoft.com/devcontainers/javascript-node:24-bookworm';
 const VOLUME = process.env.SANDBOX_VOLUME || `toolplane_sandbox_${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
@@ -20,11 +22,19 @@ const CONNECTOR_BROKER_URL = (process.env.SANDBOX_CONNECTOR_BROKER_URL || 'http:
 const CONNECTOR_BROKER_TOKEN = process.env.SANDBOX_CONNECTOR_BROKER_TOKEN || '';
 const CONTAINER = `toolplane-sandbox-${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 const USER_ENV = parseEnvJson(process.env.SANDBOX_ENV_JSON || '{}');
+const HERMES_RUNTIME_ID = process.env.HERMES_RUNTIME_ID || '';
+const HERMES_RUNTIME_API_KEY = process.env.HERMES_RUNTIME_API_KEY || '';
+const HERMES_RUNTIME_MODEL_NAME = process.env.HERMES_RUNTIME_MODEL_NAME || 'hermes-agent';
+const WORKSPACE_ROOT = KIND === 'hermes' ? '/opt/data/workspace' : '/workspace';
 const PROTOCOL_VERSION = '2025-06-18';
 const VERSION = '1.0.0';
 const MAX_BODY = 2_000_000;
+const MAX_HERMES_BODY = 12_000_000;
+const MAX_HERMES_DASHBOARD_BODY = 32_000_000;
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 1_000_000;
+const MAX_RUNTIME_UPLOAD = 10_000_000;
+const MAX_RUNTIME_UPLOAD_BODY = Math.ceil(MAX_RUNTIME_UPLOAD * 4 / 3) + 16_384;
 const MAX_DOWNLOAD = 5_000_000;
 const MAX_DOWNLOAD_BASE64 = Math.ceil(MAX_DOWNLOAD * 4 / 3) + 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -32,6 +42,7 @@ const MAX_TIMEOUT_MS = 120_000;
 const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
 const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
+const HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:/opt/hermes/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 const TOOLS = [
   {
@@ -170,7 +181,8 @@ async function run(command, args, opts = {}) {
       clearTimeout(timer);
       resolve({ exitCode, signal, timedOut, stdout, stderr });
     });
-    child.stdin.end(String(opts.stdin ?? '').slice(0, MAX_WRITE));
+    const maxInput = Math.min(Math.max(Number(opts.maxInput ?? MAX_WRITE), 0), MAX_RUNTIME_UPLOAD_BODY);
+    child.stdin.end(String(opts.stdin ?? '').slice(0, maxInput));
   });
 }
 
@@ -186,6 +198,25 @@ function readBody(req, max = MAX_BODY) {
     });
     req.on('error', reject);
     req.on('end', () => resolve(body));
+  });
+}
+
+function readBuffer(req, max = MAX_BODY) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > max) {
+        reject(new Error('Request body is too large.'));
+        req.destroy();
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on('error', reject);
+    req.on('end', () => resolve(Buffer.concat(chunks)));
   });
 }
 
@@ -257,11 +288,25 @@ function hasExpectedDockerSandboxCaps(info) {
   const hostConfig = info?.HostConfig ?? {};
   const capDrop = new Set((hostConfig.CapDrop ?? []).map((cap) => String(cap).toUpperCase()));
   const capAdd = new Set((hostConfig.CapAdd ?? []).map((cap) => String(cap).toUpperCase()));
-  return capDrop.has('ALL') && DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap));
+  const mountTarget = KIND === 'hermes' ? '/opt/data' : '/workspace';
+  const expectedMount = (info?.Mounts ?? []).some(
+    (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
+  );
+  const containerEnv = new Set(info?.Config?.Env ?? []);
+  const dashboardConfigured = KIND !== 'hermes' || [
+    'HERMES_DASHBOARD=1',
+    'HERMES_DASHBOARD_HOST=127.0.0.1',
+    'HERMES_DASHBOARD_PORT=9119',
+  ].every((entry) => containerEnv.has(entry));
+  return capDrop.has('ALL')
+    && DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap))
+    && info?.Config?.Image === IMAGE
+    && expectedMount
+    && dashboardConfigured;
 }
 
 function dockerCreateArgs() {
-  return [
+  const base = [
     'run',
     '-d',
     '--name',
@@ -269,7 +314,7 @@ function dockerCreateArgs() {
     '--label',
     `toolplane.sandbox=${SANDBOX_ID}`,
     '--workdir',
-    '/workspace',
+    WORKSPACE_ROOT,
     '--network',
     NETWORK,
     '--memory',
@@ -284,6 +329,48 @@ function dockerCreateArgs() {
     'ALL',
     ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap]),
     ...Object.entries(USER_ENV).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
+  ];
+
+  if (KIND === 'hermes') {
+    if (!HERMES_RUNTIME_ID || !HERMES_RUNTIME_API_KEY) {
+      throw new Error('Hermes runtime identity is missing.');
+    }
+    return [
+      ...base,
+      '--label',
+      `toolplane.agent-runtime=${HERMES_RUNTIME_ID}`,
+      '--add-host',
+      'host.docker.internal:host-gateway',
+      '--env',
+      'API_SERVER_ENABLED=true',
+      '--env',
+      'API_SERVER_HOST=127.0.0.1',
+      '--env',
+      'API_SERVER_PORT=8642',
+      '--env',
+      `API_SERVER_KEY=${HERMES_RUNTIME_API_KEY}`,
+      '--env',
+      `API_SERVER_MODEL_NAME=${HERMES_RUNTIME_MODEL_NAME}`,
+      '--env',
+      'HERMES_DASHBOARD=1',
+      '--env',
+      'HERMES_DASHBOARD_HOST=127.0.0.1',
+      '--env',
+      'HERMES_DASHBOARD_PORT=9119',
+      '--env',
+      'HERMES_ACCEPT_HOOKS=1',
+      '--env',
+      'HERMES_ENVIRONMENT_HINT=This Hermes instance is managed by ToolPlane. Use only the configured ToolPlane MCP server and the files under /opt/data.',
+      '-v',
+      `${VOLUME}:/opt/data`,
+      IMAGE,
+      'gateway',
+      'run',
+    ];
+  }
+
+  return [
+    ...base,
     '-v',
     `${VOLUME}:/workspace`,
     IMAGE,
@@ -326,13 +413,13 @@ async function ensureRuntime() {
 function workspacePath(raw) {
   const rel = safeRel(raw);
   if (rel === null) return null;
-  return `/workspace${rel ? `/${rel}` : ''}`;
+  return `${WORKSPACE_ROOT}${rel ? `/${rel}` : ''}`;
 }
 
 async function dockerShell({ command, cwd = '.', stdin = '', timeoutMs }) {
   const rel = safeRel(cwd);
   if (rel === null) return textResult('Invalid cwd.', true);
-  const workdir = `/workspace${rel ? `/${rel}` : ''}`;
+  const workdir = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ''}`;
   const result = await run(
     'docker',
     ['exec', '-i', '-w', workdir, CONTAINER, 'sh', '-lc', String(command ?? '')],
@@ -445,15 +532,19 @@ function createTerminal(cols = 80, rows = 24) {
   const id = randomUUID();
   const safeCols = Math.min(Math.max(Number(cols) || 80, 20), 240);
   const safeRows = Math.min(Math.max(Number(rows) || 24, 6), 80);
+  const shellCommand = KIND === 'hermes'
+    ? `export VIRTUAL_ENV=/opt/hermes/.venv; export PATH=${HERMES_TERMINAL_PATH}; if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi`
+    : 'if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi';
   const term = pty.spawn('docker', [
     'exec',
     '-it',
+    ...(KIND === 'hermes' ? ['--user', 'hermes'] : []),
     '-w',
-    '/workspace',
+    WORKSPACE_ROOT,
     CONTAINER,
     'sh',
     '-lc',
-    'if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi',
+    shellCommand,
   ], {
     name: 'xterm-256color',
     cols: safeCols,
@@ -621,6 +712,283 @@ async function handleTerminal(req, res) {
   return true;
 }
 
+async function handleRuntimeFiles(req, res) {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (url.pathname !== '/files/upload') return false;
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'method not allowed' });
+    return true;
+  }
+  if (KIND !== 'hermes') {
+    sendJson(res, 404, { error: 'Runtime attachment upload is only available for Hermes agents.' });
+    return true;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(await readBody(req, MAX_RUNTIME_UPLOAD_BODY));
+  } catch (error) {
+    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    return true;
+  }
+  const rel = safeRel(payload?.path);
+  const content = typeof payload?.content === 'string' ? payload.content : '';
+  if (!rel || !content) {
+    sendJson(res, 400, { error: 'path and base64 content are required' });
+    return true;
+  }
+  const size = Buffer.byteLength(content, 'base64');
+  if (size > MAX_RUNTIME_UPLOAD) {
+    sendJson(res, 413, { error: `Attachment exceeds ${MAX_RUNTIME_UPLOAD} bytes.` });
+    return true;
+  }
+
+  const target = workspacePath(rel);
+  const parent = path.posix.dirname(target);
+  const command = [
+    `mkdir -p ${shQuote(parent)}`,
+    `base64 -d > ${shQuote(target)}`,
+    `if id hermes >/dev/null 2>&1; then chown "$(id -u hermes):$(id -g hermes)" ${shQuote(parent)} ${shQuote(target)}; fi`,
+  ].join(' && ');
+  const result = await run('docker', ['exec', '-i', CONTAINER, 'sh', '-lc', command], {
+    env: dockerEnv(),
+    stdin: content,
+    maxInput: MAX_RUNTIME_UPLOAD_BODY,
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode !== 0) {
+    sendJson(res, 500, { error: result.stderr || 'Could not write attachment.' });
+    return true;
+  }
+  sendJson(res, 201, { path: target, relativePath: rel, size });
+  return true;
+}
+
+function hermesProxyPath(req) {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (!url.pathname.startsWith('/hermes/')) return null;
+  const path = url.pathname.slice('/hermes'.length);
+  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/'))) {
+    return false;
+  }
+  return `${path}${url.search}`;
+}
+
+function parseCurlHeaders(raw, allowedNames = ['content-type', 'cache-control', 'x-hermes-session-id', 'x-hermes-session-key']) {
+  const text = raw.toString('latin1');
+  const lines = text.split(/\r?\n/);
+  const statusMatch = /^HTTP\/\S+\s+(\d+)/.exec(lines[0] || '');
+  const headers = {};
+  const allowed = new Set(allowedNames);
+  for (const line of lines.slice(1)) {
+    const index = line.indexOf(':');
+    if (index < 1) continue;
+    const name = line.slice(0, index).trim().toLowerCase();
+    const value = line.slice(index + 1).trim();
+    if (allowed.has(name)) {
+      headers[name] = value;
+    }
+  }
+  return { status: Number(statusMatch?.[1] || 502), headers };
+}
+
+function streamCurlResponse(req, res, args, body, responseHeaders) {
+  const child = spawn('docker', args, { env: dockerEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  let headerBuffer = Buffer.alloc(0);
+  let responseStarted = false;
+  let stderr = '';
+
+  child.stdout.on('data', (chunk) => {
+    if (responseStarted) {
+      res.write(chunk);
+      return;
+    }
+    headerBuffer = Buffer.concat([headerBuffer, chunk]);
+    const marker = headerBuffer.indexOf('\r\n\r\n');
+    const fallbackMarker = marker === -1 ? headerBuffer.indexOf('\n\n') : -1;
+    const splitAt = marker === -1 ? fallbackMarker : marker;
+    if (splitAt === -1) return;
+    const markerLength = marker === -1 ? 2 : 4;
+    const parsed = parseCurlHeaders(headerBuffer.subarray(0, splitAt), responseHeaders);
+    res.writeHead(parsed.status, parsed.headers);
+    responseStarted = true;
+    const rest = headerBuffer.subarray(splitAt + markerLength);
+    if (rest.length) res.write(rest);
+    headerBuffer = Buffer.alloc(0);
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr = truncate(stderr + chunk.toString('utf8'), 8_000);
+  });
+  child.on('error', (error) => {
+    if (!responseStarted) {
+      responseStarted = true;
+      sendJson(res, 502, { error: error.message });
+    } else {
+      res.end();
+    }
+  });
+  child.on('close', (code) => {
+    if (!responseStarted) {
+      sendJson(res, 502, { error: stderr || `Hermes proxy exited with code ${code}` });
+      return;
+    }
+    res.end();
+  });
+  req.on('aborted', () => child.kill('SIGTERM'));
+  child.stdin.end(body);
+}
+
+async function handleHermesProxy(req, res) {
+  const targetPath = hermesProxyPath(req);
+  if (targetPath === null) return false;
+  if (KIND !== 'hermes') {
+    sendJson(res, 404, { error: 'Hermes runtime is not enabled for this sandbox.' });
+    return true;
+  }
+  if (targetPath === false) {
+    sendJson(res, 404, { error: 'Hermes endpoint is not exposed.' });
+    return true;
+  }
+  if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) {
+    sendJson(res, 405, { error: 'method not allowed' });
+    return true;
+  }
+
+  let body = '';
+  if (req.method === 'POST') {
+    try {
+      body = await readBody(req, MAX_HERMES_BODY);
+    } catch (error) {
+      sendJson(res, 413, { error: error instanceof Error ? error.message : String(error) });
+      return true;
+    }
+  }
+
+  const args = [
+    'exec',
+    '-i',
+    CONTAINER,
+    'curl',
+    '--silent',
+    '--show-error',
+    '--no-buffer',
+    '--include',
+    '--connect-timeout',
+    '10',
+    '--max-time',
+    '3600',
+    '--request',
+    req.method || 'GET',
+    `http://127.0.0.1:8642${targetPath}`,
+    '--header',
+    `Authorization: Bearer ${HERMES_RUNTIME_API_KEY}`,
+    '--header',
+    'Expect:',
+  ];
+  for (const name of ['x-hermes-session-id', 'x-hermes-session-key']) {
+    const value = req.headers[name];
+    if (typeof value === 'string' && value) {
+      args.push('--header', `${name}: ${value}`);
+    }
+  }
+  if (body) {
+    args.push('--header', `Content-Type: ${req.headers['content-type'] || 'application/json'}`, '--data-binary', '@-');
+  }
+
+  streamCurlResponse(
+    req,
+    res,
+    args,
+    body,
+    ['content-type', 'cache-control', 'x-hermes-session-id', 'x-hermes-session-key'],
+  );
+  return true;
+}
+
+function hermesDashboardProxyPath(req) {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (url.pathname !== '/hermes-dashboard' && !url.pathname.startsWith('/hermes-dashboard/')) return null;
+  const targetPath = url.pathname.slice('/hermes-dashboard'.length) || '/';
+  return `${targetPath}${url.search}`;
+}
+
+async function handleHermesDashboardProxy(req, res) {
+  const targetPath = hermesDashboardProxyPath(req);
+  if (targetPath === null) return false;
+  if (KIND !== 'hermes') {
+    sendJson(res, 404, { error: 'Hermes runtime is not enabled for this sandbox.' });
+    return true;
+  }
+  if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '')) {
+    sendJson(res, 405, { error: 'method not allowed' });
+    return true;
+  }
+
+  let body = Buffer.alloc(0);
+  if (!['GET', 'HEAD'].includes(req.method || '')) {
+    try {
+      body = await readBuffer(req, MAX_HERMES_DASHBOARD_BODY);
+    } catch (error) {
+      sendJson(res, 413, { error: error instanceof Error ? error.message : String(error) });
+      return true;
+    }
+  }
+
+  const args = [
+    'exec',
+    '-i',
+    CONTAINER,
+    'curl',
+    '--silent',
+    '--show-error',
+    '--no-buffer',
+    '--include',
+    '--connect-timeout',
+    '10',
+    '--max-time',
+    '3600',
+    '--request',
+    req.method || 'GET',
+    `http://127.0.0.1:9119${targetPath}`,
+    '--header',
+    'Expect:',
+  ];
+  for (const name of [
+    'accept',
+    'content-type',
+    'if-modified-since',
+    'if-none-match',
+    'range',
+    'x-hermes-session-token',
+  ]) {
+    const value = req.headers[name];
+    if (typeof value === 'string' && value) args.push('--header', `${name}: ${value}`);
+  }
+  const forwardedPrefix = req.headers['x-forwarded-prefix'];
+  if (typeof forwardedPrefix === 'string' && /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(forwardedPrefix)) {
+    args.push('--header', `X-Forwarded-Prefix: ${forwardedPrefix}`);
+  }
+  if (body.length) args.push('--data-binary', '@-');
+
+  streamCurlResponse(
+    req,
+    res,
+    args,
+    body,
+    [
+      'accept-ranges',
+      'cache-control',
+      'content-disposition',
+      'content-range',
+      'content-type',
+      'etag',
+      'last-modified',
+      'location',
+    ],
+  );
+  return true;
+}
+
 async function callTool(name, args = {}) {
   switch (name) {
     case 'sandbox_info':
@@ -628,16 +996,17 @@ async function callTool(name, args = {}) {
         id: SANDBOX_ID,
         name: NAME,
         kind: KIND,
-        image: KIND === 'docker' ? IMAGE : null,
-        container: KIND === 'docker' ? CONTAINER : null,
-        volume: KIND === 'docker' ? VOLUME : null,
+        image: KIND === 'connector' ? null : IMAGE,
+        container: KIND === 'connector' ? null : CONTAINER,
+        volume: KIND === 'connector' ? null : VOLUME,
+        runtimeId: KIND === 'hermes' ? HERMES_RUNTIME_ID : null,
         connector: KIND === 'connector'
           ? {
               remoteRoot: CONNECTOR_REMOTE_ROOT,
               broker: CONNECTOR_BROKER_URL,
             }
           : null,
-        workspace: KIND === 'docker' ? '/workspace' : CONNECTOR_REMOTE_ROOT,
+        workspace: KIND === 'connector' ? CONNECTOR_REMOTE_ROOT : WORKSPACE_ROOT,
       });
     case 'shell_exec':
       if (!args.command) return textResult('command is required.', true);
@@ -695,6 +1064,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   try {
+    if (await handleRuntimeFiles(req, res)) return;
+    if (await handleHermesDashboardProxy(req, res)) return;
+    if (await handleHermesProxy(req, res)) return;
     if (await handleTerminal(req, res)) return;
   } catch (error) {
     sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -727,9 +1099,18 @@ const server = http.createServer(async (req, res) => {
     .catch((error) => sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }));
 });
 
+let shuttingDown = false;
 const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   for (const session of terminalSessions.values()) session.term.kill();
-  server.close(() => process.exit(0));
+  server.close();
+  if (KIND === 'hermes') {
+    void run('docker', ['stop', '--time', '10', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 })
+      .finally(() => process.exit(0));
+    return;
+  }
+  process.exit(0);
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

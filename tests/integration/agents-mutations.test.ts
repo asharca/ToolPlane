@@ -3,12 +3,14 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { db } from '@/lib/db';
 import {
   createAgent,
+  deleteAgent,
   updateAgent,
   setAgentTools,
   setProviderModels,
   appendMessage,
   createConversation,
 } from '@/lib/agents/mutations';
+import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -64,6 +66,65 @@ describe('agents mutations', () => {
     expect(a.slug).toBe('my-agent');
     const b = await createAgent(workspaceId, 'My Agent');
     expect(b.slug).toBe('my-agent-1');
+  });
+
+  it('creates a Hermes agent with one managed runtime sandbox', async () => {
+    const agent = await createAgent(workspaceId, 'Hermes Research', {
+      runtime: 'hermes',
+      hermesImage: 'nousresearch/hermes-agent:v2026.6.5',
+    });
+    const runtime = await db.agentRuntime.findUnique({
+      where: { agentId: agent.id },
+      include: { sandbox: { include: { deployment: true } } },
+    });
+
+    expect(runtime?.workspaceId).toBe(workspaceId);
+    expect(runtime?.kind).toBe('hermes');
+    expect(runtime?.status).toBe('setup_required');
+    expect(runtime?.image).toBe('nousresearch/hermes-agent:v2026.6.5');
+    expect(runtime?.sandbox.kind).toBe('hermes');
+    expect(runtime?.sandbox.deployment.source).toBe('sandbox');
+    expect(runtime?.sandbox.deployment.installCfg).toMatchObject({
+      runtimeId: runtime?.id,
+      kind: 'hermes',
+    });
+
+    const [userSandboxes, managedRuntimes] = await Promise.all([
+      listSandboxes(workspaceId),
+      listManagedAgentRuntimes(workspaceId),
+    ]);
+    expect(userSandboxes.some((sandbox) => sandbox.id === runtime?.sandboxId)).toBe(false);
+    expect(managedRuntimes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: runtime?.id,
+        agent: expect.objectContaining({ id: agent.id }),
+        sandbox: expect.objectContaining({ id: runtime?.sandboxId }),
+      }),
+    ]));
+
+    await deleteAgent(workspaceId, agent.id);
+    expect(await db.agentRuntime.findUnique({ where: { id: runtime!.id } })).toBeNull();
+    expect(await db.sandbox.findUnique({ where: { id: runtime!.sandboxId } })).toBeNull();
+  });
+
+  it('does not attach a managed Hermes runtime as another agent sandbox', async () => {
+    const runtimeAgent = await createAgent(workspaceId, 'Runtime owner', { runtime: 'hermes' });
+    const nativeAgent = await createAgent(workspaceId, 'Native consumer');
+    const runtime = await db.agentRuntime.findUniqueOrThrow({
+      where: { agentId: runtimeAgent.id },
+      select: { sandboxId: true },
+    });
+
+    await setAgentTools(workspaceId, nativeAgent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [runtime.sandboxId],
+    });
+
+    await expect(db.agentSandbox.count({ where: { agentId: nativeAgent.id } })).resolves.toBe(0);
+    await deleteAgent(workspaceId, runtimeAgent.id);
+    await deleteAgent(workspaceId, nativeAgent.id);
   });
 
   it('updates config and replaces the attached tools', async () => {

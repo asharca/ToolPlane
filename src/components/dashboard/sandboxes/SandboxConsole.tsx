@@ -100,8 +100,8 @@ async function callTool(deploymentId: string, name: string, args: Record<string,
   return text;
 }
 
-async function postTerminal(deploymentId: string, sessionId: string, action: 'input' | 'resize', body: unknown) {
-  await fetch(`/api/v1/mcp/${deploymentId}/terminal/${sessionId}/${action}`, {
+async function postTerminal(terminalApiBase: string, sessionId: string, action: 'input' | 'resize', body: unknown) {
+  await fetch(`${terminalApiBase}/${sessionId}/${action}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -114,13 +114,22 @@ export function SandboxConsole({
   running,
   initialPath,
   initialEntries,
+  terminalOnly = false,
+  terminalApiBase,
+  terminalLabel,
+  terminalSubtitle,
 }: {
   deploymentId: string;
   running: boolean;
   initialPath: string;
   initialEntries: SandboxFileEntry[];
+  terminalOnly?: boolean;
+  terminalApiBase?: string;
+  terminalLabel?: string;
+  terminalSubtitle?: string;
 }) {
   const t = useTranslations('console.sandboxes');
+  const terminalBase = terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
   const terminalElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<XtermFitAddon | null>(null);
@@ -133,6 +142,7 @@ export function SandboxConsole({
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState('');
   const [terminalStatus, setTerminalStatus] = useState(running ? 'Connecting' : 'Stopped');
+  const [terminalGeneration, setTerminalGeneration] = useState(0);
   const [fileStatus, setFileStatus] = useState(
     initialEntries.length ? `${initialEntries.length} item(s)` : running ? 'Empty directory' : 'Start sandbox to browse files',
   );
@@ -176,8 +186,8 @@ export function SandboxConsole({
     const data = inputQueueRef.current;
     if (!sessionId || !data) return;
     inputQueueRef.current = '';
-    void postTerminal(deploymentId, sessionId, 'input', { data });
-  }, [deploymentId]);
+    void postTerminal(terminalBase, sessionId, 'input', { data });
+  }, [terminalBase]);
 
   const queueInput = useCallback(
     (data: string) => {
@@ -197,8 +207,8 @@ export function SandboxConsole({
     const sessionId = sessionIdRef.current;
     if (!term || !fit) return;
     fit.fit();
-    if (sessionId) void postTerminal(deploymentId, sessionId, 'resize', { cols: term.cols, rows: term.rows });
-  }, [deploymentId]);
+    if (sessionId) void postTerminal(terminalBase, sessionId, 'resize', { cols: term.cols, rows: term.rows });
+  }, [terminalBase]);
 
   useEffect(() => {
     let disposed = false;
@@ -241,7 +251,7 @@ export function SandboxConsole({
         return;
       }
 
-      const sessionRes = await fetch(`/api/v1/mcp/${deploymentId}/terminal`, {
+      const sessionRes = await fetch(terminalBase, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows }),
@@ -255,7 +265,7 @@ export function SandboxConsole({
       sessionIdRef.current = session.id;
       setTerminalStatus('Connected');
 
-      eventSource = new EventSource(`/api/v1/mcp/${deploymentId}/terminal/${session.id}/stream`);
+      eventSource = new EventSource(`${terminalBase}/${session.id}/stream`);
       eventSource.addEventListener('data', (event) => {
         if (disposed || !terminal) return;
         const payload = JSON.parse((event as MessageEvent).data) as { data?: string };
@@ -273,7 +283,7 @@ export function SandboxConsole({
       terminal.onData((data) => queueInput(data));
       terminal.onResize(({ cols, rows }) => {
         const sessionId = sessionIdRef.current;
-        if (sessionId) void postTerminal(deploymentId, sessionId, 'resize', { cols, rows });
+        if (sessionId) void postTerminal(terminalBase, sessionId, 'resize', { cols, rows });
       });
 
       resizeObserver = new ResizeObserver(() => resizeTerminal());
@@ -294,14 +304,14 @@ export function SandboxConsole({
       resizeObserver?.disconnect();
       const sessionId = sessionIdRef.current;
       if (sessionId) {
-        void fetch(`/api/v1/mcp/${deploymentId}/terminal/${sessionId}`, { method: 'DELETE', keepalive: true });
+        void fetch(`${terminalBase}/${sessionId}`, { method: 'DELETE', keepalive: true });
       }
       sessionIdRef.current = null;
       fitRef.current = null;
       terminalRef.current = null;
       terminal?.dispose();
     };
-  }, [deploymentId, flushInput, queueInput, resizeTerminal, running]);
+  }, [flushInput, queueInput, resizeTerminal, running, terminalBase, terminalGeneration]);
 
   function openFile(path: string) {
     setSelectedPath(path);
@@ -334,6 +344,42 @@ export function SandboxConsole({
       setLoadingPath(null);
     }
   }
+
+  const terminalPanel = (
+    <section
+      className={terminalOnly
+        ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#111419]'
+        : 'ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-[#111419]'}
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+          <TerminalIcon className="size-4 text-zinc-400" />
+          {terminalLabel ?? t('terminal')}
+        </div>
+        <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-400">
+          <span>{terminalStatus}</span>
+          <span className="hidden max-w-80 truncate font-mono sm:inline">
+            {terminalSubtitle ?? deploymentId}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setTerminalStatus('Connecting');
+              setTerminalGeneration((value) => value + 1);
+            }}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100"
+            title={t('reconnectTerminal')}
+            aria-label={t('reconnectTerminal')}
+          >
+            <RefreshCw className="size-3.5" />
+          </button>
+        </div>
+      </div>
+      <div ref={terminalElementRef} className="sandbox-terminal min-h-0 flex-1 overflow-hidden" />
+    </section>
+  );
+
+  if (terminalOnly) return terminalPanel;
 
   return (
     <div className="grid min-h-[calc(100vh-13rem)] gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
@@ -434,19 +480,7 @@ export function SandboxConsole({
         </div>
       </aside>
 
-      <section className="ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-[#111419]">
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-            <TerminalIcon className="size-4 text-zinc-400" />
-            {t('terminal')}
-          </div>
-          <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-400">
-            <span>{terminalStatus}</span>
-            <span className="hidden font-mono sm:inline">{deploymentId}</span>
-          </div>
-        </div>
-        <div ref={terminalElementRef} className="sandbox-terminal min-h-0 flex-1 overflow-hidden" />
-      </section>
+      {terminalPanel}
     </div>
   );
 }

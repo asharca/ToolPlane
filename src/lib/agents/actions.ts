@@ -28,6 +28,11 @@ import {
   requestAgentChannelPairing,
 } from '@/lib/agents/channel-pairing';
 import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/platforms';
+import {
+  cleanupHermesRuntime,
+  stopHermesRuntime,
+  syncHermesRuntime,
+} from '@/lib/agents/hermes/runtime';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -101,9 +106,31 @@ export async function createAgentAction(formData: FormData) {
   const name = String(formData.get('name') ?? '').trim() || 'New agent';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const agent = await createAgent(ctx.ws.id, name);
+  const runtime = String(formData.get('runtime') ?? '') === 'hermes' ? 'hermes' : 'native';
+  const agent = await createAgent(ctx.ws.id, name, {
+    runtime,
+    hermesImage: String(formData.get('hermesImage') ?? ''),
+  });
+
+  const providerId = String(formData.get('providerId') ?? '') || null;
+  const model = String(formData.get('model') ?? '') || null;
+  if (providerId || model) {
+    await updateAgent(ctx.ws.id, agent.id, {
+      name,
+      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+      providerId,
+      model,
+      maxSteps: AGENT_STEP_BOUNDS.default,
+    });
+  }
+  await setAgentTools(ctx.ws.id, agent.id, {
+    deploymentIds: formData.getAll('deploymentId').map(String),
+    installedSkillIds: formData.getAll('installedSkillId').map(String),
+    toolkitIds: formData.getAll('toolkitId').map(String),
+  });
+  if (runtime === 'hermes') await syncHermesRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);
-  redirect(`/app/${slug}/agents/${agent.id}?tab=settings`);
+  redirect(`/app/${slug}/agents/${agent.id}?settings=agent`);
 }
 
 export async function deleteAgentAction(formData: FormData) {
@@ -111,6 +138,7 @@ export async function deleteAgentAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
+  await cleanupHermesRuntime(ctx.ws.id, agentId);
   await deleteAgent(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents`);
   redirect(`/app/${slug}/agents`);
@@ -146,8 +174,28 @@ export async function updateAgentAction(
     sandboxIds: formData.getAll('sandboxId').map(String),
     subAgentIds: formData.getAll('subAgentId').map(String),
   });
+  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
+  if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
   return { savedAt: Date.now() };
+}
+
+export async function syncAgentRuntimeAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  await syncHermesRuntime(ctx.ws.id, agentId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+}
+
+export async function stopAgentRuntimeAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  await stopHermesRuntime(ctx.ws.id, agentId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
 }
 
 export async function createConversationAction(formData: FormData) {
