@@ -4,15 +4,21 @@ import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
 import {
+  Blocks,
   Bot,
   CheckCircle2,
   CircleAlert,
+  Container,
+  Cpu,
   MessageCircle,
+  PackageCheck,
   Plus,
+  Server,
   Wrench,
   Users,
 } from 'lucide-react';
 import { createAgentAction } from '@/lib/agents/actions';
+import { DEFAULT_HERMES_IMAGE } from '@/lib/agents/hermes/constants';
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -26,6 +32,15 @@ export type AgentRow = {
   toolCount: number;
   subAgentCount: number;
   conversationCount: number;
+  runtimeKind: string;
+  runtimeStatus: string | null;
+};
+
+type CreateOptions = {
+  providers: Array<{ id: string; name: string; models: string[] }>;
+  deployments: Array<{ id: string; label: string }>;
+  skills: Array<{ id: string; label: string }>;
+  toolkits: Array<{ id: string; label: string }>;
 };
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -50,10 +65,21 @@ function CountPill({
   );
 }
 
-export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow[] }) {
+export function AgentsBrowser({
+  slug,
+  agents,
+  createOptions,
+}: {
+  slug: string;
+  agents: AgentRow[];
+  createOptions: CreateOptions;
+}) {
   const t = useTranslations('console.agents');
   const [creating, setCreating] = useState(false);
+  const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
+  const [providerId, setProviderId] = useState('');
   const setupCount = agents.filter((agent) => !agent.model).length;
+  const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
 
   return (
     <DashboardPage className="space-y-5">
@@ -75,21 +101,103 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
       {creating ? (
         <form
           action={createAgentAction}
-          className="ui-panel grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto]"
+          className="ui-panel space-y-5 p-5"
         >
           <input type="hidden" name="workspace" value={slug} />
-          <input
-            name="name"
-            autoFocus
-            required
-            maxLength={60}
-            placeholder={t('egResearchAssistant')}
-            className="ui-input h-10"
-          />
-          <button className="ui-button-primary h-10 gap-2 px-4">
-            <Plus className="size-[18px] shrink-0" />
-            {t('createAgent')}
-          </button>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
+              <input
+                name="name"
+                autoFocus
+                required
+                maxLength={60}
+                placeholder={t('egResearchAssistant')}
+                className="ui-input h-10 w-full"
+              />
+            </label>
+            <fieldset>
+              <legend className="mb-1.5 text-xs font-semibold text-foreground">{t('runtime')}</legend>
+              <div className="grid grid-cols-2 rounded-md border border-border bg-muted/20 p-1">
+                {([
+                  { value: 'native' as const, label: t('nativeRuntime'), icon: Bot },
+                  { value: 'hermes' as const, label: 'Hermes', icon: Container },
+                ]).map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <label
+                      key={option.value}
+                      className={cx(
+                        'flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors',
+                        runtime === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="runtime"
+                        value={option.value}
+                        checked={runtime === option.value}
+                        onChange={() => setRuntime(option.value)}
+                        className="sr-only"
+                      />
+                      <Icon className="size-4" />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          </div>
+
+          {runtime === 'hermes' ? (
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('dockerImage')}</span>
+              <input
+                name="hermesImage"
+                defaultValue={DEFAULT_HERMES_IMAGE}
+                className="ui-input h-10 w-full font-mono text-sm"
+              />
+            </label>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                <Cpu className="size-4 text-muted-foreground" /> {t('provider')}
+              </span>
+              <select
+                name="providerId"
+                value={providerId}
+                onChange={(event) => setProviderId(event.target.value)}
+                className="ui-input h-10 w-full"
+              >
+                <option value="">{t('none')}</option>
+                {createOptions.providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
+              <select name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
+                <option value="">{t('select')}</option>
+                {models.map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <CreateCheckGroup icon={Server} legend="MCP" name="deploymentId" options={createOptions.deployments} />
+            <CreateCheckGroup icon={PackageCheck} legend="Skills" name="installedSkillId" options={createOptions.skills} />
+            <CreateCheckGroup icon={Blocks} legend="Toolkits" name="toolkitId" options={createOptions.toolkits} />
+          </div>
+
+          <div className="flex justify-end border-t border-border pt-4">
+            <button className="ui-button-primary h-10 gap-2 px-4">
+              <Plus className="size-[18px] shrink-0" />
+              {t('createAgent')}
+            </button>
+          </div>
         </form>
       ) : null}
 
@@ -153,6 +261,11 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
                             {ready ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
                             {ready ? t('ready') : t('needsModel')}
                           </span>
+                          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
+                            {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}
+                            {agent.runtimeKind === 'hermes' ? 'Hermes' : t('nativeRuntime')}
+                            {agent.runtimeStatus ? ` · ${agent.runtimeStatus}` : ''}
+                          </span>
                         </div>
                         <p className="mt-1 truncate text-sm text-muted-foreground">
                           {t('model')}: {model}
@@ -179,5 +292,38 @@ export function AgentsBrowser({ slug, agents }: { slug: string; agents: AgentRow
         </section>
       )}
     </DashboardPage>
+  );
+}
+
+function CreateCheckGroup({
+  icon: Icon,
+  legend,
+  name,
+  options,
+}: {
+  icon: typeof Bot;
+  legend: string;
+  name: string;
+  options: Array<{ id: string; label: string }>;
+}) {
+  const t = useTranslations('console.agents');
+  return (
+    <fieldset className="min-w-0 rounded-md border border-border p-3">
+      <legend className="px-1 text-xs font-semibold text-foreground">
+        <span className="inline-flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{legend}</span>
+      </legend>
+      {options.length ? (
+        <div className="max-h-36 space-y-1 overflow-y-auto">
+          {options.map((option) => (
+            <label key={option.id} className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted/40">
+              <input type="checkbox" name={name} value={option.id} className="size-4" />
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="px-2 py-2 text-sm text-muted-foreground">{t('nothingAvailableInThisWorkspace')}</p>
+      )}
+    </fieldset>
   );
 }

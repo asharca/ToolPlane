@@ -141,6 +141,8 @@ model Workspace {
   toolkits         Toolkit[]
   modelProviders   ModelProvider[]
   agents           Agent[]
+  agentRuntimes    AgentRuntime[]
+  agentAttachments AgentAttachment[]
   agentChannels    AgentChannelConnection[]
   skillInvocations SkillInvocation[]
   syncEvents       SyncEvent[]
@@ -196,6 +198,7 @@ model Sandbox {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   agentLinks   AgentSandbox[]
+  agentRuntime AgentRuntime?
 
   @@unique([workspaceId, slug])
 }
@@ -333,8 +336,55 @@ model Agent {
   parentLinks   AgentSubAgent[]          @relation("AgentChild")
   conversations Conversation[]
   channels      AgentChannelConnection[]
+  runtime       AgentRuntime?
+  attachments   AgentAttachment[]
 
   @@unique([workspaceId, slug])
+}
+
+model AgentRuntime {
+  id            String            @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId       String            @unique
+  agent         Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId     String            @unique
+  sandbox       Sandbox           @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  kind          String            @default("hermes")
+  image         String
+  status        String            @default("provisioning")
+  configVersion Int               @default(1)
+  configHash    String?
+  capabilities  Json?
+  lastSyncedAt  DateTime?
+  lastStartedAt DateTime?
+  lastError     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  attachments   AgentAttachment[]
+
+  @@index([workspaceId, kind, status])
+}
+
+model AgentAttachment {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  runtimeId      String?
+  runtime        AgentRuntime? @relation(fields: [runtimeId], references: [id], onDelete: SetNull)
+  name           String
+  mimeType       String
+  size           Int
+  storage        String        @default("hermes-volume")
+  storagePath    String
+  createdAt      DateTime      @default(now())
+
+  @@index([workspaceId, agentId, createdAt])
+  @@index([conversationId])
 }
 
 model AgentChannelConnection {
@@ -411,12 +461,13 @@ model AgentSandbox {
 }
 
 model Conversation {
-  id        String    @id @default(cuid())
-  agentId   String
-  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  title     String?
-  createdAt DateTime  @default(now())
-  messages  Message[]
+  id          String            @id @default(cuid())
+  agentId     String
+  agent       Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title       String?
+  createdAt   DateTime          @default(now())
+  messages    Message[]
+  attachments AgentAttachment[]
 }
 
 model Message {

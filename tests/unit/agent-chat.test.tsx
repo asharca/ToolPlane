@@ -26,6 +26,10 @@ vi.mock('@streamdown/code', () => ({
   code: {},
 }));
 
+vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
+  SandboxConsole: () => <div>Hermes shell</div>,
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -40,6 +44,8 @@ vi.mock('@/lib/agents/actions', () => ({
   updateAgentChannelConnectionCredentialsAction: vi.fn(),
   startAgentChannelConnectionAction: vi.fn(),
   stopAgentChannelConnectionAction: vi.fn(),
+  stopAgentRuntimeAction: vi.fn(),
+  syncAgentRuntimeAction: vi.fn(),
   updateAgentAction: vi.fn(),
 }));
 
@@ -63,14 +69,27 @@ const channelSettings = {
   stats: { mcp: 0, skills: 0, toolkits: 0, sandboxes: 0, subAgents: 0 },
 };
 
+const hermesRuntime = {
+  kind: 'hermes',
+  image: 'nousresearch/hermes-agent:latest',
+  status: 'running',
+  lastError: null,
+  lastSyncedAt: '2026-07-11T00:00:00.000Z',
+  sandboxId: 'sandbox-1',
+  deploymentId: 'deployment-1',
+  dashboardUrl: '/api/v1/agent-runtimes/runtime-1/dashboard/capability/',
+};
+
 function renderChat({
   conversationId = 'conv-1',
   initialMessages = [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }] as UIMessage[],
   initialSettingsTab = null,
+  runtime = null,
 }: {
   conversationId?: string | null;
   initialMessages?: UIMessage[];
-  initialSettingsTab?: 'agent' | 'channels' | null;
+  initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
+  runtime?: typeof hermesRuntime | null;
 } = {}) {
   return render(
     <AgentChat
@@ -96,7 +115,7 @@ function renderChat({
           source: null,
         },
       ]}
-      settings={settings}
+      settings={{ ...settings, runtime }}
       channelSettings={channelSettings}
       ready
       agentName="Test agent"
@@ -222,6 +241,50 @@ describe('AgentChat', () => {
     expect(screen.getByLabelText('Close settings')).toBeInTheDocument();
   });
 
+  it('closes settings with Escape or a backdrop click but not an inside click', async () => {
+    renderChat();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    let dialog = screen.getByRole('dialog', { name: 'Settings' });
+    fireEvent.mouseDown(dialog);
+    expect(dialog).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    dialog = screen.getByRole('dialog', { name: 'Settings' });
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
+  it('keeps one stable settings frame while switching tabs', async () => {
+    renderChat({ runtime: hermesRuntime });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const dialog = screen.getByRole('dialog', { name: 'Settings' });
+    const frameClassName = dialog.className;
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hermes' }));
+    expect(dialog.className).toBe(frameClassName);
+    await userEvent.click(screen.getByRole('button', { name: 'Terminal' }));
+    expect(dialog.className).toBe(frameClassName);
+    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    expect(dialog.className).toBe(frameClassName);
+  });
+
+  it('accepts an Escape close request from the Hermes iframe', () => {
+    renderChat({ initialSettingsTab: 'hermes', runtime: hermesRuntime });
+
+    const iframe = screen.getByTitle('Hermes runtime dashboard') as HTMLIFrameElement;
+    fireEvent(window, new MessageEvent('message', {
+      data: 'toolplane:close-agent-settings',
+      source: iframe.contentWindow,
+    }));
+
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
   it('keeps channel settings inside the settings dialog', async () => {
     renderChat();
 
@@ -237,5 +300,17 @@ describe('AgentChat', () => {
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByText('Connected channels')).toBeInTheDocument();
+  });
+
+  it('lets the separate-origin Hermes dashboard use browser storage', () => {
+    renderChat({ initialSettingsTab: 'hermes', runtime: hermesRuntime });
+
+    const dashboard = screen.getByTitle('Hermes runtime dashboard');
+    expect(dashboard).toHaveAttribute('src', hermesRuntime.dashboardUrl);
+    expect(dashboard.getAttribute('sandbox')).toContain('allow-scripts');
+    expect(dashboard.getAttribute('sandbox')).toContain('allow-same-origin');
+    expect(dashboard.getAttribute('sandbox')).not.toContain('allow-forms');
+    expect(screen.getByText(/managed by ToolPlane/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument();
   });
 });

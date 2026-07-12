@@ -208,6 +208,38 @@ describe('resolveSpawnSpec', () => {
     });
   });
 
+  it('sandbox source preserves the scoped Hermes runtime identity', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Hermes runtime: Research',
+      source: 'sandbox',
+      sourceRef: 'nousresearch/hermes-agent:latest',
+      installCfg: {
+        sandboxId: 'sb-hermes',
+        kind: 'hermes',
+        image: 'nousresearch/hermes-agent:latest',
+        volumeName: 'hermes-volume',
+        network: 'isolated',
+        runtimeId: 'runtime-1',
+        runtimeModelName: 'research',
+      },
+    });
+
+    expect(spec).toEqual({
+      kind: 'sandbox',
+      name: 'Hermes runtime: Research',
+      sandboxId: 'sb-hermes',
+      sandboxKind: 'hermes',
+      image: 'nousresearch/hermes-agent:latest',
+      volumeName: 'hermes-volume',
+      network: 'isolated',
+      env: {},
+      runtimeId: 'runtime-1',
+      runtimeModelName: 'research',
+    });
+  });
+
   it('generates the one-command WebSocket connector command', () => {
     const connector = buildConnectorConfig(
       {

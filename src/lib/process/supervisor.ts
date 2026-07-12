@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { type SpawnSpec } from './spawn-spec';
 import { MCP_NETWORK } from './sandbox';
 import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
+import { deriveHermesRuntimeToken } from '@/lib/agents/hermes/token';
 
 type Entry = {
   child: ChildProcess;
@@ -219,6 +220,11 @@ export async function startProcess(
             SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
             SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
             SANDBOX_CONNECTOR_REMOTE_ROOT: spec.connector?.remoteRoot ?? '',
+            HERMES_RUNTIME_ID: spec.runtimeId ?? '',
+            HERMES_RUNTIME_API_KEY: spec.runtimeId
+              ? deriveHermesRuntimeToken(spec.runtimeId, 'hermes-api')
+              : '',
+            HERMES_RUNTIME_MODEL_NAME: spec.runtimeModelName ?? 'hermes-agent',
           }
         : { ...process.env, MCP_PORT: '0', MCP_NAME: spec.name };
 

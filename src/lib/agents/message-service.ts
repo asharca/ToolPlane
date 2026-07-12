@@ -12,6 +12,7 @@ import { resolveMaxSteps } from '@/lib/agents/constants';
 import { parseAgentMessageBody, type AgentMessageBody } from '@/lib/agents/chat-body';
 import { isSilentAgentReply, normalizeAgentMessageEvent } from '@/lib/agents/messaging';
 import { touchAgentChannelEvent } from '@/lib/agents/channel-connections';
+import { runHermesText } from '@/lib/agents/hermes/client';
 
 type LoadedMessageAgent = NonNullable<Awaited<ReturnType<typeof getAgentForRequest>>>;
 
@@ -110,27 +111,44 @@ async function runLoadedAgentMessage(params: {
     parts: [{ type: 'text', text: event.promptText }],
   };
 
-  const resolved = resolveAgentTools(agent);
-  const tools = await buildAgentToolSet(resolved, {
-    workspaceId: agent.workspaceId,
-    depth: 0,
-    visited: new Set([agent.id]),
-  });
-  const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
-  const model = buildModel(agent.provider, agent.model);
-  const modelMessages = prependSystemModelMessage(
-    system,
-    await convertToModelMessages([...priorMessages, userMessage]),
-  );
+  let text: string;
+  if (agent.runtime?.kind === 'hermes') {
+    try {
+      text = await runHermesText({
+        agent,
+        messages: [...priorMessages, userMessage],
+        sessionId: conversation.id,
+        sessionKey: event.sessionKey,
+      });
+    } catch (error) {
+      return {
+        status: 502,
+        body: { error: error instanceof Error ? error.message : 'Hermes runtime request failed.' },
+      };
+    }
+  } else {
+    const resolved = resolveAgentTools(agent);
+    const tools = await buildAgentToolSet(resolved, {
+      workspaceId: agent.workspaceId,
+      depth: 0,
+      visited: new Set([agent.id]),
+    });
+    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
+    const model = buildModel(agent.provider, agent.model);
+    const modelMessages = prependSystemModelMessage(
+      system,
+      await convertToModelMessages([...priorMessages, userMessage]),
+    );
 
-  const result = await generateText({
-    model,
-    allowSystemInMessages: true,
-    messages: modelMessages,
-    tools,
-    stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),
-  });
-  const text = result.text;
+    const result = await generateText({
+      model,
+      allowSystemInMessages: true,
+      messages: modelMessages,
+      tools,
+      stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),
+    });
+    text = result.text;
+  }
   const silent = isSilentAgentReply(text);
 
   await appendMessage(conversation.id, 'user', userMessage.parts as never);

@@ -141,6 +141,7 @@ export async function updateSandboxEnvAction(formData: FormData) {
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
 
   const env = parseSandboxEnvText(formData.get('env'));
   const config = sandboxConfigWithEnv(sandbox.config, env);
@@ -182,6 +183,7 @@ export async function renameSandboxAction(formData: FormData) {
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
 
   await db.$transaction([
     db.sandbox.update({
@@ -204,6 +206,7 @@ export async function startSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
   await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
@@ -256,6 +259,7 @@ export async function stopSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
   await stopProcess(sandbox.deploymentId);
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
@@ -268,6 +272,7 @@ export async function restartSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
   await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
@@ -282,6 +287,7 @@ export async function deleteSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
+  if (sandbox.kind === 'hermes') return;
 
   killProcess(sandbox.deploymentId);
   if (sandbox.kind === 'docker') {

@@ -79,6 +79,34 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain('timeoutMs: DOCKER_CREATE_TIMEOUT_MS');
   });
 
+  it('keeps the Hermes API private while forwarding memory scope headers', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain('API_SERVER_HOST=127.0.0.1');
+    expect(script).toContain("['x-hermes-session-id', 'x-hermes-session-key']");
+    expect(script).toContain("if (KIND !== 'hermes')");
+    expect(script).not.toContain("'--publish'");
+  });
+
+  it('starts the Hermes dashboard on container loopback without publishing its port', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain('HERMES_DASHBOARD=1');
+    expect(script).toContain('HERMES_DASHBOARD_HOST=127.0.0.1');
+    expect(script).toContain('HERMES_DASHBOARD_PORT=9119');
+    expect(script).toContain('http://127.0.0.1:9119');
+    expect(script).not.toContain("'--publish'");
+  });
+
+  it('runs interactive Hermes terminal sessions as the Hermes service user', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("...(KIND === 'hermes' ? ['--user', 'hermes'] : [])");
+    expect(script).toContain("HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:");
+    expect(script).toContain('export VIRTUAL_ENV=/opt/hermes/.venv; export PATH=${HERMES_TERMINAL_PATH}');
+    expect(script).toContain("chown \"$(id -u hermes):$(id -g hermes)\"");
+  });
+
   it('does not self-terminate when the request worker parent changes in production', () => {
     for (const file of ['scripts/mcp-server.mjs', 'scripts/mcp-stdio-bridge.mjs', 'scripts/sandbox-mcp-server.mjs']) {
       const script = readFileSync(path.join(process.cwd(), file), 'utf8');

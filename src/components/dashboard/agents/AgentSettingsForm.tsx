@@ -9,15 +9,23 @@ import {
   Box,
   BrainCircuit,
   Check,
+  Container,
   Cpu,
   FileText,
   Loader2,
   PackageCheck,
   Save,
   Server,
+  Square,
+  RefreshCw,
   Users,
 } from 'lucide-react';
-import { updateAgentAction, type ActionState } from '@/lib/agents/actions';
+import {
+  stopAgentRuntimeAction,
+  syncAgentRuntimeAction,
+  updateAgentAction,
+  type ActionState,
+} from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 
 type Provider = { id: string; name: string; models: string[] };
@@ -52,6 +60,7 @@ export function AgentSettingsForm({
   toolkits,
   sandboxes,
   subAgents,
+  runtime = null,
   className = 'max-w-2xl space-y-5 px-8 py-6',
 }: {
   slug: string;
@@ -67,6 +76,14 @@ export function AgentSettingsForm({
   toolkits: Option[];
   sandboxes: Option[];
   subAgents: Option[];
+  runtime?: {
+    kind: string;
+    image: string;
+    status: string;
+    lastError: string | null;
+    lastSyncedAt: string | null;
+    sandboxId: string;
+  } | null;
   className?: string;
 }) {
   const t = useTranslations('console.agents');
@@ -180,6 +197,61 @@ export function AgentSettingsForm({
           </label>
         </div>
       </section>
+
+      {runtime?.kind === 'hermes' ? (
+        <section className="rounded-md border border-border bg-background">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Container className="size-[18px] shrink-0 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
+              <span className="inline-flex h-6 items-center rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
+                {runtime.status}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                formAction={syncAgentRuntimeAction}
+                formNoValidate
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs"
+              >
+                <RefreshCw className="size-4" />
+                {t('syncRuntime')}
+              </button>
+              <button
+                type="submit"
+                formAction={stopAgentRuntimeAction}
+                formNoValidate
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs"
+              >
+                <Square className="size-3.5" />
+                {t('stopRuntime')}
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2 px-4 py-4 text-sm">
+            <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <span className="text-muted-foreground">{t('dockerImage')}</span>
+              <code className="min-w-0 break-all text-xs text-foreground">{runtime.image}</code>
+            </div>
+            <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <span className="text-muted-foreground">Sandbox</span>
+              <code className="min-w-0 break-all text-xs text-foreground">{runtime.sandboxId}</code>
+            </div>
+            {runtime.lastSyncedAt ? (
+              <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+                <span className="text-muted-foreground">{t('lastSynced')}</span>
+                <span className="text-xs text-foreground">{new Date(runtime.lastSyncedAt).toLocaleString()}</span>
+              </div>
+            ) : null}
+            {runtime.lastError ? (
+              <p className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                {runtime.lastError}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-md border border-border bg-background">
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">

@@ -7,6 +7,12 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listAgents, listProviders } from '@/lib/agents/queries';
 import { AgentsBrowser } from '@/components/dashboard/agents/AgentsBrowser';
 import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
+import { getDeployments, getInstalledSkills } from '@/lib/workspace/queries';
+import { listToolkits } from '@/lib/toolkits/queries';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { skillLabel } from '@/lib/workspace/skill-label';
+import { effectiveStatus } from '@/lib/process/supervisor';
+import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,10 +37,17 @@ export default async function AgentsPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
-  const [agents, providers] = await Promise.all([listAgents(ws.id), listProviders(ws.id)]);
+  const [agents, providers, deployments, skills, toolkits] = await Promise.all([
+    listAgents(ws.id),
+    listProviders(ws.id),
+    getDeployments(ws.id),
+    getInstalledSkills(ws.id),
+    listToolkits(ws.id),
+  ]);
 
   return (
     <>
+      <DashboardHeader title={t('title')} />
       <div className="px-4 pt-5 sm:px-6 lg:px-8">
         <nav className="inline-flex rounded-md border border-border bg-card p-1" aria-label={t('agent')}>
           {TABS.map((item) => {
@@ -69,7 +82,26 @@ export default async function AgentsPage({
             toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
             subAgentCount: a._count.subAgents,
             conversationCount: a._count.conversations,
+            runtimeKind: a.runtime?.kind ?? 'native',
+            runtimeStatus: a.runtime
+              ? ['error', 'setup_required'].includes(a.runtime.status)
+                ? a.runtime.status
+                : effectiveStatus(a.runtime.sandbox.deploymentId, a.runtime.sandbox.deployment.status)
+              : null,
           }))}
+          createOptions={{
+            providers: providers.map((provider) => ({
+              id: provider.id,
+              name: provider.name,
+              models: provider.models,
+            })),
+            deployments: deployments.map((deployment) => ({
+              id: deployment.id,
+              label: deploymentLabel(deployment).name,
+            })),
+            skills: skills.map((skill) => ({ id: skill.id, label: skillLabel(skill).name })),
+            toolkits: toolkits.map((toolkit) => ({ id: toolkit.id, label: toolkit.name })),
+          }}
         />
       ) : (
         <ProvidersPanel
