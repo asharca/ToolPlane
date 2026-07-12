@@ -57,15 +57,33 @@ describe('connector CLI portability', () => {
       writeFileSync(tarballPath, await buildConnectorPackageTarball(process.cwd()));
       const command = `npx -y --package "${tarballPath}" connector --help`;
       const shells = process.platform === 'win32'
-        ? [
-            { executable: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command] },
-            { executable: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command] },
-          ]
-        : [{ executable: process.platform === 'darwin' ? '/bin/zsh' : process.env.SHELL || '/bin/sh', args: ['-lc', command] }];
+        ? (() => {
+            const powershellScript = path.join(temp, 'install.ps1');
+            const commandScript = path.join(temp, 'install.cmd');
+            writeFileSync(powershellScript, `${command}\r\n`);
+            writeFileSync(commandScript, `@echo off\r\n${command}\r\n`);
+            return [
+              {
+                name: 'PowerShell',
+                executable: 'powershell.exe',
+                args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', powershellScript],
+              },
+              {
+                name: 'Command Prompt',
+                executable: process.env.ComSpec || 'cmd.exe',
+                args: ['/d', '/s', '/c', commandScript],
+              },
+            ];
+          })()
+        : [{
+            name: process.platform === 'darwin' ? 'zsh' : 'POSIX shell',
+            executable: process.platform === 'darwin' ? '/bin/zsh' : process.env.SHELL || '/bin/sh',
+            args: ['-lc', command],
+          }];
 
       for (const shell of shells) {
         const result = spawnSync(shell.executable, shell.args, { encoding: 'utf8', timeout: 120_000 });
-        expect(result.status, result.stderr).toBe(0);
+        expect(result.status, `${shell.name}: ${result.stderr}`).toBe(0);
         expect(result.stdout).toContain('toolplane connector 0.1.9');
       }
     } finally {
