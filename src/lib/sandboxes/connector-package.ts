@@ -62,9 +62,11 @@ export async function buildConnectorPackageTarball(root = process.cwd()): Promis
   const packageRoot = path.join(root, 'packages', 'connector');
   const packageJson = await readFile(path.join(packageRoot, 'package.json'));
   const cli = await readFile(path.join(packageRoot, 'bin', 'connector.mjs'));
+  const runtime = await readFile(path.join(packageRoot, 'bin', 'runtime.mjs'));
 
   return gzipSync(buildTar([
     { name: 'package/package.json', body: packageJson, mode: 0o644 },
     { name: 'package/bin/connector.mjs', body: cli, mode: 0o755 },
+    { name: 'package/bin/runtime.mjs', body: runtime, mode: 0o644 },
   ]), { level: 9 });
 }

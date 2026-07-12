@@ -18,7 +18,7 @@ import {
   shellExecArgs,
   terminalShellArgs,
   VERSION,
-} from '../../packages/connector/bin/connector.mjs';
+} from '../../packages/connector/bin/runtime.mjs';
 import { buildConnectorPackageTarball, CONNECTOR_TARBALL_FILENAME } from '@/lib/sandboxes/connector-package';
 import {
   CONNECTOR_PACKAGE_VERSION,

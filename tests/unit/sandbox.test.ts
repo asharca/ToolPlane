@@ -72,7 +72,7 @@ describe('persistent Docker sandbox runtime', () => {
 
   it('uses structured process execution and binary-safe file writes', () => {
     const server = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
-    const connector = readFileSync(path.join(process.cwd(), 'packages/connector/bin/connector.mjs'), 'utf8');
+    const connector = readFileSync(path.join(process.cwd(), 'packages/connector/bin/runtime.mjs'), 'utf8');
 
     expect(server).toContain("name: 'process_exec'");
     expect(server).toContain("decoded.encoding === 'base64' ? 'write_file_base64' : 'write_file'");
