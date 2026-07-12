@@ -8,8 +8,6 @@ import {
   Cable,
   Check,
   Container,
-  FolderOpen,
-  Globe2,
   Loader2,
   Network,
   Plus,
@@ -220,12 +218,8 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
 
 export function SandboxCreateForm({
   workspace,
-  connectorServerUrl,
-  defaultRemoteRoot,
 }: {
   workspace: string;
-  connectorServerUrl: string;
-  defaultRemoteRoot: string;
 }) {
   const [mode, setMode] = useState<Mode>('docker');
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
@@ -409,21 +403,6 @@ export function SandboxCreateForm({
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {t('toolplaneGeneratesAOnetimeTokenTheUserRunsOneCommandAndTheConnectorCallsBackToThisServer')}
               </p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label={t('platformUrl')} hint={t('theConnectorUsesThisToDiscoverTheWebsocketBroker')}>
-                <div className="relative">
-                  <Globe2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <input name="connectorServerUrl" defaultValue={connectorServerUrl} className="ui-input ui-input-icon h-9 w-full" />
-                </div>
-              </Field>
-              <Field label={t('localRoot')} hint={t('directoryOnTheUsersMachineExposedToTheAgent')}>
-                <div className="relative">
-                  <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <input name="connectorRemoteRoot" defaultValue={defaultRemoteRoot} className="ui-input ui-input-icon h-9 w-full" />
-                </div>
-              </Field>
             </div>
 
             <div className="rounded-md border border-border bg-background px-4 py-3">

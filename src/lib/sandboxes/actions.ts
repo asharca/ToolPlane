@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { headers } from 'next/headers';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -17,10 +18,13 @@ import { parseSandboxEnvText, readSandboxEnv, sandboxConfigWithEnv } from './env
 import { resolveSandboxImage } from './images';
 import {
   connectorFromConfig,
+  connectorServerUrlFromHeaders,
   connectorSourceRef,
   createConnectorConfig,
   type SandboxConnectorConfig,
 } from './connector';
+import { disconnectConnector } from './connector-broker';
+import { setConnectorSetupTokenCookie } from './connector-setup-token';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -74,12 +78,13 @@ function installCfgForSandbox(sandbox: {
 
 export async function createSandboxAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
-  const name = String(formData.get('name') ?? '').trim() || 'Linux sandbox';
   if (!slug) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
   const kind = String(formData.get('kind') ?? 'docker') === 'connector' ? 'connector' : 'docker';
+  const name = String(formData.get('name') ?? '').trim()
+    || (kind === 'connector' ? 'Connected computer' : 'Linux sandbox');
   const sandboxSlug = await uniqueSlug(ctx.ws.id, name);
   const network = String(formData.get('network') ?? 'isolated') === 'none' ? 'none' : 'isolated';
   const env = parseSandboxEnvText(formData.get('env'));
@@ -87,10 +92,7 @@ export async function createSandboxAction(formData: FormData) {
     ? resolveSandboxImage(formData.get('imageChoice'), formData.get('customImage') ?? formData.get('image'))
     : null;
   const connectorBundle = kind === 'connector'
-    ? createConnectorConfig({
-        serverUrl: String(formData.get('connectorServerUrl') ?? ''),
-        remoteRoot: String(formData.get('connectorRemoteRoot') ?? '').trim(),
-      })
+    ? createConnectorConfig({ serverUrl: connectorServerUrlFromHeaders(await headers()) })
     : undefined;
   const connectorConfig: SandboxConnectorConfig | undefined = connectorBundle?.config;
 
@@ -103,7 +105,7 @@ export async function createSandboxAction(formData: FormData) {
       sourceRef: kind === 'docker'
         ? image
         : connectorConfig ? connectorSourceRef(connectorConfig) : 'connector://missing',
-      status: kind === 'connector' ? 'stopped' : 'provisioning',
+      status: 'provisioning',
     },
   });
   const sandbox = await db.sandbox.create({
@@ -124,13 +126,13 @@ export async function createSandboxAction(formData: FormData) {
     data: { installCfg },
   });
 
-  if (kind === 'docker') {
-    await startProcess(updated.id, resolveSpawnSpec(updated), { awaitReady: false });
-  }
+  await startProcess(updated.id, resolveSpawnSpec(updated), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
-  const tokenQuery = connectorBundle ? `?token=${encodeURIComponent(connectorBundle.token)}` : '';
-  redirect(`/app/${slug}/sandboxes/${sandbox.id}${tokenQuery}`);
+  redirect(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function updateSandboxEnvAction(formData: FormData) {
@@ -161,13 +163,19 @@ export async function updateSandboxEnvAction(formData: FormData) {
   ]);
 
   if (sandbox.kind === 'docker') {
-    killProcess(sandbox.deploymentId);
+    await killProcess(sandbox.deploymentId);
     await removeDockerSandboxContainer(sandbox.id);
     if (wasActive) {
-      await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), { awaitReady: false });
+      await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      });
     }
   } else if (sandbox.kind === 'connector' && connectorFromConfig(config) && wasActive) {
-    await restartProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), { awaitReady: false });
+    await restartProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
   }
 
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -209,7 +217,10 @@ export async function startSandboxAction(formData: FormData) {
   if (sandbox.kind === 'hermes') return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-  await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
+  await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
@@ -226,15 +237,15 @@ export async function generateConnectorCommandAction(formData: FormData) {
   if (!connector) return;
 
   const bundle = createConnectorConfig({
-    serverUrl: connector.serverUrl,
-    remoteRoot: connector.remoteRoot,
+    serverUrl: connectorServerUrlFromHeaders(await headers()),
+    remoteRoot: String(formData.get('connectorRemoteRoot') ?? connector.remoteRoot).trim(),
     packageName: connector.packageName,
   });
   const nextConnector = bundle.config;
   const currentConfig = (sandbox.config ?? {}) as Record<string, unknown>;
   const currentInstallCfg = (sandbox.deployment.installCfg ?? {}) as Record<string, unknown>;
 
-  await db.$transaction([
+  const [, updatedDeployment] = await db.$transaction([
     db.sandbox.update({
       where: { id: sandbox.id },
       data: { config: { ...currentConfig, connector: nextConnector } as Prisma.InputJsonValue },
@@ -248,8 +259,17 @@ export async function generateConnectorCommandAction(formData: FormData) {
     }),
   ]);
 
+  disconnectConnector(sandbox.id, 'connector token rotated');
+  const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
+  if (status !== 'running' && status !== 'provisioning') {
+    await startProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
+  }
+  await setConnectorSetupTokenCookie(slug, sandbox.id, bundle.token);
   revalidatePath(`/app/${slug}/sandboxes`);
-  redirect(`/app/${slug}/sandboxes/${sandbox.id}?token=${encodeURIComponent(bundle.token)}`);
+  redirect(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
 
 export async function stopSandboxAction(formData: FormData) {
@@ -261,6 +281,7 @@ export async function stopSandboxAction(formData: FormData) {
   if (!sandbox) return;
   if (sandbox.kind === 'hermes') return;
   await stopProcess(sandbox.deploymentId);
+  if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'sandbox stopped');
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
@@ -275,7 +296,10 @@ export async function restartSandboxAction(formData: FormData) {
   if (sandbox.kind === 'hermes') return;
   if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
   if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
-  await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), { awaitReady: false });
+  await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
 }
@@ -289,7 +313,11 @@ export async function deleteSandboxAction(formData: FormData) {
   if (!sandbox) return;
   if (sandbox.kind === 'hermes') return;
 
-  killProcess(sandbox.deploymentId);
+  if (sandbox.kind === 'connector') {
+    await stopProcess(sandbox.deploymentId);
+    disconnectConnector(sandbox.id, 'sandbox deleted');
+  }
+  await killProcess(sandbox.deploymentId, { preventRestart: true });
   if (sandbox.kind === 'docker') {
     const cfg = (sandbox.deployment.installCfg ?? {}) as { volumeName?: string };
     await removeDockerSandboxRuntime(sandbox.id, cfg.volumeName);
@@ -298,4 +326,5 @@ export async function deleteSandboxAction(formData: FormData) {
     where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
   });
   revalidatePath(`/app/${slug}/sandboxes`);
+  redirect(`/app/${slug}/sandboxes`);
 }

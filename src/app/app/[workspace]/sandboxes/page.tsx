@@ -1,6 +1,5 @@
 import { getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { Bot, Boxes, Container, Cpu, HardDrive, Laptop, Terminal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -8,8 +7,6 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
 import {
   connectorFromConfig,
-  defaultConnectorServerUrl,
-  DEFAULT_CONNECTOR_REMOTE_ROOT,
   type SandboxConnectorConfig,
 } from '@/lib/sandboxes/connector';
 import {
@@ -110,14 +107,6 @@ function connectorMeta(connector: SandboxConnectorConfig | null): string {
   return 'open sandbox to generate command';
 }
 
-async function requestOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get('x-forwarded-host') ?? h.get('host');
-  if (!host) return defaultConnectorServerUrl();
-  const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
-  return `${proto}://${host}`;
-}
-
 export default async function SandboxesPage({
   params,
 }: {
@@ -138,7 +127,6 @@ export default async function SandboxesPage({
     ...runtime,
     dashboardUrl: createHermesDashboardPath(runtime.id),
   }));
-  const connectorServerUrl = await requestOrigin();
   const managedStatus = (runtime: (typeof managedRuntimes)[number]) => (
     runtime.status === 'error' || runtime.status === 'setup_required'
       ? runtime.status
@@ -164,11 +152,7 @@ export default async function SandboxesPage({
       <DashboardPage>
         <DashboardToolbar
           actions={
-            <SandboxCreateForm
-              workspace={slug}
-              connectorServerUrl={connectorServerUrl}
-              defaultRemoteRoot={DEFAULT_CONNECTOR_REMOTE_ROOT}
-            />
+            <SandboxCreateForm workspace={slug} />
           }
         >
           <p className="text-sm text-muted-foreground">

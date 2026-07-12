@@ -63,6 +63,24 @@ describe('sandbox env config', () => {
 });
 
 describe('persistent Docker sandbox runtime', () => {
+  it('keeps connector proxies online before the user machine connects', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("if (KIND === 'connector') return;");
+    expect(script).not.toContain("await connectorRequest('ping', {}, 10_000);\n    return;");
+  });
+
+  it('uses structured process execution and binary-safe file writes', () => {
+    const server = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+    const connector = readFileSync(path.join(process.cwd(), 'packages/connector/bin/connector.mjs'), 'utf8');
+
+    expect(server).toContain("name: 'process_exec'");
+    expect(server).toContain("decoded.encoding === 'base64' ? 'write_file_base64' : 'write_file'");
+    expect(server).toContain('Buffer.isBuffer(opts.stdin)');
+    expect(connector).toContain("case 'process_exec':");
+    expect(connector).toContain("case 'write_file_base64':");
+  });
+
   it('keeps the minimal capabilities apt needs inside user sandboxes', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 

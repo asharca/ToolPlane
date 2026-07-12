@@ -1,4 +1,4 @@
-// MCP server for one agent sandbox. It exposes a small Linux-like workspace
+// MCP server for one agent sandbox. It exposes a small workspace
 // surface over JSON-RPC HTTP: shell execution, bounded file operations, and a
 // PTY terminal stream. Docker sandboxes run in a persistent container + volume.
 // Connector sandboxes use a user-started WebSocket agent; this process proxies
@@ -28,17 +28,20 @@ const HERMES_RUNTIME_MODEL_NAME = process.env.HERMES_RUNTIME_MODEL_NAME || 'herm
 const WORKSPACE_ROOT = KIND === 'hermes' ? '/opt/data/workspace' : '/workspace';
 const PROTOCOL_VERSION = '2025-06-18';
 const VERSION = '1.0.0';
-const MAX_BODY = 2_000_000;
+const MAX_BODY = 4_000_000;
 const MAX_HERMES_BODY = 12_000_000;
 const MAX_HERMES_DASHBOARD_BODY = 32_000_000;
 const MAX_OUTPUT = 128_000;
-const MAX_WRITE = 1_000_000;
+const MAX_WRITE = 2_000_000;
 const MAX_RUNTIME_UPLOAD = 10_000_000;
 const MAX_RUNTIME_UPLOAD_BODY = Math.ceil(MAX_RUNTIME_UPLOAD * 4 / 3) + 16_384;
 const MAX_DOWNLOAD = 5_000_000;
 const MAX_DOWNLOAD_BASE64 = Math.ceil(MAX_DOWNLOAD * 4 / 3) + 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+const MAX_PROCESS_ARGS = 128;
+const MAX_PROCESS_ARG_LENGTH = 8_192;
+const MAX_PROCESS_ARG_TOTAL = 24_000;
 const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
 const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
@@ -52,16 +55,31 @@ const TOOLS = [
   },
   {
     name: 'shell_exec',
-    description: 'Run a shell command inside the sandbox workspace.',
+    description: 'Run a command using the sandbox native shell. Connector sandboxes use PowerShell on Windows and a POSIX shell on macOS/Linux. Call sandbox_info first and match its shellFamily.',
     inputSchema: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Shell command to execute.' },
-        cwd: { type: 'string', description: 'Relative working directory under /workspace.' },
+        cwd: { type: 'string', description: 'Relative working directory under the sandbox workspace root.' },
         stdin: { type: 'string', description: 'Optional standard input.' },
         timeoutMs: { type: 'number', description: 'Timeout in milliseconds, max 120000.' },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: 'process_exec',
+    description: 'Run a Node.js, Python, or Bash script with a structured argument array. This avoids shell quoting differences across Windows, macOS, and Linux.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        runtime: { type: 'string', enum: ['node', 'python', 'bash'], description: 'Script runtime.' },
+        args: { type: 'array', items: { type: 'string' }, description: 'Arguments passed directly to the runtime.' },
+        cwd: { type: 'string', description: 'Relative working directory under the sandbox workspace root.' },
+        stdin: { type: 'string', description: 'Optional standard input.' },
+        timeoutMs: { type: 'number', description: 'Timeout in milliseconds, max 120000.' },
+      },
+      required: ['runtime', 'args'],
     },
   },
   {
@@ -88,7 +106,8 @@ const TOOLS = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Relative file path.' },
-        content: { type: 'string', description: 'Text content to write.' },
+        content: { type: 'string', description: 'Text or base64-encoded file content.' },
+        encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'Content encoding. Defaults to utf8.' },
       },
       required: ['path', 'content'],
     },
@@ -152,6 +171,39 @@ function parseEnvJson(raw) {
   }
 }
 
+function validBase64(value) {
+  return value.length % 4 === 0
+    && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
+}
+
+function decodeFileContent(args) {
+  const encoding = String(args.encoding ?? 'utf8');
+  const raw = String(args.content ?? '');
+  if (encoding !== 'utf8' && encoding !== 'base64') throw new Error('Unsupported file encoding.');
+  if (encoding === 'base64' && !validBase64(raw)) throw new Error('Invalid base64 file content.');
+  const content = Buffer.from(raw, encoding);
+  if (content.byteLength > MAX_WRITE) throw new Error('File content is too large.');
+  return { content, encoding };
+}
+
+function parseProcessArgs(args) {
+  const runtime = String(args.runtime ?? '');
+  if (!['node', 'python', 'bash'].includes(runtime)) {
+    throw new Error('runtime must be node, python, or bash.');
+  }
+  const commandArgs = args.args ?? [];
+  const totalLength = Array.isArray(commandArgs)
+    ? commandArgs.reduce((total, arg) => total + (typeof arg === 'string' ? arg.length : MAX_PROCESS_ARG_TOTAL + 1), 0)
+    : MAX_PROCESS_ARG_TOTAL + 1;
+  if (!Array.isArray(commandArgs)
+    || commandArgs.length > MAX_PROCESS_ARGS
+    || totalLength > MAX_PROCESS_ARG_TOTAL
+    || commandArgs.some((arg) => typeof arg !== 'string' || arg.includes('\0') || arg.length > MAX_PROCESS_ARG_LENGTH)) {
+    throw new Error(`args must contain at most ${MAX_PROCESS_ARGS} bounded strings.`);
+  }
+  return { runtime, commandArgs };
+}
+
 async function run(command, args, opts = {}) {
   return new Promise((resolve) => {
     let stdout = '';
@@ -182,7 +234,10 @@ async function run(command, args, opts = {}) {
       resolve({ exitCode, signal, timedOut, stdout, stderr });
     });
     const maxInput = Math.min(Math.max(Number(opts.maxInput ?? MAX_WRITE), 0), MAX_RUNTIME_UPLOAD_BODY);
-    child.stdin.end(String(opts.stdin ?? '').slice(0, maxInput));
+    const input = Buffer.isBuffer(opts.stdin)
+      ? opts.stdin.subarray(0, maxInput)
+      : Buffer.from(String(opts.stdin ?? ''), 'utf8').subarray(0, maxInput);
+    child.stdin.end(input);
   });
 }
 
@@ -403,10 +458,7 @@ async function ensureDockerContainer() {
 }
 
 async function ensureRuntime() {
-  if (KIND === 'connector') {
-    await connectorRequest('ping', {}, 10_000);
-    return;
-  }
+  if (KIND === 'connector') return;
   await ensureDockerContainer();
 }
 
@@ -420,12 +472,101 @@ async function dockerShell({ command, cwd = '.', stdin = '', timeoutMs }) {
   const rel = safeRel(cwd);
   if (rel === null) return textResult('Invalid cwd.', true);
   const workdir = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ''}`;
+  const result = await dockerTrackedExec({
+    workdir,
+    executable: 'sh',
+    args: ['-lc', String(command ?? '')],
+    stdin,
+    timeoutMs,
+  });
+  return textResult(result, result.exitCode !== 0 || result.timedOut);
+}
+
+function dockerRuntimeCandidates(runtime) {
+  if (runtime === 'node') return ['node'];
+  if (runtime === 'python') {
+    return KIND === 'hermes' ? ['/opt/hermes/.venv/bin/python3'] : ['python3', 'python'];
+  }
+  return ['bash'];
+}
+
+async function resolveDockerRuntime(runtime) {
+  for (const candidate of dockerRuntimeCandidates(runtime)) {
+    const result = await run(
+      'docker',
+      ['exec', CONTAINER, 'sh', '-c', 'command -v "$1"', 'toolplane-runtime', candidate],
+      { env: dockerEnv(), timeoutMs: 10_000 },
+    );
+    const executable = result.stdout.trim().split('\n')[0];
+    if (result.exitCode === 0 && executable) return executable;
+  }
+  return null;
+}
+
+async function terminateDockerExec(pid) {
+  const script = `
+pid=$1
+case "$pid" in ''|*[!0-9]*) exit 3 ;; esac
+kill_tree() {
+  for child in $(cat "/proc/$1/task/$1/children" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill -KILL "$1" 2>/dev/null || true
+}
+kill_tree "$pid"
+`;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = await run(
+      'docker',
+      ['exec', CONTAINER, 'sh', '-c', script, 'toolplane-kill', String(pid)],
+      { env: dockerEnv(), timeoutMs: 10_000 },
+    );
+    if (result.exitCode === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function dockerTrackedExec({ workdir, executable, args, stdin, timeoutMs }) {
+  const executionId = randomUUID();
+  const controlPrefix = `__TOOLPLANE_EXEC_PID_${executionId}__`;
+  const wrapper = `printf '${controlPrefix}%s\\n' "$$"; exec "$@"`;
   const result = await run(
     'docker',
-    ['exec', '-i', '-w', workdir, CONTAINER, 'sh', '-lc', String(command ?? '')],
+    ['exec', '-i', '-w', workdir, CONTAINER, 'sh', '-c', wrapper, 'toolplane-exec', executable, ...args],
     { env: dockerEnv(), stdin, timeoutMs },
   );
-  return textResult(result, result.exitCode !== 0 || result.timedOut);
+  const controlPattern = new RegExp(`^${controlPrefix}(\\d+)\\r?\\n`);
+  const match = controlPattern.exec(result.stdout);
+  const cleaned = { ...result, stdout: result.stdout.replace(controlPattern, '') };
+  if (result.timedOut && match) await terminateDockerExec(Number(match[1]));
+  return cleaned;
+}
+
+async function processExec(args = {}) {
+  if (KIND === 'connector') {
+    return connectorTool('process_exec', { ...args, env: USER_ENV }, Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      (result) => Boolean(result?.timedOut) || result?.exitCode !== 0);
+  }
+
+  let parsed;
+  try {
+    parsed = parseProcessArgs(args);
+  } catch (error) {
+    return textResult(error instanceof Error ? error.message : String(error), true);
+  }
+  const rel = safeRel(args.cwd ?? '.');
+  if (rel === null) return textResult('Invalid cwd.', true);
+  const workdir = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ''}`;
+  const executable = await resolveDockerRuntime(parsed.runtime);
+  if (!executable) return textResult(`${parsed.runtime} runtime is unavailable in this sandbox.`, true);
+  const result = await dockerTrackedExec({
+    workdir,
+    executable,
+    args: parsed.commandArgs,
+    stdin: args.stdin,
+    timeoutMs: args.timeoutMs,
+  });
+  return textResult({ ...result, runtime: parsed.runtime, executable }, result.exitCode !== 0 || result.timedOut);
 }
 
 async function listDir(args = {}) {
@@ -462,18 +603,25 @@ async function readSandboxFile(args = {}) {
 async function writeSandboxFile(args = {}) {
   const rel = safeRel(args.path);
   if (!rel) return textResult('Invalid path.', true);
-  const content = String(args.content ?? '');
-  if (Buffer.byteLength(content, 'utf8') > MAX_WRITE) return textResult('File content is too large.', true);
+  let decoded;
+  try {
+    decoded = decodeFileContent(args);
+  } catch (error) {
+    return textResult(error instanceof Error ? error.message : String(error), true);
+  }
   if (KIND === 'connector') {
-    return connectorTool('write_file', { ...args, path: rel, content }, 10_000);
+    const op = decoded.encoding === 'base64' ? 'write_file_base64' : 'write_file';
+    return connectorTool(op, { path: rel, content: String(args.content ?? '') }, 30_000);
   }
   const p = workspacePath(rel);
-  const command = `mkdir -p ${shQuote(path.posix.dirname(p))} && cat > ${shQuote(p)}`;
-  const result = await run('docker', ['exec', '-i', CONTAINER, 'sh', '-lc', command], {
+  const parent = path.posix.dirname(p);
+  const created = await run('docker', ['exec', CONTAINER, 'mkdir', '-p', '--', parent], { env: dockerEnv() });
+  if (created.exitCode !== 0) return textResult(created, true);
+  const result = await run('docker', ['exec', '-i', CONTAINER, 'sh', '-c', 'cat > "$1"', 'toolplane-write', p], {
     env: dockerEnv(),
-    stdin: content,
+    stdin: decoded.content,
   });
-  return textResult({ path: rel, bytes: Buffer.byteLength(content, 'utf8'), stderr: result.stderr }, result.exitCode !== 0);
+  return textResult({ path: rel, bytes: decoded.content.byteLength, stderr: result.stderr }, result.exitCode !== 0);
 }
 
 async function downloadSandboxFile(args = {}) {
@@ -989,30 +1137,55 @@ async function handleHermesDashboardProxy(req, res) {
   return true;
 }
 
+async function sandboxInfoResult() {
+  let connectorRuntime = null;
+  let connectorError = null;
+  if (KIND === 'connector') {
+    try {
+      connectorRuntime = await connectorRequest('ping', {}, 10_000);
+    } catch (error) {
+      connectorError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const workspace = connectorRuntime?.root || (KIND === 'connector' ? CONNECTOR_REMOTE_ROOT : WORKSPACE_ROOT);
+  return textResult({
+    id: SANDBOX_ID,
+    name: NAME,
+    kind: KIND,
+    platform: KIND === 'connector' ? (connectorRuntime?.platform ?? 'unknown') : 'linux',
+    arch: KIND === 'connector' ? (connectorRuntime?.arch ?? null) : null,
+    shell: KIND === 'connector' ? (connectorRuntime?.shell ?? null) : 'sh',
+    shellFamily: KIND === 'connector' ? (connectorRuntime?.shellFamily ?? null) : 'posix',
+    image: KIND === 'connector' ? null : IMAGE,
+    container: KIND === 'connector' ? null : CONTAINER,
+    volume: KIND === 'connector' ? null : VOLUME,
+    runtimeId: KIND === 'hermes' ? HERMES_RUNTIME_ID : null,
+    connector: KIND === 'connector'
+      ? {
+          configuredRoot: CONNECTOR_REMOTE_ROOT,
+          actualRoot: connectorRuntime?.root ?? null,
+          broker: CONNECTOR_BROKER_URL,
+          version: connectorRuntime?.version ?? null,
+          nodeVersion: connectorRuntime?.nodeVersion ?? null,
+          capabilities: connectorRuntime?.capabilities ?? [],
+          error: connectorError,
+        }
+      : null,
+    workspace,
+  });
+}
+
 async function callTool(name, args = {}) {
   switch (name) {
     case 'sandbox_info':
-      return textResult({
-        id: SANDBOX_ID,
-        name: NAME,
-        kind: KIND,
-        image: KIND === 'connector' ? null : IMAGE,
-        container: KIND === 'connector' ? null : CONTAINER,
-        volume: KIND === 'connector' ? null : VOLUME,
-        runtimeId: KIND === 'hermes' ? HERMES_RUNTIME_ID : null,
-        connector: KIND === 'connector'
-          ? {
-              remoteRoot: CONNECTOR_REMOTE_ROOT,
-              broker: CONNECTOR_BROKER_URL,
-            }
-          : null,
-        workspace: KIND === 'connector' ? CONNECTOR_REMOTE_ROOT : WORKSPACE_ROOT,
-      });
+      return sandboxInfoResult();
     case 'shell_exec':
       if (!args.command) return textResult('command is required.', true);
       return KIND === 'connector'
-        ? connectorTool('shell_exec', { ...args, env: USER_ENV }, Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), (result) => Boolean(result?.timedOut) || Number(result?.exitCode ?? 0) !== 0)
+        ? connectorTool('shell_exec', { ...args, env: USER_ENV }, Number(args.timeoutMs ?? DEFAULT_TIMEOUT_MS), (result) => Boolean(result?.timedOut) || result?.exitCode !== 0)
         : dockerShell(args);
+    case 'process_exec':
+      return processExec(args);
     case 'list_dir':
       return listDir(args);
     case 'read_file':

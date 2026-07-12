@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { CONNECTOR_PACKAGE_VERSION } from './connector';
 
 const BLOCK_SIZE = 512;
 
-export const CONNECTOR_TARBALL_FILENAME = 'toolplane-connector-0.1.8.tgz';
+export const CONNECTOR_TARBALL_FILENAME = `toolplane-connector-${CONNECTOR_PACKAGE_VERSION}.tgz`;
 
 type TarEntry = {
   name: string;

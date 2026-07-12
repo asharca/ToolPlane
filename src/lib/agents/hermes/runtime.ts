@@ -309,7 +309,10 @@ export async function syncHermesRuntime(
         return { status };
       }
       if (!livePort(deploymentId)) {
-        await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), { awaitReady: false });
+        await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
+          awaitReady: false,
+          workspaceId,
+        });
         await updateRuntimeState(workspaceId, runtime.id, {
           status: 'provisioning',
           lastStartedAt: new Date(),
@@ -320,7 +323,7 @@ export async function syncHermesRuntime(
       return { status: runtime.status };
     }
 
-    killProcess(deploymentId);
+    await killProcess(deploymentId);
     await removeDockerSandboxContainer(runtime.sandboxId);
     await installProjection({
       directory: projection.directory,
@@ -345,7 +348,10 @@ export async function syncHermesRuntime(
     ]);
 
     if (!configured || options.start === false) return { status: nextStatus };
-    await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), { awaitReady: false });
+    await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
+      awaitReady: false,
+      workspaceId,
+    });
     return { status: 'provisioning' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -419,7 +425,7 @@ export async function ensureHermesRuntimeReady(
     await startProcess(
       deploymentId,
       resolveSpawnSpec(agent.runtime.sandbox.deployment),
-      { awaitReady: true },
+      { awaitReady: true, workspaceId },
     );
   }
   const port = await waitForHermesHealth(deploymentId);
@@ -453,13 +459,13 @@ export async function ensureHermesDashboardReady(
   }
   const spec = resolveSpawnSpec(agent.runtime.sandbox.deployment);
   if (!live) {
-    await startProcess(deploymentId, spec, { awaitReady: true });
+    await startProcess(deploymentId, spec, { awaitReady: true, workspaceId });
   }
 
   let port = await waitForHermesDashboard(deploymentId);
   if (!port) {
     dashboardReadyCache().delete(deploymentId);
-    await restartProcess(deploymentId, spec, { awaitReady: true });
+    await restartProcess(deploymentId, spec, { awaitReady: true, workspaceId });
     port = await waitForHermesDashboard(deploymentId);
   }
   if (!port) {
@@ -488,7 +494,7 @@ export async function cleanupHermesRuntime(workspaceId: string, agentId: string)
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return;
   dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
-  killProcess(agent.runtime.sandbox.deploymentId);
+  await killProcess(agent.runtime.sandbox.deploymentId, { preventRestart: true });
   await removeDockerSandboxRuntime(
     agent.runtime.sandboxId,
     sandboxVolumeName(agent.runtime.sandboxId),

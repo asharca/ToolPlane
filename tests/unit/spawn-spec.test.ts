@@ -3,9 +3,10 @@ import { buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { MCP_NETWORK } from '@/lib/process/sandbox';
 import {
   buildConnectorConfig,
+  CONNECTOR_PACKAGE_VERSION,
   connectorClientCommand,
   connectorFromConfig,
-  connectorPowerShellCommand,
+  connectorServerUrlFromHeaders,
   hashConnectorToken,
 } from '@/lib/sandboxes/connector';
 
@@ -80,6 +81,15 @@ describe('buildSpawnSpec — every custom source runs in a hardened container', 
 });
 
 describe('resolveSpawnSpec', () => {
+  it('derives the connector server URL from trusted request routing headers', () => {
+    const requestHeaders = new Headers({
+      'x-forwarded-host': 'toolplane.example.com, proxy.internal',
+      'x-forwarded-proto': 'https, http',
+    });
+
+    expect(connectorServerUrlFromHeaders(requestHeaders)).toBe('https://toolplane.example.com');
+  });
+
   it('builtin for catalog (in-process, not containerized)', () => {
     expect(
       resolveSpawnSpec({ serverId: 's1', server: { name: 'Stripe' }, name: null, source: null, sourceRef: null, installCfg: null }),
@@ -197,7 +207,7 @@ describe('resolveSpawnSpec', () => {
       env: {},
       connector: {
         provider: 'websocket',
-        protocolVersion: '2026-07-connector-ws',
+        protocolVersion: '2026-07-connector-ws-v2',
         serverUrl: 'https://app.example.com',
         remoteRoot: '/srv/workspace',
         tokenHash: hashConnectorToken('mcpcon_deadbeef'),
@@ -250,11 +260,11 @@ describe('resolveSpawnSpec', () => {
     );
 
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      'npx -y --package https://app.example.com/api/v1/connectors/package.tgz connector connect --server https://app.example.com --token mcpcon_deadbeef --root /srv/workspace',
+      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/srv/workspace"`,
     );
   });
 
-  it('generates a Windows PowerShell connector command', () => {
+  it('uses the exact same command for a Windows root with spaces', () => {
     const connector = buildConnectorConfig(
       {
         serverUrl: 'https://app.example.com/',
@@ -263,9 +273,37 @@ describe('resolveSpawnSpec', () => {
       'mcpcon_deadbeef',
     );
 
-    expect(connectorPowerShellCommand(connector, 'mcpcon_deadbeef')).toBe(
-      "'npx' '-y' '--package' 'https://app.example.com/api/v1/connectors/package.tgz' 'connector' 'connect' '--server' 'https://app.example.com' '--token' 'mcpcon_deadbeef' '--root' 'C:\\Users\\Ada Lovelace\\ToolPlane Sandbox'",
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox"`,
     );
+  });
+
+  it('drops URL path, credentials, query, and fragment before generating a command', () => {
+    const connector = buildConnectorConfig(
+      { serverUrl: 'https://user:pass@app.example.com/base?x=1&next=bad#hash' },
+      'mcpcon_deadbeef',
+    );
+
+    expect(connector.serverUrl).toBe('https://app.example.com');
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
+      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox"`,
+    );
+  });
+
+  it('rejects a token that contains shell syntax', () => {
+    const connector = buildConnectorConfig({ serverUrl: 'https://app.example.com' }, 'mcpcon_deadbeef');
+
+    expect(() => connectorClientCommand(connector, 'mcpcon_ok;whoami')).toThrow(/unsupported argument/i);
+  });
+
+  it('rejects percent expansion in a custom package argument for Windows cmd', () => {
+    const connector = buildConnectorConfig({
+      serverUrl: 'https://app.example.com',
+      packageName: 'https://packages.example.com/%PATH%/connector.tgz',
+    }, 'mcpcon_deadbeef');
+
+    expect(connector.packageName).toBe('/api/v1/connectors/package.tgz');
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).not.toContain('%PATH%');
   });
 
   it('normalizes legacy connector package and root names', () => {
@@ -286,7 +324,7 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector).not.toBeNull();
     expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
-      'npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
+      `npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox"`,
     );
   });
 
@@ -306,7 +344,33 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector).not.toBeNull();
     expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
-      'npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect --server http://localhost:3002 --token mcpcon_deadbeef --root ~/toolplane-sandbox',
+      `npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox"`,
     );
+  });
+
+  it('replaces roots with shell expansion syntax before generating the portable command', () => {
+    const connector = buildConnectorConfig({
+      serverUrl: 'https://app.example.com',
+      remoteRoot: '$HOME/private',
+    }, 'mcpcon_deadbeef');
+
+    expect(connector.remoteRoot).toBe('~/toolplane-sandbox');
+    expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).not.toContain('$HOME');
+  });
+
+  it('repairs a persisted platform URL that was written into remoteRoot', () => {
+    const connector = connectorFromConfig({
+      connector: {
+        provider: 'websocket',
+        serverUrl: 'http://localhost:3000',
+        remoteRoot: 'http://localhost:3000',
+        tokenHash: hashConnectorToken('mcpcon_deadbeef'),
+        tokenPrefix: 'mcpcon_deadb',
+        packageName: '/api/v1/connectors/package.tgz',
+        createdAt: '2026-07-12T00:00:00.000Z',
+      },
+    });
+
+    expect(connector?.remoteRoot).toBe('~/toolplane-sandbox');
   });
 });

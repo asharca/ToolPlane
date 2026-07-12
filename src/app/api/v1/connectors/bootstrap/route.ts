@@ -7,8 +7,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const token = url.searchParams.get('token') ?? '';
+  const token = /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization')?.trim() ?? '')?.[1] ?? '';
   const sandbox = await findSandboxByConnectorToken(token);
   if (!sandbox) {
     return NextResponse.json({ error: 'invalid connector token' }, { status: 401 });
@@ -22,6 +21,6 @@ export async function GET(req: Request) {
     name: sandbox.name,
     slug: sandbox.slug,
     root: sandbox.connector.remoteRoot,
-    wsUrl: connectorPublicWsUrl(sandbox.connector.serverUrl, token),
+    wsUrl: connectorPublicWsUrl(sandbox.connector.serverUrl),
   });
 }

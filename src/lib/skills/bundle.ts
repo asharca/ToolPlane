@@ -112,6 +112,8 @@ export function safeSkillFilePath(raw: string): string | null {
   const parts = path.split('/');
   if (parts.some((p) => !p || p === '.' || p === '..')) return null;
   if (parts.some((p) => p.startsWith('._') || p === '__MACOSX')) return null;
+  if (parts.some((p) => /[<>:"|?*\u0000-\u001f]/.test(p) || /[ .]$/.test(p))) return null;
+  if (parts.some((p) => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(p))) return null;
   if (parts.includes('.git') || parts.includes('node_modules')) return null;
   if (path.length > 240) return null;
   return path;
@@ -125,7 +127,9 @@ export function normalizeSkillFiles(files: SkillBundleFile[]): SkillBundleFile[]
   for (const file of files) {
     if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') continue;
     const path = safeSkillFilePath(file.path);
-    if (!path || /^SKILL\.md$/i.test(path) || seen.has(path)) continue;
+    if (!path || /^SKILL\.md$/i.test(path)) continue;
+    const portableKey = path.normalize('NFC').toLowerCase();
+    if (seen.has(portableKey)) continue;
 
     const encoding = file.encoding === 'base64' ? 'base64' : undefined;
     const bytes = encoding === 'base64'
@@ -139,7 +143,7 @@ export function normalizeSkillFiles(files: SkillBundleFile[]): SkillBundleFile[]
       throw new Error('Skill bundle is too large.');
     }
 
-    seen.add(path);
+    seen.add(portableKey);
     out.push({ path, content: file.content, ...(encoding ? { encoding } : {}) });
     if (out.length > MAX_SKILL_FILES - 1) {
       throw new Error(`Skill bundle has too many files; max ${MAX_SKILL_FILES}.`);

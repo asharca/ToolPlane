@@ -1,13 +1,17 @@
 import { createHash, randomBytes } from 'node:crypto';
+import connectorPackage from '../../../packages/connector/package.json';
 
 export const DEFAULT_CONNECTOR_SERVER_URL = 'http://localhost:3000';
 export const DEFAULT_CONNECTOR_REMOTE_ROOT = '~/toolplane-sandbox';
 export const DEFAULT_CONNECTOR_PACKAGE = '/api/v1/connectors/package.tgz';
-export const CONNECTOR_PROTOCOL_VERSION = '2026-07-connector-ws';
+export const CONNECTOR_PROTOCOL_VERSION = '2026-07-connector-ws-v2';
+export const CONNECTOR_PACKAGE_VERSION = connectorPackage.version;
 
 const LEGACY_CONNECTOR_PACKAGE = `@${['mcp', 'market'].join('-')}/connector`;
 const UNPUBLISHED_CONNECTOR_PACKAGE = '@toolplane/connector';
 const LEGACY_CONNECTOR_ROOT_SEGMENT = `${['mcp', 'market'].join('')}-sandbox`;
+const PORTABLE_COMMAND_ARG = /^[A-Za-z0-9._~:/@+,=?\[\]-]+$/;
+const UNSAFE_PORTABLE_QUOTED_ARG = /["$`%!\r\n\0]/;
 
 export type SandboxConnectorConfig = {
   provider: 'websocket';
@@ -26,8 +30,25 @@ type ConnectorInput = {
   packageName?: string | null;
 };
 
+type ConnectorRequestHeaders = {
+  get(name: string): string | null;
+};
+
 export function defaultConnectorServerUrl(env: Record<string, string | undefined> = process.env): string {
   return sanitizeConnectorServerUrl(env.NEXT_PUBLIC_APP_URL ?? env.APP_URL ?? DEFAULT_CONNECTOR_SERVER_URL);
+}
+
+export function connectorServerUrlFromHeaders(
+  requestHeaders: ConnectorRequestHeaders,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const host = (requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host'))
+    ?.split(',')[0]
+    ?.trim();
+  if (!host) return defaultConnectorServerUrl(env);
+  const forwardedProto = requestHeaders.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const localHost = /^(localhost|127\.0\.0\.1|\[::1\])(?::|$)/.test(host);
+  return sanitizeConnectorServerUrl(`${forwardedProto || (localHost ? 'http' : 'https')}://${host}`);
 }
 
 export function sanitizeConnectorServerUrl(raw: string): string {
@@ -35,7 +56,7 @@ export function sanitizeConnectorServerUrl(raw: string): string {
   try {
     const url = new URL(value);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return DEFAULT_CONNECTOR_SERVER_URL;
-    return url.toString().replace(/\/$/, '');
+    return url.origin;
   } catch {
     return DEFAULT_CONNECTOR_SERVER_URL;
   }
@@ -43,7 +64,11 @@ export function sanitizeConnectorServerUrl(raw: string): string {
 
 export function sanitizeConnectorRoot(raw: string | null | undefined): string {
   const value = String(raw ?? '').trim();
-  return value || DEFAULT_CONNECTOR_REMOTE_ROOT;
+  return value
+    && !/^https?:\/\//i.test(value)
+    && !UNSAFE_PORTABLE_QUOTED_ARG.test(value)
+    ? value
+    : DEFAULT_CONNECTOR_REMOTE_ROOT;
 }
 
 function normalizeConnectorRoot(raw: string | null | undefined): string {
@@ -52,15 +77,17 @@ function normalizeConnectorRoot(raw: string | null | undefined): string {
 
 function normalizeConnectorPackage(raw: string | null | undefined): string {
   const value = String(raw ?? '').trim();
-  return !value || value === LEGACY_CONNECTOR_PACKAGE || value === UNPUBLISHED_CONNECTOR_PACKAGE
-    ? DEFAULT_CONNECTOR_PACKAGE
-    : value;
+  if (!value || value === LEGACY_CONNECTOR_PACKAGE || value === UNPUBLISHED_CONNECTOR_PACKAGE) {
+    return DEFAULT_CONNECTOR_PACKAGE;
+  }
+  return PORTABLE_COMMAND_ARG.test(value) ? value : DEFAULT_CONNECTOR_PACKAGE;
 }
 
 function connectorPackageSpec(config: SandboxConnectorConfig): string {
   const value = normalizeConnectorPackage(config.packageName);
   if (!value.startsWith('/')) return value;
-  return `${sanitizeConnectorServerUrl(config.serverUrl)}${value}`;
+  const version = value === DEFAULT_CONNECTOR_PACKAGE ? `?v=${CONNECTOR_PACKAGE_VERSION}` : '';
+  return `${sanitizeConnectorServerUrl(config.serverUrl)}${value}${version}`;
 }
 
 export function generateConnectorToken(): string {
@@ -92,13 +119,19 @@ export function createConnectorConfig(input: ConnectorInput): {
   return { token, config: buildConnectorConfig(input, token) };
 }
 
-function shellArg(value: string): string {
-  if (/^[A-Za-z0-9_./:@?=&%+,\-~]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+function portableCommandArg(value: string): string {
+  if (!PORTABLE_COMMAND_ARG.test(value)) {
+    throw new Error('Connector command contains an unsupported argument.');
+  }
+  return value;
 }
 
-function powershellArg(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+function portableQuotedArg(value: string): string {
+  return `"${portableCommandArg(value)}"`;
+}
+
+function portableRootArg(value: string): string {
+  return `"${sanitizeConnectorRoot(value)}"`;
 }
 
 function connectorClientCommandParts(config: SandboxConnectorConfig, token: string): string[] {
@@ -106,24 +139,24 @@ function connectorClientCommandParts(config: SandboxConnectorConfig, token: stri
     'npx',
     '-y',
     '--package',
-    connectorPackageSpec(config),
+    portableQuotedArg(connectorPackageSpec(config)),
     'connector',
     'connect',
     '--server',
-    shellArg(config.serverUrl),
+    portableQuotedArg(config.serverUrl),
     '--token',
-    shellArg(token),
+    portableQuotedArg(token),
     '--root',
-    config.remoteRoot,
+    portableRootArg(config.remoteRoot),
   ];
 }
 
 export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
-  return connectorClientCommandParts(config, token).map(shellArg).join(' ');
+  return connectorClientCommandParts(config, token).join(' ');
 }
 
-export function connectorPowerShellCommand(config: SandboxConnectorConfig, token: string): string {
-  return connectorClientCommandParts(config, token).map(powershellArg).join(' ');
+export function isConnectorToken(token: string): boolean {
+  return /^mcpcon_[A-Za-z0-9_-]+$/.test(token);
 }
 
 export function connectorSourceRef(config: SandboxConnectorConfig): string {

@@ -1,6 +1,11 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { connectorFromConfig, hashConnectorToken, type SandboxConnectorConfig } from './connector';
+import {
+  connectorFromConfig,
+  hashConnectorToken,
+  isConnectorToken,
+  type SandboxConnectorConfig,
+} from './connector';
 
 export type ConnectorSandboxRecord = {
   id: string;
@@ -12,11 +17,15 @@ export type ConnectorSandboxRecord = {
 };
 
 export async function findSandboxByConnectorToken(token: string): Promise<ConnectorSandboxRecord | null> {
-  const hash = hashConnectorToken(token.trim());
-  if (!hash) return null;
+  const normalizedToken = token.trim();
+  if (!isConnectorToken(normalizedToken)) return null;
+  const hash = hashConnectorToken(normalizedToken);
 
   const rows = await db.sandbox.findMany({
-    where: { kind: 'connector' },
+    where: {
+      kind: 'connector',
+      deployment: { status: { in: ['running', 'provisioning'] } },
+    },
     select: {
       id: true,
       workspaceId: true,
