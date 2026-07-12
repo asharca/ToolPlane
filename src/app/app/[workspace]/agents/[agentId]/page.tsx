@@ -1,6 +1,5 @@
 import { redirect, notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
-import type { UIMessage } from 'ai';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
@@ -21,6 +20,7 @@ import { toAgentChannelConnectionClientView } from '@/lib/agents/channel-connect
 import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,10 +76,10 @@ export default async function AgentDetailPage({
   const activeId = c ?? conversations[0]?.id ?? null;
   const loaded = activeId ? await getConversation(activeId, ws.id) : null;
   const conv = loaded && loaded.agentId === agentId ? loaded : null;
-  const initialMessages: UIMessage[] = (conv?.messages ?? []).map((m) => ({
+  const initialMessages: HermesUIMessage[] = (conv?.messages ?? []).map((m) => ({
     id: m.id,
-    role: m.role as UIMessage['role'],
-    parts: m.parts as UIMessage['parts'],
+    role: m.role as HermesUIMessage['role'],
+    parts: m.parts as HermesUIMessage['parts'],
   }));
 
   const selectedToolkits = new Set(agent.toolkits.map((toolkit) => toolkit.toolkitId));

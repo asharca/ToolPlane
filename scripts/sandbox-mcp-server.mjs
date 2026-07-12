@@ -916,7 +916,8 @@ function hermesProxyPath(req) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   if (!url.pathname.startsWith('/hermes/')) return null;
   const path = url.pathname.slice('/hermes'.length);
-  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/'))) {
+  const sessionMessages = /^\/api\/sessions\/[^/]+\/messages$/.test(path);
+  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/') || sessionMessages)) {
     return false;
   }
   return `${path}${url.search}`;

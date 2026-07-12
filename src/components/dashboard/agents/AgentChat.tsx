@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
+import { DefaultChatTransport, type FileUIPart } from 'ai';
 import dynamic from 'next/dynamic';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import Link from 'next/link';
@@ -30,6 +30,10 @@ import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
 import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
+import {
+  expandHermesAssistantMessages,
+  type HermesUIMessage,
+} from '@/lib/agents/hermes/message-segments';
 
 const AgentSettingsForm = dynamic(() =>
   import('@/components/dashboard/agents/AgentSettingsForm').then(
@@ -152,7 +156,7 @@ export function AgentChat({
   slug: string;
   agentId: string;
   conversationId: string | null;
-  initialMessages: UIMessage[];
+  initialMessages: HermesUIMessage[];
   conversations: Conversation[];
   settings: SettingsData;
   channelSettings: ChannelSettingsData;
@@ -180,7 +184,7 @@ export function AgentChat({
     setSettingsOpen(false);
     window.setTimeout(() => settingsButtonRef.current?.focus(), 0);
   }, []);
-  const { messages, sendMessage, setMessages, status, error } = useChat({
+  const { messages, sendMessage, setMessages, status, error } = useChat<HermesUIMessage>({
     transport: new DefaultChatTransport({
       api: `/api/v1/agents/${agentId}/chat`,
     }),
@@ -191,6 +195,7 @@ export function AgentChat({
   const sending = busy || creatingConversation || uploadingAttachments;
   const canSend = Boolean((text.trim() || attachments.length) && ready && !sending);
   const activeConversationId = createdConversationId ?? conversationId;
+  const displayMessages = useMemo(() => expandHermesAssistantMessages(messages), [messages]);
 
   const conversationGroups = useMemo(() => {
     const external = conversations.filter((conversation) => conversation.source);
@@ -480,7 +485,7 @@ export function AgentChat({
           ) : null}
 
           <div className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-5">
-            {messages.length === 0 ? (
+            {displayMessages.length === 0 ? (
               <div className="flex min-h-full items-center justify-center">
                 <div className="max-w-md px-5 py-6 text-center">
                   <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
@@ -494,7 +499,7 @@ export function AgentChat({
               </div>
             ) : (
               <div className="space-y-5">
-                {messages.map((message) => {
+                {displayMessages.map((message) => {
                   const isUser = message.role === 'user';
                   return (
                     <article key={message.id} className={cx('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>

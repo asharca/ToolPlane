@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { UIMessage } from 'ai';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
+import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 const chatMocks = vi.hoisted(() => ({
   useChat: vi.fn(),
@@ -80,12 +80,12 @@ const hermesRuntime = {
 
 function renderChat({
   conversationId = 'conv-1',
-  initialMessages = [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }] as UIMessage[],
+  initialMessages = [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }] as HermesUIMessage[],
   initialSettingsTab = null,
   runtime = null,
 }: {
   conversationId?: string | null;
-  initialMessages?: UIMessage[];
+  initialMessages?: HermesUIMessage[];
   initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
   runtime?: typeof hermesRuntime | null;
 } = {}) {
@@ -147,8 +147,8 @@ describe('AgentChat', () => {
   });
 
   it('re-syncs local chat state when the selected conversation changes', () => {
-    const firstMessages: UIMessage[] = [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first' }] }];
-    const secondMessages: UIMessage[] = [{ id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'second' }] }];
+    const firstMessages: HermesUIMessage[] = [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first' }] }];
+    const secondMessages: HermesUIMessage[] = [{ id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'second' }] }];
     const view = renderChat({ conversationId: 'conv-1', initialMessages: firstMessages });
 
     view.rerender(
@@ -170,6 +170,43 @@ describe('AgentChat', () => {
     );
 
     expect(chatMocks.setMessages).toHaveBeenLastCalledWith(secondMessages);
+  });
+
+  it('renders Hermes assistant turn segments as separate messages', () => {
+    const segmentedMessages = [
+      { id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Inspect the file.' }] },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'I will inspect.\n\nFinal result.' },
+          {
+            type: 'data-hermes-messages',
+            id: 'hermes-messages-conversation-1',
+            data: {
+              segments: [
+                { id: '2', text: 'I will inspect.' },
+                { id: '4', text: 'Final result.' },
+              ],
+            },
+          },
+        ],
+      },
+    ] as unknown as HermesUIMessage[];
+    chatMocks.useChat.mockReturnValue({
+      messages: segmentedMessages,
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      status: 'ready',
+      error: undefined,
+    });
+
+    renderChat({ initialMessages: segmentedMessages, runtime: hermesRuntime });
+
+    const preamble = screen.getByText('I will inspect.');
+    const final = screen.getByText('Final result.');
+    expect(preamble.closest('article')).not.toBe(final.closest('article'));
+    expect(screen.getAllByRole('article')).toHaveLength(3);
   });
 
   it('sends the active conversation id with each message submission', async () => {
