@@ -1,6 +1,10 @@
 import 'server-only';
-import type { FileUIPart, UIMessage, UIMessageStreamWriter } from 'ai';
+import type { FileUIPart, UIMessage } from 'ai';
 import { ensureHermesRuntimeReady } from './runtime';
+import type {
+  HermesAssistantSegment,
+  HermesUIMessage,
+} from './message-segments';
 
 type HermesRuntimeAgent = {
   id: string;
@@ -16,6 +20,12 @@ type HermesContentPart =
 type HermesMessage = {
   role: 'user' | 'assistant';
   content: string | HermesContentPart[];
+};
+
+type HermesStoredMessage = {
+  id?: unknown;
+  role?: unknown;
+  content?: unknown;
 };
 
 function fileLabel(part: FileUIPart): string {
@@ -62,14 +72,15 @@ async function hermesFetch(params: {
   sessionId: string;
   sessionKey: string;
   stream: boolean;
-}): Promise<Response> {
+}): Promise<{ baseUrl: string; response: Response }> {
   if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
     throw new Error('Hermes runtime is not configured.');
   }
   const ready = await ensureHermesRuntimeReady(params.agent.workspaceId, params.agent.id);
   if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
 
-  return fetch(`http://127.0.0.1:${ready.port}/hermes/v1/chat/completions`, {
+  const baseUrl = `http://127.0.0.1:${ready.port}/hermes`;
+  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -84,6 +95,7 @@ async function hermesFetch(params: {
     signal: AbortSignal.timeout(60 * 60_000),
     cache: 'no-store',
   });
+  return { baseUrl, response };
 }
 
 async function responseError(response: Response): Promise<Error> {
@@ -116,14 +128,55 @@ function textDelta(data: string): string {
   return '';
 }
 
+function storedMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.flatMap((part) => (
+    part && typeof part === 'object' && (part as { type?: unknown }).type === 'text'
+      ? [String((part as { text?: unknown }).text ?? '')]
+      : []
+  )).join('');
+}
+
+async function readHermesAssistantSegments(
+  baseUrl: string,
+  conversationId: string,
+): Promise<HermesAssistantSegment[]> {
+  const response = await fetch(
+    `${baseUrl}/api/sessions/${encodeURIComponent(conversationId)}/messages`,
+    {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+      cache: 'no-store',
+    },
+  );
+  if (!response.ok) return [];
+  const body = await response.json().catch(() => ({})) as { data?: HermesStoredMessage[] };
+  const messages = Array.isArray(body.data) ? body.data : [];
+  let turnStart = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      turnStart = index + 1;
+      break;
+    }
+  }
+  if (turnStart < 0) return [];
+  return messages.slice(turnStart).flatMap((message, index) => {
+    if (message.role !== 'assistant') return [];
+    const text = storedMessageText(message.content);
+    if (!text.trim()) return [];
+    return [{ id: String(message.id ?? index), text }];
+  });
+}
+
 export async function writeHermesChatStream(params: {
   agent: HermesRuntimeAgent;
   messages: UIMessage[];
   conversationId: string;
   sessionKey?: string;
-  writer: UIMessageStreamWriter;
+  writer: import('ai').UIMessageStreamWriter<HermesUIMessage>;
 }) {
-  const response = await hermesFetch({
+  const { baseUrl, response } = await hermesFetch({
     agent: params.agent,
     messages: uiMessagesToHermes(params.messages),
     sessionId: params.conversationId,
@@ -155,6 +208,14 @@ export async function writeHermesChatStream(params: {
   const trailing = textDelta(sseData(buffer));
   if (trailing) params.writer.write({ type: 'text-delta', id: textPartId, delta: trailing });
   params.writer.write({ type: 'text-end', id: textPartId });
+  const segments = await readHermesAssistantSegments(baseUrl, params.conversationId);
+  if (segments.length) {
+    params.writer.write({
+      type: 'data-hermes-messages',
+      id: `hermes-messages-${params.conversationId}`,
+      data: { segments },
+    });
+  }
 }
 
 export async function runHermesText(params: {
@@ -163,7 +224,7 @@ export async function runHermesText(params: {
   sessionId: string;
   sessionKey: string;
 }): Promise<string> {
-  const response = await hermesFetch({
+  const { response } = await hermesFetch({
     agent: params.agent,
     messages: uiMessagesToHermes(params.messages),
     sessionId: params.sessionId,

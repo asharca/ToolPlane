@@ -18,6 +18,10 @@ import { buildModel } from '@/lib/agents/model';
 import { resolveMaxSteps } from '@/lib/agents/constants';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
 import { writeHermesChatStream } from '@/lib/agents/hermes/client';
+import {
+  hermesAssistantSegments,
+  type HermesUIMessage,
+} from '@/lib/agents/hermes/message-segments';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -47,7 +51,7 @@ export async function POST(
   } catch {
     return new Response('Bad request', { status: 400 });
   }
-  const messages = body.messages ?? [];
+  const messages = (body.messages ?? []) as HermesUIMessage[];
 
   // Only persist to a conversation that belongs to THIS agent.
   const conversationId = body.conversationId
@@ -63,7 +67,7 @@ export async function POST(
 
   if (agent.runtime?.kind === 'hermes') {
     const runtimeSessionId = conversationId ?? randomUUID();
-    const stream = createUIMessageStream({
+    const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
       execute: ({ writer }) => writeHermesChatStream({
         agent,
@@ -77,7 +81,18 @@ export async function POST(
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
         }
-        await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+        const segments = hermesAssistantSegments(responseMessage.parts);
+        if (!segments.length) {
+          await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+          return;
+        }
+        await db.$transaction(segments.map((segment) => db.message.create({
+          data: {
+            conversationId,
+            role: 'assistant',
+            parts: [{ type: 'text', text: segment.text, state: 'done' }],
+          },
+        })));
       },
     });
     return createUIMessageStreamResponse({ stream });
