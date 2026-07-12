@@ -100,6 +100,12 @@ export type AgentConfig = {
 };
 
 export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
+  const agent = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: { id: true, runtime: { select: { kind: true } } },
+  });
+  if (!agent) return;
+
   let providerId = cfg.providerId;
   if (providerId) {
     const provider = await db.modelProvider.findFirst({
@@ -112,7 +118,7 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     where: { id: agentId, workspaceId },
     data: {
       name: cfg.name,
-      systemPrompt: cfg.systemPrompt,
+      ...(agent.runtime?.kind === HERMES_RUNTIME_KIND ? {} : { systemPrompt: cfg.systemPrompt }),
       providerId,
       model: cfg.model,
       maxSteps: cfg.maxSteps,

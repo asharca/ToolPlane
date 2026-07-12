@@ -30,7 +30,7 @@ import { deriveHermesRuntimeToken } from './token';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
-const HERMES_CONFIG_VERSION = 3;
+const HERMES_CONFIG_VERSION = 4;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const CONFIG_MERGE_SCRIPT = String.raw`import os
 import pathlib
@@ -207,8 +207,6 @@ async function buildProjection(
   const hash = createHash('sha256');
   const resolved = resolveAgentTools(agent);
   const config = renderHermesConfig({
-    agentName: agent.name,
-    systemPrompt: agent.systemPrompt,
     maxSteps: agent.maxSteps,
     provider: agent.provider && agent.model
       ? {

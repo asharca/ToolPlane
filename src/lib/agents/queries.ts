@@ -32,7 +32,15 @@ const TOOL_INCLUDE = {
   },
   subAgents: {
     select: {
-      child: { select: { id: true, name: true, slug: true, systemPrompt: true } },
+      child: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          systemPrompt: true,
+          runtime: { select: { kind: true } },
+        },
+      },
     },
   },
   sandboxes: {

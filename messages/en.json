@@ -373,7 +373,7 @@
       "closeHermesRuntimeDialog": "Close Hermes runtime",
       "hermesDashboardTitle": "Hermes runtime dashboard",
       "hermesTerminalTitle": "Hermes shell",
-      "hermesManagedFieldsWarning": "Model, system prompt, and the toolplane MCP entry are managed by ToolPlane and may be replaced on the next sync.",
+      "hermesManagedFieldsWarning": "Model and the toolplane MCP entry are managed by ToolPlane. The system prompt and other native settings are managed only in Hermes and are preserved during sync.",
       "channelSessions": "Channel sessions",
       "connectedChannelsWillAppearHereAfterTheirFirstMessage": "Connected channels will appear here after their first message.",
       "consoleChats": "Console chats",
