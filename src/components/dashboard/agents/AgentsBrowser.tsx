@@ -23,6 +23,10 @@ import {
   DashboardEmptyState,
   DashboardPage,
 } from '@/components/dashboard/DashboardUI';
+import {
+  AgentResourceSelect,
+  type AgentResourceOption,
+} from '@/components/dashboard/agents/AgentResourceSelect';
 
 export type AgentRow = {
   id: string;
@@ -38,9 +42,9 @@ export type AgentRow = {
 
 type CreateOptions = {
   providers: Array<{ id: string; name: string; models: string[] }>;
-  deployments: Array<{ id: string; label: string }>;
-  skills: Array<{ id: string; label: string }>;
-  toolkits: Array<{ id: string; label: string }>;
+  deployments: AgentResourceOption[];
+  skills: AgentResourceOption[];
+  toolkits: AgentResourceOption[];
 };
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -78,6 +82,9 @@ export function AgentsBrowser({
   const [creating, setCreating] = useState(false);
   const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
   const [providerId, setProviderId] = useState('');
+  const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
+  const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !agent.model).length;
   const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
 
@@ -186,10 +193,31 @@ export function AgentsBrowser({
             </label>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-3">
-            <CreateCheckGroup icon={Server} legend="MCP" name="deploymentId" options={createOptions.deployments} />
-            <CreateCheckGroup icon={PackageCheck} legend="Skills" name="installedSkillId" options={createOptions.skills} />
-            <CreateCheckGroup icon={Blocks} legend="Toolkits" name="toolkitId" options={createOptions.toolkits} />
+          <div className="grid items-start gap-3 lg:grid-cols-2">
+            <AgentResourceSelect
+              icon={Server}
+              label={t('mcp')}
+              name="deploymentId"
+              options={createOptions.deployments}
+              selectedIds={selectedDeploymentIds}
+              onSelectionChange={setSelectedDeploymentIds}
+            />
+            <AgentResourceSelect
+              icon={PackageCheck}
+              label={t('skills')}
+              name="installedSkillId"
+              options={createOptions.skills}
+              selectedIds={selectedSkillIds}
+              onSelectionChange={setSelectedSkillIds}
+            />
+            <AgentResourceSelect
+              icon={Blocks}
+              label={t('toolkits')}
+              name="toolkitId"
+              options={createOptions.toolkits}
+              selectedIds={selectedToolkitIds}
+              onSelectionChange={setSelectedToolkitIds}
+            />
           </div>
 
           <div className="flex justify-end border-t border-border pt-4">
@@ -292,38 +320,5 @@ export function AgentsBrowser({
         </section>
       )}
     </DashboardPage>
-  );
-}
-
-function CreateCheckGroup({
-  icon: Icon,
-  legend,
-  name,
-  options,
-}: {
-  icon: typeof Bot;
-  legend: string;
-  name: string;
-  options: Array<{ id: string; label: string }>;
-}) {
-  const t = useTranslations('console.agents');
-  return (
-    <fieldset className="min-w-0 rounded-md border border-border p-3">
-      <legend className="px-1 text-xs font-semibold text-foreground">
-        <span className="inline-flex items-center gap-2"><Icon className="size-4 text-muted-foreground" />{legend}</span>
-      </legend>
-      {options.length ? (
-        <div className="max-h-36 space-y-1 overflow-y-auto">
-          {options.map((option) => (
-            <label key={option.id} className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm hover:bg-muted/40">
-              <input type="checkbox" name={name} value={option.id} className="size-4" />
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            </label>
-          ))}
-        </div>
-      ) : (
-        <p className="px-2 py-2 text-sm text-muted-foreground">{t('nothingAvailableInThisWorkspace')}</p>
-      )}
-    </fieldset>
   );
 }

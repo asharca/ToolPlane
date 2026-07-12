@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useState } from 'react';
+import { useActionState, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, FileText, GitBranch, Upload } from 'lucide-react';
 import { createCustomSkillAction, importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
@@ -58,6 +58,21 @@ function displaySkillRoots(roots: string[]): string[] {
     common += 1;
   }
   return splitRoots.map((parts) => parts.slice(common).join('/') || parts.at(-1) || 'SKILL.md');
+}
+
+function GithubImportForm({ slug }: { slug: string }) {
+  const t = useTranslations('console.skills');
+  const [state, formAction, isPending] = useActionState(importSkillFromGithubAction, {});
+  return (
+    <form action={formAction} className="space-y-3">
+      <input type="hidden" name="workspace" value={slug} />
+      <input name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
+      {state.error ? <p className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
+      <button type="submit" disabled={isPending} className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white disabled:cursor-wait disabled:opacity-70 dark:bg-zinc-100 dark:text-zinc-900">
+        {isPending ? t('importing') : t('import')}
+      </button>
+    </form>
+  );
 }
 
 export function AddSkillDialog({ slug }: { slug: string }) {
@@ -128,11 +143,7 @@ export function AddSkillDialog({ slug }: { slug: string }) {
                 ) : null}
 
                 {mode === 'github' ? (
-                  <form action={importSkillFromGithubAction} className="space-y-3">
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input name="repo" required placeholder="https://github.com/org/skill" className={`${field} font-mono`} />
-                    <button type="submit" className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{t('import')}</button>
-                  </form>
+                  <GithubImportForm slug={slug} />
                 ) : null}
 
                 {mode === 'upload' ? (

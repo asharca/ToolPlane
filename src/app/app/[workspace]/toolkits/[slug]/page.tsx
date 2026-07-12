@@ -2,27 +2,30 @@ import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { Download, Server as ServerIcon, Brain, Plus, X } from 'lucide-react';
+import { Download, Server as ServerIcon, Brain, X } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import {
   getToolkitBySlug,
   getOrCreateDefaultToolkit,
-  getToolkitComposables,
+  getToolkitMcpCandidates,
+  getToolkitSkillCandidates,
 } from '@/lib/toolkits/queries';
 import { getOrCreateToolkitInstallLink } from '@/lib/toolkits/install-link';
 import { originFromHeaders } from '@/lib/http/origin';
-import { liveStatus } from '@/lib/process/supervisor';
+import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ToolkitInstall } from '@/components/dashboard/ToolkitInstall';
+import {
+  ToolkitResourcePicker,
+  type ToolkitPickerItem,
+} from '@/components/dashboard/toolkits/ToolkitResourcePicker';
 import { TabBar } from '@/components/dashboard/TabBar';
 import {
-  addServerToToolkitAction,
   removeServerFromToolkitAction,
-  addSkillToToolkitAction,
   removeSkillFromToolkitAction,
 } from '@/lib/toolkits/actions';
 
@@ -49,22 +52,6 @@ export default async function ToolkitDetailPage({
   const toolkit = await getToolkitBySlug(ws.id, toolkitSlug);
   if (!toolkit) notFound();
 
-  const composables = await getToolkitComposables(ws.id, toolkit.id);
-
-  const toolCounts = await Promise.all(
-    toolkit.servers.map(async (s) =>
-      liveStatus(s.deployment.id) === 'running'
-        ? (await listMcpTools(s.deployment.id)).length
-        : null,
-    ),
-  );
-
-  const origin = originFromHeaders(await headers());
-  const installLink = await getOrCreateToolkitInstallLink(toolkit.id, user.id);
-  const installUrl = `${origin}/install/${installLink.id}`;
-  const uninstallUrl = `${installUrl}/uninstall`;
-  const mcpUrl = `${origin}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/mcp`;
-
   const base = `/app/${wsSlug}/toolkits/${toolkitSlug}`;
   const tabs = [
     { key: 'overview', label: 'Overview' },
@@ -73,11 +60,49 @@ export default async function ToolkitDetailPage({
   ];
   const current = tabs.some((t) => t.key === tab) ? tab! : 'overview';
 
+  const [mcpCandidates, skillCandidates, toolCounts, requestHeaders, installLink] = await Promise.all([
+    current === 'mcps' ? getToolkitMcpCandidates(ws.id, toolkit.id) : Promise.resolve([]),
+    current === 'skills' ? getToolkitSkillCandidates(ws.id, toolkit.id) : Promise.resolve([]),
+    current === 'overview'
+      ? Promise.all(
+          toolkit.servers.map(async (s) =>
+            liveStatus(s.deployment.id) === 'running'
+              ? (await listMcpTools(s.deployment.id)).length
+              : null,
+          ),
+        )
+      : Promise.resolve([]),
+    headers(),
+    getOrCreateToolkitInstallLink(toolkit.id, user.id),
+  ]);
+  const origin = originFromHeaders(requestHeaders);
+  const installUrl = `${origin}/install/${installLink.id}`;
+  const uninstallUrl = `${installUrl}/uninstall`;
+  const mcpUrl = `${origin}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/mcp`;
+  const mcpPickerItems: ToolkitPickerItem[] = mcpCandidates.map((deployment) => {
+    const label = deploymentLabel(deployment);
+    return {
+      id: deployment.id,
+      name: label.name,
+      description: deployment.server?.description ?? label.ref,
+      source: label.source,
+      status: effectiveStatus(deployment.id, deployment.status),
+      keywords: [deployment.server?.slug ?? '', deployment.sourceRef ?? '', deployment.source ?? ''],
+    };
+  });
+  const skillPickerItems: ToolkitPickerItem[] = skillCandidates.map((skill) => {
+    const label = skillLabel(skill);
+    return {
+      id: skill.id,
+      name: label.name,
+      description: skill.skill?.description ?? skill.description,
+      source: label.source,
+      keywords: [label.slug, skill.sourceRef ?? '', skill.userInvocable ? 'user' : '', skill.agentInvocable ? 'agent' : ''],
+    };
+  });
+
   const cardHeader =
     'flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800';
-  const rowAddButton =
-    'inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800';
-
   return (
     <>
       <DashboardHeader
@@ -88,10 +113,12 @@ export default async function ToolkitDetailPage({
         actions={
           <a
             href={installUrl}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            aria-label={t('installScript')}
+            title={t('installScript')}
+            className="inline-flex size-9 items-center justify-center rounded-md bg-zinc-900 text-sm font-medium text-white transition-colors hover:bg-zinc-800 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             <Download className="size-4" />
-            {t('installScript')}
+            <span className="hidden sm:inline">{t('installScript')}</span>
           </a>
         }
       />
@@ -248,53 +275,13 @@ export default async function ToolkitDetailPage({
               )}
             </section>
 
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  {t('availableMcp')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {composables.deployments.length}
-                </span>
-              </header>
-              {composables.deployments.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  {t('everyDeployedServerIsAlreadyInThisToolkit')}{' '}
-                  <Link
-                    href={`/app/${wsSlug}/mcp/new`}
-                    className="text-zinc-700 underline dark:text-zinc-300"
-                  >
-                    {t('deployMore')}
-                  </Link>
-                  .
-                </p>
-              ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {composables.deployments.map((d) => (
-                    <li
-                      key={d.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
-                    >
-                      <span className="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <ServerIcon className="size-4 text-muted-foreground" />
-                        </span>
-                        {deploymentLabel(d).name}
-                      </span>
-                      <form action={addServerToToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input type="hidden" name="deploymentId" value={d.id} />
-                        <button className={rowAddButton}>
-                          <Plus className="size-3.5" />
-                          {t('add')}
-                        </button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+            <ToolkitResourcePicker
+              kind="mcp"
+              workspaceSlug={wsSlug}
+              toolkitSlug={toolkitSlug}
+              items={mcpPickerItems}
+              emptyHref={`/app/${wsSlug}/mcp/new`}
+            />
           </div>
         ) : null}
 
@@ -345,53 +332,13 @@ export default async function ToolkitDetailPage({
               )}
             </section>
 
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  {t('availableSkills')}
-                </h2>
-                <span className="text-sm text-muted-foreground">
-                  {composables.skills.length}
-                </span>
-              </header>
-              {composables.skills.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                  {t('everyInstalledSkillIsAlreadyInThisToolkit')}{' '}
-                  <Link
-                    href={`/app/${wsSlug}/skills/new`}
-                    className="text-zinc-700 underline dark:text-zinc-300"
-                  >
-                    {t('installMore')}
-                  </Link>
-                  .
-                </p>
-              ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {composables.skills.map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex items-center justify-between gap-3 px-4 py-3"
-                    >
-                      <span className="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                          <Brain className="size-4 text-muted-foreground" />
-                        </span>
-                        {skillLabel(s).name}
-                      </span>
-                      <form action={addSkillToToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input type="hidden" name="installedSkillId" value={s.id} />
-                        <button className={rowAddButton}>
-                          <Plus className="size-3.5" />
-                          {t('add')}
-                        </button>
-                      </form>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+            <ToolkitResourcePicker
+              kind="skill"
+              workspaceSlug={wsSlug}
+              toolkitSlug={toolkitSlug}
+              items={skillPickerItems}
+              emptyHref={`/app/${wsSlug}/skills/new`}
+            />
           </div>
         ) : null}
       </div>

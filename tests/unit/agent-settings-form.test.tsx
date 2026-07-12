@@ -74,4 +74,30 @@ describe('AgentSettingsForm', () => {
     expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
     expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
   });
+
+  it('does not mark search changes dirty but schedules a save for resource changes', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        deployments={[
+          {
+            id: 'deployment-1',
+            label: 'RouterOS MCP',
+            checked: false,
+            description: 'Network automation',
+            source: 'custom',
+            status: 'running',
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
+    await user.type(screen.getByRole('searchbox', { name: 'Search MCP...' }), 'router');
+    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select RouterOS MCP' }));
+    expect(screen.getByText('Saving shortly...')).toBeInTheDocument();
+  });
 });

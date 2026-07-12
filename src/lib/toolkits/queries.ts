@@ -23,18 +23,40 @@ export async function listToolkits(workspaceId: string) {
 export async function getToolkitBySlug(workspaceId: string, slug: string) {
   return db.toolkit.findFirst({
     where: { workspaceId, slug },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      visibility: true,
+      enabled: true,
       servers: {
-        include: {
+        select: {
+          id: true,
           deployment: {
-            include: { server: { select: { name: true, slug: true } } },
+            select: {
+              id: true,
+              status: true,
+              serverId: true,
+              name: true,
+              source: true,
+              sourceRef: true,
+              server: { select: { name: true, slug: true } },
+            },
           },
         },
       },
       skills: {
-        include: {
+        select: {
+          id: true,
           installedSkill: {
-            include: { skill: { select: { name: true, slug: true } } },
+            select: {
+              id: true,
+              skillId: true,
+              name: true,
+              slug: true,
+              source: true,
+              skill: { select: { name: true, slug: true } },
+            },
           },
         },
       },
@@ -52,7 +74,13 @@ export async function getOrCreateDefaultToolkit(workspaceId: string) {
   if (existing) return existing;
 
   const [deployments, skills] = await Promise.all([
-    db.deployment.findMany({ where: { workspaceId }, select: { id: true } }),
+    db.deployment.findMany({
+      where: {
+        workspaceId,
+        OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+      },
+      select: { id: true },
+    }),
     db.installedSkill.findMany({ where: { workspaceId }, select: { id: true } }),
   ]);
 
@@ -67,37 +95,46 @@ export async function getOrCreateDefaultToolkit(workspaceId: string) {
   });
 }
 
-// Workspace items not yet attached to the given toolkit, available to add.
-export async function getToolkitComposables(
-  workspaceId: string,
-  toolkitId: string,
-) {
-  const [usedServers, usedSkills] = await Promise.all([
-    db.toolkitServer.findMany({
-      where: { toolkitId },
-      select: { deploymentId: true },
-    }),
-    db.toolkitSkill.findMany({
-      where: { toolkitId },
-      select: { installedSkillId: true },
-    }),
-  ]);
-  const usedDeploymentIds = usedServers.map((s) => s.deploymentId);
-  const usedSkillIds = usedSkills.map((s) => s.installedSkillId);
+export async function getToolkitMcpCandidates(workspaceId: string, toolkitId: string) {
+  return db.deployment.findMany({
+    where: {
+      workspaceId,
+      OR: [{ source: null }, { source: { notIn: ['sandbox'] } }],
+      toolkitLinks: { none: { toolkitId } },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      status: true,
+      serverId: true,
+      name: true,
+      source: true,
+      sourceRef: true,
+      server: { select: { name: true, slug: true, description: true } },
+    },
+  });
+}
 
-  const [deployments, skills] = await Promise.all([
-    db.deployment.findMany({
-      where: { workspaceId, id: { notIn: usedDeploymentIds } },
-      include: { server: { select: { name: true, slug: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
-    db.installedSkill.findMany({
-      where: { workspaceId, id: { notIn: usedSkillIds } },
-      include: { skill: { select: { name: true, slug: true } } },
-      orderBy: { createdAt: 'desc' },
-    }),
-  ]);
-  return { deployments, skills };
+export async function getToolkitSkillCandidates(workspaceId: string, toolkitId: string) {
+  return db.installedSkill.findMany({
+    where: {
+      workspaceId,
+      toolkitLinks: { none: { toolkitId } },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      skillId: true,
+      name: true,
+      slug: true,
+      description: true,
+      source: true,
+      sourceRef: true,
+      userInvocable: true,
+      agentInvocable: true,
+      skill: { select: { name: true, slug: true, description: true } },
+    },
+  });
 }
 
 const TOOLKIT_MARKET_PAGE_SIZE = 20;

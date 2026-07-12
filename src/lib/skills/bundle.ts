@@ -2,6 +2,8 @@ import {
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_FILES,
+  MAX_SKILL_IMPORT_BYTES,
+  MAX_SKILL_IMPORT_FILES,
   MAX_SKILL_IMPORT_SKILLS,
   TEXT_SKILL_EXTENSION_SET,
 } from './limits';
@@ -264,13 +266,18 @@ export function parseUploadedSkillBundle(
   return parseUploadedSkillBundles(rawFiles, fallbackName)[0];
 }
 
-type GithubEntry = {
-  type: 'file' | 'dir' | string;
-  name: string;
+type GithubTreeEntry = {
+  type: 'blob' | 'tree' | string;
   path: string;
   size?: number;
-  download_url?: string | null;
 };
+
+type GithubTreeResponse = {
+  tree?: GithubTreeEntry[];
+  truncated?: boolean;
+};
+
+const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
 
 async function fetchJson(url: string): Promise<unknown> {
   const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
@@ -280,8 +287,13 @@ async function fetchJson(url: string): Promise<unknown> {
       'user-agent': 'toolplane-skill-import',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`GitHub request failed (${res.status}).`);
+  if (!res.ok) {
+    const rateLimited = res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0';
+    throw new Error(`GitHub request failed (${res.status})${rateLimited ? ': API rate limit exceeded' : ''}.`);
+  }
   return res.json();
 }
 
@@ -292,6 +304,8 @@ async function fetchFile(url: string, filePath: string): Promise<Pick<SkillBundl
       'user-agent': 'toolplane-skill-import',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`GitHub file download failed (${res.status}).`);
   const buffer = Buffer.from(await res.arrayBuffer());
@@ -301,63 +315,116 @@ async function fetchFile(url: string, filePath: string): Promise<Pick<SkillBundl
   return { content: buffer.toString('base64'), encoding: 'base64' };
 }
 
-function contentsUrl(source: ParsedGithubSkillSource, path: string): string {
+function githubTreeUrl(source: ParsedGithubSkillSource): string {
+  return `https://api.github.com/repos/${source.owner}/${source.repo}/git/trees/${encodeURIComponent(source.ref)}?recursive=1`;
+}
+
+function rawGithubFileUrl(source: ParsedGithubSkillSource, path: string): string {
   const encodedPath = path
     .split('/')
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/');
-  return `https://api.github.com/repos/${source.owner}/${source.repo}/contents/${encodedPath}?ref=${encodeURIComponent(source.ref)}`;
+  return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${encodeURIComponent(source.ref)}/${encodedPath}`;
 }
 
-export async function fetchGithubSkillBundle(rawSource: string): Promise<SkillBundle> {
-  const source = parseGithubSkillSource(rawSource);
-  const rootPath = source.path;
-  const rootPrefix = rootPath ? `${rootPath}/` : '';
-  const files: SkillBundleFile[] = [];
+function relativeGithubPath(source: ParsedGithubSkillSource, filePath: string): string | null {
+  if (!source.path) return safeSkillFilePath(filePath);
+  if (filePath === source.path) {
+    return safeSkillFilePath(filePath.split('/').pop() ?? filePath);
+  }
+  const prefix = `${source.path}/`;
+  if (!filePath.startsWith(prefix)) return null;
+  return safeSkillFilePath(filePath.slice(prefix.length));
+}
 
-  async function visit(path: string) {
-    const data = await fetchJson(contentsUrl(source, path));
-    const entries = Array.isArray(data) ? (data as GithubEntry[]) : [data as GithubEntry];
-    for (const entry of entries) {
-      if (entry.type === 'dir') {
-        await visit(entry.path);
-        continue;
-      }
-      if (entry.type !== 'file' || !entry.download_url) continue;
-      if (entry.size != null && entry.size > MAX_SKILL_FILE_BYTES) {
-        throw new Error(`File too large: ${entry.path}`);
-      }
-      const relative = entry.path.startsWith(rootPrefix)
-        ? entry.path.slice(rootPrefix.length)
-        : entry.name;
-      const safePath = safeSkillFilePath(relative);
-      if (!safePath) continue;
-      const file = await fetchFile(entry.download_url, safePath);
-      files.push({ path: safePath, ...file });
-      if (files.length > MAX_SKILL_FILES) {
-        throw new Error(`Skill bundle has too many files; max ${MAX_SKILL_FILES}.`);
-      }
+function githubSourceAtRoot(
+  source: ParsedGithubSkillSource,
+  relativeRoot: string | null,
+): ParsedGithubSkillSource {
+  if (!relativeRoot) return source;
+  const path = [source.path, relativeRoot].filter(Boolean).join('/');
+  const normalized = source.normalized.startsWith('https://github.com/')
+    ? `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${path}`
+    : `${source.owner}/${source.repo}/${path}`;
+  return { ...source, path, normalized };
+}
+
+export async function fetchGithubSkillBundles(rawSource: string): Promise<SkillBundle[]> {
+  const source = parseGithubSkillSource(rawSource);
+  const data = (await fetchJson(githubTreeUrl(source))) as GithubTreeResponse;
+  if (!Array.isArray(data.tree)) throw new Error('GitHub returned an invalid repository tree.');
+  if (data.truncated) {
+    throw new Error('GitHub repository tree is too large. Select a folder that contains fewer files.');
+  }
+
+  const candidates: { entry: GithubTreeEntry; path: string; url: string }[] = [];
+  for (const entry of data.tree) {
+    if (entry.type !== 'blob') continue;
+    const path = relativeGithubPath(source, entry.path);
+    if (!path) continue;
+    candidates.push({ entry, path, url: rawGithubFileUrl(source, entry.path) });
+  }
+
+  const roots = Array.from(
+    new Set(
+      candidates
+        .filter(({ path }) => /(^|\/)SKILL\.md$/i.test(path))
+        .map(({ path }) => directoryName(path)),
+    ),
+  ).sort((a, b) => rootDepth(a) - rootDepth(b) || String(a ?? '').localeCompare(String(b ?? '')));
+  if (roots.length === 0) throw new Error('SKILL.md not found in that GitHub folder.');
+  if (roots.length > MAX_SKILL_IMPORT_SKILLS) {
+    throw new Error(`Skill import has too many skills; max ${MAX_SKILL_IMPORT_SKILLS}.`);
+  }
+
+  const selected = candidates.filter(({ path }) => nearestSkillRoot(path, roots) !== undefined);
+  if (selected.length > MAX_SKILL_IMPORT_FILES) {
+    throw new Error(`Skill import has too many files; max ${MAX_SKILL_IMPORT_FILES}.`);
+  }
+  for (const { entry, path } of selected) {
+    if (entry.size != null && entry.size > MAX_SKILL_FILE_BYTES) {
+      throw new Error(`File too large: ${path}`);
+    }
+  }
+  const declaredBytes = selected.reduce((total, { entry }) => total + (entry.size ?? 0), 0);
+  if (declaredBytes > MAX_SKILL_IMPORT_BYTES) throw new Error('Skill import is too large.');
+
+  const files: SkillBundleFile[] = [];
+  let totalBytes = 0;
+  const batchSize = 8;
+  for (let i = 0; i < selected.length; i += batchSize) {
+    const batch = await Promise.all(
+      selected.slice(i, i + batchSize).map(async ({ path, url }) => {
+        const file = await fetchFile(url, path);
+        const bytes = file.encoding === 'base64'
+          ? Buffer.byteLength(file.content, 'base64')
+          : Buffer.byteLength(file.content, 'utf8');
+        return { path, file, bytes };
+      }),
+    );
+    for (const downloaded of batch) {
+      totalBytes += downloaded.bytes;
+      if (totalBytes > MAX_SKILL_IMPORT_BYTES) throw new Error('Skill import is too large.');
+      files.push({ path: downloaded.path, ...downloaded.file });
     }
   }
 
-  await visit(rootPath);
+  return parseUploadedSkillBundles(files).map((bundle) => ({
+    slugHint: bundle.slugHint,
+    name: bundle.name,
+    description: bundle.description,
+    author: bundle.author || source.owner,
+    source: githubSourceAtRoot(source, bundle.rootPath),
+    content: bundle.content,
+    files: bundle.files,
+  }));
+}
 
-  const skillMd = files.find((file) => /^SKILL\.md$/i.test(file.path));
-  if (!skillMd) throw new Error('SKILL.md not found in that GitHub folder.');
-  if (Buffer.byteLength(skillMd.content, 'utf8') > MAX_SKILL_FILE_BYTES) {
-    throw new Error('SKILL.md is too large.');
+export async function fetchGithubSkillBundle(rawSource: string): Promise<SkillBundle> {
+  const bundles = await fetchGithubSkillBundles(rawSource);
+  if (bundles.length > 1) {
+    throw new Error('Multiple skills found. Select a GitHub folder that contains one SKILL.md.');
   }
-
-  const fm = parseSkillFrontmatter(skillMd.content);
-  const fallbackName = rootPath ? rootPath.split('/').pop() || source.repo : source.repo;
-  return {
-    slugHint: fm.name || fallbackName,
-    name: fm.name || fallbackName,
-    description: fm.description || null,
-    author: fm.author || source.owner,
-    source,
-    content: skillMd.content,
-    files: normalizeSkillFiles(files),
-  };
+  return bundles[0];
 }

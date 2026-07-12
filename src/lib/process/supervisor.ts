@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -158,6 +159,37 @@ export function effectiveStatus(deploymentId: string, dbStatus: string): string 
   const live = liveStatus(deploymentId);
   if (live) return live;
   return ACTIVE_STATES.has(dbStatus) ? 'stopped' : dbStatus;
+}
+
+export function effectiveStatuses(
+  deployments: ReadonlyArray<{ id: string; status: string }>,
+): Map<string, string> {
+  const statuses = new Map<string, string>();
+  const registryFiles = (() => {
+    try {
+      return new Set(readdirSync(REGISTRY_DIR));
+    } catch {
+      return new Set<string>();
+    }
+  })();
+  const currentStore = store();
+
+  for (const deployment of deployments) {
+    const entry = currentStore.get(deployment.id);
+    if (entry && entry.child.exitCode === null && !entry.stopping && entry.pid && pidAlive(entry.pid)) {
+      statuses.set(deployment.id, entry.status);
+      continue;
+    }
+
+    const filename = `${safeId(deployment.id)}.json`;
+    const registered = registryFiles.has(filename) ? readRegistry(deployment.id) : null;
+    statuses.set(
+      deployment.id,
+      registered?.status ?? (ACTIVE_STATES.has(deployment.status) ? 'stopped' : deployment.status),
+    );
+  }
+
+  return statuses;
 }
 
 export function livePort(deploymentId: string): number | null {

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
 import dynamic from 'next/dynamic';
+import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import Link from 'next/link';
 import {
   Bot,
@@ -64,11 +65,11 @@ type SettingsData = {
   model: string | null;
   maxSteps: number;
   providers: Array<{ id: string; name: string; models: string[] }>;
-  deployments: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
-  skills: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
-  toolkits: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
-  sandboxes: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
-  subAgents: Array<{ id: string; label: string; checked: boolean; running?: boolean }>;
+  deployments: AgentResourceOption[];
+  skills: AgentResourceOption[];
+  toolkits: AgentResourceOption[];
+  sandboxes: AgentResourceOption[];
+  subAgents: AgentResourceOption[];
   runtime?: {
     kind: string;
     image: string;

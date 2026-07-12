@@ -27,23 +27,16 @@ import {
   type ActionState,
 } from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import {
+  AgentResourceSelect,
+  type AgentResourceOption,
+} from '@/components/dashboard/agents/AgentResourceSelect';
 
 type Provider = { id: string; name: string; models: string[] };
-type Option = { id: string; label: string; checked: boolean; running?: boolean };
 type SaveStatus = 'idle' | 'dirty';
 
-function checkedIds(options: Option[]) {
+function checkedIds(options: AgentResourceOption[]) {
   return new Set(options.filter((option) => option.checked).map((option) => option.id));
-}
-
-function toggleId(previous: Set<string>, id: string, checked: boolean) {
-  const next = new Set(previous);
-  if (checked) {
-    next.add(id);
-  } else {
-    next.delete(id);
-  }
-  return next;
 }
 
 export function AgentSettingsForm({
@@ -71,11 +64,11 @@ export function AgentSettingsForm({
   model: string | null;
   maxSteps: number;
   providers: Provider[];
-  deployments: Option[];
-  skills: Option[];
-  toolkits: Option[];
-  sandboxes: Option[];
-  subAgents: Option[];
+  deployments: AgentResourceOption[];
+  skills: AgentResourceOption[];
+  toolkits: AgentResourceOption[];
+  sandboxes: AgentResourceOption[];
+  subAgents: AgentResourceOption[];
   runtime?: {
     kind: string;
     image: string;
@@ -327,46 +320,61 @@ export function AgentSettingsForm({
           <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
           <h3 className="text-sm font-semibold text-foreground">{t('tools')}</h3>
         </div>
-        <div className="grid gap-3 px-4 py-4 lg:grid-cols-2">
-          <CheckGroup
+        <div className="grid items-start gap-3 px-4 py-4 lg:grid-cols-2">
+          <AgentResourceSelect
             icon={Server}
-            legend="MCP"
+            label={t('mcp')}
             name="deploymentId"
             options={deployments}
             selectedIds={selectedDeploymentIds}
-            onToggle={(id, checked) => setSelectedDeploymentIds((previous) => toggleId(previous, id, checked))}
+            onSelectionChange={(next) => {
+              setSelectedDeploymentIds(next);
+              scheduleAutoSave();
+            }}
           />
-          <CheckGroup
+          <AgentResourceSelect
             icon={PackageCheck}
-            legend="Skills"
+            label={t('skills')}
             name="installedSkillId"
             options={skills}
             selectedIds={selectedSkillIds}
-            onToggle={(id, checked) => setSelectedSkillIds((previous) => toggleId(previous, id, checked))}
+            onSelectionChange={(next) => {
+              setSelectedSkillIds(next);
+              scheduleAutoSave();
+            }}
           />
-          <CheckGroup
+          <AgentResourceSelect
             icon={Blocks}
-            legend="Toolkits"
+            label={t('toolkits')}
             name="toolkitId"
             options={toolkits}
             selectedIds={selectedToolkitIds}
-            onToggle={(id, checked) => setSelectedToolkitIds((previous) => toggleId(previous, id, checked))}
+            onSelectionChange={(next) => {
+              setSelectedToolkitIds(next);
+              scheduleAutoSave();
+            }}
           />
-          <CheckGroup
+          <AgentResourceSelect
             icon={Box}
-            legend="Sandboxes"
+            label={t('sandboxes')}
             name="sandboxId"
             options={sandboxes}
             selectedIds={selectedSandboxIds}
-            onToggle={(id, checked) => setSelectedSandboxIds((previous) => toggleId(previous, id, checked))}
+            onSelectionChange={(next) => {
+              setSelectedSandboxIds(next);
+              scheduleAutoSave();
+            }}
           />
-          <CheckGroup
+          <AgentResourceSelect
             icon={Users}
-            legend="Sub-agents"
+            label={t('subAgents')}
             name="subAgentId"
             options={subAgents}
             selectedIds={selectedSubAgentIds}
-            onToggle={(id, checked) => setSelectedSubAgentIds((previous) => toggleId(previous, id, checked))}
+            onSelectionChange={(next) => {
+              setSelectedSubAgentIds(next);
+              scheduleAutoSave();
+            }}
           />
         </div>
       </section>
@@ -399,60 +407,5 @@ export function AgentSettingsForm({
         </button>
       </div>
     </form>
-  );
-}
-
-function CheckGroup({
-  icon: Icon,
-  legend,
-  name,
-  options,
-  selectedIds,
-  onToggle,
-}: {
-  icon: typeof Bot;
-  legend: string;
-  name: string;
-  options: Option[];
-  selectedIds: ReadonlySet<string>;
-  onToggle: (id: string, checked: boolean) => void;
-}) {
-  const t = useTranslations('console.agents');
-  return (
-    <fieldset className="rounded-md border border-border bg-muted/15 p-3">
-      <legend className="px-1">
-        <span className="inline-flex items-center gap-2 text-xs font-semibold text-foreground">
-          <Icon className="size-4 shrink-0 text-muted-foreground" />
-          {legend}
-        </span>
-      </legend>
-      {options.length === 0 ? (
-        <p className="px-1 py-2 text-sm text-muted-foreground">{t('nothingAvailableInThisWorkspace')}</p>
-      ) : (
-        <div className="grid gap-2">
-          {options.map((o) => (
-            <label
-              key={o.id}
-              className="flex min-h-10 items-center gap-2.5 rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-background"
-            >
-              <input
-                type="checkbox"
-                name={name}
-                value={o.id}
-                checked={selectedIds.has(o.id)}
-                onChange={(event) => onToggle(o.id, event.target.checked)}
-                className="size-4"
-              />
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              {o.running === false ? (
-                <span className="inline-flex h-6 items-center rounded-md bg-muted px-2 text-[11px] uppercase text-muted-foreground">
-                  {t('stopped')}
-                </span>
-              ) : null}
-            </label>
-          ))}
-        </div>
-      )}
-    </fieldset>
   );
 }
