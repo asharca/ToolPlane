@@ -46,6 +46,9 @@ describe('skill bundle path guards', () => {
     expect(safeSkillFilePath('node_modules/pkg/index.js')).toBeNull();
     expect(safeSkillFilePath('._SKILL.md')).toBeNull();
     expect(safeSkillFilePath('__MACOSX/SKILL.md')).toBeNull();
+    expect(safeSkillFilePath('assets/CON.txt')).toBeNull();
+    expect(safeSkillFilePath('assets/name?.txt')).toBeNull();
+    expect(safeSkillFilePath('assets/trailing.')).toBeNull();
   });
 
   it('keeps safe nested files and excludes SKILL.md from extras', () => {
@@ -61,6 +64,13 @@ describe('skill bundle path guards', () => {
       { path: 'assets/font.ttf', content: Buffer.from('font').toString('base64'), encoding: 'base64' },
       { path: 'reference.md', content: 'ref' },
     ]);
+  });
+
+  it('deduplicates paths using Windows-compatible case rules', () => {
+    expect(normalizeSkillFiles([
+      { path: 'scripts/Run.js', content: 'first' },
+      { path: 'scripts/run.js', content: 'second' },
+    ])).toEqual([{ path: 'scripts/Run.js', content: 'first' }]);
   });
 });
 

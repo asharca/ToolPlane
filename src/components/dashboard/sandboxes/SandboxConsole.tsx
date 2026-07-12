@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ChevronRight, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2 } from 'lucide-react';
+import { ChevronRight, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2, X } from 'lucide-react';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 
 type RpcResult = {
@@ -20,6 +20,11 @@ type DownloadPayload = {
   filename?: string;
   content?: string;
   encoding?: string;
+};
+
+type FilePreview = {
+  path: string;
+  content: string;
 };
 
 function textFromResult(result: RpcResult | null): string {
@@ -50,13 +55,13 @@ function normalizePath(path: string): string {
   return clean || '.';
 }
 
-function shellEscape(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function absoluteWorkspacePath(path: string): string {
+function displayWorkspacePath(path: string, workspaceRoot = '/workspace'): string {
   const clean = normalizePath(path);
-  return clean === '.' ? '/workspace' : `/workspace/${clean}`;
+  const separator = workspaceRoot.includes('\\') && !workspaceRoot.includes('/') ? '\\' : '/';
+  const trimmedRoot = workspaceRoot.replace(/[\\/]+$/, '') || separator;
+  const root = /^[A-Za-z]:$/.test(trimmedRoot) ? `${trimmedRoot}${separator}` : trimmedRoot;
+  const joiner = root.endsWith(separator) ? '' : separator;
+  return clean === '.' ? root : `${root}${joiner}${clean.replaceAll('/', separator)}`;
 }
 
 function formatSize(size: number | null): string {
@@ -118,6 +123,8 @@ export function SandboxConsole({
   terminalApiBase,
   terminalLabel,
   terminalSubtitle,
+  workspaceRoot,
+  waitingForConnector = false,
 }: {
   deploymentId: string;
   running: boolean;
@@ -127,6 +134,8 @@ export function SandboxConsole({
   terminalApiBase?: string;
   terminalLabel?: string;
   terminalSubtitle?: string;
+  workspaceRoot?: string;
+  waitingForConnector?: boolean;
 }) {
   const t = useTranslations('console.sandboxes');
   const terminalBase = terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
@@ -141,10 +150,19 @@ export function SandboxConsole({
   const [entries, setEntries] = useState(() => sortedEntries(initialEntries));
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState('');
-  const [terminalStatus, setTerminalStatus] = useState(running ? 'Connecting' : 'Stopped');
+  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [terminalStatus, setTerminalStatus] = useState(
+    running ? 'Connecting' : waitingForConnector ? t('waitingForConnector') : 'Stopped',
+  );
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const [fileStatus, setFileStatus] = useState(
-    initialEntries.length ? `${initialEntries.length} item(s)` : running ? 'Empty directory' : 'Start sandbox to browse files',
+    initialEntries.length
+      ? `${initialEntries.length} item(s)`
+      : running
+        ? 'Empty directory'
+        : waitingForConnector
+          ? t('waitingForConnector')
+          : 'Start sandbox to browse files',
   );
 
   const loadDirectory = useCallback(
@@ -169,6 +187,8 @@ export function SandboxConsole({
         const listing = await loadDirectory(normalized);
         setDirPath(listing.path);
         setEntries(listing.entries);
+        setPreview(null);
+        setSelectedPath('');
         setFileStatus(`${listing.entries.length} item(s)`);
         return listing.path;
       } catch (error) {
@@ -246,8 +266,10 @@ export function SandboxConsole({
       fit.fit();
 
       if (!running) {
-        terminal.writeln('\x1b[33mSandbox is stopped. Start it before opening a terminal.\x1b[0m');
-        setTerminalStatus('Stopped');
+        terminal.writeln(`\x1b[33m${waitingForConnector
+          ? t('waitingForConnectorSession')
+          : t('sandboxStoppedTerminalHint')}\x1b[0m`);
+        setTerminalStatus(waitingForConnector ? t('waitingForConnector') : 'Stopped');
         return;
       }
 
@@ -311,11 +333,22 @@ export function SandboxConsole({
       terminalRef.current = null;
       terminal?.dispose();
     };
-  }, [flushInput, queueInput, resizeTerminal, running, terminalBase, terminalGeneration]);
+  }, [flushInput, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, waitingForConnector]);
 
-  function openFile(path: string) {
+  async function openFile(path: string) {
     setSelectedPath(path);
-    queueInput(`sed -n '1,160p' ${shellEscape(absoluteWorkspacePath(path))}\r`);
+    setLoadingPath(path);
+    try {
+      const raw = await callTool(deploymentId, 'read_file', { path });
+      const payload = JSON.parse(raw) as Partial<FilePreview>;
+      if (typeof payload.content !== 'string') throw new Error(t('filePreviewUnavailable'));
+      setPreview({ path, content: payload.content });
+      setFileStatus(path);
+    } catch (error) {
+      setFileStatus(String(error instanceof Error ? error.message : error));
+    } finally {
+      setLoadingPath(null);
+    }
   }
 
   async function downloadFile(path: string) {
@@ -336,7 +369,10 @@ export function SandboxConsole({
     setLoadingPath(path);
     try {
       await callTool(deploymentId, 'delete_file', { path });
-      if (selectedPath === path) setSelectedPath('');
+      if (selectedPath === path) {
+        setSelectedPath('');
+        setPreview(null);
+      }
       await refreshDir(dirPath);
     } catch (error) {
       setFileStatus(String(error instanceof Error ? error.message : error));
@@ -383,7 +419,7 @@ export function SandboxConsole({
 
   return (
     <div className="grid min-h-[calc(100vh-13rem)] gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
-      <aside className="ui-panel flex min-h-96 flex-col overflow-hidden">
+      <aside className="ui-panel order-2 flex min-h-96 flex-col overflow-hidden xl:order-1">
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Folder className="size-4 text-muted-foreground" />
@@ -401,7 +437,7 @@ export function SandboxConsole({
         </div>
 
         <div className="border-b border-border p-3">
-          <div className="mb-2 truncate font-mono text-xs text-foreground">{absoluteWorkspacePath(dirPath)}</div>
+          <div className="mb-2 truncate font-mono text-xs text-foreground">{displayWorkspacePath(dirPath, workspaceRoot)}</div>
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span className="truncate">{fileStatus}</span>
             <button
@@ -418,7 +454,11 @@ export function SandboxConsole({
         <div className="min-h-0 flex-1 overflow-auto p-2">
           {entries.length === 0 ? (
             <p className="px-2 py-6 text-sm text-muted-foreground">
-              {running ? t('noFilesInThisDirectory') : t('startTheSandboxToBrowseFiles')}
+              {running
+                ? t('noFilesInThisDirectory')
+                : waitingForConnector
+                  ? t('waitingForConnectorSession')
+                  : t('startTheSandboxToBrowseFiles')}
             </p>
           ) : (
             entries.map((entry) => {
@@ -434,7 +474,7 @@ export function SandboxConsole({
                 >
                   <button
                     type="button"
-                    onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : openFile(fullPath))}
+                    onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : void openFile(fullPath))}
                     disabled={!running || loadingPath !== null}
                     className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left font-mono text-xs disabled:opacity-50"
                   >
@@ -480,7 +520,33 @@ export function SandboxConsole({
         </div>
       </aside>
 
-      {terminalPanel}
+      <div className="relative order-1 min-h-[34rem] min-w-0 xl:order-2">
+        {terminalPanel}
+        {preview ? (
+          <section className="absolute inset-0 flex min-h-0 flex-col overflow-hidden border border-border bg-card">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <div className="min-w-0 truncate font-mono text-xs font-medium text-foreground">
+                {displayWorkspacePath(preview.path, workspaceRoot)}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreview(null);
+                  setSelectedPath('');
+                }}
+                className="ui-button-ghost ui-icon-button shrink-0"
+                title={t('close')}
+                aria-label={t('close')}
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">
+              {preview.content}
+            </pre>
+          </section>
+        ) : null}
+      </div>
     </div>
   );
 }

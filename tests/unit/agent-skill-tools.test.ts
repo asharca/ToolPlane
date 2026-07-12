@@ -115,12 +115,13 @@ describe('buildSkillToolSet', () => {
       'write_file',
       'write_file',
       'write_file',
-      'shell_exec',
+      'process_exec',
     ]);
     expect(calls.at(-1)?.params).toMatchObject({
-      name: 'shell_exec',
+      name: 'process_exec',
       arguments: {
-        command: "node 'scripts/echo.js' 'one'",
+        runtime: 'node',
+        args: ['scripts/echo.js', 'one'],
         cwd: '.toolplane/skills/pdf',
       },
     });
@@ -156,15 +157,36 @@ describe('buildSkillToolSet', () => {
       'write_file',
       'write_file',
       'write_file',
-      'shell_exec',
-      'shell_exec',
+      'process_exec',
     ]);
-    expect(calls.at(3)?.params).toMatchObject({
-      name: 'shell_exec',
+    expect(calls.at(2)?.params).toMatchObject({
+      name: 'write_file',
       arguments: {
-        command: "base64 -d 'assets/font.ttf.b64' > 'assets/font.ttf' && rm -f 'assets/font.ttf.b64'",
-        cwd: '.toolplane/skills/canvas',
+        path: '.toolplane/skills/canvas/assets/font.ttf',
+        content: Buffer.from('font').toString('base64'),
+        encoding: 'base64',
       },
     });
+  });
+
+  it('stops before execution when a sandbox file write fails', async () => {
+    const calls: string[] = [];
+    const set = buildSkillToolSet([pdfSkill], {
+      sandboxDeploymentIds: ['sandbox-dep'],
+      rpc: async (_id, _method, params) => {
+        calls.push(String(params?.name));
+        return params?.name === 'write_file'
+          ? { isError: true, content: [{ type: 'text', text: 'disk full' }] }
+          : { content: [{ type: 'text', text: 'unexpected' }] };
+      },
+    });
+
+    const out = await (set.skill_run_script.execute as ToolExec)({
+      skill: 'pdf',
+      path: 'scripts/echo.js',
+    });
+
+    expect(out).toEqual({ error: expect.stringMatching(/disk full/) });
+    expect(calls).toEqual(['write_file']);
   });
 });

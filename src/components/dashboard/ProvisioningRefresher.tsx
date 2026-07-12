@@ -3,8 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-// While any deployment is provisioning (e.g. npx is still downloading a custom
-// server), poll the server component so its status flips to running on its own.
+// Poll server-owned runtime state until the caller observes readiness.
 export function ProvisioningRefresher({ active }: { active: boolean }) {
   const router = useRouter();
   useEffect(() => {

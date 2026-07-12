@@ -31,7 +31,11 @@ async function authorizedWorkspace(slug: string) {
 
 async function deploymentInWorkspace(deploymentId: string, workspaceId: string) {
   return db.deployment.findFirst({
-    where: { id: deploymentId, workspaceId },
+    where: {
+      id: deploymentId,
+      workspaceId,
+      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+    },
     include: { server: { select: { name: true } } },
   });
 }
@@ -79,7 +83,7 @@ export async function deployServerAction(formData: FormData) {
       sourceRef: dep.sourceRef,
       installCfg: dep.installCfg,
     }),
-    { awaitReady: false },
+    { awaitReady: false, workspaceId: ctx.ws.id },
   );
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -126,7 +130,7 @@ export async function deployCustomServerAction(formData: FormData) {
       sourceRef: dep.sourceRef,
       installCfg: dep.installCfg,
     }),
-    { awaitReady: false },
+    { awaitReady: false, workspaceId: ctx.ws.id },
   );
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -142,7 +146,11 @@ export async function setDeploymentEnvAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   const dep = await db.deployment.findFirst({
-    where: { id: deploymentId, workspaceId: ctx.ws.id },
+    where: {
+      id: deploymentId,
+      workspaceId: ctx.ws.id,
+      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+    },
     select: { id: true, installCfg: true },
   });
   if (!dep) return;
@@ -177,7 +185,7 @@ export async function removeDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  killProcess(dep.id);
+  await killProcess(dep.id, { preventRestart: true });
   await db.deployment.deleteMany({
     where: { id: dep.id, workspaceId: ctx.ws.id },
   });
@@ -196,7 +204,10 @@ export async function startDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await startProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
+  await startProcess(dep.id, resolveSpawnSpec(dep), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
@@ -224,7 +235,10 @@ export async function restartDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await restartProcess(dep.id, resolveSpawnSpec(dep), { awaitReady: false });
+  await restartProcess(dep.id, resolveSpawnSpec(dep), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
@@ -240,7 +254,10 @@ export async function rebuildDeploymentAction(formData: FormData) {
   const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!dep) return;
 
-  await restartProcess(dep.id, resolveSpawnSpec(dep, true), { awaitReady: false });
+  await restartProcess(dep.id, resolveSpawnSpec(dep, true), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);
 }

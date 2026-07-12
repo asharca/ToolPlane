@@ -1,7 +1,7 @@
 import { getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
-import { Cpu, Laptop, Terminal } from 'lucide-react';
+import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getSandbox } from '@/lib/sandboxes/queries';
@@ -9,9 +9,13 @@ import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxe
 import {
   connectorClientCommand,
   connectorFromConfig,
-  connectorPowerShellCommand,
+  DEFAULT_CONNECTOR_REMOTE_ROOT,
+  hashConnectorToken,
+  isConnectorToken,
   type SandboxConnectorConfig,
 } from '@/lib/sandboxes/connector';
+import { connectorStatus } from '@/lib/sandboxes/connector-broker';
+import { readConnectorSetupTokenCookie } from '@/lib/sandboxes/connector-setup-token';
 import {
   deleteSandboxAction,
   generateConnectorCommandAction,
@@ -28,8 +32,11 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
 import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
+import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
+import { SandboxSettingsDialog } from '@/components/dashboard/sandboxes/SandboxSettingsDialog';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
+import { CopyButton } from '@/components/dashboard/CopyButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,11 +65,14 @@ function connectorPortLabel(connector: SandboxConnectorConfig | null): string {
   return connector ? 'ws agent' : 'missing connector';
 }
 
-function CommandBlock({ label, command }: { label: string; command: string }) {
+function CommandBlock({ label, command, copyLabel }: { label: string; command: string; copyLabel: string }) {
   return (
-    <div className="space-y-1.5">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <pre className="overflow-x-auto rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground">
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+        <CopyButton text={command} label={copyLabel} />
+      </div>
+      <pre className="whitespace-pre-wrap break-all rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground">
         <code>{command}</code>
       </pre>
     </div>
@@ -87,14 +97,11 @@ function parseInitialDirectory(result: Record<string, unknown> | null): {
 
 export default async function SandboxDetailPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ workspace: string; sandboxId: string }>;
-  searchParams?: Promise<{ token?: string }>;
 }) {
   const t = await getTranslations('console.sandboxes');
   const { workspace: slug, sandboxId } = await params;
-  const token = (await searchParams)?.token?.trim();
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -106,24 +113,109 @@ export default async function SandboxDetailPage({
   const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
   const running = status === 'running' || status === 'provisioning';
   const connector = connectorFromConfig(sandbox.config);
+  const tokenParam = connector ? (await readConnectorSetupTokenCookie(sandbox.id))?.trim() ?? '' : '';
+  const token = connector
+    && isConnectorToken(tokenParam)
+    && hashConnectorToken(tokenParam) === connector.tokenHash
+      ? tokenParam
+      : undefined;
+  const connectorLive = sandbox.kind === 'connector' ? connectorStatus(sandbox.id) : null;
+  const connectorWaiting = Boolean(connector && running && !connectorLive?.connected);
+  const connectorRoot = connectorLive?.root ?? connector?.remoteRoot;
   const envText = sandboxEnvToText(readSandboxEnv(sandbox.config));
   const disabledLegacy = sandbox.kind === 'host' || sandbox.kind === 'ssh' || (sandbox.kind === 'connector' && !connector);
-  const canUseConsole = status === 'running' && !disabledLegacy;
-  const initialDirectory =
-    canUseConsole
-      ? parseInitialDirectory(
-          await mcpRpc(
-            sandbox.deploymentId,
-            'tools/call',
-            { name: 'list_dir', arguments: { path: '.' } },
-            5000,
-          ),
-        )
-      : { path: '.', entries: [] };
+  const canUseConsole = status === 'running'
+    && !disabledLegacy
+    && (sandbox.kind !== 'connector' || Boolean(connectorLive?.connected));
+  const showConnectorSetup = Boolean(connector && !connectorLive?.connected);
+  const initialDirectory = canUseConsole
+    ? parseInitialDirectory(
+        await mcpRpc(
+          sandbox.deploymentId,
+          'tools/call',
+          { name: 'list_dir', arguments: { path: '.' } },
+          5000,
+        ),
+      )
+    : { path: '.', entries: [] };
+  const connectorSettings = connector ? (
+    <div className="space-y-4">
+      <form action={generateConnectorCommandAction} className="space-y-3">
+        <input type="hidden" name="workspace" value={slug} />
+        <input type="hidden" name="sandboxId" value={sandbox.id} />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border pb-3 text-xs text-muted-foreground">
+          <Globe2 className="size-4 shrink-0" />
+          <span>{t('platformUrl')}</span>
+          <span className="break-all font-mono text-foreground">{connector.serverUrl}</span>
+          <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+            {t('automatic')}
+          </span>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <label className="block space-y-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('localRoot')}
+            <span className="relative block">
+              <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                name="connectorRemoteRoot"
+                required
+                defaultValue={connector.remoteRoot || DEFAULT_CONNECTOR_REMOTE_ROOT}
+                className="ui-input ui-input-icon h-9 w-full font-mono text-xs"
+                aria-describedby="connector-root-hint"
+              />
+            </span>
+            <span id="connector-root-hint" className="block text-[11px] font-normal normal-case leading-4 tracking-normal text-muted-foreground">
+              {t('directoryOnTheUsersMachineExposedToTheAgent')}
+            </span>
+          </label>
+          <SubmitButton pendingLabel={t('generating')} className="ui-button-primary mt-5 h-9 w-full text-sm lg:w-auto">
+            {token ? t('updateAndRegenerateCommand') : t('generateCommand')}
+          </SubmitButton>
+        </div>
+      </form>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {token ? (
+          <div className="min-w-0 space-y-3">
+            <CommandBlock
+              label={t('linuxMacosWindows')}
+              command={connectorClientCommand(connector, token)}
+              copyLabel={t('copyCommand')}
+            />
+            <p className="text-xs leading-5 text-muted-foreground">{t('connectorRequirements')}</p>
+          </div>
+        ) : (
+          <div className="rounded-md border border-border bg-background px-3 py-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t('runOnTheUserMachine')}
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t('generateAFreshConnectionCommandToMintATokenForThisSandbox')}
+            </p>
+          </div>
+        )}
+        <div className="min-w-0 rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
+          <div className="font-medium text-foreground">{t('connectionModel')}</div>
+          <p className="mt-1">
+            {t('thePlatformDoesNotDialTheUserMachineTheConnectorCliOpensAWebsocketSessionTo')} <span className="font-mono text-foreground">{connector.serverUrl}</span>{t('thenExposes')} <span className="font-mono text-foreground">{connectorRoot}</span> {t('asThisSandboxRoot')}
+          </p>
+          {token ? (
+            <p className="mt-2 text-foreground">
+              {t('thisGeneratedTokenIsShownOnlyInThisUrlKeepTheCommandSomewhereSafeBeforeLeavingThePage')}
+            </p>
+          ) : (
+            <p className="mt-2">
+              {t('tokensAreGeneratedServersideAndStoredOnlyAsHashes')}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <>
-      <ProvisioningRefresher active={status === 'provisioning'} />
+      <ProvisioningRefresher active={status === 'provisioning' || connectorWaiting} />
       <DashboardHeader
         breadcrumb={[
           { label: 'Sandboxes', href: `/app/${slug}/sandboxes` },
@@ -139,20 +231,6 @@ export default async function SandboxDetailPage({
               </span>
               <div className="min-w-0">
                 <h1 className="truncate text-xl font-semibold text-foreground">{sandbox.name}</h1>
-                <form action={renameSandboxAction} className="mt-2 flex max-w-md items-center gap-2">
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="sandboxId" value={sandbox.id} />
-                  <input
-                    name="name"
-                    defaultValue={sandbox.name}
-                    maxLength={80}
-                    className="ui-input h-8 min-w-0 text-sm"
-                    aria-label={t('sandboxName')}
-                  />
-                  <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-8 text-xs">
-                    {t('rename')}
-                  </SubmitButton>
-                </form>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="font-mono">{sandbox.slug}</span>
                   <span className="inline-flex items-center gap-1">
@@ -171,6 +249,97 @@ export default async function SandboxDetailPage({
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge status={status} />
+              {sandbox.kind === 'connector' && connector ? (
+                <SandboxConnectorStatus
+                  workspace={slug}
+                  sandboxId={sandbox.id}
+                  initialStatus={{
+                    connected: Boolean(connectorLive?.connected),
+                    connectedAt: connectorLive?.connectedAt ?? null,
+                    lastSeen: connectorLive?.lastSeen ?? null,
+                    root: connectorLive?.root ?? null,
+                    platform: connectorLive?.platform ?? null,
+                    arch: connectorLive?.arch ?? null,
+                    shell: connectorLive?.shell ?? null,
+                  }}
+                />
+              ) : null}
+              <SandboxSettingsDialog
+                title={t('sandboxSettings')}
+                subtitle={sandbox.name}
+                triggerLabel={t('settings')}
+                closeLabel={t('close')}
+              >
+                <div className="divide-y divide-border">
+                  <section className="pb-5">
+                    <h3 className="text-sm font-semibold text-foreground">{t('generalSettings')}</h3>
+                    <form action={renameSandboxAction} className="mt-3 flex items-end gap-2">
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input type="hidden" name="sandboxId" value={sandbox.id} />
+                      <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                        {t('sandboxName')}
+                        <input
+                          name="name"
+                          defaultValue={sandbox.name}
+                          maxLength={80}
+                          className="ui-input h-9 min-w-0 text-sm"
+                        />
+                      </label>
+                      <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-9 text-xs">
+                        {t('rename')}
+                      </SubmitButton>
+                    </form>
+                  </section>
+
+                  {connector && !showConnectorSetup ? (
+                    <section className="py-5">
+                      <h3 className="text-sm font-semibold text-foreground">{t('connectorSetup')}</h3>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t('runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally')}
+                      </p>
+                      <div className="mt-4">{connectorSettings}</div>
+                    </section>
+                  ) : null}
+
+                  <section className="py-5">
+                    <h3 className="text-sm font-semibold text-foreground">{t('environmentVariables')}</h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{t('changesRestartTheSandboxContainerButKeepFiles')}</p>
+                    <form action={updateSandboxEnvAction} className="mt-3 space-y-3">
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input type="hidden" name="sandboxId" value={sandbox.id} />
+                      <textarea
+                        name="env"
+                        defaultValue={envText}
+                        rows={5}
+                        spellCheck={false}
+                        placeholder={t('envPlaceholder')}
+                        className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                        aria-label={t('environmentVariables')}
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
+                        <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+                          {t('saveEnvironment')}
+                        </SubmitButton>
+                      </div>
+                    </form>
+                  </section>
+
+                  <section className="pt-5">
+                    <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h3>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                      <p className="max-w-xl text-xs leading-5 text-muted-foreground">{t('deleteSandboxDescription')}</p>
+                      <form action={deleteSandboxAction}>
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input type="hidden" name="sandboxId" value={sandbox.id} />
+                        <button className="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10">
+                          {t('delete')}
+                        </button>
+                      </form>
+                    </div>
+                  </section>
+                </div>
+              </SandboxSettingsDialog>
               <Link href={`/app/${slug}/agents`} className={rowButton}>
                 {t('attachToAgent')}
               </Link>
@@ -200,11 +369,6 @@ export default async function SandboxDetailPage({
                   </SubmitButton>
                 </form>
               )}
-              <form action={deleteSandboxAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="sandboxId" value={sandbox.id} />
-                <button className="text-xs text-red-600 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300">{t('delete')}</button>
-              </form>
             </div>
           </div>
 
@@ -219,105 +383,25 @@ export default async function SandboxDetailPage({
             </div>
           ) : null}
 
-          {status === 'provisioning' ? (
-            <div className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">
-                    {t('preparing')} {sandbox.kind === 'connector' ? t('connectorSandbox') : t('linuxSandbox')}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {sandbox.kind === 'connector'
-                      ? t('waitingForConnectorSession')
-                      : t('creatingRuntimeAndStorage')}
-                  </p>
-                </div>
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('autorefreshing')}</span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
-              </div>
-            </div>
-          ) : null}
-
-          {sandbox.kind === 'connector' && connector ? (
+          {showConnectorSetup && connector ? (
             <DashboardPanel
               title={t('connectorSetup')}
               description={t('runThisCommandOnTheUserMachineTheClientConnectsBackToThePlatformOverWebsocketAndExecutesSandboxOperationsLocally')}
             >
-              <div className="grid gap-4 lg:grid-cols-2">
-                {token ? (
-                  <div className="space-y-3">
-                    <CommandBlock label={t('macosLinuxShell')} command={connectorClientCommand(connector, token)} />
-                    <CommandBlock label={t('windowsPowerShell')} command={connectorPowerShellCommand(connector, token)} />
-                  </div>
-                ) : (
-                  <div className="rounded-md border border-border bg-background px-3 py-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {t('runOnTheUserMachine')}
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {t('generateAFreshConnectionCommandToMintATokenForThisSandbox')}
-                    </p>
-                    <form action={generateConnectorCommandAction} className="mt-3">
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="sandboxId" value={sandbox.id} />
-                      <SubmitButton pendingLabel={t('generating')} className="ui-button-primary text-sm">
-                        {t('generateCommand')}
-                      </SubmitButton>
-                    </form>
-                  </div>
-                )}
-                <div className="rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
-                  <div className="font-medium text-foreground">{t('connectionModel')}</div>
-                  <p className="mt-1">
-                    {t('thePlatformDoesNotDialTheUserMachineTheConnectorCliOpensAWebsocketSessionTo')} <span className="font-mono text-foreground">{connector.serverUrl}</span>{t('thenExposes')} <span className="font-mono text-foreground">{connector.remoteRoot}</span> {t('asThisSandboxRoot')}
-                  </p>
-                  {token ? (
-                    <p className="mt-2 text-foreground">
-                      {t('thisGeneratedTokenIsShownOnlyInThisUrlKeepTheCommandSomewhereSafeBeforeLeavingThePage')}
-                    </p>
-                  ) : (
-                    <p className="mt-2">
-                      {t('tokensAreGeneratedServersideAndStoredOnlyAsHashes')}
-                    </p>
-                  )}
-                </div>
-              </div>
+              {connectorSettings}
             </DashboardPanel>
-          ) : null}
-
-          <DashboardPanel
-            title={t('environmentVariables')}
-            description={t('changesRestartTheSandboxContainerButKeepFiles')}
-          >
-            <form action={updateSandboxEnvAction} className="space-y-3">
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="sandboxId" value={sandbox.id} />
-              <textarea
-                name="env"
-                defaultValue={envText}
-                rows={5}
-                spellCheck={false}
-                placeholder={t('envPlaceholder')}
-                className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
-                aria-label={t('environmentVariables')}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
-                <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
-                  {t('saveEnvironment')}
-                </SubmitButton>
-              </div>
-            </form>
-          </DashboardPanel>
-
-          <SandboxConsole
-            deploymentId={sandbox.deploymentId}
-            running={canUseConsole}
-            initialPath={initialDirectory.path}
-            initialEntries={initialDirectory.entries}
-          />
+          ) : (
+            <SandboxConsole
+              key={`${sandbox.id}:${canUseConsole ? connectorLive?.connectedAt ?? 'ready' : 'offline'}`}
+              deploymentId={sandbox.deploymentId}
+              running={canUseConsole}
+              initialPath={initialDirectory.path}
+              initialEntries={initialDirectory.entries}
+              terminalSubtitle={sandbox.name}
+              workspaceRoot={sandbox.kind === 'connector' ? connectorRoot : undefined}
+              waitingForConnector={connectorWaiting}
+            />
+          )}
         </section>
       </DashboardPage>
     </>

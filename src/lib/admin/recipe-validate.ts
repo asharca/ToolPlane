@@ -76,6 +76,6 @@ export async function validateServerRecipe(
     const names = tools.map((t) => t.name).filter((n): n is string => typeof n === 'string');
     return { ok: true, toolCount: names.length, tools: names.slice(0, 50) };
   } finally {
-    killProcess(id);
+    await killProcess(id, { preventRestart: true });
   }
 }

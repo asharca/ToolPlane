@@ -11,6 +11,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  connector-cross-platform:
+    name: connector (${{ matrix.os }})
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      AUTH_SECRET: connector-test-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: 1
+      CONNECTOR_INSTALL_SMOKE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Test connector portability
+        run: pnpm vitest run tests/unit/connector-cli.test.ts tests/unit/connector-auth.test.ts tests/unit/connector-bootstrap-route.test.ts tests/unit/connector-setup-token.test.ts tests/unit/spawn-spec.test.ts tests/unit/agent-skill-tools.test.ts tests/unit/sandbox.test.ts tests/integration/connector-broker.test.ts
+
+      - name: Test Docker timeout cleanup
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+        run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts
+
   validate:
     runs-on: ubuntu-latest
     services:

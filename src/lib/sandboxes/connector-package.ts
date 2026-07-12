@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { CONNECTOR_PACKAGE_VERSION } from './connector';
 
 const BLOCK_SIZE = 512;
 
-export const CONNECTOR_TARBALL_FILENAME = 'toolplane-connector-0.1.8.tgz';
+export const CONNECTOR_TARBALL_FILENAME = `toolplane-connector-${CONNECTOR_PACKAGE_VERSION}.tgz`;
 
 type TarEntry = {
   name: string;
@@ -61,9 +62,11 @@ export async function buildConnectorPackageTarball(root = process.cwd()): Promis
   const packageRoot = path.join(root, 'packages', 'connector');
   const packageJson = await readFile(path.join(packageRoot, 'package.json'));
   const cli = await readFile(path.join(packageRoot, 'bin', 'connector.mjs'));
+  const runtime = await readFile(path.join(packageRoot, 'bin', 'runtime.mjs'));
 
   return gzipSync(buildTar([
     { name: 'package/package.json', body: packageJson, mode: 0o644 },
     { name: 'package/bin/connector.mjs', body: cli, mode: 0o755 },
+    { name: 'package/bin/runtime.mjs', body: runtime, mode: 0o644 },
   ]), { level: 9 });
 }

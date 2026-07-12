@@ -23,6 +23,7 @@ type Entry = {
   pid?: number;
   name: string;
   stopping?: boolean;
+  stopGraceMs?: number;
 };
 
 type Store = Map<string, Entry>;
@@ -38,10 +39,63 @@ type RegistryEntry = {
 
 // Persist the process table on globalThis so it survives dev hot-reload
 // (module re-evaluation) while the Next server process stays alive.
-const g = globalThis as unknown as { __mcpSupervisor?: Store };
+const g = globalThis as unknown as {
+  __mcpSupervisor?: Store;
+  __mcpSupervisorPersistQueues?: Map<string, Promise<void>>;
+  __mcpSupervisorLifecycleQueues?: Map<string, Promise<void>>;
+  __mcpSupervisorTombstones?: Set<string>;
+  __mcpSupervisorWorkspaceTombstones?: Set<string>;
+};
 function store(): Store {
   if (!g.__mcpSupervisor) g.__mcpSupervisor = new Map();
   return g.__mcpSupervisor;
+}
+
+function persistQueues(): Map<string, Promise<void>> {
+  if (!g.__mcpSupervisorPersistQueues) g.__mcpSupervisorPersistQueues = new Map();
+  return g.__mcpSupervisorPersistQueues;
+}
+
+function lifecycleQueues(): Map<string, Promise<void>> {
+  if (!g.__mcpSupervisorLifecycleQueues) g.__mcpSupervisorLifecycleQueues = new Map();
+  return g.__mcpSupervisorLifecycleQueues;
+}
+
+function tombstones(): Set<string> {
+  if (!g.__mcpSupervisorTombstones) g.__mcpSupervisorTombstones = new Set();
+  return g.__mcpSupervisorTombstones;
+}
+
+function workspaceTombstones(): Set<string> {
+  if (!g.__mcpSupervisorWorkspaceTombstones) {
+    g.__mcpSupervisorWorkspaceTombstones = new Set();
+  }
+  return g.__mcpSupervisorWorkspaceTombstones;
+}
+
+export function preventWorkspaceStarts(workspaceId: string): void {
+  workspaceTombstones().add(workspaceId);
+}
+
+function launchPrevented(deploymentId: string, workspaceId?: string): boolean {
+  return tombstones().has(deploymentId)
+    || (workspaceId !== undefined && workspaceTombstones().has(workspaceId));
+}
+
+function enqueueLifecycle<T>(deploymentId: string, operation: () => Promise<T>): Promise<T> {
+  const queues = lifecycleQueues();
+  const previous = queues.get(deploymentId) ?? Promise.resolve();
+  const result = previous.catch(() => undefined).then(operation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  queues.set(deploymentId, tail);
+  return result.finally(() => {
+    if (queues.get(deploymentId) === tail) {
+      queues.delete(deploymentId);
+    }
+  });
 }
 
 const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
@@ -55,12 +109,23 @@ const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir
 // while still "provisioning". 15s covers a cold start; the process still flips
 // to running in the background if it exceeds even this.
 const READY_TIMEOUT_MS = 90000;
+const STOP_GRACE_MS = 5000;
+const KILL_GRACE_MS = 1000;
 
 async function persist(deploymentId: string, status: string) {
-  try {
-    await db.deployment.update({ where: { id: deploymentId }, data: { status } });
-  } catch {
-    // deployment may have been removed; ignore
+  const queues = persistQueues();
+  const previous = queues.get(deploymentId) ?? Promise.resolve();
+  const write = previous.catch(() => undefined).then(async () => {
+    try {
+      await db.deployment.update({ where: { id: deploymentId }, data: { status } });
+    } catch {
+      // deployment may have been removed; ignore
+    }
+  });
+  queues.set(deploymentId, write);
+  await write;
+  if (queues.get(deploymentId) === write) {
+    queues.delete(deploymentId);
   }
 }
 
@@ -81,9 +146,97 @@ function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+function childTerminated(child: ChildProcess): boolean {
+  return child.exitCode !== null
+    || child.signalCode !== null
+    || (child.pid === undefined ? true : !pidAlive(child.pid));
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (childTerminated(child)) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('error', onError);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const onError = () => {
+      if (childTerminated(child)) finish(true);
+    };
+    const timer = setTimeout(() => finish(childTerminated(child)), timeoutMs);
+    child.once('exit', onExit);
+    child.once('error', onError);
+    if (childTerminated(child)) finish(true);
+  });
+}
+
+async function terminateChild(entry: Entry, force: boolean): Promise<void> {
+  entry.stopping = true;
+  entry.status = 'stopped';
+  if (childTerminated(entry.child)) return;
+
+  const signal = force ? 'SIGKILL' : 'SIGTERM';
+  try {
+    entry.child.kill(signal);
+  } catch {
+    // The process may have exited between the state check and the signal.
+  }
+  const graceMs = force ? KILL_GRACE_MS : (entry.stopGraceMs ?? STOP_GRACE_MS);
+  if (await waitForChildExit(entry.child, graceMs)) return;
+
+  try {
+    entry.child.kill('SIGKILL');
+  } catch {
+    // Re-check through the exit waiter below.
+  }
+  if (await waitForChildExit(entry.child, KILL_GRACE_MS)) return;
+  throw new Error(`Process ${entry.pid ?? 'unknown'} did not terminate.`);
+}
+
+function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  if (!pidAlive(pid)) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const poll = () => {
+      if (!pidAlive(pid)) {
+        resolve(true);
+      } else if (Date.now() >= deadline) {
+        resolve(false);
+      } else {
+        setTimeout(poll, 50);
+      }
+    };
+    setTimeout(poll, 50);
+  });
+}
+
+async function terminateRegisteredProcess(pid: number, force: boolean): Promise<void> {
+  if (!pidAlive(pid)) return;
+  try {
+    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+  } catch (error) {
+    if (!pidAlive(pid)) return;
+    throw error;
+  }
+  if (await waitForPidExit(pid, force ? KILL_GRACE_MS : STOP_GRACE_MS)) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (!pidAlive(pid)) return;
+    throw error;
+  }
+  if (await waitForPidExit(pid, KILL_GRACE_MS)) return;
+  throw new Error(`Registered process ${pid} did not terminate.`);
 }
 
 function readRegistry(deploymentId: string): RegistryEntry | null {
@@ -198,26 +351,34 @@ export function livePort(deploymentId: string): number | null {
 
 type StartProcessOptions = {
   awaitReady?: boolean;
+  workspaceId?: string;
 };
 
-export async function startProcess(
+type LaunchResult = {
+  ready: Promise<void> | null;
+};
+
+async function launchProcess(
   deploymentId: string,
   spec: SpawnSpec,
-  options: StartProcessOptions = {},
-): Promise<void> {
-  const awaitReady = options.awaitReady ?? true;
+  workspaceId?: string,
+): Promise<LaunchResult> {
+  if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   const s = store();
   const existing = s.get(deploymentId);
-  if (existing && existing.child.exitCode === null && !existing.stopping) return;
+  if (existing && existing.child.exitCode === null && !existing.stopping) {
+    return { ready: null };
+  }
   const registered = readRegistry(deploymentId);
   if (registered && registered.status === 'running' && registered.port) {
-    await persist(deploymentId, 'running');
-    return;
+    void persist(deploymentId, 'running');
+    return { ready: null };
   }
 
   const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
     ? await ensureConnectorBroker()
     : null;
+  if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   const script = spec.kind === 'bridge' ? BRIDGE : spec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
   // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
   // down to an allowlist before spawning the docker CLI. The MCP's own env is
@@ -271,6 +432,7 @@ export async function startProcess(
     status: 'provisioning',
     pid: child.pid,
     name: spec.name,
+    stopGraceMs: spec.kind === 'sandbox' && spec.sandboxKind === 'hermes' ? 35_000 : undefined,
   };
   s.set(deploymentId, entry);
   if (child.pid) {
@@ -283,12 +445,18 @@ export async function startProcess(
       updatedAt: new Date().toISOString(),
     });
   }
-  await persist(deploymentId, 'provisioning');
-
   const ready = new Promise<void>((resolve) => {
     child.stdout?.on('data', (buf: Buffer) => {
       const m = /LISTENING (\d+)/.exec(buf.toString());
       if (m) {
+        // A buffered readiness line can arrive after stopProcess has already
+        // revoked this process. Never let it recreate a running registry or DB
+        // status. Per-deployment persistence queues preserve the same ordering
+        // when a previously-started running write is still in flight.
+        if (entry.stopping || child.exitCode !== null || store().get(deploymentId) !== entry) {
+          resolve();
+          return;
+        }
         entry.port = Number(m[1]);
         entry.status = 'running';
         if (child.pid) {
@@ -316,36 +484,54 @@ export async function startProcess(
   child.on('exit', (code) => {
     entry.status = entry.stopping ? 'stopped' : code === 0 ? 'stopped' : 'error';
     if (child.pid) deleteRegistry(deploymentId, child.pid);
+    if (entry.stopping || store().get(deploymentId) !== entry) return;
     void persist(deploymentId, entry.status);
   });
   child.on('error', () => {
-    entry.status = 'error';
+    entry.status = entry.stopping ? 'stopped' : 'error';
     if (child.pid) deleteRegistry(deploymentId, child.pid);
-    void persist(deploymentId, 'error');
+    if (entry.stopping || store().get(deploymentId) !== entry) return;
+    void persist(deploymentId, entry.status);
   });
 
-  if (awaitReady) {
-    await ready;
+  // Status persistence is ordered per deployment but deliberately does not
+  // hold the lifecycle queue. A stop must be able to signal the local child
+  // even while a slow database write is still in flight.
+  void persist(deploymentId, 'provisioning');
+  return { ready };
+}
+
+export async function startProcess(
+  deploymentId: string,
+  spec: SpawnSpec,
+  options: StartProcessOptions = {},
+): Promise<void> {
+  const { ready } = await enqueueLifecycle(deploymentId, () => (
+    launchProcess(deploymentId, spec, options.workspaceId)
+  ));
+  if ((options.awaitReady ?? true) && ready) await ready;
+}
+
+async function stopProcessUnlocked(deploymentId: string, force = false): Promise<void> {
+  const e = store().get(deploymentId);
+  const registered = readRegistry(deploymentId);
+  try {
+    if (e) await terminateChild(e, force);
+    if (registered && registered.pid !== e?.pid) {
+      await terminateRegisteredProcess(registered.pid, force);
+    }
+  } catch (error) {
+    if (e) e.status = 'error';
+    await persist(deploymentId, 'error');
+    throw error;
   }
+  deleteRegistry(deploymentId);
+  if (e && store().get(deploymentId) === e) store().delete(deploymentId);
+  await persist(deploymentId, 'stopped');
 }
 
 export async function stopProcess(deploymentId: string): Promise<void> {
-  const e = store().get(deploymentId);
-  if (e) {
-    e.stopping = true;
-    if (e.child.exitCode === null) e.child.kill('SIGTERM');
-    e.status = 'stopped';
-  }
-  const registered = readRegistry(deploymentId);
-  if (registered) {
-    try {
-      process.kill(registered.pid, 'SIGTERM');
-    } catch {
-      // already gone
-    }
-    deleteRegistry(deploymentId);
-  }
-  await persist(deploymentId, 'stopped');
+  await enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId));
 }
 
 export async function restartProcess(
@@ -353,32 +539,27 @@ export async function restartProcess(
   spec: SpawnSpec,
   options: StartProcessOptions = {},
 ): Promise<void> {
-  await stopProcess(deploymentId);
-  await new Promise((r) => setTimeout(r, 250));
-  store().delete(deploymentId);
-  await startProcess(deploymentId, spec, options);
+  const { ready } = await enqueueLifecycle(deploymentId, async () => {
+    await stopProcessUnlocked(deploymentId);
+    return launchProcess(deploymentId, spec, options.workspaceId);
+  });
+  if ((options.awaitReady ?? true) && ready) await ready;
 }
 
-export function killProcess(deploymentId: string): void {
-  const e = store().get(deploymentId);
-  if (e) {
-    e.stopping = true;
-    if (e.child.exitCode === null) e.child.kill('SIGKILL');
-  }
-  const registered = readRegistry(deploymentId);
-  if (registered) {
-    try {
-      process.kill(registered.pid, 'SIGKILL');
-    } catch {
-      // already gone
-    }
-    deleteRegistry(deploymentId);
-  }
-  store().delete(deploymentId);
+type KillProcessOptions = {
+  preventRestart?: boolean;
+};
+
+export async function killProcess(
+  deploymentId: string,
+  options: KillProcessOptions = {},
+): Promise<void> {
+  if (options.preventRestart) tombstones().add(deploymentId);
+  await enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId, true));
 }
 
 // Kill every supervised process for a set of deployments (e.g. when a
 // workspace is deleted) so no child processes are left orphaned.
-export function killMany(deploymentIds: string[]): void {
-  for (const id of deploymentIds) killProcess(id);
+export async function killMany(deploymentIds: string[]): Promise<void> {
+  await Promise.all(deploymentIds.map((id) => killProcess(id, { preventRestart: true })));
 }

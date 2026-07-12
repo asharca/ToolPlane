@@ -81,18 +81,29 @@ Use `pnpm`; the lockfile is `pnpm-lock.yaml`.
 
 ## User Connector
 
-User-machine sandboxes do not require SSH or Chisel. The user runs one command:
+User-machine sandboxes do not require SSH or Chisel. Linux, macOS, Windows
+PowerShell, and Windows Command Prompt use the same one-line command:
 
-```bash
-npx -y --package http://localhost:3000/api/v1/connectors/package.tgz connector connect \
-  --server http://localhost:3000 \
-  --token mcpcon_... \
-  --root ~/toolplane-sandbox
+```text
+npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.9" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "~/toolplane-sandbox"
 ```
 
 The sandbox page generates the `mcpcon_...` token and stores only its hash.
-The connector opens a WebSocket session to ToolPlane, then ToolPlane proxies
-shell execution, file operations, and terminal streams through that session.
+Bootstrap supplies the configured local root, so OS-specific paths never need
+shell quoting in the generated command. HTTP bootstrap and WebSocket
+authentication use a Bearer header, so the token is not placed in a URL. The
+connector opens a WebSocket session to ToolPlane, then ToolPlane proxies
+native-shell execution, structured script execution, file operations, and
+terminal streams through that session.
+
+The connector requires Node.js 20+, access to ToolPlane's HTTP/WebSocket
+endpoints, and npm registry access for the tarball's `ws` and `node-pty`
+dependencies. Windows support targets Windows 10 1809 or newer and Windows 11
+on x64/arm64. If PowerShell policy blocks `npx.ps1`, run the same command in
+Command Prompt. The connector runs with the permissions of the local user who
+starts it; use a dedicated low-privilege account for untrusted agent workloads.
+After a connector protocol upgrade, stop the old connector and run a newly
+generated command; incompatible old clients are intentionally rejected.
 
 ## Deployment Notes
 

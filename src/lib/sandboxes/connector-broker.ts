@@ -9,8 +9,9 @@ import { findSandboxByConnectorToken } from './connector-auth';
 const DEFAULT_CONNECTOR_WS_PORT = 9321;
 const DEFAULT_CONNECTOR_WS_BIND = '0.0.0.0';
 const REQUEST_TIMEOUT_MS = 30000;
-const MAX_BODY = 2_000_000;
+const MAX_BODY = 4_000_000;
 const MAX_TERMINAL_BUFFER = 200;
+const REQUIRED_CONNECTOR_CAPABILITIES = ['process_exec', 'write_file_base64'];
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -22,9 +23,18 @@ type ConnectorClient = {
   sandboxId: string;
   workspaceId: string;
   ws: WebSocket;
+  ready: boolean;
   connectedAt: string;
   lastSeen: string;
   root?: string;
+  version?: string;
+  platform?: string;
+  arch?: string;
+  shell?: string;
+  shellFamily?: string;
+  nodeVersion?: string;
+  capabilities: string[];
+  token?: string;
   pending: Map<string, PendingRequest>;
 };
 
@@ -42,6 +52,7 @@ type BrokerState = {
   port: number;
   internalToken: string;
   clients: Map<string, ConnectorClient>;
+  pendingClients: Set<ConnectorClient>;
   terminalSessions: Map<string, TerminalSession>;
 };
 
@@ -49,14 +60,21 @@ const g = globalThis as unknown as { __sandboxConnectorBroker?: BrokerState };
 
 function state(): BrokerState {
   if (!g.__sandboxConnectorBroker) {
+    const configuredPort = process.env.CONNECTOR_WS_PORT == null
+      ? DEFAULT_CONNECTOR_WS_PORT
+      : Number(process.env.CONNECTOR_WS_PORT);
     g.__sandboxConnectorBroker = {
       bind: process.env.CONNECTOR_WS_BIND || DEFAULT_CONNECTOR_WS_BIND,
-      port: Number(process.env.CONNECTOR_WS_PORT || DEFAULT_CONNECTOR_WS_PORT) || DEFAULT_CONNECTOR_WS_PORT,
+      port: Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535
+        ? configuredPort
+        : DEFAULT_CONNECTOR_WS_PORT,
       internalToken: process.env.CONNECTOR_BROKER_TOKEN || randomBytes(32).toString('base64url'),
       clients: new Map(),
+      pendingClients: new Set(),
       terminalSessions: new Map(),
     };
   }
+  g.__sandboxConnectorBroker.pendingClients ??= new Set();
   return g.__sandboxConnectorBroker;
 }
 
@@ -118,8 +136,10 @@ function pushTerminalEvent(sandboxId: string, terminalId: string, event: string,
 
 function attachClient(client: ConnectorClient) {
   const s = state();
+  s.pendingClients.delete(client);
   const existing = s.clients.get(client.sandboxId);
   if (existing && existing.ws.readyState === WebSocket.OPEN) {
+    clearTerminalSessions(client.sandboxId);
     existing.ws.close(4000, 'replaced by a newer connector session');
   }
   s.clients.set(client.sandboxId, client);
@@ -127,13 +147,27 @@ function attachClient(client: ConnectorClient) {
 
 function detachClient(client: ConnectorClient) {
   const s = state();
-  if (s.clients.get(client.sandboxId) !== client) return;
-  s.clients.delete(client.sandboxId);
+  s.pendingClients.delete(client);
+  const wasActive = s.clients.get(client.sandboxId) === client;
+  if (wasActive) {
+    s.clients.delete(client.sandboxId);
+    clearTerminalSessions(client.sandboxId);
+  }
   for (const pending of client.pending.values()) {
     clearTimeout(pending.timer);
     pending.reject(new Error('Connector client disconnected.'));
   }
+  client.token = undefined;
   client.pending.clear();
+}
+
+function clearTerminalSessions(sandboxId: string) {
+  const s = state();
+  for (const [key, session] of s.terminalSessions) {
+    if (session.sandboxId !== sandboxId) continue;
+    for (const stream of session.streams) stream.end();
+    s.terminalSessions.delete(key);
+  }
 }
 
 function sendConnectorRequest(
@@ -143,7 +177,7 @@ function sendConnectorRequest(
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<unknown> {
   const client = state().clients.get(sandboxId);
-  if (!client || client.ws.readyState !== WebSocket.OPEN) {
+  if (!client?.ready || client.ws.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error('Connector client is not connected.'));
   }
 
@@ -164,7 +198,7 @@ function sendConnectorRequest(
   });
 }
 
-function handleWsMessage(client: ConnectorClient, raw: RawData) {
+async function handleWsMessage(client: ConnectorClient, raw: RawData) {
   let msg: Record<string, unknown>;
   try {
     msg = JSON.parse(raw.toString());
@@ -174,9 +208,40 @@ function handleWsMessage(client: ConnectorClient, raw: RawData) {
   client.lastSeen = new Date().toISOString();
 
   if (msg.type === 'hello') {
-    client.root = typeof msg.root === 'string' ? msg.root : client.root;
+    if (client.ready) return;
+    const current = await findSandboxByConnectorToken(client.token ?? '');
+    if (current?.id !== client.sandboxId
+      || current.workspaceId !== client.workspaceId
+      || !state().pendingClients.has(client)
+      || client.ws.readyState !== WebSocket.OPEN) {
+      client.ws.close(4001, 'connector credential is no longer active');
+      return;
+    }
+    const capabilities = Array.isArray(msg.capabilities)
+      ? msg.capabilities.filter((value): value is string => typeof value === 'string').slice(0, 32)
+      : [];
+    const compatible = msg.protocolVersion === CONNECTOR_PROTOCOL_VERSION
+      && REQUIRED_CONNECTOR_CAPABILITIES.every((capability) => capabilities.includes(capability));
+    if (!compatible) {
+      client.ws.close(4002, 'connector upgrade required');
+      return;
+    }
+    const text = (value: unknown, max = 256) => typeof value === 'string' ? value.slice(0, max) : undefined;
+    client.root = text(msg.root, 2048);
+    client.version = text(msg.version);
+    client.platform = text(msg.platform);
+    client.arch = text(msg.arch);
+    client.shell = text(msg.shell, 1024);
+    client.shellFamily = text(msg.shellFamily);
+    client.nodeVersion = text(msg.nodeVersion);
+    client.capabilities = capabilities;
+    client.token = undefined;
+    client.ready = true;
+    attachClient(client);
     return;
   }
+
+  if (!client.ready) return;
 
   if (msg.type === 'response') {
     const id = String(msg.id ?? '');
@@ -214,7 +279,10 @@ async function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer)
     return;
   }
 
-  const token = url.searchParams.get('token') ?? '';
+  const authorization = Array.isArray(req.headers.authorization)
+    ? req.headers.authorization[0]
+    : req.headers.authorization;
+  const token = /^Bearer\s+(.+)$/i.exec(authorization?.trim() ?? '')?.[1] ?? '';
   const sandbox = await findSandboxByConnectorToken(token);
   if (!sandbox) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -228,12 +296,17 @@ async function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer)
       sandboxId: sandbox.id,
       workspaceId: sandbox.workspaceId,
       ws,
+      ready: false,
       connectedAt: now,
       lastSeen: now,
+      capabilities: [],
+      token,
       pending: new Map(),
     };
-    attachClient(client);
-    ws.on('message', (raw) => handleWsMessage(client, raw));
+    s.pendingClients.add(client);
+    ws.on('message', (raw) => {
+      void handleWsMessage(client, raw).catch(() => ws.close(1011, 'connector message failed'));
+    });
     ws.on('close', () => detachClient(client));
     ws.on('error', () => detachClient(client));
     ws.send(JSON.stringify({
@@ -380,6 +453,8 @@ export async function ensureConnectorBroker(): Promise<{
   await new Promise<void>((resolve, reject) => {
     s.server?.once('error', reject);
     s.server?.listen(s.port, s.bind, () => {
+      const address = s.server?.address();
+      if (address && typeof address === 'object') s.port = address.port;
       s.server?.off('error', reject);
       resolve();
     });
@@ -398,20 +473,62 @@ export function connectorStatus(sandboxId: string): {
   connectedAt: string | null;
   lastSeen: string | null;
   root: string | null;
+  version: string | null;
+  platform: string | null;
+  arch: string | null;
+  shell: string | null;
+  shellFamily: string | null;
+  nodeVersion: string | null;
+  capabilities: string[];
 } {
   const client = state().clients.get(sandboxId);
-  if (!client || client.ws.readyState !== WebSocket.OPEN) {
-    return { connected: false, connectedAt: null, lastSeen: null, root: null };
+  if (!client?.ready || client.ws.readyState !== WebSocket.OPEN) {
+    return {
+      connected: false,
+      connectedAt: null,
+      lastSeen: null,
+      root: null,
+      version: null,
+      platform: null,
+      arch: null,
+      shell: null,
+      shellFamily: null,
+      nodeVersion: null,
+      capabilities: [],
+    };
   }
   return {
     connected: true,
     connectedAt: client.connectedAt,
     lastSeen: client.lastSeen,
     root: client.root ?? null,
+    version: client.version ?? null,
+    platform: client.platform ?? null,
+    arch: client.arch ?? null,
+    shell: client.shell ?? null,
+    shellFamily: client.shellFamily ?? null,
+    nodeVersion: client.nodeVersion ?? null,
+    capabilities: client.capabilities,
   };
 }
 
-export function connectorPublicWsUrl(serverUrl: string, token: string): string {
+export function disconnectConnector(sandboxId: string, reason = 'connector session revoked'): void {
+  const s = state();
+  const clients = new Set(
+    [...s.pendingClients].filter((client) => client.sandboxId === sandboxId),
+  );
+  const active = s.clients.get(sandboxId);
+  if (active) clients.add(active);
+  for (const client of clients) {
+    detachClient(client);
+    if (client.ws.readyState === WebSocket.CONNECTING || client.ws.readyState === WebSocket.OPEN) {
+      client.ws.close(4001, reason.slice(0, 120));
+    }
+  }
+  clearTerminalSessions(sandboxId);
+}
+
+export function connectorPublicWsUrl(serverUrl: string): string {
   const explicit = process.env.CONNECTOR_WS_PUBLIC_URL;
   const base = explicit
     ? new URL(explicit)
@@ -423,6 +540,20 @@ export function connectorPublicWsUrl(serverUrl: string, token: string): string {
       })();
   base.pathname = '/connect';
   base.search = '';
-  base.searchParams.set('token', token);
   return base.toString();
+}
+
+export async function shutdownConnectorBroker(): Promise<void> {
+  const s = state();
+  const sandboxIds = new Set([
+    ...s.clients.keys(),
+    ...[...s.pendingClients].map((client) => client.sandboxId),
+  ]);
+  for (const sandboxId of sandboxIds) disconnectConnector(sandboxId, 'connector broker stopped');
+  const server = s.server;
+  if (server?.listening) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  s.wss?.close();
+  g.__sandboxConnectorBroker = undefined;
 }

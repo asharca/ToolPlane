@@ -76,7 +76,13 @@ describe('removeDeploymentAction', () => {
     await removeDeploymentAction(formData('foreign-dep'));
 
     expect(mocks.deploymentFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'foreign-dep', workspaceId: 'ws1' } }),
+      expect.objectContaining({
+        where: {
+          id: 'foreign-dep',
+          workspaceId: 'ws1',
+          OR: [{ source: null }, { source: { not: 'sandbox' } }],
+        },
+      }),
     );
     expect(mocks.killProcess).not.toHaveBeenCalled();
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
@@ -87,10 +93,24 @@ describe('removeDeploymentAction', () => {
 
     await removeDeploymentAction(formData('dep1'));
 
-    expect(mocks.killProcess).toHaveBeenCalledWith('dep1');
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { preventRestart: true });
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
       where: { id: 'dep1', workspaceId: 'ws1' },
     });
+  });
+
+  it('excludes sandbox-backed deployments from generic lifecycle actions', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue(null);
+
+    await startDeploymentAction(formData('sandbox-dep'));
+
+    expect(mocks.deploymentFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'sandbox-dep',
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      }),
+    }));
+    expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 
   it('starts deployments in provisioning mode without waiting for ready', async () => {
@@ -100,7 +120,11 @@ describe('removeDeploymentAction', () => {
     await startDeploymentAction(formData('dep1'));
 
     expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({ id: 'dep1', workspaceId: 'ws1' });
-    expect(mocks.startProcess).toHaveBeenCalledWith('dep1', { kind: 'builtin' }, { awaitReady: false });
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep1',
+      { kind: 'builtin' },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
   });

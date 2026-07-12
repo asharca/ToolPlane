@@ -50,14 +50,22 @@ limits, and can use either the dedicated `mcp-sandbox` network or `none`.
 
 Connector mode lets a user expose one directory on their own machine without
 opening SSH, configuring keys, or letting the platform dial arbitrary user
-hosts. The user runs one command:
+hosts. Linux, macOS, Windows PowerShell, and Windows Command Prompt all use the
+same one-line command:
 
-```bash
-npx -y --package http://localhost:3002/api/v1/connectors/package.tgz connector connect \
-  --server http://localhost:3002 \
-  --token mcpcon_... \
-  --root ~/toolplane-sandbox
+```text
+npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.9" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox"
 ```
+
+The connector requires Node.js 20+, outbound access to ToolPlane's HTTP and
+WebSocket endpoints, and npm registry access. The hosted tarball contains the
+CLI package metadata; `npx` downloads its `ws` and `node-pty` dependencies from
+the configured npm registry. Windows support targets Windows 10 1809 or newer
+and Windows 11 on x64/arm64, where `node-pty` uses ConPTY. If PowerShell policy
+blocks `npx.ps1`, the unchanged command can be run in Command Prompt. The
+configured local root is returned by bootstrap; `--root <path>` remains an
+optional manual override for development and is reported back as the actual
+root shown in the console.
 
 The sandbox page generates the `mcpcon_...` token when creating a connector
 sandbox or when the user clicks **Generate command**. The command starts a
@@ -68,15 +76,17 @@ session open.
 ```txt
 User machine
 `-- connector package tarball from /api/v1/connectors/package.tgz
-    |-- local shell
+    |-- native shell (PowerShell on Windows, POSIX shell on macOS/Linux)
     |-- local filesystem root
-    `-- local PTY
+    |-- structured process execution
+    `-- local PTY (ConPTY on Windows)
         |
         | WebSocket
         v
 Platform connector broker
 `-- sandbox-mcp-server
     |-- shell_exec
+    |-- process_exec
     |-- list_dir
     |-- read_file
     |-- write_file
@@ -86,17 +96,26 @@ Platform connector broker
 Important properties:
 
 - The platform never opens a connection to the user machine.
-- The connector token authenticates the WebSocket session.
-- File operations are constrained under the `--root` directory by the client.
+- The connector token is sent in the HTTP and WebSocket `Authorization: Bearer`
+  header; it is never placed in a URL.
+- File operations are constrained under the bootstrap-configured root directory
+  by the client.
 - Interactive terminals are real PTYs created on the user machine by
   `node-pty`, so shell completion and normal terminal behavior are preserved.
+- The connector reports its platform, architecture, shell family, Node version,
+  and capabilities during the v2 handshake. `sandbox_info` exposes these values
+  so agents can use PowerShell syntax on Windows and POSIX syntax elsewhere.
+- `shell_exec` and the PTY intentionally run with the permissions of the local
+  user who starts the connector. They are not an OS security boundary and can
+  access more than the configured file-tool root. Use a dedicated low-privilege
+  account for untrusted workloads.
 
 The Next.js server starts a connector broker during `instrumentation.ts`:
 
 ```txt
 NEXT server process
 |-- connector WebSocket broker
-|   |-- public WS /connect?token=...
+|   |-- public WS /connect (Authorization: Bearer mcpcon_...)
 |   `-- internal HTTP /internal/connectors/...
 `-- MCP supervisor
     `-- sandbox-mcp-server child processes
@@ -136,16 +155,23 @@ All generated connector sandboxes store:
 
 ```txt
 connector.provider         = websocket
-connector.protocolVersion  = 2026-07-connector-ws
+connector.protocolVersion  = 2026-07-connector-ws-v2
 connector.serverUrl        = platform URL shown in the command
-connector.remoteRoot       = root path used by the connector command
+connector.remoteRoot       = root path returned by bootstrap
 connector.tokenHash        = sha256(token)
 connector.tokenPrefix      = short display prefix only
 connector.packageName      = /api/v1/connectors/package.tgz
 ```
 
-The plaintext token is shown only immediately after creation through the
-redirect URL. The database stores only the token hash.
+The plaintext token is delivered to the setup page in a short-lived, HttpOnly,
+strict-same-site cookie scoped to that sandbox page. It is not written to a URL.
+The database stores only the token hash. Rotating a token disconnects the old
+session immediately.
+
+Protocol v2 is a breaking upgrade from connector `0.1.8` and earlier. After
+upgrading ToolPlane, stop any old connector process, generate a fresh command on
+the sandbox page, and run it again. An old process is intentionally rejected
+rather than silently using incompatible file or process semantics.
 
 ### Disabled Legacy Modes
 
@@ -172,6 +198,16 @@ skill bundle into the first attached sandbox before executing:
 |-- reference files
 `-- scripts/*
 ```
+
+Binary bundle files use `write_file` with base64 encoding and are decoded by the
+sandbox runtime without shell commands. Scripts use structured `process_exec`
+arguments: Node.js maps to the connector's current Node executable, Python maps
+to the native Python launcher/interpreter, and Bash requires Bash to be installed.
+On Windows, set `TOOLPLANE_CONNECTOR_BASH` to an absolute executable such as
+`C:\\Program Files\\Git\\bin\\bash.exe`; set `TOOLPLANE_CONNECTOR_PYTHON` when
+Python is outside `PATH`. `TOOLPLANE_CONNECTOR_SHELL` may select an absolute
+`pwsh.exe` path, but `cmd.exe` is not supported for interactive sessions. This
+avoids POSIX quoting and `base64 -d` assumptions on Windows.
 
 Without an attached sandbox, `skill_run_script` falls back to the local
 temporary execution path with a minimal environment.

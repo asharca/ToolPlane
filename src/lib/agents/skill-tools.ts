@@ -76,22 +76,18 @@ function commandForScript(absPath: string, filePath: string): { command: string;
   return null;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function fileContentBuffer(file: SkillBundleFile): Buffer {
   return file.encoding === 'base64'
     ? Buffer.from(file.content, 'base64')
     : Buffer.from(file.content, 'utf8');
 }
 
-function sandboxCommandForScript(filePath: string, args: string[]): string | null {
+function sandboxProcessForScript(filePath: string, args: string[]): { runtime: 'node' | 'python' | 'bash'; args: string[] } | null {
   const ext = path.extname(filePath);
-  const quoted = [filePath, ...args].map(shellQuote).join(' ');
-  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return `node ${quoted}`;
-  if (ext === '.py') return `python3 ${quoted}`;
-  if (ext === '.sh') return `bash ${quoted}`;
+  const processArgs = [filePath, ...args];
+  if (ext === '.js' || ext === '.mjs' || ext === '.cjs') return { runtime: 'node', args: processArgs };
+  if (ext === '.py') return { runtime: 'python', args: processArgs };
+  if (ext === '.sh') return { runtime: 'bash', args: processArgs };
   return null;
 }
 
@@ -181,29 +177,31 @@ async function callSandboxTool(
   return rpc(deploymentId, 'tools/call', { name, arguments: args }, 120000);
 }
 
+function sandboxToolError(result: Record<string, unknown> | null): string | null {
+  if (!result) return 'Sandbox is not reachable.';
+  if (result.isError !== true) return null;
+  const content = result.content;
+  if (!Array.isArray(content)) return 'Sandbox operation failed.';
+  const first = content[0] as { text?: unknown } | undefined;
+  return typeof first?.text === 'string' ? first.text : 'Sandbox operation failed.';
+}
+
 async function writeSkillToSandbox(
   rpc: typeof mcpRpc,
   deploymentId: string,
   skill: RuntimeSkill,
   root: string,
 ): Promise<{ ok: true } | { error: string }> {
-  const files = [{ path: 'SKILL.md', content: skill.markdown }, ...skill.files];
+  const files: SkillBundleFile[] = [{ path: 'SKILL.md', content: skill.markdown }, ...skill.files];
   for (const file of files) {
     const targetPath = `${root}/${file.path}`;
-    const writePath = file.encoding === 'base64' ? `${targetPath}.b64` : targetPath;
     const writeResult = await callSandboxTool(rpc, deploymentId, 'write_file', {
-      path: writePath,
+      path: targetPath,
       content: file.content,
+      encoding: file.encoding ?? 'utf8',
     });
-    if (!writeResult) return { error: `Sandbox ${deploymentId} is not reachable.` };
-    if (file.encoding === 'base64') {
-      const decodeResult = await callSandboxTool(rpc, deploymentId, 'shell_exec', {
-        command: `base64 -d ${shellQuote(`${file.path}.b64`)} > ${shellQuote(file.path)} && rm -f ${shellQuote(`${file.path}.b64`)}`,
-        cwd: root,
-        timeoutMs: SCRIPT_TIMEOUT_MS,
-      });
-      if (!decodeResult) return { error: `Sandbox ${deploymentId} is not reachable.` };
-    }
+    const error = sandboxToolError(writeResult);
+    if (error) return { error: `Could not write ${file.path}: ${error}` };
   }
   return { ok: true };
 }
@@ -306,10 +304,11 @@ export function buildSkillToolSet(
           const root = `.toolplane/skills/${runtimeSkill.slug}`;
           const written = await writeSkillToSandbox(rpc, targetSandbox, runtimeSkill, root);
           if ('error' in written) return written;
-          const command = sandboxCommandForScript(file.path, args);
-          if (!command) return { error: `Unsupported script type: ${file.path}` };
-          const result = await callSandboxTool(rpc, targetSandbox, 'shell_exec', {
-            command,
+          const processSpec = sandboxProcessForScript(file.path, args);
+          if (!processSpec) return { error: `Unsupported script type: ${file.path}` };
+          const result = await callSandboxTool(rpc, targetSandbox, 'process_exec', {
+            runtime: processSpec.runtime,
+            args: processSpec.args,
             cwd: root,
             stdin,
             timeoutMs: SCRIPT_TIMEOUT_MS,
