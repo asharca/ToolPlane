@@ -64,9 +64,7 @@ const settings = {
 };
 
 const channelSettings = {
-  endpoint: 'http://localhost/api/v1/agents/agent-1/messages',
   connections: [],
-  stats: { mcp: 0, skills: 0, toolkits: 0, sandboxes: 0, subAgents: 0 },
 };
 
 const hermesRuntime = {
@@ -291,15 +289,15 @@ describe('AgentChat', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await userEvent.click(screen.getByRole('button', { name: 'Channels' }));
 
-    expect(screen.getByText('Add channel')).toBeInTheDocument();
+    expect(await screen.findByText('Add channel')).toBeInTheDocument();
     expect(screen.getByText('Connected channels')).toBeInTheDocument();
   });
 
-  it('can open channel settings from the initial settings tab', () => {
+  it('can open channel settings from the initial settings tab', async () => {
     renderChat({ initialSettingsTab: 'channels' });
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByText('Connected channels')).toBeInTheDocument();
+    expect(await screen.findByText('Connected channels')).toBeInTheDocument();
   });
 
   it('lets the separate-origin Hermes dashboard use browser storage', () => {

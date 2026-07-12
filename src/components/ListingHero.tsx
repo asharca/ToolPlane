@@ -16,15 +16,14 @@ function CategoryChip({
   return (
     <Link
       href={href}
-      className={`ui-chip ${active ? 'ui-chip-active' : ''}`}
+      className={`ui-chip snap-start ${active ? 'ui-chip-active' : ''}`}
     >
       {label}
     </Link>
   );
 }
 
-// Shared hero header for directory listing pages (servers, skills, clients),
-// mirroring the homepage hero: two-tone mono heading, subtitle, search, chips.
+// Shared header for directory listing pages (servers, skills, clients).
 export async function ListingHero({
   lead,
   tail,
@@ -43,7 +42,6 @@ export async function ListingHero({
   const t = await getTranslations('common');
   return (
     <section className="relative py-14 sm:py-20">
-      <div className="pointer-events-none absolute inset-0 hero-grid" aria-hidden />
       <div className="relative text-center">
         <h1 className="mx-auto max-w-4xl text-balance text-5xl font-black tracking-tight sm:text-7xl">
           <span className="text-foreground">{lead}</span>{' '}
@@ -63,16 +61,19 @@ export async function ListingHero({
           />
         </form>
         {categories.length > 0 ? (
-          <div className="no-scrollbar mx-auto mt-5 flex max-w-3xl gap-2 overflow-x-auto pb-1">
-            <CategoryChip href="/categories" label={t('all')} active />
-            {categories.map((c) => (
+          <nav
+            aria-label={t('browseCategories')}
+            className="mx-auto mt-5 flex max-w-3xl snap-x gap-2 overflow-x-auto pb-2 sm:flex-wrap sm:justify-center sm:overflow-visible"
+          >
+            <CategoryChip href="/categories" label={t('all')} />
+            {categories.slice(0, 8).map((c) => (
               <CategoryChip
                 key={c.slug}
                 href={`/categories/${c.slug}`}
                 label={c.name}
               />
             ))}
-          </div>
+          </nav>
         ) : null}
       </div>
     </section>

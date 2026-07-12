@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { QrPairingDisplay } from '@/components/dashboard/agents/QrPairingDisplay';
-import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
+import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import {
   applyAgentChannelPairingAction,
   checkAgentChannelPairingAction,
@@ -35,17 +35,7 @@ import {
   type MessagingPlatformSlug,
 } from '@/lib/agents/platforms';
 
-type MessagingStats = {
-  mcp: number;
-  skills: number;
-  toolkits: number;
-  sandboxes: number;
-  subAgents: number;
-};
-
-type ChannelConnection = AgentChannelConnectionView & {
-  callbackUrl: string;
-};
+type ChannelConnection = AgentChannelConnectionClientView;
 
 function isTelegramPairingReadyToApply(pairing: ChannelConnection['pairing']) {
   return Boolean(
@@ -518,10 +508,8 @@ export function AgentMessagingPanel({
 }: {
   slug: string;
   agentId: string;
-  endpoint: string;
   connections: ChannelConnection[];
   ready: boolean;
-  stats: MessagingStats;
 }) {
   const t = useTranslations('console.agentMessaging');
   const supportedPlatforms = SUPPORTED_CHANNEL_SLUGS

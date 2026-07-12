@@ -5,6 +5,7 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import {
   DashboardPage,
@@ -24,6 +25,7 @@ export default async function SettingsPage({
 }) {
   const { workspace: slug } = await params;
   const t = await getTranslations('console.settings');
+  const common = await getTranslations('common');
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -40,18 +42,24 @@ export default async function SettingsPage({
           <form action={renameWorkspaceAction} className="space-y-4">
             <input type="hidden" name="workspace" value={slug} />
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="workspace-name" className="text-sm font-medium text-foreground">
                 {t('orgName')}
               </label>
-              <input name="name" defaultValue={ws.name} className="ui-input h-9" />
+              <input
+                id="workspace-name"
+                name="name"
+                defaultValue={ws.name}
+                className="ui-input h-9"
+              />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="workspace-slug" className="text-sm font-medium text-foreground">
                 {t('urlSlug')}
               </label>
               <div className="flex items-center rounded-md border border-border bg-muted/60">
                 <span className="px-3 text-sm text-muted-foreground">{t('toolplanelocal')}</span>
                 <input
+                  id="workspace-slug"
                   defaultValue={ws.slug}
                   readOnly
                   className="h-9 flex-1 rounded-r-md bg-transparent pr-3 text-sm text-muted-foreground outline-none"
@@ -105,9 +113,17 @@ export default async function SettingsPage({
             </p>
             <form action={deleteWorkspaceAction} className="mt-3">
               <input type="hidden" name="workspace" value={slug} />
-              <button className="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10">
-                {t('deleteOrgButton')}
-              </button>
+              <ConfirmSubmitButton
+                triggerLabel={t('deleteOrgButton')}
+                confirmLabel={common('confirm')}
+                cancelLabel={common('cancel')}
+                prompt={`${t('deleteOrg')}?`}
+                pendingLabel={`${common('confirm')}…`}
+                className="max-w-xl items-start"
+                triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
+                confirmClassName="inline-flex h-9 items-center rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                cancelClassName="ui-button-secondary h-9"
+              />
             </form>
           </DashboardPanel>
         ) : null}

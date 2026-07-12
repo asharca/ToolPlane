@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import {
   Bot,
@@ -24,15 +25,28 @@ import {
 } from 'lucide-react';
 import { code } from '@streamdown/code';
 import { createConversationAction } from '@/lib/agents/actions';
-import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
-import { AgentMessagingPanel } from '@/components/dashboard/agents/AgentMessagingPanel';
-import {
-  HERMES_EMBED_CLOSE_MESSAGE,
-  HermesRuntimePanel,
-} from '@/components/dashboard/agents/HermesRuntimePanel';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
-import type { AgentChannelConnectionView } from '@/lib/agents/channel-connections';
+import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
+import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
+
+const AgentSettingsForm = dynamic(() =>
+  import('@/components/dashboard/agents/AgentSettingsForm').then(
+    (module) => module.AgentSettingsForm,
+  ),
+);
+
+const AgentMessagingPanel = dynamic(() =>
+  import('@/components/dashboard/agents/AgentMessagingPanel').then(
+    (module) => module.AgentMessagingPanel,
+  ),
+);
+
+const HermesRuntimePanel = dynamic(() =>
+  import('@/components/dashboard/agents/HermesRuntimePanel').then(
+    (module) => module.HermesRuntimePanel,
+  ),
+);
 
 type Conversation = {
   id: string;
@@ -68,15 +82,7 @@ type SettingsData = {
 };
 
 type ChannelSettingsData = {
-  endpoint: string;
-  connections: Array<AgentChannelConnectionView & { callbackUrl: string }>;
-  stats: {
-    mcp: number;
-    skills: number;
-    toolkits: number;
-    sandboxes: number;
-    subAgents: number;
-  };
+  connections: AgentChannelConnectionClientView[];
 };
 
 const FOCUSABLE_SETTINGS_ELEMENTS = [
@@ -792,10 +798,8 @@ export function AgentChat({
                   <AgentMessagingPanel
                     slug={slug}
                     agentId={agentId}
-                    endpoint={channelSettings.endpoint}
                     connections={channelSettings.connections}
                     ready={ready}
-                    stats={channelSettings.stats}
                   />
                 </div>
               ) : settings.runtime?.kind === 'hermes' ? (

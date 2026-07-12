@@ -14,10 +14,12 @@ export async function RankedList({
   title,
   subtitle,
   items,
+  statLabel = 'Score',
 }: {
   title: string;
   subtitle?: string;
   items: RankedItem[];
+  statLabel?: string;
 }) {
   const t = await getTranslations('common');
   return (
@@ -47,19 +49,27 @@ export async function RankedList({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={item.iconUrl}
-                    alt={item.author ?? item.name}
-                    width={24}
-                    height={24}
-                    className="size-6 shrink-0 rounded-full object-cover"
+                    alt=""
+                    width={32}
+                    height={32}
+                    loading="lazy"
+                    decoding="async"
+                    className="size-8 shrink-0 rounded-full object-cover"
                   />
                 ) : (
-                  <div className="size-6 shrink-0 rounded-full bg-muted" />
+                  <div
+                    aria-hidden="true"
+                    className="size-8 shrink-0 rounded-full bg-muted"
+                  />
                 )}
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                   {item.name}
                 </span>
                 <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-                  {item.stat.toLocaleString()}
+                  <span aria-hidden="true">{item.stat.toLocaleString()}</span>
+                  <span className="sr-only">
+                    {statLabel}: {item.stat.toLocaleString()}
+                  </span>
                 </span>
               </Link>
             </li>

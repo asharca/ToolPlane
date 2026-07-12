@@ -31,6 +31,8 @@
     "previous": "Previous",
     "next": "Next",
     "noEntriesYet": "No entries yet.",
+    "browseCategories": "Browse categories",
+    "language": "Language",
     "en": "EN",
     "zh": "中"
   },
@@ -40,7 +42,8 @@
     "sellSkills": "Sell Skills",
     "sourceCode": "Source",
     "signIn": "Sign in",
-    "dashboard": "Dashboard"
+    "dashboard": "Dashboard",
+    "menu": "Menu"
   },
   "footer": {
     "browse": "Browse",
@@ -86,6 +89,10 @@
     "servers": "Servers",
     "frequentlyAskedQuestions": "Frequently Asked Questions",
     "updatedJustNow": "Updated just now",
+    "headlineMcpServers": "MCP Servers",
+    "headlineAgentSkills": "Agent Skills",
+    "headlineMcpClients": "MCP Clients",
+    "headlineAgentTools": "Agent Tools",
     "findTheBestMcpServersAgentSkillsMcpClientsAgentTools": "Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools",
     "findTheBest": "Find The Best",
     "directoryOfAwesomeMcpServersAndClientsToConnectAiAgentsWithYourFavoriteTools": "Directory of awesome MCP servers and clients to connect AI agents with\n            your favorite tools.",
@@ -208,6 +215,7 @@
       "settings": "Settings",
       "openMenu": "Open menu",
       "closeMenu": "Close menu",
+      "navigation": "Workspace navigation",
       "collapseSidebar": "Collapse sidebar",
       "expandSidebar": "Expand sidebar",
       "adminConsole": "Admin console",

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 
@@ -42,6 +42,22 @@ const localStorageMock: Storage = {
   },
 };
 
+function setDesktopViewport(matches: boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }) as MediaQueryList),
+  });
+}
+
 function renderChrome() {
   return render(
     <DashboardChrome
@@ -62,6 +78,7 @@ describe('DashboardChrome sidebar', () => {
       value: localStorageMock,
     });
     window.localStorage.clear();
+    setDesktopViewport(true);
   });
 
   it('collapses to an icon rail and persists the desktop preference', async () => {
@@ -92,5 +109,27 @@ describe('DashboardChrome sidebar', () => {
       'href',
       '/app/staging/mcp',
     );
+  });
+
+  it('keeps the closed mobile drawer inert and restores focus after Escape', async () => {
+    setDesktopViewport(false);
+    renderChrome();
+
+    const menuButton = screen.getByRole('button', { name: 'Open menu' });
+    const sidebar = document.getElementById('dashboard-sidebar');
+    await waitFor(() => expect(sidebar).toHaveAttribute('inert'));
+
+    await userEvent.click(menuButton);
+
+    const dialog = screen.getByRole('dialog', { name: 'Workspace navigation' });
+    expect(menuButton).toHaveAttribute('aria-expanded', 'true');
+    expect(dialog).not.toHaveAttribute('inert');
+    expect(within(dialog).getByRole('button', { name: 'Close menu' })).toHaveFocus();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(menuButton).toHaveAttribute('aria-expanded', 'false');
+    expect(menuButton).toHaveFocus();
+    await waitFor(() => expect(sidebar).toHaveAttribute('inert'));
   });
 });

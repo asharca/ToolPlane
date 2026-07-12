@@ -1,6 +1,12 @@
 'use client';
 
-import { useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { ReactNode } from 'react';
 import { Menu } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -60,6 +66,7 @@ export function DashboardChrome({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const collapsed = useSyncExternalStore(
     subscribeSidebarCollapsed,
     readSidebarCollapsed,
@@ -71,13 +78,35 @@ export function DashboardChrome({
     writeSidebarCollapsed(!collapsed);
   }
 
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    menuButtonRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeMenu();
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeMenu, open]);
+
   return (
     <div className="flex min-h-dvh bg-background text-foreground">
       {open ? (
         <button
           type="button"
           aria-label={t('closeMenu')}
-          onClick={() => setOpen(false)}
+          onClick={closeMenu}
           className="fixed inset-0 z-30 bg-black/40 lg:hidden"
         />
       ) : null}
@@ -89,7 +118,7 @@ export function DashboardChrome({
         workspaces={workspaces}
         isAdmin={isAdmin}
         mobileOpen={open}
-        onClose={() => setOpen(false)}
+        onClose={closeMenu}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
@@ -97,8 +126,11 @@ export function DashboardChrome({
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur lg:hidden">
           <button
+            ref={menuButtonRef}
             type="button"
             aria-label={t('openMenu')}
+            aria-expanded={open}
+            aria-controls="dashboard-sidebar"
             onClick={() => setOpen(true)}
             className="ui-button-ghost ui-icon-button"
           >
