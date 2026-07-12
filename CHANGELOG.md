@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.5.0...toolplane-v0.6.0) (2026-07-12)
+
+
+### Features
+
+* improve frontend usability and performance ([#25](https://github.com/asharca/ToolPlane/issues/25)) ([9855b9b](https://github.com/asharca/ToolPlane/commit/9855b9b9fc3c5d8db98ad2f690db61575c79ea6c))
+* improve skill imports and resource selection ([#27](https://github.com/asharca/ToolPlane/issues/27)) ([f4b2fac](https://github.com/asharca/ToolPlane/commit/f4b2fac240d3283803c880605b34b71284898c3c))
+* integrate Hermes agent runtime ([#24](https://github.com/asharca/ToolPlane/issues/24)) ([f4ebae1](https://github.com/asharca/ToolPlane/commit/f4ebae16b31b0bea46a9b47aef181a29419396f7))
+* support cross-platform sandbox connectors ([#28](https://github.com/asharca/ToolPlane/issues/28)) ([59afd5b](https://github.com/asharca/ToolPlane/commit/59afd5bc6aeadbce676ad635be5ff41d8ee3f915))
+
+
+### Bug Fixes
+
+* let Hermes own its system prompt ([#26](https://github.com/asharca/ToolPlane/issues/26)) ([397614c](https://github.com/asharca/ToolPlane/commit/397614cf5793423d3ab83a67bf8d0e861b89aa30))
+
 ## [0.5.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.4.0...toolplane-v0.5.0) (2026-07-10)
 
 
