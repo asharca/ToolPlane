@@ -181,20 +181,22 @@ export function AgentSettingsForm({
             />
           </label>
 
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <FileText className="size-4 shrink-0" />
-              {t('systemPrompt')}
-            </span>
-            <textarea
-              name="systemPrompt"
-              value={systemPromptValue}
-              onChange={(event) => setSystemPromptValue(event.target.value)}
-              rows={5}
-              placeholder={t('youAreAHelpfulAssistant')}
-              className="ui-input min-h-32 w-full resize-y py-3"
-            />
-          </label>
+          {runtime?.kind !== 'hermes' ? (
+            <label className="block">
+              <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <FileText className="size-4 shrink-0" />
+                {t('systemPrompt')}
+              </span>
+              <textarea
+                name="systemPrompt"
+                value={systemPromptValue}
+                onChange={(event) => setSystemPromptValue(event.target.value)}
+                rows={5}
+                placeholder={t('youAreAHelpfulAssistant')}
+                className="ui-input min-h-32 w-full resize-y py-3"
+              />
+            </label>
+          ) : null}
         </div>
       </section>
 

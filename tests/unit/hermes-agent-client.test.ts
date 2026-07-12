@@ -30,4 +30,14 @@ describe('Hermes chat projection', () => {
     }];
     expect(uiMessagesToHermes(messages)[0].content).toContain('report.pdf');
   });
+
+  it('never forwards system messages from ToolPlane to Hermes', () => {
+    const messages = [{
+      id: 'system-1',
+      role: 'system',
+      parts: [{ type: 'text', text: 'ToolPlane override' }],
+    }] as unknown as UIMessage[];
+
+    expect(uiMessagesToHermes(messages)).toEqual([]);
+  });
 });

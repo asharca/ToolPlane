@@ -6,8 +6,6 @@ export type HermesProviderProjection = {
 };
 
 export type HermesConfigProjection = {
-  agentName: string;
-  systemPrompt: string | null;
   maxSteps: number;
   provider: HermesProviderProjection | null;
   mcpUrl: string;
@@ -16,12 +14,6 @@ export type HermesConfigProjection = {
 
 function yamlString(value: string): string {
   return JSON.stringify(value);
-}
-
-function block(value: string, indent: number): string[] {
-  const prefix = ' '.repeat(indent);
-  const lines = value.replace(/\r\n/g, '\n').trim().split('\n');
-  return lines.map((line) => `${prefix}${line || ' '}`);
 }
 
 function normalizedBaseUrl(provider: HermesProviderProjection): string {
@@ -40,7 +32,6 @@ function normalizedBaseUrl(provider: HermesProviderProjection): string {
 
 export function renderHermesConfig(input: HermesConfigProjection): string {
   const maxTurns = Math.max(1, Math.min(Math.trunc(input.maxSteps) || 1, 500));
-  const prompt = input.systemPrompt?.trim() || `You are ${input.agentName}, an agent managed by ToolPlane.`;
   const model = input.provider
     ? [
         'model:',
@@ -56,8 +47,6 @@ export function renderHermesConfig(input: HermesConfigProjection): string {
     ...model,
     'agent:',
     `  max_turns: ${maxTurns}`,
-    '  system_prompt: |',
-    ...block(prompt, 4),
     'approvals:',
     '  mode: smart',
     'tool_loop_guardrails:',

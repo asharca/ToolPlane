@@ -8,6 +8,8 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/lib/agents/actions', () => ({
+  stopAgentRuntimeAction: vi.fn(),
+  syncAgentRuntimeAction: vi.fn(),
   updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
 }));
 
@@ -50,5 +52,26 @@ describe('AgentSettingsForm', () => {
 
     expect(screen.getByLabelText('Provider')).toHaveValue('provider-1');
     expect(screen.getByLabelText('Model')).toHaveValue('gpt-4.1-mini');
+    expect(screen.getByLabelText('System prompt')).toBeInTheDocument();
+  });
+
+  it('does not expose a ToolPlane system prompt field for Hermes agents', () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        systemPrompt="Legacy ToolPlane prompt"
+        runtime={{
+          kind: 'hermes',
+          image: 'nousresearch/hermes-agent:latest',
+          status: 'running',
+          lastError: null,
+          lastSyncedAt: null,
+          sandboxId: 'sandbox-1',
+        }}
+      />,
+    );
+
+    expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
+    expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
   });
 });

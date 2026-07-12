@@ -127,6 +127,26 @@ describe('agents mutations', () => {
     await deleteAgent(workspaceId, nativeAgent.id);
   });
 
+  it('does not overwrite a Hermes-owned system prompt through ToolPlane updates', async () => {
+    const agent = await createAgent(workspaceId, 'Hermes Prompt Owner', { runtime: 'hermes' });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { systemPrompt: 'Legacy ToolPlane value' },
+    });
+
+    await updateAgent(workspaceId, agent.id, {
+      name: 'Hermes Prompt Owner',
+      systemPrompt: 'Attempted ToolPlane override',
+      providerId: null,
+      model: null,
+      maxSteps: 8,
+    });
+
+    const reread = await db.agent.findUnique({ where: { id: agent.id } });
+    expect(reread?.systemPrompt).toBe('Legacy ToolPlane value');
+    await deleteAgent(workspaceId, agent.id);
+  });
+
   it('updates config and replaces the attached tools', async () => {
     const a = await createAgent(workspaceId, 'Cfg');
     await updateAgent(workspaceId, a.id, {

@@ -104,7 +104,7 @@ export default async function AgentDetailPage({
         }))}
         settings={{
           name: agent.name,
-          systemPrompt: agent.systemPrompt ?? '',
+          systemPrompt: agent.runtime?.kind === 'hermes' ? '' : agent.systemPrompt ?? '',
           providerId: agent.providerId,
           model: agent.model,
           maxSteps: agent.maxSteps,

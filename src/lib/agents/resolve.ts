@@ -1,3 +1,5 @@
+import { HERMES_RUNTIME_KIND } from './hermes/constants';
+
 export type SkillForPrompt = {
   skillId: string | null;
   skill: {
@@ -21,7 +23,13 @@ export type SkillForPrompt = {
 
 type AttachedSkill = { installedSkill: { id: string } & SkillForPrompt };
 
-type SubAgentChild = { id: string; name: string; slug: string; systemPrompt: string | null };
+type SubAgentChild = {
+  id: string;
+  name: string;
+  slug: string;
+  systemPrompt: string | null;
+  runtime?: { kind: string } | null;
+};
 
 export type SubAgentRef = { id: string; name: string; slug: string; description: string | null };
 
@@ -57,7 +65,12 @@ export function resolveAgentTools(agent: LoadedAgentTools): {
   const subMap = new Map<string, SubAgentRef>();
   for (const link of agent.subAgents ?? []) {
     const c = link.child;
-    subMap.set(c.id, { id: c.id, name: c.name, slug: c.slug, description: c.systemPrompt });
+    subMap.set(c.id, {
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      description: c.runtime?.kind === HERMES_RUNTIME_KIND ? null : c.systemPrompt,
+    });
   }
 
   return { deploymentIds: [...depSet], sandboxDeploymentIds: [...sandboxDepSet], skills, subAgents: [...subMap.values()] };

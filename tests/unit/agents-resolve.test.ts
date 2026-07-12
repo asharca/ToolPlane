@@ -96,4 +96,28 @@ describe('resolveAgentTools', () => {
     const { skills } = resolveAgentTools({ servers: [], skills: [draftSkill, publishedSkill], toolkits: [] });
     expect(skills.map((s) => s.slug).sort()).toEqual(['draft-skill', 'published-skill']);
   });
+
+  it('does not expose a Hermes-owned system prompt as a sub-agent description', () => {
+    const { subAgents } = resolveAgentTools({
+      servers: [],
+      skills: [],
+      toolkits: [],
+      subAgents: [{
+        child: {
+          id: 'hermes-1',
+          name: 'Hermes',
+          slug: 'hermes',
+          systemPrompt: 'Legacy ToolPlane prompt',
+          runtime: { kind: 'hermes' },
+        },
+      }],
+    });
+
+    expect(subAgents).toEqual([{
+      id: 'hermes-1',
+      name: 'Hermes',
+      slug: 'hermes',
+      description: null,
+    }]);
+  });
 });

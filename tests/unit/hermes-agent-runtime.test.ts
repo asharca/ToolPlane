@@ -69,10 +69,8 @@ describe('Hermes agent runtime contract', () => {
     vi.unstubAllEnvs();
   });
 
-  it('renders an authenticated MCP projection and Anthropic wire mode', () => {
+  it('renders managed runtime settings without taking ownership of the system prompt', () => {
     const config = renderHermesConfig({
-      agentName: 'Research',
-      systemPrompt: 'Investigate carefully.\nCite sources.',
       maxSteps: 12,
       provider: {
         format: 'anthropic',
@@ -87,8 +85,8 @@ describe('Hermes agent runtime contract', () => {
     expect(config).toContain('api_mode: anthropic_messages');
     expect(config).toContain('base_url: "https://api.anthropic.com"');
     expect(config).toContain('Authorization: "Bearer runtime-token"');
-    expect(config).toContain('    Cite sources.');
     expect(config).toContain('hard_stop_enabled: true');
+    expect(config).not.toContain('system_prompt');
   });
 
   it('renders a deterministic Hermes skill bundle', () => {
@@ -100,8 +98,6 @@ describe('Hermes agent runtime contract', () => {
 
   it('rewrites loopback model endpoints for the Docker runtime', () => {
     const config = renderHermesConfig({
-      agentName: 'Local',
-      systemPrompt: null,
       maxSteps: 8,
       provider: {
         format: 'openai',

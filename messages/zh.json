@@ -373,7 +373,7 @@
       "closeHermesRuntimeDialog": "关闭 Hermes 运行时",
       "hermesDashboardTitle": "Hermes 运行时管理面板",
       "hermesTerminalTitle": "Hermes Shell",
-      "hermesManagedFieldsWarning": "模型、系统提示词和 toolplane MCP 配置由 ToolPlane 管理，下次同步时可能被覆盖。",
+      "hermesManagedFieldsWarning": "模型和 toolplane MCP 配置由 ToolPlane 管理。系统提示词及其他原生设置仅在 Hermes 中管理，ToolPlane 同步时会保留。",
       "channelSessions": "频道会话",
       "connectedChannelsWillAppearHereAfterTheirFirstMessage": "已连接频道在收到第一条消息后将会显示在这里。",
       "consoleChats": "控制台聊天",
