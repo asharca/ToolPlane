@@ -8,15 +8,16 @@ import {
 } from '@/lib/toolkits/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ToolkitsBrowser } from '@/components/dashboard/ToolkitsBrowser';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date) {
-  return d.toLocaleDateString('en-US', {
+function fmt(d: Date, timeZone: string) {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
 export default async function ToolkitsPage({
@@ -28,6 +29,7 @@ export default async function ToolkitsPage({
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -46,7 +48,7 @@ export default async function ToolkitsPage({
           visibility: t.visibility,
           enabled: t.enabled,
           toolCount: t.toolCount,
-          created: fmt(t.createdAt),
+          created: fmt(t.createdAt, timeZone),
         }))}
       />
     </>

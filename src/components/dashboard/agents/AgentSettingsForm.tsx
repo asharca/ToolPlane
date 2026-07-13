@@ -1,6 +1,6 @@
 'use client';
 
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -27,10 +27,12 @@ import {
   type ActionState,
 } from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import { formatInTimeZone } from '@/lib/timezone';
 import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
+import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 
 type Provider = { id: string; name: string; models: string[] };
 type SaveStatus = 'idle' | 'dirty';
@@ -80,6 +82,8 @@ export function AgentSettingsForm({
   className?: string;
 }) {
   const t = useTranslations('console.agents');
+  const locale = useLocale();
+  const { timeZone } = useUserTimeZone();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -236,7 +240,14 @@ export function AgentSettingsForm({
             {runtime.lastSyncedAt ? (
               <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
                 <span className="text-muted-foreground">{t('lastSynced')}</span>
-                <span className="text-xs text-foreground">{new Date(runtime.lastSyncedAt).toLocaleString()}</span>
+                <span className="text-xs text-foreground">
+                  {formatInTimeZone(
+                    runtime.lastSyncedAt,
+                    timeZone,
+                    { dateStyle: 'medium', timeStyle: 'short' },
+                    locale,
+                  )}
+                </span>
               </div>
             ) : null}
             {runtime.lastError ? (

@@ -38,18 +38,20 @@ model Server {
 }
 
 model User {
-  id              String       @id @default(cuid())
-  email           String       @unique
-  name            String?
-  passwordHash    String
-  role            UserRole     @default(user)
-  status          UserStatus   @default(active)
-  locale          String       @default("en")
-  apiTokens       ApiToken[]
-  ownedWorkspaces Workspace[]  @relation("WorkspaceOwner")
-  memberships     Membership[]
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id               String       @id @default(cuid())
+  email            String       @unique
+  name             String?
+  passwordHash     String
+  role             UserRole     @default(user)
+  status           UserStatus   @default(active)
+  locale           String       @default("en")
+  detectedTimeZone String?
+  timeZoneOverride String?
+  apiTokens        ApiToken[]
+  ownedWorkspaces  Workspace[]  @relation("WorkspaceOwner")
+  memberships      Membership[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 }
 
 model ApiToken {

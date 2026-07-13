@@ -5,6 +5,7 @@ import {
   listWorkspacesForUser,
 } from '@/lib/workspace/queries';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
+import { UserTimeZoneProvider } from '@/components/timezone/UserTimeZoneProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,14 +24,19 @@ export default async function WorkspaceLayout({
   const workspaces = await listWorkspacesForUser(user.id);
 
   return (
-    <DashboardChrome
-      slug={ws.slug}
-      workspaceName={ws.name}
-      userLabel={user.name ?? user.email}
-      workspaces={workspaces}
-      isAdmin={user.role === 'admin'}
+    <UserTimeZoneProvider
+      detectedTimeZone={user.detectedTimeZone}
+      timeZoneOverride={user.timeZoneOverride}
     >
-      {children}
-    </DashboardChrome>
+      <DashboardChrome
+        slug={ws.slug}
+        workspaceName={ws.name}
+        userLabel={user.name ?? user.email}
+        workspaces={workspaces}
+        isAdmin={user.role === 'admin'}
+      >
+        {children}
+      </DashboardChrome>
+    </UserTimeZoneProvider>
   );
 }

@@ -29,25 +29,26 @@ import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmtDate(d: Date): string {
-  return d.toLocaleDateString('en-US', {
+function fmtDate(d: Date, timeZone: string): string {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
-function fmtTime(d: Date): string {
-  return new Date(d).toLocaleString('en-US', {
+function fmtTime(d: Date, timeZone: string): string {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  });
+  }, 'en-US');
 }
 
 // The gateway logs the rpc method (and tool name for tools/call) into the path
@@ -82,6 +83,7 @@ export default async function DeploymentInspectorPage({
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -123,7 +125,7 @@ export default async function DeploymentInspectorPage({
               <StatusBadge status={status} />
               <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
               <span className="text-zinc-300 dark:text-zinc-600">·</span>
-              <span>{t('refreshed')} {fmtDate(dep.updatedAt)}</span>
+              <span>{t('refreshed')} {fmtDate(dep.updatedAt, timeZone)}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -225,7 +227,7 @@ export default async function DeploymentInspectorPage({
                     {t('created')}
                   </dt>
                   <dd className="text-sm text-zinc-700 dark:text-zinc-300">
-                    {fmtDate(dep.createdAt)}
+                    {fmtDate(dep.createdAt, timeZone)}
                   </dd>
                 </div>
               </dl>
@@ -290,7 +292,7 @@ export default async function DeploymentInspectorPage({
                 const call = parseCall(l.path);
                 return {
                   id: l.id,
-                  time: fmtTime(l.createdAt),
+                  time: fmtTime(l.createdAt, timeZone),
                   method: call.method,
                   tool: call.tool,
                   statusCode: l.statusCode,

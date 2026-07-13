@@ -24,15 +24,16 @@ import {
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function formatDate(d: Date): string {
-  return d.toLocaleDateString('en-US', {
+function formatDate(d: Date, timeZone: string): string {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
 const rowButton =
@@ -48,6 +49,7 @@ export default async function McpServersPage({
   const common = await getTranslations('common');
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const deployments = await getDeployments(ws.id);
@@ -141,7 +143,7 @@ export default async function McpServersPage({
                     <StatusBadge status={status} />
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {formatDate(d.createdAt)}
+                    {formatDate(d.createdAt, timeZone)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">

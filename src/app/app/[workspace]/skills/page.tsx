@@ -14,15 +14,16 @@ import {
   DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date) {
-  return d.toLocaleDateString('en-US', {
+function fmt(d: Date, timeZone: string) {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
 function fileCount(files: unknown): number {
@@ -59,6 +60,7 @@ export default async function SkillsPage({
   const query = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const skills = await getInstalledSkills(ws.id);
@@ -196,7 +198,7 @@ export default async function SkillsPage({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {fmt(s.createdAt)}
+                    {fmt(s.createdAt, timeZone)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-4">

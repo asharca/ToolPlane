@@ -24,6 +24,7 @@ import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skil
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +35,11 @@ function formatBytes(value: string): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('en', {
+function formatDate(date: Date, timeZone: string): string {
+  return formatInTimeZone(date, timeZone, {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(date);
+  }, 'en');
 }
 
 function sourceLabel(source: string | null, hasCatalogSkill: boolean): string {
@@ -180,6 +181,7 @@ export default async function SkillInspectorPage({
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -311,7 +313,7 @@ export default async function SkillInspectorPage({
             />
             <DetailItem
               label={t('created')}
-              value={formatDate(install.createdAt)}
+              value={formatDate(install.createdAt, timeZone)}
               icon={<Info className="size-3.5" />}
             />
             <DetailItem

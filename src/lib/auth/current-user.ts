@@ -9,7 +9,16 @@ export const getCurrentUser = cache(async () => {
   if (!userId) return null;
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true, createdAt: true, role: true, status: true },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      createdAt: true,
+      role: true,
+      status: true,
+      detectedTimeZone: true,
+      timeZoneOverride: true,
+    },
   });
   return activeUserOrNull(user);
 });

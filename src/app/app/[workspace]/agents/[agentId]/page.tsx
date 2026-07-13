@@ -1,5 +1,5 @@
 import { redirect, notFound } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
@@ -21,11 +21,17 @@ import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmtDate(d: Date): string {
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function fmtDate(d: Date, timeZone: string, locale: string): string {
+  return formatInTimeZone(
+    d,
+    timeZone,
+    { month: 'short', day: 'numeric' },
+    locale,
+  );
 }
 
 export default async function AgentDetailPage({
@@ -37,10 +43,14 @@ export default async function AgentDetailPage({
 }) {
   const { workspace: slug, agentId } = await params;
   const { c, settings } = await searchParams;
-  const t = await getTranslations('console.agents');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.agents'),
+    getLocale(),
+  ]);
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -103,9 +113,11 @@ export default async function AgentDetailPage({
         conversations={conversations.map((cv) => ({
           id: cv.id,
           title: cv.title,
-          createdAt: fmtDate(cv.createdAt),
+          createdAt: fmtDate(cv.createdAt, timeZone, locale),
           messageCount: cv._count.messages,
-          lastMessageAt: cv.messages[0]?.createdAt ? fmtDate(cv.messages[0].createdAt) : null,
+          lastMessageAt: cv.messages[0]?.createdAt
+            ? fmtDate(cv.messages[0].createdAt, timeZone, locale)
+            : null,
           source: parseMessagingSessionTitle(cv.title),
         }))}
         settings={{
