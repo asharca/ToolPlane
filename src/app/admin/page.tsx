@@ -1,6 +1,7 @@
 import { getTranslations } from 'next-intl/server';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getSystemOverview } from '@/lib/admin/overview';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,8 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 
 export default async function AdminOverviewPage() {
   const t = await getTranslations('admin');
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const timeZone = resolveUserTimeZone(admin);
   const o = await getSystemOverview();
   const deployTotal = Object.values(o.counts.deployments).reduce((a, b) => a + b, 0);
 
@@ -48,7 +50,11 @@ export default async function AdminOverviewPage() {
               <span className="text-zinc-700 dark:text-zinc-300">{u.name ?? u.email}</span>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
                 {u.role === 'admin' ? t('admin') : ''}{u.status === 'suspended' ? t('suspended1') : ''}
-                {new Date(u.createdAt).toLocaleDateString('en-US')}
+                {formatInTimeZone(u.createdAt, timeZone, {
+                  year: 'numeric',
+                  month: 'numeric',
+                  day: 'numeric',
+                })}
               </span>
             </li>
           ))}
@@ -64,7 +70,10 @@ export default async function AdminOverviewPage() {
             <li key={s.id} className="flex items-center justify-between px-4 py-2 text-sm">
               <span className="font-mono text-zinc-700 dark:text-zinc-300">{s.job}</span>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {s.doneCount} {t('done')} {new Date(s.updatedAt).toLocaleString('en-US')}
+                {s.doneCount} {t('done')} {formatInTimeZone(s.updatedAt, timeZone, {
+                  dateStyle: 'short',
+                  timeStyle: 'short',
+                })}
               </span>
             </li>
           ))}

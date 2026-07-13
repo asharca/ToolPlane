@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { formatInTimeZone } from '@/lib/timezone';
 
 export async function logRequest(entry: {
   workspaceId: string;
@@ -38,7 +39,7 @@ export async function getDeploymentLogs(deploymentId: string, limit = 100) {
 
 export type HourBucket = { hour: string; total: number; errors: number };
 
-export async function getObservability(workspaceId: string, hours = 24) {
+export async function getObservability(workspaceId: string, timeZone: string, hours = 24) {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   const logs = await db.requestLog.findMany({
     where: { workspaceId, createdAt: { gte: since } },
@@ -76,7 +77,7 @@ export async function getObservability(workspaceId: string, hours = 24) {
     }
   }
   const series: HourBucket[] = [...buckets.entries()].map(([t, v]) => ({
-    hour: new Date(t).toLocaleTimeString('en-US', { hour: 'numeric' }),
+    hour: formatInTimeZone(t, timeZone, { hour: 'numeric' }, 'en-US'),
     total: v.total,
     errors: v.errors,
   }));

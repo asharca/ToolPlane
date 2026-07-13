@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   Bot,
   Clock3,
@@ -26,6 +26,8 @@ import {
   updateAgentChannelConnectionCredentialsAction,
 } from '@/lib/agents/actions';
 import { hostedRunnerSpec } from '@/lib/agents/platform-runner';
+import { formatInTimeZone } from '@/lib/timezone';
+import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 import {
   MESSAGING_PLATFORMS,
   credentialRequiredAtCreate,
@@ -127,6 +129,8 @@ function ActivePairingPanel({
   connection: ChannelConnection;
   platform: MessagingPlatform;
 }) {
+  const locale = useLocale();
+  const { timeZone } = useUserTimeZone();
   if (!platform.pairing) return null;
 
   const pairing = connection.pairing;
@@ -222,7 +226,15 @@ function ActivePairingPanel({
 
         {pairing?.message ? <p className="text-xs text-muted-foreground">{pairing.message}</p> : null}
         {pairing?.expiresAt ? (
-          <p className="text-[11px] text-muted-foreground">Expires: {new Date(pairing.expiresAt).toLocaleString()}</p>
+          <p className="text-[11px] text-muted-foreground">
+            Expires:{' '}
+            {formatInTimeZone(
+              pairing.expiresAt,
+              timeZone,
+              { dateStyle: 'medium', timeStyle: 'short' },
+              locale,
+            )}
+          </p>
         ) : null}
         {pairing?.error ? (
           <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-xs text-red-700 dark:text-red-300">

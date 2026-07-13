@@ -7,6 +7,7 @@ import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
+import { TimeZoneSettings } from '@/components/timezone/TimeZoneSettings';
 import {
   DashboardPage,
   DashboardPanel,
@@ -95,12 +96,8 @@ export default async function SettingsPage({
           description={t('timezoneScheduled')}
           bodyClassName="py-4"
         >
-          <div className="inline-flex h-9 items-center rounded-md border border-border bg-muted/60 px-3 text-sm text-foreground">
-            {Intl.DateTimeFormat().resolvedOptions().timeZone}
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {t('timezoneDesc')}
-          </p>
+          <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
+          <p className="mt-2 text-xs text-muted-foreground">{t('timezoneDesc')}</p>
         </DashboardPanel>
 
         {isOwner ? (

@@ -5,12 +5,14 @@ import { requireAdmin } from '@/lib/auth/admin';
 import { getWorkspaceDetail } from '@/lib/admin/workspaces';
 import { deleteWorkspaceAdminAction } from '@/lib/admin/workspace-actions';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminWorkspaceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const t = await getTranslations('admin');
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const timeZone = resolveUserTimeZone(admin);
   const { id } = await params;
   const w = await getWorkspaceDetail(id);
   if (!w) notFound();
@@ -20,7 +22,13 @@ export default async function AdminWorkspaceDetailPage({ params }: { params: Pro
       <Link href="/admin/workspaces" className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">{t('workspaces')}</Link>
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{w.name} <span className="text-base font-normal text-zinc-400">/{w.slug}</span></h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('owner')} {w.owner.email} {t('created')} {new Date(w.createdAt).toLocaleDateString('en-US')}</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          {t('owner')} {w.owner.email} {t('created')} {formatInTimeZone(w.createdAt, timeZone, {
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+          })}
+        </p>
       </div>
 
       <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

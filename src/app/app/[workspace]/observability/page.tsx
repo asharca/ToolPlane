@@ -12,6 +12,7 @@ import {
   DashboardPanel,
   DashboardTable,
 } from '@/components/dashboard/DashboardUI';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,10 +70,11 @@ export default async function ObservabilityPage({
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
-  const o = await getObservability(ws.id);
+  const o = await getObservability(ws.id, timeZone);
   const pt = current === 'plugin' ? await getPluginTelemetry(ws.id) : null;
   const max = Math.max(1, ...o.series.map((s) => s.total));
   const errorRate = o.total ? (Math.round((o.errors / o.total) * 1000) / 10) : 0;
@@ -213,10 +215,10 @@ export default async function ObservabilityPage({
                       {l.durationMs}{t('ms')}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
-                      {l.createdAt.toLocaleTimeString('en-US', {
+                      {formatInTimeZone(l.createdAt, timeZone, {
                         hour: 'numeric',
                         minute: '2-digit',
-                      })}
+                      }, 'en-US')}
                     </td>
                   </tr>
                 ))}
@@ -285,10 +287,10 @@ export default async function ObservabilityPage({
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.createdAt.toLocaleTimeString('en-US', {
+                        {formatInTimeZone(s.createdAt, timeZone, {
                           hour: 'numeric',
                           minute: '2-digit',
-                        })}
+                        }, 'en-US')}
                       </td>
                     </tr>
                   ))}
@@ -338,10 +340,10 @@ export default async function ObservabilityPage({
                         {s.removed}
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.createdAt.toLocaleTimeString('en-US', {
+                        {formatInTimeZone(s.createdAt, timeZone, {
                           hour: 'numeric',
                           minute: '2-digit',
-                        })}
+                        }, 'en-US')}
                       </td>
                     </tr>
                   ))}

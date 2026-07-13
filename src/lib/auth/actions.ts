@@ -9,6 +9,7 @@ import { createSession, clearSession, getSessionUserId } from './session';
 import { createApiToken, revokeApiToken } from './tokens';
 import { safeRelativePath } from './safe-redirect';
 import { reconcileAdminRole } from './admin';
+import { normalizeTimeZone } from '@/lib/timezone';
 
 export type AuthState = { error?: string };
 
@@ -21,6 +22,7 @@ export async function signupAction(
   const email = String(formData.get('email') ?? '').trim().toLowerCase();
   const password = String(formData.get('password') ?? '');
   const name = String(formData.get('name') ?? '').trim();
+  const detectedTimeZone = normalizeTimeZone(formData.get('detectedTimeZone'));
 
   if (!EMAIL_RE.test(email)) return { error: 'Enter a valid email address.' };
   if (password.length < 8)
@@ -30,7 +32,12 @@ export async function signupAction(
   if (existing) return { error: 'An account with that email already exists.' };
 
   const user = await db.user.create({
-    data: { email, name: name || null, passwordHash: await hashPassword(password) },
+    data: {
+      email,
+      name: name || null,
+      passwordHash: await hashPassword(password),
+      detectedTimeZone,
+    },
   });
   await createSession(user.id);
   await reconcileAdminRole(user);
@@ -43,6 +50,7 @@ export async function loginAction(
 ): Promise<AuthState> {
   const email = String(formData.get('email') ?? '').trim().toLowerCase();
   const password = String(formData.get('password') ?? '');
+  const detectedTimeZone = normalizeTimeZone(formData.get('detectedTimeZone'));
 
   const user = await db.user.findUnique({ where: { email } });
   if (!user || !(await verifyPassword(password, user.passwordHash)))
@@ -52,6 +60,13 @@ export async function loginAction(
 
   await createSession(user.id);
   await reconcileAdminRole(user);
+
+  if (detectedTimeZone && detectedTimeZone !== user.detectedTimeZone) {
+    await db.user.updateMany({
+      where: { id: user.id },
+      data: { detectedTimeZone },
+    });
+  }
 
   // Restore locale preference across devices
   if (user.locale && user.locale !== 'en') {

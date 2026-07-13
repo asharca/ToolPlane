@@ -5,12 +5,14 @@ import { requireAdmin } from '@/lib/auth/admin';
 import { getUserDetail } from '@/lib/admin/users';
 import { setUserRoleAction, setUserStatusAction, deleteUserAction } from '@/lib/admin/user-actions';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminUserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const t = await getTranslations('admin');
   const admin = await requireAdmin();
+  const timeZone = resolveUserTimeZone(admin);
   const { id } = await params;
   const u = await getUserDetail(id);
   if (!u) notFound();
@@ -21,7 +23,13 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
       <Link href="/admin/users" className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">{t('users1')}</Link>
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{u.name ?? u.email}</h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">{u.email} {t('joined')} {new Date(u.createdAt).toLocaleDateString('en-US')}</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          {u.email} {t('joined')} {formatInTimeZone(u.createdAt, timeZone, {
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+          })}
+        </p>
       </div>
 
       <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

@@ -5,6 +5,7 @@ import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import type { AuthState } from '@/lib/auth/actions';
+import { useDetectedClientTimeZone } from '@/components/timezone/UserTimeZoneContext';
 
 type Action = (prev: AuthState, formData: FormData) => Promise<AuthState>;
 
@@ -35,6 +36,7 @@ export function AuthForm({
   const t = useTranslations('auth');
   const isSignup = mode === 'signup';
   const crossLinkQuery = next ? `?next=${encodeURIComponent(next)}` : '';
+  const detectedTimeZone = useDetectedClientTimeZone();
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
@@ -48,6 +50,11 @@ export function AuthForm({
 
         <form action={formAction} className="space-y-4">
           {next ? <input type="hidden" name="next" value={next} /> : null}
+          <input
+            type="hidden"
+            name="detectedTimeZone"
+            value={detectedTimeZone ?? ''}
+          />
           {isSignup && (
             <div className="space-y-1.5">
               <label htmlFor="name" className="text-sm font-medium text-foreground">

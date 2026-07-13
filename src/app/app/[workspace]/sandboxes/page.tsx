@@ -36,22 +36,23 @@ import {
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
 const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
 
-function formatDate(d: Date): string {
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+function formatDate(d: Date, timeZone: string): string {
+  return formatInTimeZone(d, timeZone, { month: 'short', day: 'numeric', year: 'numeric' }, 'en-US');
 }
 
-function formatDateTime(d: Date): string {
-  return d.toLocaleString('en-US', {
+function formatDateTime(d: Date, timeZone: string): string {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  });
+  }, 'en-US');
 }
 
 function compactVolumeName(sandboxId: string): string {
@@ -116,6 +117,7 @@ export default async function SandboxesPage({
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -216,7 +218,7 @@ export default async function SandboxesPage({
                       <div>
                         <dt className="text-muted-foreground">{t('lastSync')}</dt>
                         <dd className="mt-1 font-medium text-foreground">
-                          {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt) : t('neverSynced')}
+                          {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone) : t('neverSynced')}
                         </dd>
                       </div>
                       <div className="min-w-0 sm:col-span-2">
@@ -301,7 +303,7 @@ export default async function SandboxesPage({
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt) : t('neverSynced')}
+                      {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone) : t('neverSynced')}
                     </td>
                     <td className="px-4 py-3">
                       <HermesRuntimeDialogLauncher
@@ -387,7 +389,7 @@ export default async function SandboxesPage({
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{s._count.agentLinks}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-3">
                         <Link href={`/app/${slug}/sandboxes/${s.id}`} className={rowButton}>

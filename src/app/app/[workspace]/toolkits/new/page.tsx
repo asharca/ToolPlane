@@ -15,15 +15,16 @@ import {
   DashboardSection,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date) {
-  return d.toLocaleDateString('en-US', {
+function fmt(d: Date, timeZone: string) {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
 function preview(names: string[], fallback: string) {
@@ -49,6 +50,7 @@ export default async function BrowseToolkitsPage({
   const q = (qParam ?? '').trim();
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -90,7 +92,7 @@ export default async function BrowseToolkitsPage({
                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <span>{toolkit.workspaceName}</span>
                         <span>/</span>
-                        <span>{fmt(toolkit.createdAt)}</span>
+                        <span>{fmt(toolkit.createdAt, timeZone)}</span>
                       </div>
                       <h3 className="truncate text-lg font-semibold text-foreground">
                         {toolkit.name}

@@ -9,15 +9,16 @@ import {
   DashboardSection,
   DashboardTable,
 } from '@/components/dashboard/DashboardUI';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date) {
-  return d.toLocaleDateString('en-US', {
+function fmt(d: Date, timeZone: string) {
+  return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  }, 'en-US');
 }
 
 export default async function MembersPage({
@@ -29,6 +30,7 @@ export default async function MembersPage({
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const members = await getWorkspaceMembers(ws.id);
@@ -75,7 +77,7 @@ export default async function MembersPage({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {fmt(m.createdAt)}
+                      {fmt(m.createdAt, timeZone)}
                     </td>
                   </tr>
                 ))}
