@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildSpawnSpec, resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import {
+  buildSpawnSpec,
+  buildStdioConfigSpawnSpec,
+  resolveSpawnSpec,
+} from '@/lib/process/spawn-spec';
 import { MCP_NETWORK } from '@/lib/process/sandbox';
 import {
   buildConnectorConfig,
@@ -81,6 +85,47 @@ describe('buildSpawnSpec — every custom source runs in a hardened container', 
 });
 
 describe('resolveSpawnSpec', () => {
+  it('runs npx JSON configs with their exact args inside the hardened Node container', () => {
+    const commandArgs = ['-y', '@fangjunjie/ssh-mcp-server', '--host', '192.168.1.1'];
+    const { command, args } = buildStdioConfigSpawnSpec(
+      'npx',
+      commandArgs,
+      { SSH_PASSWORD: 'secret' },
+    );
+
+    expect(command).toBe('docker');
+    expect(args).toContain('--cap-drop');
+    expect(args).toContain('SSH_PASSWORD=secret');
+    const imageIndex = args.indexOf('node:24-bookworm-slim');
+    expect(args.slice(imageIndex + 1)).toEqual(['npx', ...commandArgs]);
+  });
+
+  it('runs uvx JSON configs in the Python wrapper and rejects arbitrary commands', () => {
+    const { args } = buildStdioConfigSpawnSpec('uvx', ['mcp-server-fetch']);
+    const imageIndex = args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
+    expect(args.slice(imageIndex + 1)).toEqual(['uvx', 'mcp-server-fetch']);
+    expect(() => buildStdioConfigSpawnSpec('bash', ['-lc', 'whoami'])).toThrow(/Unsupported/);
+  });
+
+  it('resolves a stored MCP JSON config to a bridge spec', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'ssh-mcp-server',
+      source: 'config',
+      sourceRef: 'npx',
+      installCfg: {
+        command: 'npx',
+        args: ['-y', '@fangjunjie/ssh-mcp-server', '--port', '22'],
+        env: {},
+      },
+    });
+    expect(spec).toMatchObject({ kind: 'bridge', name: 'ssh-mcp-server', command: 'docker' });
+    if (spec.kind === 'bridge') {
+      expect(spec.args.slice(-5)).toEqual(['npx', '-y', '@fangjunjie/ssh-mcp-server', '--port', '22']);
+    }
+  });
+
   it('derives the connector server URL from trusted request routing headers', () => {
     const requestHeaders = new Headers({
       'x-forwarded-host': 'toolplane.example.com, proxy.internal',

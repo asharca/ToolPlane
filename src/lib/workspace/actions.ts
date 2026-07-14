@@ -103,6 +103,7 @@ export async function deployCustomServerAction(formData: FormData) {
       ref: String(formData.get('ref') ?? ''),
       name: String(formData.get('name') ?? ''),
       startCommand: String(formData.get('startCommand') ?? ''),
+      config: String(formData.get('config') ?? ''),
     });
   } catch {
     return;
