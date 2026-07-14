@@ -504,6 +504,8 @@
       "mcpCanAccessYourDataAndExecuteArbitraryCodeOnlyInstallSourcesYouTrust": "MCP 可以访问您的数据并执行任意代码。请只安装您信任的来源。",
       "source": "来源",
       "startCommand": "启动命令",
+      "jsonConfig": "MCP JSON 配置",
+      "invalidJsonConfig": "请输入一个有效的 MCP JSON 配置，command 必须是 npx 或 uvx。",
       "serverName": "服务器名称",
       "weatherApi": "天气 API",
       "mcp": "/mcp/",

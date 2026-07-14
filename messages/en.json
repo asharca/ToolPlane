@@ -504,6 +504,8 @@
       "mcpCanAccessYourDataAndExecuteArbitraryCodeOnlyInstallSourcesYouTrust": "MCP can access your data and execute arbitrary code. Only install sources you trust.",
       "source": "Source",
       "startCommand": "Start Command",
+      "jsonConfig": "MCP JSON config",
+      "invalidJsonConfig": "Enter one valid MCP JSON config. The command must be npx or uvx.",
       "serverName": "Server Name",
       "weatherApi": "Weather API",
       "mcp": "/mcp/",
