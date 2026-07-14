@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.7.0...toolplane-v0.8.0) (2026-07-14)
+
+
+### Features
+
+* support OpenAI Responses providers ([#33](https://github.com/asharca/ToolPlane/issues/33)) ([e6a3848](https://github.com/asharca/ToolPlane/commit/e6a3848b6d13c15ca0090820f25663666d80e006))
+
+
+### Build System
+
+* reduce runtime artifact size ([#34](https://github.com/asharca/ToolPlane/issues/34)) ([812f049](https://github.com/asharca/ToolPlane/commit/812f04946c0217f4f14387ed867ed2d68ed4c9d8))
+
 ## [0.7.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.6.0...toolplane-v0.7.0) (2026-07-14)
 
 
