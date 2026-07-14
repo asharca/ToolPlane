@@ -54,27 +54,6 @@ jobs:
         with:
           ref: ${{ steps.release.outputs.sha }}
 
-      - name: Set up pnpm
-        if: steps.release.outputs.release_created == 'true'
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-
-      - name: Set up Node.js
-        if: steps.release.outputs.release_created == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        if: steps.release.outputs.release_created == 'true'
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate Prisma client
-        if: steps.release.outputs.release_created == 'true'
-        run: pnpm exec prisma generate
-
       - name: Log in to GHCR
         if: steps.release.outputs.release_created == 'true'
         uses: docker/login-action@v3
@@ -99,11 +78,33 @@ jobs:
         if: steps.release.outputs.release_created == 'true'
         uses: docker/setup-buildx-action@v3
 
+      - name: Export runtime release artifact
+        if: steps.release.outputs.release_created == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime-artifact
+          platforms: linux/amd64
+          outputs: type=local,dest=dist/release/app
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+            TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
+          cache-from: type=gha
+
+      - name: Package runtime release artifact
+        if: steps.release.outputs.release_created == 'true'
+        run: |
+          tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
+          artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
+          test "$artifact_size" -le $((100 * 1024 * 1024))
+          shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
+
       - name: Build and push release image
         if: steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -112,31 +113,6 @@ jobs:
             TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Build runtime release artifact
-        if: steps.release.outputs.release_created == 'true'
-        env:
-          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
-          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
-          NEXT_TELEMETRY_DISABLED: 1
-          TOOLPLANE_VERSION: ${{ steps.release.outputs.tag_name }}
-        run: |
-          pnpm build
-          rm -rf dist/release
-          mkdir -p dist/release/app
-          cp -a \
-            node_modules \
-            .next \
-            public \
-            package.json \
-            next.config.ts \
-            scripts \
-            prisma \
-            prisma.config.ts \
-            dist/release/app/
-          printf '%s\n' "$TOOLPLANE_VERSION" > dist/release/app/.toolplane-version
-          tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
-          shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
 
       - name: Upload release assets
         if: steps.release.outputs.release_created == 'true'

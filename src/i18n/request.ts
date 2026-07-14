@@ -1,8 +1,14 @@
 import { cookies, headers } from 'next/headers';
 import { getRequestConfig } from 'next-intl/server';
+import enMessages from '../../messages/en.json';
+import zhMessages from '../../messages/zh.json';
 import type { Locale } from './routing';
 
 const LOCALES: Locale[] = ['en', 'zh'];
+const MESSAGES = {
+  en: enMessages,
+  zh: zhMessages,
+} as const;
 
 function pickLocaleFromAcceptLanguage(acceptLang: string): Locale {
   for (const part of acceptLang.split(',')) {
@@ -30,6 +36,6 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages: (await import(`../../messages/${locale}.json`)).default,
+    messages: MESSAGES[locale],
   };
 });

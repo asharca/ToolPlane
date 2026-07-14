@@ -6,7 +6,8 @@ set -e
 
 echo "[entrypoint] prisma migrate deploy…"
 n=0
-until node_modules/.bin/prisma migrate deploy; do
+until node_modules/.toolplane-runtime/migrator/node_modules/.bin/prisma migrate deploy \
+  --config node_modules/.toolplane-runtime/migrator/prisma.config.mjs; do
   n=$((n + 1))
   if [ "$n" -ge 15 ]; then
     echo "[entrypoint] migrations failed after $n attempts" >&2
@@ -17,4 +18,4 @@ until node_modules/.bin/prisma migrate deploy; do
 done
 
 echo "[entrypoint] starting Next on :3000…"
-exec node_modules/.bin/next start
+exec node node_modules/.toolplane-runtime/server.cjs

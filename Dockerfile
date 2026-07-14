@@ -28,14 +28,17 @@ RUN set -eux; \
       tar; \
     rm -rf /var/lib/apt/lists/*
 
-# ---- deps: full install (incl. dev) for build + runtime prisma CLI ----
+# ---- deps: full workspace install for the build stages ----
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 ARG PNPM_VERSION
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/connector/package.json ./packages/connector/package.json
+COPY runtime/migrator/package.json runtime/migrator/pnpm-lock.yaml runtime/migrator/pnpm-workspace.yaml ./runtime/migrator/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile \
+    && pnpm --config.auto-install-peers=false --dir runtime/migrator install --prod --frozen-lockfile
 
 # ---- build: prisma generate + next build ----
 FROM ${NODE_IMAGE} AS build
@@ -43,6 +46,8 @@ WORKDIR /app
 ARG PNPM_VERSION
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/connector/node_modules ./packages/connector/node_modules
+COPY --from=deps /app/runtime/migrator/node_modules ./runtime/migrator/node_modules
 COPY . .
 RUN pnpm exec prisma generate
 # NEXT_PUBLIC_* is baked into the client bundle at build time, so it must be set
@@ -56,7 +61,13 @@ ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
     DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder \
     NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
-RUN printf '%s\n' "${TOOLPLANE_VERSION}" > .toolplane-version
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm runtime:assemble
+
+# Exported by the release workflow so the tarball and image use the exact same
+# assembled runtime files.
+FROM scratch AS runtime-artifact
+COPY --from=build /app/dist/release/app/ /
 
 # ---- hermes: source checkout + Python deps for hosted messaging channels ----
 FROM python-runtime-base AS hermes
@@ -87,6 +98,8 @@ FROM python-runtime-base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000 \
     HERMES_ROOT=/opt/hermes-agent \
     TOOLPLANE_HERMES_ROOT=/opt/hermes-agent \
     TOOLPLANE_PYTHON=/opt/toolplane-hermes-venv/bin/python
@@ -97,22 +110,9 @@ COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=hermes --chown=node:node /opt/hermes-agent /opt/hermes-agent
 COPY --from=hermes --chown=node:node /opt/toolplane-hermes-venv /opt/toolplane-hermes-venv
 
-# Full node_modules (prisma is a devDependency, needed for the startup
-# `migrate deploy`), the built app, and the files referenced at runtime — all
-# owned by the non-root `node` user.
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/.next ./.next
-COPY --from=build --chown=node:node /app/public ./public
-COPY --from=build --chown=node:node /app/package.json ./package.json
-COPY --from=build --chown=node:node /app/next.config.ts ./next.config.ts
-COPY --from=build --chown=node:node /app/.toolplane-version ./.toolplane-version
-# Spawned by the supervisor via process.cwd()/scripts — Next never bundles them.
-COPY --from=build --chown=node:node /app/scripts ./scripts
-# The connector package tarball endpoint reads these source files at runtime.
-COPY --from=build --chown=node:node /app/packages ./packages
-# Needed by `prisma migrate deploy` on startup.
-COPY --from=build --chown=node:node /app/prisma ./prisma
-COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
+# The assembler combines Next's traced standalone output with the dynamic MCP,
+# connector, native PTY, and isolated migration runtimes.
+COPY --from=build --chown=node:node /app/dist/release/app/ ./
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \

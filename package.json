@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "runtime:assemble": "node scripts/assemble-runtime.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

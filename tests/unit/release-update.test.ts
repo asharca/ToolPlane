@@ -22,10 +22,13 @@ describe('release artifact updater', () => {
     expect(RUNTIME_UPDATE_ENTRIES).toEqual([
       '.next',
       'node_modules',
+      'messages',
       'public',
       'package.json',
       'next.config.ts',
+      'server.js',
       'scripts',
+      'packages',
       'prisma',
       'prisma.config.ts',
       '.toolplane-version',

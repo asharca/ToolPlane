@@ -9,6 +9,7 @@ function readRepoFile(file: string) {
 describe('Hermes hosted runner image contract', () => {
   it('bundles a pinned Hermes checkout and runner venv in the app image', () => {
     const dockerfile = readRepoFile('Dockerfile');
+    const runtimeAssembler = readRepoFile('scripts/assemble-runtime.mjs');
 
     expect(dockerfile).toContain('ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git');
     expect(dockerfile).toContain('ARG HERMES_REF=7e8f50a14176e02b514631b0b04470acaadae32a');
@@ -22,7 +23,8 @@ describe('Hermes hosted runner image contract', () => {
     expect(dockerfile).toContain('/opt/toolplane-hermes-venv');
     expect(dockerfile).toContain('pip install ".[messaging,wecom,dingtalk]"');
     expect(dockerfile).toContain('ARG TOOLPLANE_VERSION=dev');
-    expect(dockerfile).toContain('/app/.toolplane-version');
+    expect(dockerfile).toContain('/app/dist/release/app/');
+    expect(runtimeAssembler).toContain("path.join(outputRoot, '.toolplane-version')");
     expect(dockerfile).toContain('chown node:node /app');
   });
 
