@@ -70,8 +70,8 @@ describe('ConfirmSubmitButton', () => {
 
     finishAction?.();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
+      expect(screen.queryByText('Remove weather server?')).not.toBeInTheDocument();
     });
   });
 });

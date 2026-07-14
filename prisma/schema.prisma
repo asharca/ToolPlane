@@ -204,8 +204,23 @@ model Sandbox {
   updatedAt    DateTime       @updatedAt
   agentLinks   AgentSandbox[]
   agentRuntime AgentRuntime?
+  snapshots    SandboxSnapshot[]
 
   @@unique([workspaceId, slug])
+}
+
+model SandboxSnapshot {
+  id         String   @id @default(cuid())
+  sandboxId  String
+  sandbox    Sandbox  @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  name       String
+  volumeName String   @unique
+  status     String   @default("creating")
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sandboxId, createdAt])
 }
 
 model InstalledSkill {
