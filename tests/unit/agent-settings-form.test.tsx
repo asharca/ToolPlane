@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
@@ -7,11 +7,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-vi.mock('@/lib/agents/actions', () => ({
+const actions = vi.hoisted(() => ({
   stopAgentRuntimeAction: vi.fn(),
   syncAgentRuntimeAction: vi.fn(),
   updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
 }));
+
+vi.mock('@/lib/agents/actions', () => actions);
 
 const baseProps = {
   slug: 'acme',
@@ -73,6 +75,40 @@ describe('AgentSettingsForm', () => {
 
     expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
     expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
+  });
+
+  it('shows pending and completed feedback for Hermes sync and stop actions', async () => {
+    let finishSync: ((state: { savedAt: number }) => void) | undefined;
+    let finishStop: ((state: { savedAt: number }) => void) | undefined;
+    actions.syncAgentRuntimeAction.mockImplementation(
+      () => new Promise((resolve) => { finishSync = resolve; }),
+    );
+    actions.stopAgentRuntimeAction.mockImplementation(
+      () => new Promise((resolve) => { finishStop = resolve; }),
+    );
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        runtime={{
+          kind: 'hermes',
+          image: 'nousresearch/hermes-agent:latest',
+          status: 'running',
+          lastError: null,
+          lastSyncedAt: null,
+          sandboxId: 'sandbox-1',
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sync / start' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Syncing...' })).toBeDisabled());
+    finishSync?.({ savedAt: 1 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Synced' })).toBeEnabled());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stopping...' })).toBeDisabled());
+    finishStop?.({ savedAt: 2 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stopped' })).toBeEnabled());
   });
 
   it('does not mark search changes dirty but schedules a save for resource changes', async () => {

@@ -69,6 +69,10 @@ export function renderHermesConfig(input: HermesConfigProjection): string {
   ].join('\n');
 }
 
+export function renderHermesMcpBindingFingerprint(deploymentIds: string[]): string {
+  return JSON.stringify([...new Set(deploymentIds)].sort());
+}
+
 export function renderHermesSkillBundle(skillNames: string[]): string {
   return [
     'name: toolplane-agent',

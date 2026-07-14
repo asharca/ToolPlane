@@ -330,6 +330,14 @@ describe('AgentChat', () => {
     expect(screen.getByText('Connected channels')).toBeInTheDocument();
   });
 
+  it('hides channel configuration for Hermes agents', async () => {
+    renderChat({ runtime: hermesRuntime, initialSettingsTab: 'channels' });
+
+    expect(screen.queryByRole('button', { name: 'Channels' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Add channel')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agent' })).toHaveClass('bg-accent');
+  });
+
   it('can open channel settings from the initial settings tab', async () => {
     renderChat({ initialSettingsTab: 'channels' });
 

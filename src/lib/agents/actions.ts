@@ -183,22 +183,39 @@ export async function updateAgentAction(
   return { savedAt: Date.now() };
 }
 
-export async function syncAgentRuntimeAction(formData: FormData) {
+export async function syncAgentRuntimeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return;
-  await syncHermesRuntime(ctx.ws.id, agentId);
-  revalidatePath(`/app/${slug}/agents/${agentId}`);
+  if (!ctx) return { error: 'Not authorized.' };
+  try {
+    const result = await syncHermesRuntime(ctx.ws.id, agentId);
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    if (result.error) return { error: result.error };
+    return { savedAt: Date.now() };
+  } catch {
+    return { error: 'Could not sync the Hermes runtime.' };
+  }
 }
 
-export async function stopAgentRuntimeAction(formData: FormData) {
+export async function stopAgentRuntimeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return;
-  await stopHermesRuntime(ctx.ws.id, agentId);
-  revalidatePath(`/app/${slug}/agents/${agentId}`);
+  if (!ctx) return { error: 'Not authorized.' };
+  try {
+    await stopHermesRuntime(ctx.ws.id, agentId);
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    return { savedAt: Date.now() };
+  } catch {
+    return { error: 'Could not stop the Hermes runtime.' };
+  }
 }
 
 export async function createConversationAction(formData: FormData) {
