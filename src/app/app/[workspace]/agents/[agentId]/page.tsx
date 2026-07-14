@@ -74,7 +74,9 @@ export default async function AgentDetailPage({
     agents,
   ] = await Promise.all([
     listConversations(agentId),
-    listAgentChannelConnections(ws.id, agentId),
+    agent.runtime?.kind === 'hermes'
+      ? Promise.resolve([])
+      : listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id, selectedDeps),
     listAgentSkillOptions(ws.id, selectedSkills),
@@ -169,7 +171,7 @@ export default async function AgentDetailPage({
         ready={ready}
         agentName={agent.name}
         providerLabel={providerLabel}
-        initialSettingsTab={settings === 'channels' ? 'channels' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </>
   );

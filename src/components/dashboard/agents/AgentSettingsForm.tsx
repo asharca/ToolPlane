@@ -88,6 +88,14 @@ export function AgentSettingsForm({
   const formRef = useRef<HTMLFormElement>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [state, formAction, isPending] = useActionState<ActionState, FormData>(updateAgentAction, {});
+  const [syncState, syncFormAction, isSyncPending] = useActionState<ActionState, FormData>(
+    syncAgentRuntimeAction,
+    {},
+  );
+  const [stopState, stopFormAction, isStopPending] = useActionState<ActionState, FormData>(
+    stopAgentRuntimeAction,
+    {},
+  );
   const [nameValue, setNameValue] = useState(name);
   const [systemPromptValue, setSystemPromptValue] = useState(systemPrompt);
   const [selectedProvider, setSelectedProvider] = useState(providerId ?? '');
@@ -99,6 +107,7 @@ export function AgentSettingsForm({
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => checkedIds(sandboxes));
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | null>(null);
   const models = useMemo(
     () => providers.find((p) => p.id === selectedProvider)?.models ?? [],
     [providers, selectedProvider],
@@ -113,6 +122,12 @@ export function AgentSettingsForm({
 
     router.refresh();
   }, [router, state.savedAt]);
+
+  useEffect(() => {
+    if (!syncState.savedAt && !stopState.savedAt) return;
+
+    router.refresh();
+  }, [router, stopState.savedAt, syncState.savedAt]);
 
   useEffect(() => () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -140,12 +155,25 @@ export function AgentSettingsForm({
   const saveMessage = state.error
     ? state.error
     : isPending
-      ? t('saving')
+      ? runtime?.kind === 'hermes' ? t('savingAndSyncingRuntime') : t('saving')
       : saveStatus === 'dirty'
         ? t('unsavedChanges')
         : state.savedAt
           ? t('saved')
           : t('autoSaveOn');
+  const activeRuntimeState = lastRuntimeAction === 'sync' ? syncState : stopState;
+  const runtimeActionPending = lastRuntimeAction === 'sync' ? isSyncPending : isStopPending;
+  const runtimeActionMessage = runtimeActionPending
+    ? lastRuntimeAction === 'sync' ? t('syncingRuntime') : t('stoppingRuntime')
+    : activeRuntimeState.error
+      ? activeRuntimeState.error
+      : activeRuntimeState.savedAt
+        ? lastRuntimeAction === 'sync' ? t('runtimeSynced') : t('runtimeStopped')
+        : null;
+  const runtimeControlsDisabled = isPending
+    || saveStatus === 'dirty'
+    || isSyncPending
+    || isStopPending;
 
   return (
     <form
@@ -210,21 +238,39 @@ export function AgentSettingsForm({
             <div className="flex gap-2">
               <button
                 type="submit"
-                formAction={syncAgentRuntimeAction}
+                formAction={syncFormAction}
                 formNoValidate
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs"
+                disabled={runtimeControlsDisabled}
+                aria-busy={isSyncPending}
+                onClick={() => setLastRuntimeAction('sync')}
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
               >
-                <RefreshCw className="size-4" />
-                {t('syncRuntime')}
+                {isSyncPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : lastRuntimeAction === 'sync' && syncState.savedAt ? (
+                  <Check className="size-4 text-emerald-600" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                {isSyncPending ? t('syncingRuntime') : lastRuntimeAction === 'sync' && syncState.savedAt ? t('runtimeSynced') : t('syncRuntime')}
               </button>
               <button
                 type="submit"
-                formAction={stopAgentRuntimeAction}
+                formAction={stopFormAction}
                 formNoValidate
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs"
+                disabled={runtimeControlsDisabled}
+                aria-busy={isStopPending}
+                onClick={() => setLastRuntimeAction('stop')}
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
               >
-                <Square className="size-3.5" />
-                {t('stopRuntime')}
+                {isStopPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : lastRuntimeAction === 'stop' && stopState.savedAt ? (
+                  <Check className="size-4 text-emerald-600" />
+                ) : (
+                  <Square className="size-3.5" />
+                )}
+                {isStopPending ? t('stoppingRuntime') : lastRuntimeAction === 'stop' && stopState.savedAt ? t('runtimeStopped') : t('stopRuntime')}
               </button>
             </div>
           </div>
@@ -253,6 +299,17 @@ export function AgentSettingsForm({
             {runtime.lastError ? (
               <p className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
                 {runtime.lastError}
+              </p>
+            ) : null}
+            {runtimeActionMessage ? (
+              <p
+                role={activeRuntimeState.error ? 'alert' : 'status'}
+                aria-live="polite"
+                className={activeRuntimeState.error
+                  ? 'rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300'
+                  : 'text-xs text-muted-foreground'}
+              >
+                {runtimeActionMessage}
               </p>
             ) : null}
           </div>
@@ -414,7 +471,7 @@ export function AgentSettingsForm({
           ) : (
             <Save className="size-4 shrink-0" />
           )}
-          {isPending ? t('saving') : t('saveNow')}
+          {isPending && runtime?.kind === 'hermes' ? t('savingAndSyncingRuntime') : isPending ? t('saving') : t('saveNow')}
         </button>
       </div>
     </form>

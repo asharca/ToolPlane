@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_HERMES_IMAGE, resolveHermesImage } from '@/lib/agents/hermes/constants';
-import { renderHermesConfig, renderHermesSkillBundle } from '@/lib/agents/hermes/config';
+import {
+  renderHermesConfig,
+  renderHermesMcpBindingFingerprint,
+  renderHermesSkillBundle,
+} from '@/lib/agents/hermes/config';
 import {
   createHermesDashboardAccessToken,
   createHermesDashboardPath,
@@ -93,6 +97,15 @@ describe('Hermes agent runtime contract', () => {
     const bundle = renderHermesSkillBundle(['pdf', 'github']);
     expect(bundle.indexOf('toolplane-agent/github')).toBeLessThan(
       bundle.indexOf('toolplane-agent/pdf'),
+    );
+  });
+
+  it('changes the runtime projection fingerprint when MCP bindings change', () => {
+    expect(renderHermesMcpBindingFingerprint(['deployment-b', 'deployment-a'])).toBe(
+      renderHermesMcpBindingFingerprint(['deployment-a', 'deployment-b']),
+    );
+    expect(renderHermesMcpBindingFingerprint(['deployment-a'])).not.toBe(
+      renderHermesMcpBindingFingerprint(['deployment-a', 'deployment-b']),
     );
   });
 

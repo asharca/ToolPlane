@@ -27,6 +27,7 @@ import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export type AgentRow = {
   id: string;
@@ -221,10 +222,14 @@ export function AgentsBrowser({
           </div>
 
           <div className="flex justify-end border-t border-border pt-4">
-            <button className="ui-button-primary h-10 gap-2 px-4">
+            <SubmitButton
+              pendingLabel={t('creatingAgent')}
+              savedLabel={t('agentCreated')}
+              className="ui-button-primary h-10 gap-2 px-4"
+            >
               <Plus className="size-[18px] shrink-0" />
               {t('createAgent')}
-            </button>
+            </SubmitButton>
           </div>
         </form>
       ) : null}

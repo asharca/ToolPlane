@@ -25,7 +25,11 @@ import {
   sandboxVolumeName,
 } from '@/lib/sandboxes/runtime';
 import { HERMES_RUNTIME_KIND } from './constants';
-import { renderHermesConfig, renderHermesSkillBundle } from './config';
+import {
+  renderHermesConfig,
+  renderHermesMcpBindingFingerprint,
+  renderHermesSkillBundle,
+} from './config';
 import { deriveHermesRuntimeToken } from './token';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
@@ -226,6 +230,7 @@ async function buildProjection(
     { mode: 0o600 },
   );
   hash.update(config);
+  hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
 
   const usedNames = new Set<string>();
   const skillNames: string[] = [];

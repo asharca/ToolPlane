@@ -166,10 +166,15 @@ export function AgentChat({
   initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
 }) {
   const t = useTranslations('console.agents');
+  const supportsChannelSettings = settings.runtime?.kind !== 'hermes';
+  const requestedSettingsTab = initialSettingsTab ?? 'agent';
+  const initialTab = !supportsChannelSettings && requestedSettingsTab === 'channels'
+    ? 'agent'
+    : requestedSettingsTab;
   const [text, setText] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(Boolean(initialSettingsTab));
-  const [settingsTab, setSettingsTab] = useState<'agent' | 'channels' | 'hermes' | 'terminal'>(initialSettingsTab ?? 'agent');
+  const [settingsTab, setSettingsTab] = useState<'agent' | 'channels' | 'hermes' | 'terminal'>(initialTab);
   const [createdConversationId, setCreatedConversationId] = useState<string | null>(null);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -722,7 +727,10 @@ export function AgentChat({
                 <X className="size-5" />
               </button>
             </header>
-            <div className="grid shrink-0 grid-cols-4 gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:overflow-x-auto sm:px-5">
+            <div className={cx(
+              'grid shrink-0 gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:overflow-x-auto sm:px-5',
+              supportsChannelSettings ? 'grid-cols-2' : 'grid-cols-3',
+            )}>
               <button
                 type="button"
                 onClick={() => setSettingsTab('agent')}
@@ -736,19 +744,21 @@ export function AgentChat({
                 <Settings2 className="size-3.5 shrink-0 sm:size-4" />
                 {t('agentSettingsTab')}
               </button>
-              <button
-                type="button"
-                onClick={() => setSettingsTab('channels')}
-                className={cx(
-                  'inline-flex h-9 min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors sm:w-auto sm:shrink-0 sm:gap-2 sm:px-3.5 sm:text-sm',
-                  settingsTab === 'channels'
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-                )}
-              >
-                <Route className="size-3.5 shrink-0 sm:size-4" />
-                {t('channelSettingsTab')}
-              </button>
+              {supportsChannelSettings ? (
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab('channels')}
+                  className={cx(
+                    'inline-flex h-9 min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors sm:w-auto sm:shrink-0 sm:gap-2 sm:px-3.5 sm:text-sm',
+                    settingsTab === 'channels'
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                  )}
+                >
+                  <Route className="size-3.5 shrink-0 sm:size-4" />
+                  {t('channelSettingsTab')}
+                </button>
+              ) : null}
               {settings.runtime?.kind === 'hermes' ? (
                 <>
                   <button
@@ -799,7 +809,7 @@ export function AgentChat({
                   runtime={settings.runtime}
                   className="mx-auto w-full max-w-5xl space-y-4 px-4 py-5 sm:px-6"
                 />
-              ) : settingsTab === 'channels' ? (
+              ) : settingsTab === 'channels' && supportsChannelSettings ? (
                 <div className="mx-auto w-full max-w-6xl">
                   <AgentMessagingPanel
                     slug={slug}
