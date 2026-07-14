@@ -1,0 +1,9 @@
+{
+  "name": "@toolplane/runtime-migrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "prisma": "7.8.0"
+  }
+}

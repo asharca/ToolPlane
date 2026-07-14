@@ -8,6 +8,12 @@ node_modules
 *.log
 .DS_Store
 coverage
+.venv
+.worktrees
+.compare
+.playwright-mcp
+dist
+*.tar.gz
 .remember
 .claude
 .vscode

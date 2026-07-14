@@ -106,3 +106,14 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Assemble and verify runtime artifact
+        run: |
+          pnpm runtime:assemble
+          dist/release/app/node_modules/.bin/prisma validate
+          node --check dist/release/app/node_modules/.toolplane-runtime/server.cjs
+          test -L dist/release/app/packages
+          test -L dist/release/app/messages
+          tar -C dist/release -czf /tmp/toolplane-runtime-linux-amd64.tar.gz app
+          artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
+          test "$artifact_size" -le $((100 * 1024 * 1024))

@@ -1,5 +1,6 @@
 import 'server-only';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import path from 'node:path';
 import { db } from '@/lib/db';
 import { decryptSecretText } from '@/lib/security/secrets';
 import { decryptChannelCredentials } from '@/lib/agents/channel-connections';
@@ -70,10 +71,10 @@ export async function startAgentChannelRunner(workspaceId: string, connectionId:
     return { error: message };
   }
 
-  const runnerPath = 'scripts/agent-channel-runner.py';
+  const runnerPath = path.join(process.cwd(), 'scripts/agent-channel-runner.py');
   const python = process.env.TOOLPLANE_PYTHON || process.env.PYTHON || 'python3';
   const token = decryptSecretText(row.inboundTokenSecret);
-  const child = spawn(python, [runnerPath], {
+  const child = spawn(/* turbopackIgnore: true */ python, [runnerPath], {
     env: {
       ...process.env,
       ...credentials,

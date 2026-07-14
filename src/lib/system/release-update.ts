@@ -16,10 +16,13 @@ const TRUSTED_DOWNLOAD_HOSTS = new Set(['github.com', 'objects.githubusercontent
 export const RUNTIME_UPDATE_ENTRIES = [
   '.next',
   'node_modules',
+  'messages',
   'public',
   'package.json',
   'next.config.ts',
+  'server.js',
   'scripts',
+  'packages',
   'prisma',
   'prisma.config.ts',
   VERSION_FILE,
@@ -326,6 +329,7 @@ async function downloadAndApplyRelease(
   const stagingRoot = path.join(/* turbopackIgnore: true */ workRoot, 'staging');
   const archivePath = path.join(/* turbopackIgnore: true */ workRoot, artifact.name);
   const checksumPath = path.join(/* turbopackIgnore: true */ workRoot, checksumAsset.name);
+  const backupRoot = path.join(/* turbopackIgnore: true */ updateRoot, `backup-${stamp}`);
 
   await mkdir(stagingRoot, { recursive: true });
 
@@ -338,7 +342,8 @@ async function downloadAndApplyRelease(
     const appRoot = path.join(/* turbopackIgnore: true */ stagingRoot, 'app');
     const payloadRoot = (await pathExists(appRoot)) ? appRoot : stagingRoot;
     await assertPayload(payloadRoot);
-    await replaceRuntimeEntries(root, payloadRoot, path.join(/* turbopackIgnore: true */ updateRoot, `backup-${stamp}`));
+    await replaceRuntimeEntries(root, payloadRoot, backupRoot);
+    await rm(backupRoot, { recursive: true, force: true }).catch(() => undefined);
   } finally {
     await rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
   }
