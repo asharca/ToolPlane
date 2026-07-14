@@ -2,7 +2,16 @@ import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { Download, Server as ServerIcon, Brain, X } from 'lucide-react';
+import {
+  Brain,
+  CopyPlus,
+  Download,
+  Pencil,
+  Server as ServerIcon,
+  Settings,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import {
@@ -24,7 +33,12 @@ import {
   type ToolkitPickerItem,
 } from '@/components/dashboard/toolkits/ToolkitResourcePicker';
 import { TabBar } from '@/components/dashboard/TabBar';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import {
+  cloneToolkitAction,
+  deleteToolkitAction,
+  renameToolkitAction,
   removeServerFromToolkitAction,
   removeSkillFromToolkitAction,
 } from '@/lib/toolkits/actions';
@@ -39,6 +53,7 @@ export default async function ToolkitDetailPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const t = await getTranslations('console.toolkits');
+  const common = await getTranslations('common');
   const mcpT = await getTranslations('console.mcp');
   const { workspace: wsSlug, slug: toolkitSlug } = await params;
   const { tab } = await searchParams;
@@ -54,9 +69,10 @@ export default async function ToolkitDetailPage({
 
   const base = `/app/${wsSlug}/toolkits/${toolkitSlug}`;
   const tabs = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'mcps', label: 'MCPs', count: toolkit.servers.length },
-    { key: 'skills', label: 'Skills', count: toolkit.skills.length },
+    { key: 'overview', label: t('overview') },
+    { key: 'mcps', label: t('mcps'), count: toolkit.servers.length },
+    { key: 'skills', label: t('skillsTab'), count: toolkit.skills.length },
+    { key: 'settings', label: t('settings') },
   ];
   const current = tabs.some((t) => t.key === tab) ? tab! : 'overview';
 
@@ -103,6 +119,7 @@ export default async function ToolkitDetailPage({
 
   const cardHeader =
     'flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800';
+  const defaultCloneName = `${toolkit.name.slice(0, 55).trimEnd()} Copy`;
   return (
     <>
       <DashboardHeader
@@ -137,7 +154,7 @@ export default async function ToolkitDetailPage({
               {toolkit.enabled ? t('enabled') : t('disabled')}
             </span>
           </div>
-          <code className="block font-mono text-xs text-zinc-400 dark:text-zinc-500">
+          <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-zinc-400 dark:text-zinc-500">
             {installUrl}
           </code>
         </div>
@@ -339,6 +356,128 @@ export default async function ToolkitDetailPage({
               items={skillPickerItems}
               emptyHref={`/app/${wsSlug}/skills/new`}
             />
+          </div>
+        ) : null}
+
+        {current === 'settings' ? (
+          <div className="max-w-3xl divide-y divide-border">
+            <section className="pb-6">
+              <div className="flex items-center gap-2">
+                <Settings className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('generalSettings')}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('renameToolkitDescription')}
+              </p>
+              <form
+                action={renameToolkitAction}
+                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
+              >
+                <input type="hidden" name="workspace" value={wsSlug} />
+                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                  {t('toolkitName')}
+                  <input
+                    name="name"
+                    defaultValue={toolkit.name}
+                    required
+                    maxLength={60}
+                    pattern=".*\S.*"
+                    title={t('nameCannotBeBlank')}
+                    className="ui-input h-9 min-w-0 text-sm"
+                  />
+                </label>
+                <SubmitButton
+                  pendingLabel={t('renaming')}
+                  savedLabel={t('renamed')}
+                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
+                >
+                  <Pencil className="size-3.5" />
+                  {t('rename')}
+                </SubmitButton>
+              </form>
+            </section>
+
+            <section className="py-6">
+              <div className="flex items-center gap-2">
+                <CopyPlus className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('cloneToolkit')}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('cloneToolkitDescription')}
+              </p>
+              <form
+                action={cloneToolkitAction}
+                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
+              >
+                <input type="hidden" name="workspace" value={wsSlug} />
+                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                  {t('copyName')}
+                  <input
+                    name="name"
+                    defaultValue={defaultCloneName}
+                    required
+                    maxLength={60}
+                    pattern=".*\S.*"
+                    title={t('nameCannotBeBlank')}
+                    className="ui-input h-9 min-w-0 text-sm"
+                  />
+                </label>
+                <SubmitButton
+                  flash={false}
+                  pendingLabel={t('cloning')}
+                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
+                >
+                  <CopyPlus className="size-3.5" />
+                  {t('clone')}
+                </SubmitButton>
+              </form>
+            </section>
+
+            {toolkitSlug !== 'me' ? (
+              <section className="pt-6">
+                <div className="flex items-center gap-2">
+                  <Trash2 className="size-4 text-red-600 dark:text-red-400" />
+                  <h2 className="text-sm font-semibold text-red-700 dark:text-red-400">
+                    {t('dangerZone')}
+                  </h2>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{t('deleteToolkit')}</p>
+                    <p className="mt-0.5 max-w-xl text-xs leading-5 text-muted-foreground">
+                      {t('deleteToolkitDescription')}
+                    </p>
+                  </div>
+                  <form action={deleteToolkitAction}>
+                    <input type="hidden" name="workspace" value={wsSlug} />
+                    <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                    <ConfirmSubmitButton
+                      triggerLabel={
+                        <>
+                          <Trash2 className="size-3.5" />
+                          {t('deleteToolkit')}
+                        </>
+                      }
+                      confirmLabel={common('confirm')}
+                      cancelLabel={common('cancel')}
+                      prompt={t('deleteToolkitPrompt', { name: toolkit.name })}
+                      pendingLabel={t('deleting')}
+                      className="max-w-xl items-center justify-end"
+                      triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
+                      confirmClassName="inline-flex h-9 items-center rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                      cancelClassName="ui-button-secondary h-9"
+                      promptClassName="text-xs text-muted-foreground"
+                    />
+                  </form>
+                </div>
+              </section>
+            ) : null}
           </div>
         ) : null}
       </div>

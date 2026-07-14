@@ -9,14 +9,22 @@ function clientLabel(client: string): string {
   return installClientLabel(resolveInstallClient(client));
 }
 
-// Stable per-(toolkit, client) key name. Re-installing overwrites the key of
-// this exact name; uninstall revokes every key whose name starts with the
-// per-toolkit prefix.
-function tokenName(toolkitSlug: string, client: string): string {
-  return `${SITE.compactName} plugin - ${toolkitSlug} (${clientLabel(client)})`;
+// Stable per-(workspace, toolkit, client) key name. The workspace prefix keeps
+// same-slug toolkits from rotating each other's credentials.
+function tokenName(workspaceSlug: string, toolkitSlug: string, client: string): string {
+  return `${SITE.compactName} plugin - ${workspaceSlug}/${toolkitSlug} (${clientLabel(client)})`;
 }
-function tokenNamePrefix(toolkitSlug: string): string {
-  return `${SITE.compactName} plugin - ${toolkitSlug} (`;
+
+const LEGACY_PLUGIN_BRANDS = [...new Set([SITE.compactName, 'MCPmarket'])];
+
+function legacyTokenNames(toolkitSlug: string, client: string): string[] {
+  return LEGACY_PLUGIN_BRANDS.map(
+    (brand) => `${brand} plugin - ${toolkitSlug} (${clientLabel(client)})`,
+  );
+}
+
+function legacyTokenNamePrefixes(toolkitSlug: string): string[] {
+  return LEGACY_PLUGIN_BRANDS.map((brand) => `${brand} plugin - ${toolkitSlug} (`);
 }
 
 // Ensure an opaque install link exists for (toolkit, user). The link is just a
@@ -53,7 +61,7 @@ function resolveLink(id: string) {
     where: { id },
     select: {
       userId: true,
-      toolkit: { select: { slug: true, workspace: { select: { slug: true } } } },
+      toolkit: { select: { id: true, slug: true, workspace: { select: { slug: true } } } },
     },
   });
 }
@@ -66,7 +74,7 @@ export type IssuedInstall = {
 
 // Issue (rotate) the install token for an opaque link. Mirrors the real site:
 // each call to the install URL overwrites a single named key
-// ("<brand> plugin - <toolkit> (<client>)"), so the embedded credential is
+// ("<brand> plugin - <workspace>/<toolkit> (<client>)"), so the embedded credential is
 // always freshly valid and can never silently go stale.
 export async function issueInstallToken(
   id: string,
@@ -76,12 +84,23 @@ export async function issueInstallToken(
   if (!link) return null;
 
   const toolkitSlug = link.toolkit.slug;
-  const name = tokenName(toolkitSlug, client);
+  const workspaceSlug = link.toolkit.workspace.slug;
+  const name = tokenName(workspaceSlug, toolkitSlug, client);
   // Overwrite: drop any prior key with this exact name, then mint a fresh one.
-  await db.apiToken.deleteMany({ where: { userId: link.userId, name } });
-  const { token } = await createApiToken(link.userId, name);
+  await db.apiToken.deleteMany({
+    where: {
+      userId: link.userId,
+      OR: [
+        { toolkitId: link.toolkit.id, name },
+        { toolkitId: null, name: { in: legacyTokenNames(toolkitSlug, client) } },
+      ],
+    },
+  });
+  const { token } = await createApiToken(link.userId, name, {
+    toolkitId: link.toolkit.id,
+  });
 
-  return { token, workspaceSlug: link.toolkit.workspace.slug, toolkitSlug };
+  return { token, workspaceSlug, toolkitSlug };
 }
 
 export type RevokedInstall = { workspaceSlug: string; toolkitSlug: string };
@@ -93,8 +112,46 @@ export async function revokeInstallTokens(id: string): Promise<RevokedInstall | 
 
   const toolkitSlug = link.toolkit.slug;
   await db.apiToken.deleteMany({
-    where: { userId: link.userId, name: { startsWith: tokenNamePrefix(toolkitSlug) } },
+    where: {
+      userId: link.userId,
+      OR: [
+        { toolkitId: link.toolkit.id },
+        ...legacyTokenNamePrefixes(toolkitSlug).map((prefix) => ({
+          toolkitId: null,
+          name: { startsWith: prefix },
+        })),
+      ],
+    },
   });
 
   return { workspaceSlug: link.toolkit.workspace.slug, toolkitSlug };
+}
+
+// Delete actions call this before the Toolkit row cascades so credentials
+// issued before toolkitId was recorded can also be revoked.
+export async function revokeToolkitInstallTokens(toolkitId: string): Promise<void> {
+  const toolkit = await db.toolkit.findUnique({
+    where: { id: toolkitId },
+    select: {
+      slug: true,
+      installLinks: { select: { userId: true } },
+    },
+  });
+  if (!toolkit) return;
+
+  const userIds = [...new Set(toolkit.installLinks.map(({ userId }) => userId))];
+  await db.apiToken.deleteMany({
+    where: {
+      OR: [
+        { toolkitId },
+        ...(userIds.length > 0
+          ? legacyTokenNamePrefixes(toolkit.slug).map((prefix) => ({
+              toolkitId: null,
+              userId: { in: userIds },
+              name: { startsWith: prefix },
+            }))
+          : []),
+      ],
+    },
+  });
 }

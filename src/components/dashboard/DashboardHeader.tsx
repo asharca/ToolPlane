@@ -15,20 +15,20 @@ export function DashboardHeader({
 }) {
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-      <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-8">
+      <div className="flex h-16 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-8">
         {breadcrumb ? (
-          <nav className="flex items-center gap-2 text-sm">
+          <nav className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
             {breadcrumb.map((crumb, i) => {
               const last = i === breadcrumb.length - 1;
               return (
-                <span key={`${crumb.label}-${i}`} className="flex items-center gap-2">
+                <span key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-2">
                   {i > 0 ? (
-                    <span className="text-muted-foreground/55">/</span>
+                    <span className="shrink-0 text-muted-foreground/55">/</span>
                   ) : null}
                   {crumb.href && !last ? (
                     <Link
                       href={crumb.href}
-                      className="font-semibold text-foreground transition-colors hover:text-muted-foreground"
+                      className="truncate font-semibold text-foreground transition-colors hover:text-muted-foreground"
                     >
                       {crumb.label}
                     </Link>
@@ -36,8 +36,8 @@ export function DashboardHeader({
                     <span
                       className={
                         last
-                          ? 'text-muted-foreground'
-                          : 'font-semibold text-foreground'
+                          ? 'truncate text-muted-foreground'
+                          : 'truncate font-semibold text-foreground'
                       }
                     >
                       {crumb.label}
@@ -52,7 +52,7 @@ export function DashboardHeader({
             {title}
           </h1>
         )}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <DashboardHeaderControls />
           {actions}
         </div>
