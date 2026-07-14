@@ -262,6 +262,7 @@
       "configure": "Settings",
       "configureAgent": "Settings",
       "openai": "OpenAI",
+      "openaiResponses": "OpenAI Responses",
       "format": "Format",
       "anthropic": "Anthropic",
       "baseUrl": "Base URL",

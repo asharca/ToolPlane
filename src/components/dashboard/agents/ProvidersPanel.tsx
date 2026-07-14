@@ -72,6 +72,7 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
           <Field icon={Braces} label={t('format')}>
             <select name="format" className="ui-input h-10 w-full" defaultValue="openai">
               <option value="openai">{t('openai')}</option>
+              <option value="openai-responses">{t('openaiResponses')}</option>
               <option value="anthropic">{t('anthropic')}</option>
             </select>
           </Field>

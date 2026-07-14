@@ -31,6 +31,31 @@ describe('buildModel', () => {
     expect(m.provider).not.toContain('anthropic');
   });
 
+  it('builds an OpenAI Responses model carrying the requested model id', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const m = buildModel({ ...base, format: 'openai-responses' }, 'gpt-x') as any;
+    expect(m.modelId).toBe('gpt-x');
+    expect(m.provider).toContain('responses');
+  });
+
+  it('sends OpenAI Responses requests to the responses endpoint', async () => {
+    let requestUrl = '';
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      requestUrl = String(input);
+      return new Response(JSON.stringify({ error: { message: 'test response' } }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    await expect(generateText({
+      model: buildModel({ ...base, format: 'openai-responses' }, 'gpt-x'),
+      prompt: 'hello',
+    })).rejects.toThrow();
+
+    expect(requestUrl).toBe('https://example.com/v1/responses');
+  });
+
   it('sends system instructions as the first OpenAI-compatible chat message', async () => {
     let requestUrl = '';
     let requestBody: Record<string, unknown> | null = null;
