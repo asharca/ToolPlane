@@ -28,6 +28,8 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
+import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 
 export type AgentRow = {
   id: string;
@@ -316,6 +318,8 @@ export function AgentsBrowser({
                         <MessageCircle className="size-[18px] shrink-0" />
                         {t('chat')}
                       </Link>
+                      <CloneAgentButton slug={slug} agentId={agent.id} agentName={agent.name} />
+                      <DeleteAgentButton slug={slug} agentId={agent.id} />
                     </div>
                   </div>
                 </li>

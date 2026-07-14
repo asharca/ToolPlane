@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { db } from '@/lib/db';
 import {
+  cloneAgent,
   createAgent,
   deleteAgent,
   updateAgent,
@@ -66,6 +67,159 @@ describe('agents mutations', () => {
     expect(a.slug).toBe('my-agent');
     const b = await createAgent(workspaceId, 'My Agent');
     expect(b.slug).toBe('my-agent-1');
+  });
+
+  it('clones reusable configuration and bindings without copying agent history', async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const source = await createAgent(workspaceId, 'Clone source');
+    const child = await createAgent(workspaceId, 'Clone child');
+    const skill = await db.installedSkill.create({
+      data: {
+        workspaceId,
+        name: 'Clone skill',
+        slug: `clone-skill-${suffix}`,
+        content: '# Clone skill',
+      },
+    });
+    const toolkit = await db.toolkit.create({
+      data: { workspaceId, name: 'Clone toolkit', slug: `clone-toolkit-${suffix}` },
+    });
+    const sandboxDeployment = await db.deployment.create({
+      data: { workspaceId, name: 'Clone sandbox deployment', source: 'sandbox', status: 'stopped' },
+    });
+    const sandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        deploymentId: sandboxDeployment.id,
+        name: 'Clone sandbox',
+        slug: `clone-sandbox-${suffix}`,
+        kind: 'docker',
+      },
+    });
+    const blockedDeployment = await db.deployment.create({
+      data: { workspaceId, name: 'Failed sandbox copy', source: 'sandbox', status: 'copy_failed' },
+    });
+    const blockedSandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        deploymentId: blockedDeployment.id,
+        name: 'Failed sandbox copy',
+        slug: `failed-clone-sandbox-${suffix}`,
+        kind: 'docker',
+      },
+    });
+
+    await updateAgent(workspaceId, source.id, {
+      name: source.name,
+      systemPrompt: 'Clone these instructions',
+      providerId,
+      model: 'gpt-clone',
+      maxSteps: 13,
+    });
+    await setAgentTools(workspaceId, source.id, {
+      deploymentIds: [deploymentId],
+      installedSkillIds: [skill.id],
+      toolkitIds: [toolkit.id],
+      sandboxIds: [sandbox.id],
+      subAgentIds: [child.id],
+    });
+    await db.agentSandbox.create({
+      data: { agentId: source.id, sandboxId: blockedSandbox.id },
+    });
+    const conversation = await createConversation(workspaceId, source.id, 'Do not clone');
+    await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'history' }]);
+    await db.agentAttachment.create({
+      data: {
+        workspaceId,
+        agentId: source.id,
+        conversationId: conversation!.id,
+        name: 'private.txt',
+        mimeType: 'text/plain',
+        size: 7,
+        storagePath: '/private.txt',
+      },
+    });
+    await db.agentChannelConnection.create({
+      data: {
+        workspaceId,
+        agentId: source.id,
+        platform: 'telegram',
+        name: 'Private channel',
+        credentials: { encrypted: 'secret' },
+        inboundTokenHash: `clone-hash-${suffix}`,
+        inboundTokenSecret: { encrypted: 'token' },
+        inboundTokenPrefix: 'tpchan_clone',
+      },
+    });
+
+    const cloned = await cloneAgent(workspaceId, source.id, 'Clone target');
+    expect(cloned?.runtimeKind).toBe('native');
+    const reread = await db.agent.findUnique({
+      where: { id: cloned!.id },
+      include: {
+        servers: true,
+        skills: true,
+        toolkits: true,
+        sandboxes: true,
+        subAgents: true,
+        conversations: true,
+        channels: true,
+        attachments: true,
+      },
+    });
+
+    expect(reread).toMatchObject({
+      name: 'Clone target',
+      slug: 'clone-target',
+      systemPrompt: 'Clone these instructions',
+      providerId,
+      model: 'gpt-clone',
+      maxSteps: 13,
+    });
+    expect(reread?.servers.map((link) => link.deploymentId)).toEqual([deploymentId]);
+    expect(reread?.skills.map((link) => link.installedSkillId)).toEqual([skill.id]);
+    expect(reread?.toolkits.map((link) => link.toolkitId)).toEqual([toolkit.id]);
+    expect(reread?.sandboxes.map((link) => link.sandboxId)).toEqual([sandbox.id]);
+    expect(reread?.subAgents.map((link) => link.childId)).toEqual([child.id]);
+    expect(reread?.conversations).toHaveLength(0);
+    expect(reread?.channels).toHaveLength(0);
+    expect(reread?.attachments).toHaveLength(0);
+  });
+
+  it('clones a Hermes agent into a distinct managed runtime', async () => {
+    const source = await createAgent(workspaceId, 'Hermes clone source', {
+      runtime: 'hermes',
+      hermesImage: 'nousresearch/hermes-agent:v-clone',
+    });
+    await updateAgent(workspaceId, source.id, {
+      name: source.name,
+      systemPrompt: null,
+      providerId,
+      model: 'hermes-model',
+      maxSteps: 9,
+    });
+
+    const cloned = await cloneAgent(workspaceId, source.id, 'Hermes clone target');
+    expect(cloned?.runtimeKind).toBe('hermes');
+    const [sourceRuntime, clonedRuntime, clonedAgent] = await Promise.all([
+      db.agentRuntime.findUniqueOrThrow({ where: { agentId: source.id } }),
+      db.agentRuntime.findUniqueOrThrow({ where: { agentId: cloned!.id } }),
+      db.agent.findUniqueOrThrow({ where: { id: cloned!.id } }),
+    ]);
+
+    expect(clonedRuntime.id).not.toBe(sourceRuntime.id);
+    expect(clonedRuntime.sandboxId).not.toBe(sourceRuntime.sandboxId);
+    expect(clonedRuntime.image).toBe(sourceRuntime.image);
+    expect(clonedRuntime.status).toBe('setup_required');
+    expect(clonedAgent).toMatchObject({
+      providerId,
+      model: 'hermes-model',
+      maxSteps: 9,
+      systemPrompt: null,
+    });
+
+    await deleteAgent(workspaceId, source.id);
+    await deleteAgent(workspaceId, cloned!.id);
   });
 
   it('creates a Hermes agent with one managed runtime sandbox', async () => {
@@ -247,13 +401,16 @@ describe('agents mutations', () => {
     await db.workspace.delete({ where: { id: other.id } });
   });
 
-  it('refuses to create a conversation on an agent outside the workspace', async () => {
+  it('refuses to create, clone, or delete an agent outside the workspace', async () => {
     const other = await db.workspace.create({
       data: { slug: `m-o3-${Date.now()}`, name: 'O3', ownerId: userId, members: { create: { userId, role: 'owner' } } },
     });
     const fagent = await db.agent.create({ data: { workspaceId: other.id, name: 'FA', slug: 'fa' } });
     const conv = await createConversation(workspaceId, fagent.id);
     expect(conv).toBeNull();
+    expect(await cloneAgent(workspaceId, fagent.id)).toBeNull();
+    await deleteAgent(workspaceId, fagent.id);
+    expect(await db.agent.findUnique({ where: { id: fagent.id } })).not.toBeNull();
     await db.workspace.delete({ where: { id: other.id } });
   });
 

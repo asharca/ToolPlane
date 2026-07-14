@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getProvider } from '@/lib/agents/queries';
 import {
+  cloneAgent,
   createAgent,
   updateAgent,
   setAgentTools,
@@ -145,6 +146,22 @@ export async function deleteAgentAction(formData: FormData) {
   await deleteAgent(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents`);
   redirect(`/app/${slug}/agents`);
+}
+
+export async function cloneAgentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const sourceAgentId = String(formData.get('agentId') ?? '');
+  const requestedName = String(formData.get('cloneName') ?? '').trim().slice(0, 60) || undefined;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !sourceAgentId) return;
+
+  const cloned = await cloneAgent(ctx.ws.id, sourceAgentId, requestedName);
+  if (!cloned) return;
+  if (cloned.runtimeKind === 'hermes') {
+    await syncHermesRuntime(ctx.ws.id, cloned.id);
+  }
+  revalidatePath(`/app/${slug}/agents`);
+  redirect(`/app/${slug}/agents/${cloned.id}?settings=agent`);
 }
 
 export async function updateAgentAction(
