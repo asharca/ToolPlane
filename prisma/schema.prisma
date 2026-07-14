@@ -58,6 +58,8 @@ model ApiToken {
   id         String    @id @default(cuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolkitId  String?
+  toolkit    Toolkit?  @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
   name       String
   prefix     String
   tokenHash  String    @unique
@@ -65,6 +67,7 @@ model ApiToken {
   createdAt  DateTime  @default(now())
 
   @@index([userId])
+  @@index([toolkitId])
 }
 
 model Client {
@@ -257,6 +260,7 @@ model Toolkit {
   skills           ToolkitSkill[]
   agentLinks       AgentToolkit[]
   installLinks     ToolkitInstallLink[]
+  apiTokens        ApiToken[]
   skillInvocations SkillInvocation[]
   syncEvents       SyncEvent[]
   createdAt        DateTime             @default(now())

@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Lock, Globe, Store, Wrench } from 'lucide-react';
+import { Plus, Lock, Globe, Settings, Store, Wrench } from 'lucide-react';
 import { createToolkitAction } from '@/lib/toolkits/actions';
 import {
   DashboardEmptyState,
@@ -126,26 +126,27 @@ export function ToolkitsBrowser({
                 { label: 'Status' },
                 { label: 'Tools' },
                 { label: 'Created' },
+                { label: t('settings'), align: 'right' },
               ]}
               panel={false}
             >
-              {filtered.map((t) => (
-                <tr key={t.id}>
+              {filtered.map((toolkit) => (
+                <tr key={toolkit.id}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <Link
-                        href={`/app/${slug}/toolkits/${t.slug}`}
+                        href={`/app/${slug}/toolkits/${toolkit.slug}`}
                         className="font-medium text-foreground hover:underline"
                       >
-                        {t.name}
+                        {toolkit.name}
                       </Link>
                       <span className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
-                        {t.visibility === 'public' ? (
+                        {toolkit.visibility === 'public' ? (
                           <Globe className="size-3" />
                         ) : (
                           <Lock className="size-3" />
                         )}
-                        {t.visibility}
+                        {toolkit.visibility}
                       </span>
                     </div>
                   </td>
@@ -153,17 +154,27 @@ export function ToolkitsBrowser({
                     <span className="inline-flex items-center gap-1.5 text-foreground">
                       <span
                         className={`size-2 rounded-full ${
-                          t.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
+                          toolkit.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
                         }`}
                       />
-                      {t.enabled ? 'Enabled' : 'Disabled'}
+                      {toolkit.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {t.toolCount}
+                    {toolkit.toolCount}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {t.created}
+                    {toolkit.created}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Link
+                      href={`/app/${slug}/toolkits/${toolkit.slug}?tab=settings`}
+                      aria-label={`${toolkit.name}: ${t('settings')}`}
+                      title={t('settings')}
+                      className="ui-button-ghost ui-icon-button ml-auto size-8 min-h-8"
+                    >
+                      <Settings className="size-4" />
+                    </Link>
                   </td>
                 </tr>
               ))}

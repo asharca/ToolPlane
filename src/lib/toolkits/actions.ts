@@ -8,6 +8,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
+import { revokeToolkitInstallTokens } from '@/lib/toolkits/install-link';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -21,6 +22,15 @@ async function toolkitInWorkspace(toolkitSlug: string, workspaceId: string) {
   return db.toolkit.findFirst({ where: { slug: toolkitSlug, workspaceId } });
 }
 
+const MAX_TOOLKIT_NAME_LENGTH = 60;
+const MAX_TOOLKIT_CREATE_ATTEMPTS = 10;
+
+function toolkitName(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  return name && name.length <= MAX_TOOLKIT_NAME_LENGTH ? name : null;
+}
+
 function slugify(input: string): string {
   const base = input
     .toLowerCase()
@@ -29,23 +39,63 @@ function slugify(input: string): string {
   return base || 'toolkit';
 }
 
+async function availableToolkitSlug(workspaceId: string, name: string): Promise<string> {
+  const base = slugify(name);
+  let suffix = 0;
+
+  while (true) {
+    const candidate = suffix === 0 ? base : `${base}-${suffix}`;
+    if (
+      candidate !== 'me' &&
+      !(await db.toolkit.findFirst({
+        where: { workspaceId, slug: candidate },
+        select: { id: true },
+      }))
+    ) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+}
+
+function withCloneSuffix(name: string, copyNumber: number): string {
+  const suffix = copyNumber === 1 ? '' : ` ${copyNumber}`;
+  return `${name.slice(0, MAX_TOOLKIT_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'P2002'
+  );
+}
+
+async function availableCloneIdentity(workspaceId: string, requestedName: string) {
+  for (let copyNumber = 1; ; copyNumber += 1) {
+    const name = withCloneSuffix(requestedName, copyNumber);
+    const slug = slugify(name);
+    if (slug === 'me') continue;
+
+    const conflict = await db.toolkit.findFirst({
+      where: {
+        workspaceId,
+        OR: [{ name }, { slug }],
+      },
+      select: { id: true },
+    });
+    if (!conflict) return { name, slug };
+  }
+}
+
 export async function createToolkitAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
-  const name = String(formData.get('name') ?? '').trim() || 'New toolkit';
+  const name = toolkitName(formData.get('name')) ?? 'New toolkit';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  const base = slugify(name);
-  let toolkitSlug = base;
-  for (
-    let i = 1;
-    await db.toolkit.findFirst({
-      where: { workspaceId: ctx.ws.id, slug: toolkitSlug },
-    });
-    i += 1
-  ) {
-    toolkitSlug = `${base}-${i}`;
-  }
+  const toolkitSlug = await availableToolkitSlug(ctx.ws.id, name);
 
   await db.toolkit.create({
     data: { workspaceId: ctx.ws.id, name, slug: toolkitSlug },
@@ -88,17 +138,7 @@ export async function clonePublicToolkitAction(formData: FormData) {
     return redirect(`/app/${workspaceSlug}/toolkits/${source.slug}`);
   }
 
-  const base = slugify(source.name);
-  let nextSlug = base;
-  for (
-    let i = 1;
-    await db.toolkit.findFirst({
-      where: { workspaceId: ctx.ws.id, slug: nextSlug },
-    });
-    i += 1
-  ) {
-    nextSlug = `${base}-${i}`;
-  }
+  const nextSlug = await availableToolkitSlug(ctx.ws.id, source.name);
 
   const cloned = await db.$transaction(async (tx) => {
     const target = await tx.toolkit.create({
@@ -209,6 +249,92 @@ export async function clonePublicToolkitAction(formData: FormData) {
   redirect(`/app/${workspaceSlug}/toolkits/${cloned.slug}`);
 }
 
+export async function renameToolkitAction(formData: FormData) {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
+  const name = toolkitName(formData.get('name'));
+  if (!workspaceSlug || !toolkitSlug || !name) return;
+
+  const ctx = await authorizedWorkspace(workspaceSlug);
+  if (!ctx) return;
+  const toolkit = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
+  if (!toolkit) return;
+
+  await db.toolkit.update({ where: { id: toolkit.id }, data: { name } });
+  revalidatePath(`/app/${workspaceSlug}/toolkits`);
+  revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
+}
+
+export async function cloneToolkitAction(formData: FormData) {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
+  if (!workspaceSlug || !toolkitSlug) return;
+
+  const ctx = await authorizedWorkspace(workspaceSlug);
+  if (!ctx) return;
+  const source = await db.toolkit.findFirst({
+    where: { workspaceId: ctx.ws.id, slug: toolkitSlug },
+    select: {
+      name: true,
+      servers: {
+        select: {
+          deploymentId: true,
+          deployment: { select: { workspaceId: true } },
+        },
+      },
+      skills: {
+        select: {
+          installedSkillId: true,
+          installedSkill: { select: { workspaceId: true } },
+        },
+      },
+    },
+  });
+  if (!source) return;
+  if (
+    source.servers.some(({ deployment }) => deployment.workspaceId !== ctx.ws.id) ||
+    source.skills.some(({ installedSkill }) => installedSkill.workspaceId !== ctx.ws.id)
+  ) {
+    return;
+  }
+
+  const defaultName = `${source.name.slice(0, MAX_TOOLKIT_NAME_LENGTH - 5).trimEnd()} Copy`;
+  const nameEntry = formData.get('name');
+  const requestedName = nameEntry === null ? defaultName : toolkitName(nameEntry);
+  if (!requestedName) return;
+  let cloned: { slug: string } | null = null;
+  for (let attempt = 0; attempt < MAX_TOOLKIT_CREATE_ATTEMPTS; attempt += 1) {
+    const identity = await availableCloneIdentity(ctx.ws.id, requestedName);
+    try {
+      cloned = await db.toolkit.create({
+        data: {
+          workspaceId: ctx.ws.id,
+          name: identity.name,
+          slug: identity.slug,
+          visibility: 'private',
+          enabled: true,
+          servers: {
+            create: source.servers.map(({ deploymentId }) => ({ deploymentId })),
+          },
+          skills: {
+            create: source.skills.map(({ installedSkillId }) => ({ installedSkillId })),
+          },
+        },
+        select: { slug: true },
+      });
+      break;
+    } catch (error) {
+      if (!isUniqueConstraintError(error) || attempt === MAX_TOOLKIT_CREATE_ATTEMPTS - 1) {
+        throw error;
+      }
+    }
+  }
+  if (!cloned) return;
+
+  revalidatePath(`/app/${workspaceSlug}/toolkits`);
+  redirect(`/app/${workspaceSlug}/toolkits/${cloned.slug}`);
+}
+
 export async function deleteToolkitAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
@@ -218,6 +344,7 @@ export async function deleteToolkitAction(formData: FormData) {
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
 
+  await revokeToolkitInstallTokens(tk.id);
   await db.toolkit.delete({ where: { id: tk.id } });
   revalidatePath(`/app/${slug}/toolkits`);
   redirect(`/app/${slug}/toolkits`);

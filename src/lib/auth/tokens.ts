@@ -4,11 +4,16 @@ import { generateToken, hashToken, tokenPrefix } from './token-format';
 
 export { generateToken, hashToken, tokenPrefix } from './token-format';
 
-export async function createApiToken(userId: string, name: string) {
+export async function createApiToken(
+  userId: string,
+  name: string,
+  options: { toolkitId?: string } = {},
+) {
   const token = generateToken();
   const record = await db.apiToken.create({
     data: {
       userId,
+      toolkitId: options.toolkitId,
       name: name.trim() || 'Default token',
       prefix: tokenPrefix(token),
       tokenHash: hashToken(token),

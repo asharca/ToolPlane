@@ -8,6 +8,7 @@ import { GET as uninstallGET } from '@/app/install/[id]/uninstall/route';
 
 let userId = '';
 let workspaceId = '';
+let workspaceSlug = '';
 let toolkitId = '';
 let tkSlug = '';
 const stamp = Date.now();
@@ -26,6 +27,7 @@ beforeAll(async () => {
     },
   });
   workspaceId = ws.id;
+  workspaceSlug = ws.slug;
   tkSlug = `kit-${stamp}`;
   const toolkit = await db.toolkit.create({
     data: { workspaceId, slug: tkSlug, name: 'Kit' },
@@ -39,7 +41,8 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-const KEY_NAME = (client = 'Claude Code') => `ToolPlane plugin - ${tkSlug} (${client})`;
+const KEY_NAME = (client = 'Claude Code') =>
+  `ToolPlane plugin - ${workspaceSlug}/${tkSlug} (${client})`;
 
 function install(id: string, client?: string) {
   const suffix = client ? `?client=${client}` : '';
@@ -82,9 +85,10 @@ describe('toolkit install link (mint-on-fetch named key)', () => {
     const token = tokenFromScript(body);
     const row = await db.apiToken.findUnique({
       where: { tokenHash: hashToken(token) },
-      select: { name: true },
+      select: { name: true, toolkitId: true },
     });
     expect(row?.name).toBe(KEY_NAME());
+    expect(row?.toolkitId).toBe(toolkitId);
   });
 
   it('re-installing overwrites the key (one row, rotated token)', async () => {
@@ -127,7 +131,7 @@ describe('toolkit install link (mint-on-fetch named key)', () => {
     expect(body).toContain('rm -rf');
     expect(
       await db.apiToken.count({
-        where: { userId, name: { startsWith: `ToolPlane plugin - ${tkSlug} (` } },
+        where: { userId, toolkitId },
       }),
     ).toBe(0);
   });
