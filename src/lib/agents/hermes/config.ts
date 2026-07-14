@@ -30,6 +30,12 @@ function normalizedBaseUrl(provider: HermesProviderProjection): string {
   return provider.format === 'anthropic' ? value.replace(/\/v1$/, '') : value;
 }
 
+function hermesApiMode(format: string): string {
+  if (format === 'anthropic') return 'anthropic_messages';
+  if (format === 'openai-responses') return 'codex_responses';
+  return 'chat_completions';
+}
+
 export function renderHermesConfig(input: HermesConfigProjection): string {
   const maxTurns = Math.max(1, Math.min(Math.trunc(input.maxSteps) || 1, 500));
   const model = input.provider
@@ -39,7 +45,7 @@ export function renderHermesConfig(input: HermesConfigProjection): string {
         `  default: ${yamlString(input.provider.model)}`,
         `  base_url: ${yamlString(normalizedBaseUrl(input.provider))}`,
         `  api_key: ${yamlString(input.provider.apiKey)}`,
-        `  api_mode: ${input.provider.format === 'anthropic' ? 'anthropic_messages' : 'chat_completions'}`,
+        `  api_mode: ${hermesApiMode(input.provider.format)}`,
       ]
     : [];
 

@@ -9,8 +9,9 @@ describe('modelsEndpoint', () => {
 });
 
 describe('modelsHeaders', () => {
-  it('uses Bearer auth for openai format', () => {
+  it('uses Bearer auth for OpenAI formats', () => {
     expect(modelsHeaders('openai', 'k')).toEqual({ authorization: 'Bearer k' });
+    expect(modelsHeaders('openai-responses', 'k')).toEqual({ authorization: 'Bearer k' });
   });
   it('uses x-api-key + version for anthropic format', () => {
     expect(modelsHeaders('anthropic', 'k')).toEqual({

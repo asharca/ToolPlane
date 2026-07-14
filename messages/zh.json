@@ -262,6 +262,7 @@
       "configure": "设置",
       "configureAgent": "设置",
       "openai": "OpenAI",
+      "openaiResponses": "OpenAI Responses",
       "format": "格式",
       "anthropic": "Anthropic",
       "baseUrl": "Base URL",

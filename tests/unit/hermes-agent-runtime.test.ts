@@ -110,4 +110,20 @@ describe('Hermes agent runtime contract', () => {
     });
     expect(config).toContain('base_url: "http://host.docker.internal:11434/v1"');
   });
+
+  it('configures Responses providers with the Hermes responses API mode', () => {
+    const config = renderHermesConfig({
+      maxSteps: 8,
+      provider: {
+        format: 'openai-responses',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'provider-secret',
+        model: 'gpt-x',
+      },
+      mcpUrl: 'https://toolplane.test/mcp',
+      mcpToken: 'token',
+    });
+
+    expect(config).toContain('api_mode: codex_responses');
+  });
 });

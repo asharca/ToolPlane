@@ -44,13 +44,16 @@ async function authorizedWorkspace(slug: string) {
 
 export type ActionState = { error?: string; savedAt?: number };
 
+const PROVIDER_FORMATS = new Set(['openai', 'openai-responses', 'anthropic']);
+
 export async function createProviderAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
   const slug = String(formData.get('workspace') ?? '');
   const name = String(formData.get('name') ?? '').trim();
-  const format = String(formData.get('format') ?? '') === 'anthropic' ? 'anthropic' : 'openai';
+  const requestedFormat = String(formData.get('format') ?? '');
+  const format = PROVIDER_FORMATS.has(requestedFormat) ? requestedFormat : 'openai';
   const baseUrl = String(formData.get('baseUrl') ?? '').trim();
   const apiKey = String(formData.get('apiKey') ?? '').trim();
   if (!name || !baseUrl || !apiKey) return { error: 'Name, base URL and API key are required.' };
