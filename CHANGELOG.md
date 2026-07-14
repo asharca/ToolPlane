@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.9.0...toolplane-v0.10.0) (2026-07-14)
+
+
+### Features
+
+* support MCP JSON configs ([#41](https://github.com/asharca/ToolPlane/issues/41)) ([d527bdb](https://github.com/asharca/ToolPlane/commit/d527bdbbf992faa4c96b59622f7b08f8c1673484))
+
 ## [0.9.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.8.0...toolplane-v0.9.0) (2026-07-14)
 
 
