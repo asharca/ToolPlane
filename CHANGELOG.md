@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.6.0...toolplane-v0.7.0) (2026-07-14)
+
+
+### Features
+
+* add user timezone preferences ([#31](https://github.com/asharca/ToolPlane/issues/31)) ([b2eae0b](https://github.com/asharca/ToolPlane/commit/b2eae0b3a03069fd7cb6953275d275397d5a5600))
+
+
+### Bug Fixes
+
+* preserve Hermes assistant message boundaries ([#30](https://github.com/asharca/ToolPlane/issues/30)) ([ea94444](https://github.com/asharca/ToolPlane/commit/ea9444421b20a4d170b857c84820739484bfbfd6))
+
 ## [0.6.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.5.0...toolplane-v0.6.0) (2026-07-12)
 
 
