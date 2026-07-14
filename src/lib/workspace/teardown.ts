@@ -1,8 +1,12 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { killMany, preventWorkspaceStarts } from '@/lib/process/supervisor';
-import { removeDockerSandboxRuntime } from '@/lib/sandboxes/runtime';
+import {
+  removeDockerSandboxRuntimeStrict,
+  removeDockerVolumeStrict,
+} from '@/lib/sandboxes/runtime';
 import { disconnectConnector } from '@/lib/sandboxes/connector-broker';
+import { closeWorkspaceOperations } from './operation-gate';
 
 export async function workspaceDeploymentIds(workspaceId: string): Promise<string[]> {
   const rows = await db.deployment.findMany({ where: { workspaceId }, select: { id: true } });
@@ -15,29 +19,52 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   // Close the workspace before taking the deployment snapshot so concurrent
   // creates in this server process cannot start an ID absent from the snapshot.
   preventWorkspaceStarts(workspaceId);
+  await closeWorkspaceOperations(workspaceId);
   const [deploymentIds, sandboxes] = await Promise.all([
     workspaceDeploymentIds(workspaceId),
-    db.sandbox.findMany({ where: { workspaceId }, include: { deployment: { select: { installCfg: true } } } }),
+    db.sandbox.findMany({
+      where: { workspaceId },
+      include: {
+        deployment: { select: { installCfg: true } },
+        snapshots: { select: { volumeName: true } },
+      },
+    }),
   ]);
+  const sandboxDeploymentIds = new Set(sandboxes.map((sandbox) => sandbox.deploymentId));
+  const regularDeploymentIds = deploymentIds.filter((id) => !sandboxDeploymentIds.has(id));
   // Supervisor teardown joins any pending launch, terminates the child, and
   // drains its ordered status writes before connector authentication is closed.
-  await killMany(deploymentIds);
+  if (regularDeploymentIds.length > 0) await killMany(regularDeploymentIds);
+  if (sandboxDeploymentIds.size > 0) {
+    await killMany([...sandboxDeploymentIds], { finalStatus: 'deleting' });
+  }
   // Supervisor writes intentionally tolerate rows deleted by other cleanup
   // paths. Workspace deletion needs a strict final write so connector auth is
   // durably inactive before the one-time WebSocket disconnect.
   await db.deployment.updateMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      OR: [
+        { source: null },
+        { source: { not: 'sandbox' } },
+      ],
+    },
     data: { status: 'stopped' },
+  });
+  await db.deployment.updateMany({
+    where: { workspaceId, source: 'sandbox' },
+    data: { status: 'deleting' },
   });
   for (const sandbox of sandboxes) {
     if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'workspace deleted');
   }
-  await Promise.all(
-    sandboxes
-      .filter((s) => s.kind === 'docker' || s.kind === 'hermes')
-      .map((s) => {
-        const cfg = (s.deployment.installCfg ?? {}) as { volumeName?: string };
-        return removeDockerSandboxRuntime(s.id, cfg.volumeName);
-      }),
-  );
+  for (const sandbox of sandboxes) {
+    for (const snapshot of sandbox.snapshots) {
+      await removeDockerVolumeStrict(snapshot.volumeName);
+    }
+    if (sandbox.kind === 'docker' || sandbox.kind === 'hermes') {
+      const cfg = (sandbox.deployment.installCfg ?? {}) as { volumeName?: string };
+      await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName);
+    }
+  }
 }

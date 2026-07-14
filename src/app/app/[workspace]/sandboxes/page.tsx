@@ -36,6 +36,7 @@ import {
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -114,6 +115,7 @@ export default async function SandboxesPage({
   params: Promise<{ workspace: string }>;
 }) {
   const t = await getTranslations('console.sandboxes');
+  const common = await getTranslations('common');
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -134,7 +136,13 @@ export default async function SandboxesPage({
       ? runtime.status
       : effectiveStatus(runtime.sandbox.deploymentId, runtime.sandbox.deployment.status)
   );
-  const anyProvisioning = sandboxes.some((s) => effectiveStatus(s.deploymentId, s.deployment.status) === 'provisioning')
+  const anyProvisioning = sandboxes.some((s) => {
+    const status = effectiveStatus(s.deploymentId, s.deployment.status);
+    return status === 'provisioning'
+      || status === 'copying'
+      || status === 'restoring'
+      || status === 'restore_cleanup_required';
+  })
     || managedRuntimes.some((runtime) => managedStatus(runtime) === 'provisioning');
   const dockerCount = sandboxes.filter((s) => s.kind === 'docker').length;
   const connectorCount = sandboxes.filter((s) => s.kind === 'connector').length;
@@ -332,20 +340,30 @@ export default async function SandboxesPage({
             />
           ) : (
             <DashboardTable
-              minWidth="54rem"
+              minWidth="60rem"
               headers={[
-                { label: 'Sandbox' },
-                { label: 'Mode' },
-                { label: 'Status' },
-                { label: 'Backing store' },
-                { label: 'Agents' },
-                { label: 'Created' },
-                { label: 'Actions', align: 'right' },
+                { label: t('sandbox') },
+                { label: t('mode') },
+                { label: t('status') },
+                { label: t('backingStore') },
+                { label: t('agentsColumn') },
+                { label: t('snapshots') },
+                { label: t('created') },
+                { label: t('actions'), align: 'right' },
               ]}
             >
               {sandboxes.map((s) => {
                 const status = effectiveStatus(s.deploymentId, s.deployment.status);
                 const running = status === 'running' || status === 'provisioning';
+                const lifecycleBlocked = [
+                  'copying',
+                  'copy_failed',
+                  'restoring',
+                  'restore_failed',
+                  'restore_cleanup_required',
+                  'deleting',
+                ]
+                  .includes(status);
                 const connector = connectorFromConfig(s.config);
                 const disabledLegacy = s.kind === 'host' || s.kind === 'ssh' || (s.kind === 'connector' && !connector);
                 return (
@@ -389,13 +407,14 @@ export default async function SandboxesPage({
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{s._count.agentLinks}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{s._count.snapshots}</td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-3">
                         <Link href={`/app/${slug}/sandboxes/${s.id}`} className={rowButton}>
                           {t('inspect')}
                         </Link>
-                        {disabledLegacy ? null : running ? (
+                        {disabledLegacy || lifecycleBlocked ? null : running ? (
                           <>
                             <form action={stopSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />
@@ -424,9 +443,17 @@ export default async function SandboxesPage({
                         <form action={deleteSandboxAction}>
                           <input type="hidden" name="workspace" value={slug} />
                           <input type="hidden" name="sandboxId" value={s.id} />
-                          <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                            {t('delete')}
-                          </button>
+                          <ConfirmSubmitButton
+                            triggerLabel={t('delete')}
+                            confirmLabel={common('confirm')}
+                            cancelLabel={common('cancel')}
+                            prompt={t('deleteSandboxShortPrompt', { name: s.name })}
+                            pendingLabel={t('deletingSandbox')}
+                            triggerClassName="text-xs text-muted-foreground transition-colors hover:text-red-600"
+                            confirmClassName="text-xs font-medium text-red-600 hover:text-red-700"
+                            cancelClassName="text-xs text-muted-foreground hover:text-foreground"
+                            promptClassName="max-w-36 text-right text-xs text-muted-foreground"
+                          />
                         </form>
                       </div>
                     </td>

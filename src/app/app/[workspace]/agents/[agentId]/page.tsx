@@ -137,12 +137,25 @@ export default async function AgentDetailPage({
             checked: selectedToolkits.has(t.id),
             status: t.enabled ? 'enabled' : 'disabled',
           })),
-          sandboxes: sandboxes.filter((s) => s.id !== agent.runtime?.sandboxId).map((s) => ({
-            id: s.id,
-            label: s.name,
-            checked: selectedSandboxes.has(s.id),
-            status: effectiveStatus(s.deploymentId, s.deployment.status),
-          })),
+          sandboxes: sandboxes
+            .filter((s) => {
+              if (s.id === agent.runtime?.sandboxId) return false;
+              return ![
+                'copying',
+                'copy_failed',
+                'restoring',
+                'restore_failed',
+                'restore_cleanup_required',
+                'deleting',
+              ]
+                .includes(effectiveStatus(s.deploymentId, s.deployment.status));
+            })
+            .map((s) => ({
+              id: s.id,
+              label: s.name,
+              checked: selectedSandboxes.has(s.id),
+              status: effectiveStatus(s.deploymentId, s.deployment.status),
+            })),
           subAgents: agents
             .filter((a) => a.id !== agentId)
             .map((a) => ({

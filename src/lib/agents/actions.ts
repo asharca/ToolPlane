@@ -141,7 +141,7 @@ export async function deleteAgentAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  await cleanupHermesRuntime(ctx.ws.id, agentId);
+  if (!await cleanupHermesRuntime(ctx.ws.id, agentId)) return;
   await deleteAgent(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents`);
   redirect(`/app/${slug}/agents`);

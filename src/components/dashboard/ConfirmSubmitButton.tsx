@@ -35,6 +35,7 @@ export function ConfirmSubmitButton({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const restoreTriggerFocus = useRef(false);
+  const wasPending = useRef(false);
 
   useEffect(() => {
     if (confirming) {
@@ -44,6 +45,18 @@ export function ConfirmSubmitButton({
       triggerRef.current?.focus();
     }
   }, [confirming]);
+
+  useEffect(() => {
+    if (pending) {
+      wasPending.current = true;
+      return;
+    }
+    if (!wasPending.current) return;
+
+    wasPending.current = false;
+    restoreTriggerFocus.current = true;
+    setConfirming(false);
+  }, [pending]);
 
   function cancelConfirmation() {
     restoreTriggerFocus.current = true;

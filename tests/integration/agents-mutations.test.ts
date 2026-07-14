@@ -127,6 +127,39 @@ describe('agents mutations', () => {
     await deleteAgent(workspaceId, nativeAgent.id);
   });
 
+  it('does not attach a sandbox with an incomplete data lifecycle operation', async () => {
+    const agent = await createAgent(workspaceId, 'Blocked sandbox consumer');
+    const deployment = await db.deployment.create({
+      data: {
+        workspaceId,
+        name: 'Interrupted clone',
+        source: 'sandbox',
+        status: 'copy_failed',
+      },
+    });
+    const sandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        deploymentId: deployment.id,
+        name: 'Interrupted clone',
+        slug: `interrupted-clone-${Date.now()}`,
+        kind: 'docker',
+        image: 'alpine:3.20',
+      },
+    });
+
+    await setAgentTools(workspaceId, agent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [sandbox.id],
+    });
+
+    await expect(db.agentSandbox.count({ where: { agentId: agent.id } })).resolves.toBe(0);
+    await deleteAgent(workspaceId, agent.id);
+    await db.deployment.delete({ where: { id: deployment.id } });
+  });
+
   it('does not overwrite a Hermes-owned system prompt through ToolPlane updates', async () => {
     const agent = await createAgent(workspaceId, 'Hermes Prompt Owner', { runtime: 'hermes' });
     await db.agent.update({

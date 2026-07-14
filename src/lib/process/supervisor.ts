@@ -77,6 +77,10 @@ export function preventWorkspaceStarts(workspaceId: string): void {
   workspaceTombstones().add(workspaceId);
 }
 
+export function allowProcessRestart(deploymentId: string): void {
+  tombstones().delete(deploymentId);
+}
+
 function launchPrevented(deploymentId: string, workspaceId?: string): boolean {
   return tombstones().has(deploymentId)
     || (workspaceId !== undefined && workspaceTombstones().has(workspaceId));
@@ -512,7 +516,11 @@ export async function startProcess(
   if ((options.awaitReady ?? true) && ready) await ready;
 }
 
-async function stopProcessUnlocked(deploymentId: string, force = false): Promise<void> {
+async function stopProcessUnlocked(
+  deploymentId: string,
+  force = false,
+  finalStatus = 'stopped',
+): Promise<void> {
   const e = store().get(deploymentId);
   const registered = readRegistry(deploymentId);
   try {
@@ -527,7 +535,7 @@ async function stopProcessUnlocked(deploymentId: string, force = false): Promise
   }
   deleteRegistry(deploymentId);
   if (e && store().get(deploymentId) === e) store().delete(deploymentId);
-  await persist(deploymentId, 'stopped');
+  await persist(deploymentId, finalStatus);
 }
 
 export async function stopProcess(deploymentId: string): Promise<void> {
@@ -546,8 +554,9 @@ export async function restartProcess(
   if ((options.awaitReady ?? true) && ready) await ready;
 }
 
-type KillProcessOptions = {
+export type KillProcessOptions = {
   preventRestart?: boolean;
+  finalStatus?: string;
 };
 
 export async function killProcess(
@@ -555,11 +564,20 @@ export async function killProcess(
   options: KillProcessOptions = {},
 ): Promise<void> {
   if (options.preventRestart) tombstones().add(deploymentId);
-  await enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId, true));
+  await enqueueLifecycle(
+    deploymentId,
+    () => stopProcessUnlocked(deploymentId, true, options.finalStatus),
+  );
 }
 
 // Kill every supervised process for a set of deployments (e.g. when a
 // workspace is deleted) so no child processes are left orphaned.
-export async function killMany(deploymentIds: string[]): Promise<void> {
-  await Promise.all(deploymentIds.map((id) => killProcess(id, { preventRestart: true })));
+export async function killMany(
+  deploymentIds: string[],
+  options: KillProcessOptions = {},
+): Promise<void> {
+  await Promise.all(deploymentIds.map((id) => killProcess(id, {
+    ...options,
+    preventRestart: true,
+  })));
 }

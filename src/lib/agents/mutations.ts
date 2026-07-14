@@ -148,6 +148,18 @@ export async function setAgentTools(
         id: { in: tools.sandboxIds ?? [] },
         workspaceId,
         kind: { not: HERMES_RUNTIME_KIND },
+        deployment: {
+          status: {
+            notIn: [
+              'copying',
+              'copy_failed',
+              'restoring',
+              'restore_failed',
+              'restore_cleanup_required',
+              'deleting',
+            ],
+          },
+        },
       },
       select: { id: true },
     }),

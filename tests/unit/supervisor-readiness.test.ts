@@ -403,6 +403,15 @@ describe('supervisor readiness races', () => {
     expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('stopped');
   });
 
+  it('persists the destructive lifecycle status requested by the caller', async () => {
+    await supervisor.killProcess('deleting-deployment', {
+      preventRestart: true,
+      finalStatus: 'deleting',
+    });
+
+    expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('deleting');
+  });
+
   it('blocks new deployment ids after workspace teardown begins', async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);

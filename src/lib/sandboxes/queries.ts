@@ -5,7 +5,7 @@ export async function listSandboxes(workspaceId: string) {
   return db.sandbox.findMany({
     where: { workspaceId, kind: { not: 'hermes' } },
     orderBy: { createdAt: 'desc' },
-    include: { deployment: true, _count: { select: { agentLinks: true } } },
+    include: { deployment: true, _count: { select: { agentLinks: true, snapshots: true } } },
   });
 }
 
@@ -38,6 +38,10 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
 export async function getSandbox(workspaceId: string, sandboxId: string) {
   return db.sandbox.findFirst({
     where: { id: sandboxId, workspaceId, kind: { not: 'hermes' } },
-    include: { deployment: true, agentLinks: { include: { agent: { select: { id: true, name: true } } } } },
+    include: {
+      deployment: true,
+      agentLinks: { include: { agent: { select: { id: true, name: true } } } },
+      snapshots: { orderBy: { createdAt: 'desc' } },
+    },
   });
 }

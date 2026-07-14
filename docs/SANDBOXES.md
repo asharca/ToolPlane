@@ -46,6 +46,73 @@ mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
 The container is not privileged, drops Linux capabilities, has pids/cpu/memory
 limits, and can use either the dedicated `mcp-sandbox` network or `none`.
 
+#### Workspace Data Lifecycle
+
+These data-management operations apply only to Docker Linux sandboxes. Each
+Docker sandbox owns a named volume mounted at `/workspace`:
+
+- Creating a sandbox creates its dedicated workspace volume.
+- Cloning creates a new sandbox and copies the source's current workspace volume
+  into the clone's new volume. The clone gets the source image, network, and
+  sandbox configuration, but it does not inherit the source's snapshot records.
+- Creating a snapshot copies the current workspace volume into a separate named
+  volume and records it on the source sandbox.
+- Restoring a ready snapshot replaces the current workspace volume contents. A
+  temporary copy of the pre-restore data is used for automatic rollback if the
+  restore copy fails, then removed. If both restore and automatic rollback fail,
+  ToolPlane leaves the sandbox stopped and retains that copy as a ready recovery
+  snapshot instead of starting from partially restored data.
+- Deleting a snapshot removes its named volume before deleting its database
+  record. A Docker cleanup failure is reported and leaves the record available
+  for a retry.
+
+Clone, snapshot creation, and restore first quiesce the affected sandbox: the
+supervised MCP process is terminated and its Docker container is stopped before
+any volume is copied. A sandbox that was running is started again after the
+operation (including the rollback path); a sandbox that was already stopped
+stays stopped. A provisioning sandbox must finish provisioning before one of
+these operations can begin. After a successful clone copy, the new clone starts
+as its own sandbox. Snapshot deletion only removes an independent snapshot
+volume and does not pause the sandbox.
+
+Volume copies run in named, labeled helper containers. A clone remains in the
+non-runnable `copying` state until its helper has exited and cleanup is
+confirmed; server startup removes stale helpers and changes interrupted clones
+to `copy_failed`, where only deletion is available. Restore recovery records
+are created before the backup copy begins and marked ready before the active
+volume is replaced. The deployment is then kept in `restoring` until the active
+volume is known-good. If helper cleanup cannot yet be confirmed, the sandbox
+stays in `restore_cleanup_required`; after cleanup, an interrupted restore
+becomes `restore_failed` and can only restore a ready recovery snapshot or be
+deleted. Temporary recovery rows enter `deleting` before their volumes are
+removed so a crash cannot leave a restoreable row pointing at a missing volume.
+
+Lifecycle operations are serialized per sandbox. Workspace deletion first
+closes an in-process workspace gate and drains operations already in progress,
+then takes the inventory used for strict external cleanup. As described in the
+deployment requirements in the README, ToolPlane must run as one always-on Node
+process; multiple control-plane replicas cannot safely share the same local
+Docker runtime.
+
+Deleting a Docker sandbox stops its process, strictly removes every snapshot
+volume, then removes its container and main workspace volume before deleting the
+database records. Workspace deletion follows the same strict snapshot-before-
+runtime cleanup order. Before external cleanup begins, the deployment enters a
+non-runnable `deleting` state. If Docker or database cleanup fails, that state is
+retained for an idempotent deletion retry instead of exposing an empty recreated
+workspace volume.
+
+Only the named volume mounted at `/workspace` is copied or snapshotted. The
+container writable layer, data in any other mount, and external services are not
+included. For example, files written outside `/workspace` or packages installed
+only into the running container's writable layer are not copied to a clone and
+are neither captured nor rolled back by snapshot restore.
+
+User Connector and Hermes runtime sandboxes do not support these clone or
+snapshot operations. Connector data stays on the user's machine and ToolPlane
+does not copy or delete it. Hermes storage is owned by the Agent runtime
+lifecycle and is not managed with the Docker Linux sandbox data controls.
+
 ### User Connector
 
 Connector mode lets a user expose one directory on their own machine without

@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from 'lucide-react';
@@ -34,9 +34,12 @@ import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardU
 import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
 import { SandboxSettingsDialog } from '@/components/dashboard/sandboxes/SandboxSettingsDialog';
+import { SandboxDataManagement } from '@/components/dashboard/sandboxes/SandboxDataManagement';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 import { CopyButton } from '@/components/dashboard/CopyButton';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,9 +104,12 @@ export default async function SandboxDetailPage({
   params: Promise<{ workspace: string; sandboxId: string }>;
 }) {
   const t = await getTranslations('console.sandboxes');
+  const common = await getTranslations('common');
+  const locale = await getLocale();
   const { workspace: slug, sandboxId } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
@@ -112,6 +118,15 @@ export default async function SandboxDetailPage({
 
   const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
   const running = status === 'running' || status === 'provisioning';
+  const lifecycleBlocked = [
+    'copying',
+    'copy_failed',
+    'restoring',
+    'restore_failed',
+    'restore_cleanup_required',
+    'deleting',
+  ]
+    .includes(status);
   const connector = connectorFromConfig(sandbox.config);
   const tokenParam = connector ? (await readConnectorSetupTokenCookie(sandbox.id))?.trim() ?? '' : '';
   const token = connector
@@ -215,7 +230,13 @@ export default async function SandboxDetailPage({
 
   return (
     <>
-      <ProvisioningRefresher active={status === 'provisioning' || connectorWaiting} />
+      <ProvisioningRefresher
+        active={status === 'provisioning'
+          || status === 'copying'
+          || status === 'restoring'
+          || status === 'restore_cleanup_required'
+          || connectorWaiting}
+      />
       <DashboardHeader
         breadcrumb={[
           { label: 'Sandboxes', href: `/app/${slug}/sandboxes` },
@@ -273,21 +294,23 @@ export default async function SandboxDetailPage({
                 <div className="divide-y divide-border">
                   <section className="pb-5">
                     <h3 className="text-sm font-semibold text-foreground">{t('generalSettings')}</h3>
-                    <form action={renameSandboxAction} className="mt-3 flex items-end gap-2">
+                    <form action={renameSandboxAction} className="mt-3">
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="sandboxId" value={sandbox.id} />
-                      <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                        {t('sandboxName')}
-                        <input
-                          name="name"
-                          defaultValue={sandbox.name}
-                          maxLength={80}
-                          className="ui-input h-9 min-w-0 text-sm"
-                        />
-                      </label>
-                      <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-9 text-xs">
-                        {t('rename')}
-                      </SubmitButton>
+                      <fieldset disabled={lifecycleBlocked} className="flex items-end gap-2 disabled:opacity-60">
+                        <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                          {t('sandboxName')}
+                          <input
+                            name="name"
+                            defaultValue={sandbox.name}
+                            maxLength={80}
+                            className="ui-input h-9 min-w-0 text-sm"
+                          />
+                        </label>
+                        <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-9 text-xs">
+                          {t('rename')}
+                        </SubmitButton>
+                      </fieldset>
                     </form>
                   </section>
 
@@ -304,46 +327,93 @@ export default async function SandboxDetailPage({
                   <section className="py-5">
                     <h3 className="text-sm font-semibold text-foreground">{t('environmentVariables')}</h3>
                     <p className="mt-0.5 text-xs text-muted-foreground">{t('changesRestartTheSandboxContainerButKeepFiles')}</p>
-                    <form action={updateSandboxEnvAction} className="mt-3 space-y-3">
+                    <form action={updateSandboxEnvAction} className="mt-3">
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="sandboxId" value={sandbox.id} />
-                      <textarea
-                        name="env"
-                        defaultValue={envText}
-                        rows={5}
-                        spellCheck={false}
-                        placeholder={t('envPlaceholder')}
-                        className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
-                        aria-label={t('environmentVariables')}
-                      />
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
-                        <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
-                          {t('saveEnvironment')}
-                        </SubmitButton>
-                      </div>
+                      <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
+                        <textarea
+                          name="env"
+                          defaultValue={envText}
+                          rows={5}
+                          spellCheck={false}
+                          placeholder={t('envPlaceholder')}
+                          className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                          aria-label={t('environmentVariables')}
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
+                          <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+                            {t('saveEnvironment')}
+                          </SubmitButton>
+                        </div>
+                      </fieldset>
                     </form>
                   </section>
+
+                  {sandbox.kind === 'docker' && status !== 'copy_failed' && status !== 'deleting' ? (
+                    <SandboxDataManagement
+                      workspace={slug}
+                      sandboxId={sandbox.id}
+                      sandboxName={sandbox.name}
+                      disabled={status === 'provisioning'
+                        || status === 'copying'
+                        || status === 'restoring'
+                        || status === 'restore_cleanup_required'}
+                      disabledLabel={status === 'restore_cleanup_required'
+                        ? t('statusCleanupPending')
+                        : undefined}
+                      creationDisabled={status === 'restore_failed'}
+                      snapshots={sandbox.snapshots.map((snapshot) => ({
+                        id: snapshot.id,
+                        name: snapshot.name,
+                        status: snapshot.status,
+                        error: snapshot.error ? 'error' : null,
+                        createdAt: formatInTimeZone(snapshot.createdAt, timeZone, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        }, locale),
+                      }))}
+                    />
+                  ) : null}
 
                   <section className="pt-5">
                     <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h3>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                      <p className="max-w-xl text-xs leading-5 text-muted-foreground">{t('deleteSandboxDescription')}</p>
+                      <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                        {t(sandbox.kind === 'docker'
+                          ? 'deleteSandboxDescription'
+                          : 'deleteExternalSandboxDescription')}
+                      </p>
                       <form action={deleteSandboxAction}>
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="sandboxId" value={sandbox.id} />
-                        <button className="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10">
-                          {t('delete')}
-                        </button>
+                        <ConfirmSubmitButton
+                          triggerLabel={t('delete')}
+                          confirmLabel={common('confirm')}
+                          cancelLabel={common('cancel')}
+                          prompt={t(sandbox.kind === 'docker'
+                            ? 'deleteSandboxPrompt'
+                            : 'deleteExternalSandboxPrompt', { name: sandbox.name })}
+                          pendingLabel={t('deletingSandbox')}
+                          triggerClassName="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
+                          confirmClassName="ui-button-primary h-9 bg-red-600 text-sm text-white hover:bg-red-700"
+                          cancelClassName="ui-button-ghost h-9 text-sm"
+                          promptClassName="max-w-sm text-xs text-muted-foreground"
+                        />
                       </form>
                     </div>
                   </section>
                 </div>
               </SandboxSettingsDialog>
-              <Link href={`/app/${slug}/agents`} className={rowButton}>
-                {t('attachToAgent')}
-              </Link>
-              {disabledLegacy ? null : running ? (
+              {lifecycleBlocked ? null : (
+                <Link href={`/app/${slug}/agents`} className={rowButton}>
+                  {t('attachToAgent')}
+                </Link>
+              )}
+              {disabledLegacy || lifecycleBlocked ? null : running ? (
                 <>
                   <form action={stopSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />

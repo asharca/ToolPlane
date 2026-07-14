@@ -10,6 +10,10 @@ import {
 } from '@/lib/sandboxes/images';
 import { parseSandboxDirectoryText } from '@/lib/sandboxes/file-list';
 import { parseSandboxEnvText, readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
+import {
+  dockerVolumeCopyArgs,
+  sandboxSnapshotVolumeName,
+} from '@/lib/sandboxes/runtime';
 
 describe('sandboxFlags', () => {
   it('isolated: hardening flags + the dedicated sandbox network', () => {
@@ -131,6 +135,93 @@ describe('persistent Docker sandbox runtime', () => {
       expect(script).not.toContain('process.ppid');
       expect(script).not.toContain('initialPpid');
     }
+  });
+});
+
+describe('Docker sandbox volume snapshots', () => {
+  it('builds a least-privilege, non-networked volume copy command', () => {
+    const args = dockerVolumeCopyArgs('source-volume', 'destination.volume');
+    const script = args.at(-1);
+
+    expect(args).toEqual(expect.arrayContaining([
+      '--rm',
+      '--read-only',
+      '--network',
+      'none',
+      '--memory',
+      '512m',
+      '--cpus',
+      '1',
+      '--pids-limit',
+      '128',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      'type=volume,src=source-volume,dst=/from,readonly',
+      'type=volume,src=destination.volume,dst=/to',
+    ]));
+    expect(args).not.toContain('--privileged');
+    expect(args.filter((arg) => arg === '--cap-add')).toHaveLength(3);
+    expect(script).toBe(
+      'set -euo pipefail; test -z "$(find /to -mindepth 1 -print -quit)"; '
+      + 'tar -C /from -cf - . | tar -C /to -xpf -',
+    );
+    expect(script).not.toContain('source-volume');
+    expect(script).not.toContain('destination.volume');
+  });
+
+  it('uses an explicit destination reset only for snapshot restore', () => {
+    const args = dockerVolumeCopyArgs('snapshot-volume', 'sandbox-volume', true);
+
+    expect(args.at(-1)).toContain('rm -rf /to/* /to/.[!.]* /to/..?*');
+    expect(args.at(-1)).not.toContain('find /to -mindepth 1');
+  });
+
+  it('can name and label a copy helper so timeout cleanup can target it', () => {
+    const args = dockerVolumeCopyArgs(
+      'source-volume',
+      'destination-volume',
+      false,
+      'toolplane-volume-copy-test',
+    );
+
+    expect(args).toEqual(expect.arrayContaining([
+      '--name',
+      'toolplane-volume-copy-test',
+      '--label',
+      'toolplane.volume-copy=true',
+    ]));
+    expect(() => dockerVolumeCopyArgs(
+      'source-volume',
+      'destination-volume',
+      false,
+      'invalid helper',
+    )).toThrow('Invalid Docker helper container name.');
+  });
+
+  it('rejects shell-like volume names and same-volume copies', () => {
+    for (const invalid of [
+      'volume;touch-pwned',
+      'volume$(touch-pwned)',
+      'volume name',
+      '--volume',
+      'volume/path',
+    ]) {
+      expect(() => dockerVolumeCopyArgs('source-volume', invalid)).toThrow('Invalid Docker volume name.');
+    }
+    expect(() => dockerVolumeCopyArgs('same-volume', 'same-volume')).toThrow(
+      'Source and destination Docker volumes must be different.',
+    );
+  });
+
+  it('sanitizes snapshot identifiers before deriving Docker volume names', () => {
+    const volumeName = sandboxSnapshotVolumeName('snapshot/../../$(touch pwned)');
+
+    expect(volumeName).toMatch(/^toolplane_snapshot_[a-zA-Z0-9_.-]+$/);
+    expect(volumeName).not.toContain('/');
+    expect(volumeName).not.toContain('$');
+    expect(volumeName).not.toContain(' ');
   });
 });
 

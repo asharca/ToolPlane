@@ -20,8 +20,9 @@ import {
 } from '@/lib/process/supervisor';
 import {
   removeDockerSandboxContainer,
-  removeDockerSandboxRuntime,
+  removeDockerSandboxRuntimeStrict,
   sandboxContainerName,
+  sandboxSyncContainerName,
   sandboxVolumeName,
 } from '@/lib/sandboxes/runtime';
 import { HERMES_RUNTIME_KIND } from './constants';
@@ -31,11 +32,21 @@ import {
   renderHermesSkillBundle,
 } from './config';
 import { deriveHermesRuntimeToken } from './token';
+import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
 const HERMES_CONFIG_VERSION = 4;
 const DASHBOARD_READY_CACHE_MS = 15_000;
+const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
+  'copying',
+  'copy_failed',
+  'restoring',
+  'restore_failed',
+  'restore_cleanup_required',
+  'deleting',
+]);
+const SANDBOX_LIFECYCLE_ERROR = 'The Hermes sandbox has a pending lifecycle operation.';
 const CONFIG_MERGE_SCRIPT = String.raw`import os
 import pathlib
 import sys
@@ -105,11 +116,32 @@ type DockerResult = { stdout: string; stderr: string };
 type DashboardReadyEntry = { port: number; checkedAt: number };
 const globalRuntime = globalThis as unknown as {
   __hermesDashboardReady?: Map<string, DashboardReadyEntry>;
+  __hermesOperationQueues?: Map<string, Promise<void>>;
 };
 
 function dashboardReadyCache(): Map<string, DashboardReadyEntry> {
   if (!globalRuntime.__hermesDashboardReady) globalRuntime.__hermesDashboardReady = new Map();
   return globalRuntime.__hermesDashboardReady;
+}
+
+function enqueueHermesOperation<T>(
+  workspaceId: string,
+  agentId: string,
+  rejected: T,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const releaseWorkspaceOperation = beginWorkspaceOperation(workspaceId);
+  if (!releaseWorkspaceOperation) return Promise.resolve(rejected);
+  const queues = globalRuntime.__hermesOperationQueues ??= new Map();
+  const key = `${workspaceId}:${agentId}`;
+  const previous = queues.get(key) ?? Promise.resolve();
+  const result = previous.catch(() => undefined).then(operation);
+  const tail = result.then(() => undefined, () => undefined);
+  queues.set(key, tail);
+  return result.finally(() => {
+    if (queues.get(key) === tail) queues.delete(key);
+    releaseWorkspaceOperation();
+  });
 }
 
 function dockerEnv(): NodeJS.ProcessEnv {
@@ -254,7 +286,7 @@ async function installProjection(params: {
   sandboxId: string;
 }) {
   const volume = sandboxVolumeName(params.sandboxId);
-  const initContainer = `${sandboxContainerName(params.sandboxId)}-sync`;
+  const initContainer = sandboxSyncContainerName(params.sandboxId);
   await runDocker(['volume', 'create', volume]);
   await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
   const installCommand = [
@@ -293,12 +325,29 @@ export async function syncHermesRuntime(
   agentId: string,
   options: { start?: boolean } = {},
 ): Promise<{ status: string; error?: string }> {
+  return enqueueHermesOperation(
+    workspaceId,
+    agentId,
+    { status: 'deleting', error: SANDBOX_LIFECYCLE_ERROR },
+    () => syncHermesRuntimeUnlocked(workspaceId, agentId, options),
+  );
+}
+
+async function syncHermesRuntimeUnlocked(
+  workspaceId: string,
+  agentId: string,
+  options: { start?: boolean } = {},
+): Promise<{ status: string; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
     return { status: 'native' };
   }
   const runtime = agent.runtime;
   const deploymentId = runtime.sandbox.deploymentId;
+  const deploymentStatus = runtime.sandbox.deployment.status;
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus)) {
+    return { status: deploymentStatus, error: SANDBOX_LIFECYCLE_ERROR };
+  }
   let projection: Awaited<ReturnType<typeof buildProjection>> | null = null;
 
   try {
@@ -417,9 +466,24 @@ export async function ensureHermesRuntimeReady(
   workspaceId: string,
   agentId: string,
 ): Promise<{ port?: number; error?: string }> {
+  return enqueueHermesOperation(
+    workspaceId,
+    agentId,
+    { error: SANDBOX_LIFECYCLE_ERROR },
+    () => ensureHermesRuntimeReadyUnlocked(workspaceId, agentId),
+  );
+}
+
+async function ensureHermesRuntimeReadyUnlocked(
+  workspaceId: string,
+  agentId: string,
+): Promise<{ port?: number; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
     return { error: 'Hermes runtime is not configured.' };
+  }
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) {
+    return { error: SANDBOX_LIFECYCLE_ERROR };
   }
   if (!agent.provider || !agent.model) {
     return { error: 'This Hermes agent has no model configured.' };
@@ -447,9 +511,24 @@ export async function ensureHermesDashboardReady(
   workspaceId: string,
   agentId: string,
 ): Promise<{ port?: number; error?: string }> {
+  return enqueueHermesOperation(
+    workspaceId,
+    agentId,
+    { error: SANDBOX_LIFECYCLE_ERROR },
+    () => ensureHermesDashboardReadyUnlocked(workspaceId, agentId),
+  );
+}
+
+async function ensureHermesDashboardReadyUnlocked(
+  workspaceId: string,
+  agentId: string,
+): Promise<{ port?: number; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
     return { error: 'Hermes runtime is not configured.' };
+  }
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) {
+    return { error: SANDBOX_LIFECYCLE_ERROR };
   }
 
   const deploymentId = agent.runtime.sandbox.deploymentId;
@@ -487,21 +566,48 @@ export async function ensureHermesDashboardReady(
 }
 
 export async function stopHermesRuntime(workspaceId: string, agentId: string) {
+  await enqueueHermesOperation(
+    workspaceId,
+    agentId,
+    undefined,
+    () => stopHermesRuntimeUnlocked(workspaceId, agentId),
+  );
+}
+
+async function stopHermesRuntimeUnlocked(workspaceId: string, agentId: string) {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return;
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) return;
   dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
   await stopProcess(agent.runtime.sandbox.deploymentId);
   await runDocker(['stop', '--time', '10', sandboxContainerName(agent.runtime.sandboxId)]).catch(() => undefined);
   await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'stopped', lastError: null });
 }
 
-export async function cleanupHermesRuntime(workspaceId: string, agentId: string) {
-  const agent = await getAgent(workspaceId, agentId);
-  if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return;
-  dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
-  await killProcess(agent.runtime.sandbox.deploymentId, { preventRestart: true });
-  await removeDockerSandboxRuntime(
-    agent.runtime.sandboxId,
-    sandboxVolumeName(agent.runtime.sandboxId),
-  );
+export async function cleanupHermesRuntime(
+  workspaceId: string,
+  agentId: string,
+): Promise<boolean> {
+  return enqueueHermesOperation(workspaceId, agentId, false, async () => {
+    const agent = await getAgent(workspaceId, agentId);
+    if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return true;
+    dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
+    await killProcess(agent.runtime.sandbox.deploymentId, {
+      preventRestart: true,
+      finalStatus: 'deleting',
+    });
+    await db.deployment.updateMany({
+      where: {
+        id: agent.runtime.sandbox.deploymentId,
+        workspaceId,
+        source: 'sandbox',
+      },
+      data: { status: 'deleting' },
+    });
+    await removeDockerSandboxRuntimeStrict(
+      agent.runtime.sandboxId,
+      sandboxVolumeName(agent.runtime.sandboxId),
+    );
+    return true;
+  });
 }
