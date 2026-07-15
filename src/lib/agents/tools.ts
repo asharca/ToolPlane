@@ -4,6 +4,12 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from 'ai';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc, type McpTool } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
+import {
+  filterMcpToolsForAi,
+  isMcpToolExposedToAi,
+  loadMcpToolPolicies,
+  type McpToolPolicy,
+} from '@/lib/workspace/mcp-tool-exposure';
 
 function shortHash(input: string, length: number): string {
   return createHash('sha256').update(input).digest('hex').slice(0, length);
@@ -36,9 +42,19 @@ export type ToolDeps = {
     params?: Record<string, unknown>,
   ) => Promise<Record<string, unknown> | null>;
   logRequest: (entry: LogEntry) => Promise<void>;
+  loadMcpToolPolicies: (
+    deploymentIds: readonly string[],
+    workspaceId: string,
+  ) => Promise<Map<string, McpToolPolicy>>;
 };
 
-const defaultDeps: ToolDeps = { liveStatus, listMcpTools, mcpRpc, logRequest };
+const defaultDeps: ToolDeps = {
+  liveStatus,
+  listMcpTools,
+  mcpRpc,
+  logRequest,
+  loadMcpToolPolicies,
+};
 
 export async function buildToolSet(
   deploymentIds: string[],
@@ -46,9 +62,12 @@ export async function buildToolSet(
   deps: ToolDeps = defaultDeps,
 ): Promise<ToolSet> {
   const set: ToolSet = {};
+  const policies = await deps.loadMcpToolPolicies(deploymentIds, workspaceId);
   for (const deploymentId of deploymentIds) {
+    const policy = policies.get(deploymentId);
+    if (!policy) continue;
     if (deps.liveStatus(deploymentId) !== 'running') continue;
-    const tools = await deps.listMcpTools(deploymentId);
+    const tools = filterMcpToolsForAi(await deps.listMcpTools(deploymentId), policy);
     for (const t of tools) {
       set[toolKey(deploymentId, t.name)] = tool({
         description: t.description ?? t.name,
@@ -59,6 +78,22 @@ export async function buildToolSet(
           // usage would be invisible in observability. Same path shape as the
           // gateway so it shows in the deployment's Logs and the workspace stats.
           const start = Date.now();
+          const currentPolicy = (await deps.loadMcpToolPolicies([deploymentId], workspaceId))
+            .get(deploymentId);
+          if (!isMcpToolExposedToAi(currentPolicy, t.name)) {
+            const denied = { error: `MCP tool ${t.name} is not exposed to AI.` };
+            void deps.logRequest({
+              workspaceId,
+              deploymentId,
+              method: 'POST',
+              path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
+              statusCode: 403,
+              durationMs: Date.now() - start,
+              requestBody: JSON.stringify({ name: t.name, arguments: args }).slice(0, 16000),
+              responseBody: JSON.stringify(denied),
+            }).catch(() => {});
+            return denied;
+          }
           const result = await deps.mcpRpc(deploymentId, 'tools/call', {
             name: t.name,
             arguments: args,

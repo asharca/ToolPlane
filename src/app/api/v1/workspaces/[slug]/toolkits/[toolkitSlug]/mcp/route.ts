@@ -4,6 +4,11 @@ import { db } from '@/lib/db';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
+import {
+  filterMcpToolsForAi,
+  isMcpToolExposedToAi,
+  loadMcpToolPolicies,
+} from '@/lib/workspace/mcp-tool-exposure';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -56,6 +61,9 @@ export async function POST(
   const { id, method } = msg;
   const rpcParams = msg.params ?? {};
   const deploymentIds = toolkit.servers.map((s) => s.deploymentId);
+  const policies = method === 'tools/list' || method === 'tools/call'
+    ? await loadMcpToolPolicies(deploymentIds, toolkit.workspaceId)
+    : new Map();
 
   // Per-call audit detail: which deployment/tool was invoked + its args/result,
   // so a Claude tool call routed through the toolkit shows up in that
@@ -85,8 +93,10 @@ export async function POST(
   } else if (method === 'tools/list') {
     const tools: unknown[] = [];
     for (const depId of deploymentIds) {
+      const policy = policies.get(depId);
+      if (!policy) continue;
       if (liveStatus(depId) !== 'running') continue;
-      const list = await listMcpTools(depId);
+      const list = filterMcpToolsForAi(await listMcpTools(depId), policy);
       for (const t of list) {
         tools.push({
           name: `${depId}${SEP}${t.name}`,
@@ -105,6 +115,8 @@ export async function POST(
     logTool = toolName;
     reqBody = JSON.stringify({ name: toolName, arguments: args }).slice(0, 16000);
     if (!deploymentIds.includes(depId)) {
+      response = err(id, -32602, `Unknown tool: ${fullName}`);
+    } else if (!isMcpToolExposedToAi(policies.get(depId), toolName)) {
       response = err(id, -32602, `Unknown tool: ${fullName}`);
     } else if (liveStatus(depId) !== 'running') {
       logDeploymentId = depId;

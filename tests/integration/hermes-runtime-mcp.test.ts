@@ -9,6 +9,7 @@ let userId = '';
 let workspaceId = '';
 let agentId = '';
 let runtimeId = '';
+let deploymentId = '';
 
 beforeAll(async () => {
   const user = await db.user.create({
@@ -27,6 +28,19 @@ beforeAll(async () => {
   const agent = await createAgent(workspace.id, 'Hermes MCP', { runtime: 'hermes' });
   agentId = agent.id;
   runtimeId = (await db.agentRuntime.findUniqueOrThrow({ where: { agentId: agent.id } })).id;
+  const deployment = await db.deployment.create({
+    data: {
+      workspaceId: workspace.id,
+      name: 'Restricted MCP',
+      source: 'npm',
+      sourceRef: 'restricted-mcp',
+      status: 'stopped',
+      mcpToolExposure: 'allowlist',
+      mcpAllowedTools: ['allowed'],
+    },
+  });
+  deploymentId = deployment.id;
+  await db.agentServer.create({ data: { agentId: agent.id, deploymentId } });
 });
 
 afterAll(async () => {
@@ -36,11 +50,11 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-function request(token: string, method = 'initialize') {
+function request(token: string, method = 'initialize', params: Record<string, unknown> = {}) {
   return new Request(`http://localhost/api/v1/agent-runtimes/${runtimeId}/mcp`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: {} }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
 }
 
@@ -62,5 +76,24 @@ describe('Hermes runtime MCP boundary', () => {
 
     const listed = await POST(request(token, 'tools/list'), { params: Promise.resolve({ runtimeId }) });
     await expect(listed.json()).resolves.toMatchObject({ result: { tools: [] } });
+  });
+
+  it('rejects cached or guessed tool names outside the deployment allowlist', async () => {
+    const token = deriveHermesRuntimeToken(runtimeId, 'toolplane-mcp');
+    const hidden = await POST(request(token, 'tools/call', {
+      name: `${deploymentId}__hidden`,
+      arguments: {},
+    }), { params: Promise.resolve({ runtimeId }) });
+    await expect(hidden.json()).resolves.toMatchObject({
+      error: { code: -32602, message: expect.stringContaining('Unknown tool') },
+    });
+
+    const allowed = await POST(request(token, 'tools/call', {
+      name: `${deploymentId}__allowed`,
+      arguments: {},
+    }), { params: Promise.resolve({ runtimeId }) });
+    await expect(allowed.json()).resolves.toMatchObject({
+      error: { code: -32000, message: 'tool deployment is not running' },
+    });
   });
 });

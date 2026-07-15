@@ -6,6 +6,11 @@ import { verifyHermesRuntimeToken } from '@/lib/agents/hermes/token';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
+import {
+  filterMcpToolsForAi,
+  isMcpToolExposedToAi,
+  loadMcpToolPolicies,
+} from '@/lib/workspace/mcp-tool-exposure';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -57,6 +62,9 @@ export async function POST(
   const { id, method } = message;
   const rpcParams = message.params ?? {};
   const deploymentIds = resolveAgentTools(agent).deploymentIds;
+  const policies = method === 'tools/list' || method === 'tools/call'
+    ? await loadMcpToolPolicies(deploymentIds, runtimeRow.workspaceId)
+    : new Map();
   let logDeploymentId: string | null = null;
   let logTool = '';
   let requestBody: string | null = null;
@@ -80,8 +88,13 @@ export async function POST(
   } else if (method === 'tools/list') {
     const tools: unknown[] = [];
     for (const deploymentId of deploymentIds) {
+      const policy = policies.get(deploymentId);
+      if (!policy) continue;
       if (liveStatus(deploymentId) !== 'running') continue;
-      const listed = await listMcpTools(deploymentId);
+      const listed = filterMcpToolsForAi(
+        await listMcpTools(deploymentId),
+        policy,
+      );
       for (const tool of listed) {
         tools.push({
           name: `${deploymentId}${SEP}${tool.name}`,
@@ -101,6 +114,8 @@ export async function POST(
     requestBody = JSON.stringify({ name: toolName, arguments: args }).slice(0, 16_000);
 
     if (!deploymentIds.includes(deploymentId)) {
+      response = errorResponse(id, -32602, `Unknown tool: ${fullName}`);
+    } else if (!isMcpToolExposedToAi(policies.get(deploymentId), toolName)) {
       response = errorResponse(id, -32602, `Unknown tool: ${fullName}`);
     } else if (liveStatus(deploymentId) !== 'running') {
       logDeploymentId = deploymentId;

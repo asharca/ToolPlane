@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Play, Loader2 } from 'lucide-react';
+import { runMcpConsoleToolAction } from '@/lib/workspace/actions';
 
 type Tool = {
   name: string;
@@ -39,11 +41,15 @@ function skeletonArgs(tool: Tool | undefined): string {
 
 export function ToolPlayground({
   deploymentId,
+  workspace,
   tools,
 }: {
   deploymentId: string;
+  workspace: string;
   tools: Tool[];
 }) {
+  const t = useTranslations('console.mcp');
+  const argumentsId = useId();
   const [selected, setSelected] = useState(tools[0]?.name ?? '');
   const current = useMemo(
     () => tools.find((t) => t.name === selected),
@@ -69,30 +75,31 @@ export function ToolPlayground({
     try {
       parsedArgs = args.trim() ? JSON.parse(args) : {};
     } catch {
-      setError('Arguments must be valid JSON.');
+      setError(t('argumentsMustBeValidJson'));
       setLoading(false);
       return;
     }
     try {
-      const res = await fetch(`/api/v1/mcp/${deploymentId}/rpc`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'tools/call',
-          params: { name: selected, arguments: parsedArgs },
-        }),
+      if (!parsedArgs || typeof parsedArgs !== 'object' || Array.isArray(parsedArgs)) {
+        setError(t('argumentsMustBeJsonObject'));
+        return;
+      }
+      const response = await runMcpConsoleToolAction({
+        workspace,
+        deploymentId,
+        toolName: selected,
+        arguments: parsedArgs as Record<string, unknown>,
       });
-      const json = await res.json();
-      if (json.error) {
-        setError(json.error.message ?? 'Tool call failed.');
+      if (response.error) {
+        setError(response.error === 'deploymentNotRunning'
+          ? t('requestFailedDeploymentRunning')
+          : t('toolCallFailed'));
       } else {
-        const content = json.result?.content?.[0]?.text;
-        setResult(content ?? JSON.stringify(json.result, null, 2));
+        const content = (response.result?.content as { text?: string }[] | undefined)?.[0]?.text;
+        setResult(content ?? JSON.stringify(response.result, null, 2));
       }
     } catch {
-      setError('Request failed — is the deployment running?');
+      setError(t('requestFailedDeploymentRunning'));
     } finally {
       setLoading(false);
     }
@@ -101,7 +108,7 @@ export function ToolPlayground({
   if (tools.length === 0) {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        No tools available — start the deployment to inspect its tools.
+        {t('noToolsAvailable')}
       </p>
     );
   }
@@ -114,7 +121,8 @@ export function ToolPlayground({
             key={t.name}
             type="button"
             onClick={() => onSelect(t.name)}
-            className={`rounded-md border px-2.5 py-1 font-mono text-xs transition-colors ${
+            aria-pressed={selected === t.name}
+            className={`min-h-11 max-w-full break-all rounded-md border px-2.5 py-1 text-left font-mono text-xs transition-colors sm:min-h-7 ${
               selected === t.name
                 ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
                 : 'border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
@@ -132,10 +140,11 @@ export function ToolPlayground({
       ) : null}
 
       <div>
-        <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Arguments (JSON)
+        <label htmlFor={argumentsId} className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t('argumentsJson')}
         </label>
         <textarea
+          id={argumentsId}
           value={args}
           onChange={(e) => setArgs(e.target.value)}
           spellCheck={false}
@@ -155,20 +164,20 @@ export function ToolPlayground({
         ) : (
           <Play className="size-4" />
         )}
-        Run tool
+        {t('runTool')}
       </button>
 
       {error ? (
-        <pre className="overflow-x-auto rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+        <pre role="alert" className="overflow-x-auto rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
           {error}
         </pre>
       ) : null}
       {result !== null ? (
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Result
+            {t('toolResult')}
           </label>
-          <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+          <pre role="status" className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
             {result}
           </pre>
         </div>

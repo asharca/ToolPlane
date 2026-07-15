@@ -4,6 +4,14 @@ import userEvent from '@testing-library/user-event';
 
 import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 
+const mocks = vi.hoisted(() => ({
+  runMcpConsoleToolAction: vi.fn(),
+}));
+
+vi.mock('@/lib/workspace/actions', () => ({
+  runMcpConsoleToolAction: mocks.runMcpConsoleToolAction,
+}));
+
 type PlaygroundTool = {
   name: string;
   description?: string;
@@ -29,35 +37,35 @@ const tools: PlaygroundTool[] = [
 describe('ToolPlayground', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mocks.runMcpConsoleToolAction.mockReset();
   });
 
   it('renders tool chips and the first tool description', () => {
-    render(<ToolPlayground deploymentId="dep1" tools={tools} />);
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} />);
     expect(screen.getByRole('button', { name: 'echo' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'add' })).toBeInTheDocument();
     expect(screen.getByText('Echo back the provided message.')).toBeInTheDocument();
   });
 
-  it('runs a tool through the gateway and shows the result', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: async () => ({
-        result: { content: [{ type: 'text', text: 'HELLO' }] },
-      }),
+  it('runs a tool through the workspace-scoped console action and shows the result', async () => {
+    mocks.runMcpConsoleToolAction.mockResolvedValue({
+      result: { content: [{ type: 'text', text: 'HELLO' }] },
     });
-    vi.stubGlobal('fetch', fetchMock);
 
-    render(<ToolPlayground deploymentId="dep1" tools={tools} />);
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} />);
     await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/mcp/dep1/rpc',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    expect(mocks.runMcpConsoleToolAction).toHaveBeenCalledWith({
+      workspace: 'acme',
+      deploymentId: 'dep1',
+      toolName: 'echo',
+      arguments: { message: '' },
+    });
     expect(await screen.findByText('HELLO')).toBeInTheDocument();
   });
 
   it('shows an empty state when there are no tools', () => {
-    render(<ToolPlayground deploymentId="dep1" tools={[]} />);
-    expect(screen.getByText(/no tools available/i)).toBeInTheDocument();
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={[]} />);
+    expect(screen.getByText(/no tools are currently available/i)).toBeInTheDocument();
   });
 });

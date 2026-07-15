@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { Plus, X, AlertTriangle } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
 import { parseMcpJsonConfig } from '@/lib/workspace/custom-mcp';
+import { McpNetworkModeControl } from './McpNetworkModeControl';
 import { SubmitButton } from './SubmitButton';
 
 const SOURCES = [
@@ -17,17 +18,15 @@ const SOURCES = [
 ];
 
 const JSON_CONFIG_EXAMPLE = `{
-  "ssh-mcp-server": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "@fangjunjie/ssh-mcp-server",
-      "--host", "192.168.1.1",
-      "--port", "22",
-      "--username", "root",
-      "--password", "YOUR_PASSWORD"
-    ]
-  }
+  "command": "npx",
+  "args": [
+    "-y",
+    "@fangjunjie/ssh-mcp-server",
+    "--host", "192.168.1.1",
+    "--port", "22",
+    "--username", "root",
+    "--password", "YOUR_PASSWORD"
+  ]
 }`;
 
 const field =
@@ -41,6 +40,8 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
   const [name, setName] = useState('');
   const [config, setConfig] = useState('');
   const [configError, setConfigError] = useState<string | null>(null);
+  const [network, setNetwork] = useState<'isolated' | 'none'>('isolated');
+  const [networkTouched, setNetworkTouched] = useState(false);
   const current = SOURCES.find((s) => s.key === source) ?? SOURCES[0];
   const configName = useMemo(() => {
     if (!config.trim()) return '';
@@ -130,8 +131,17 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                         required
                         value={config}
                         onChange={(event) => {
-                          setConfig(event.target.value);
+                          const nextConfig = event.target.value;
+                          setConfig(nextConfig);
                           setConfigError(null);
+                          if (!networkTouched) {
+                            try {
+                              const parsed = parseMcpJsonConfig(nextConfig);
+                              setNetwork(parsed.installCfg?.network === 'none' ? 'none' : 'isolated');
+                            } catch {
+                              // Keep the current selection while the JSON is incomplete.
+                            }
+                          }
                         }}
                         placeholder={JSON_CONFIG_EXAMPLE}
                         spellCheck={false}
@@ -167,6 +177,15 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                       <p className="mt-1 font-mono text-xs text-muted-foreground">/{slug}{t('mcp')}{slugPreview}</p>
                     </div>
                   ) : null}
+
+                  <McpNetworkModeControl
+                    value={network}
+                    onChange={(value) => {
+                      setNetwork(value);
+                      setNetworkTouched(true);
+                    }}
+                    warnAboutPackageInstall={source !== 'docker'}
+                  />
 
                   <div className="flex justify-end gap-2 pt-2">
                     <button type="button" onClick={() => setOpen(false)} className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">{t('cancel')}</button>

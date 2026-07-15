@@ -16,6 +16,11 @@ enum UserStatus {
   suspended
 }
 
+enum McpToolExposure {
+  all
+  allowlist
+}
+
 model Server {
   id            String       @id @default(cuid())
   slug          String       @unique
@@ -168,21 +173,23 @@ model Membership {
 }
 
 model Deployment {
-  id           String          @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  serverId     String?
-  server       Server?         @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  name         String?
-  source       String?
-  sourceRef    String?
-  installCfg   Json?
-  status       String          @default("provisioning")
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  toolkitLinks ToolkitServer[]
-  agentLinks   AgentServer[]
-  sandbox      Sandbox?
+  id              String          @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  serverId        String?
+  server          Server?         @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name            String?
+  source          String?
+  sourceRef       String?
+  installCfg      Json?
+  status          String          @default("provisioning")
+  mcpToolExposure McpToolExposure @default(all)
+  mcpAllowedTools String[]        @default([])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  toolkitLinks    ToolkitServer[]
+  agentLinks      AgentServer[]
+  sandbox         Sandbox?
 
   @@unique([workspaceId, serverId])
 }
