@@ -127,7 +127,6 @@ export async function cloneAgent(
       name: true,
       systemPrompt: true,
       providerId: true,
-      provider: { select: { workspaceId: true } },
       model: true,
       maxSteps: true,
       runtime: { select: { workspaceId: true, kind: true, image: true } },
@@ -174,6 +173,10 @@ export async function cloneAgent(
     : undefined;
 
   return db.$transaction(async (tx) => {
+    const providerId = source.providerId
+      && await lockProvider(tx, workspaceId, source.providerId)
+      ? source.providerId
+      : null;
     const cloned = await createAgentRecords(
       tx,
       workspaceId,
@@ -186,8 +189,8 @@ export async function cloneAgent(
       where: { id: cloned.id },
       data: {
         systemPrompt: runtime.runtime === HERMES_RUNTIME_KIND ? null : source.systemPrompt,
-        providerId: source.provider?.workspaceId === workspaceId ? source.providerId : null,
-        model: source.model,
+        providerId,
+        model: providerId ? source.model : null,
         maxSteps: source.maxSteps,
       },
     });
@@ -235,30 +238,42 @@ export type AgentConfig = {
   maxSteps: number;
 };
 
-export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
-  const agent = await db.agent.findFirst({
-    where: { id: agentId, workspaceId },
-    select: { id: true, runtime: { select: { kind: true } } },
-  });
-  if (!agent) return;
+async function lockProvider(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  providerId: string,
+): Promise<boolean> {
+  const providers = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "ModelProvider"
+    WHERE "id" = ${providerId} AND "workspaceId" = ${workspaceId}
+    FOR UPDATE
+  `;
+  return providers.length > 0;
+}
 
-  let providerId = cfg.providerId;
-  if (providerId) {
-    const provider = await db.modelProvider.findFirst({
-      where: { id: providerId, workspaceId },
-      select: { id: true },
+export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
+  await db.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({
+      where: { id: agentId, workspaceId },
+      select: { id: true, runtime: { select: { kind: true } } },
     });
-    if (!provider) providerId = null;
-  }
-  await db.agent.updateMany({
-    where: { id: agentId, workspaceId },
-    data: {
-      name: cfg.name,
-      ...(agent.runtime?.kind === HERMES_RUNTIME_KIND ? {} : { systemPrompt: cfg.systemPrompt }),
-      providerId,
-      model: cfg.model,
-      maxSteps: cfg.maxSteps,
-    },
+    if (!agent) return;
+
+    let providerId = cfg.providerId;
+    if (providerId && !await lockProvider(tx, workspaceId, providerId)) {
+      providerId = null;
+    }
+    await tx.agent.updateMany({
+      where: { id: agentId, workspaceId },
+      data: {
+        name: cfg.name,
+        ...(agent.runtime?.kind === HERMES_RUNTIME_KIND ? {} : { systemPrompt: cfg.systemPrompt }),
+        providerId,
+        model: providerId ? cfg.model : null,
+        maxSteps: cfg.maxSteps,
+      },
+    });
   });
 }
 
@@ -344,7 +359,15 @@ export async function updateProvider(
 }
 
 export async function deleteProvider(workspaceId: string, providerId: string) {
-  await db.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) return;
+
+    await tx.agent.updateMany({
+      where: { workspaceId, providerId },
+      data: { providerId: null, model: null },
+    });
+    await tx.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
+  });
 }
 
 export async function setProviderModels(workspaceId: string, providerId: string, models: string[]) {

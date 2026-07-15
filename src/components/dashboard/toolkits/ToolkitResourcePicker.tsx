@@ -17,6 +17,7 @@ import {
   type ToolkitBatchActionState,
 } from '@/lib/toolkits/actions';
 import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 const TOOLKIT_PICKER_RENDER_LIMIT = 100;
 
@@ -183,17 +184,17 @@ export function ToolkitResourcePicker({
             />
           </div>
           <div className="w-full shrink-0 sm:w-40">
-            <select value={source} onChange={(event) => setSource(event.target.value)} aria-label={t('filterBySource')} className="ui-input h-9">
+            <NativeSelect value={source} onChange={(event) => setSource(event.target.value)} aria-label={t('filterBySource')} className="ui-input h-9">
               <option value="all">{t('allSources')}</option>
               {sourceOptions.map((value) => <option key={value} value={value}>{sourceLabel(value, t)}</option>)}
-            </select>
+            </NativeSelect>
           </div>
           {kind === 'mcp' ? (
             <div className="w-full shrink-0 sm:w-40">
-              <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label={t('filterByStatus')} className="ui-input h-9">
+              <NativeSelect value={status} onChange={(event) => setStatus(event.target.value)} aria-label={t('filterByStatus')} className="ui-input h-9">
                 <option value="all">{t('allStatuses')}</option>
                 {statusOptions.map((value) => <option key={value} value={value}>{statusLabel(value, t)}</option>)}
-              </select>
+              </NativeSelect>
             </div>
           ) : null}
           {hasFilters ? (

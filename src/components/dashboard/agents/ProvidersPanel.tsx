@@ -26,7 +26,9 @@ import {
   updateProviderAction,
   type ActionState,
 } from '@/lib/agents/actions';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export type ProviderRow = {
   id: string;
@@ -140,11 +142,11 @@ function AddProviderDialog({ slug }: { slug: string }) {
             <input name="name" required placeholder={t('openai')} className="ui-input h-10 w-full" />
           </Field>
           <Field icon={Braces} label={t('format')}>
-            <select name="format" className="ui-input h-10 w-full" defaultValue="openai">
+            <NativeSelect name="format" className="ui-input h-10 w-full" defaultValue="openai">
               <option value="openai">{t('openai')}</option>
               <option value="openai-responses">{t('openaiResponses')}</option>
               <option value="anthropic">{t('anthropic')}</option>
-            </select>
+            </NativeSelect>
           </Field>
           <Field icon={Link2} label={t('baseUrl')}>
             <input name="baseUrl" required placeholder="https://api.openai.com/v1" className="ui-input h-10 w-full" />
@@ -279,11 +281,11 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
             <input name="name" required defaultValue={provider.name} className="ui-input h-10 w-full" />
           </Field>
           <Field icon={Braces} label={t('format')}>
-            <select name="format" className="ui-input h-10 w-full" defaultValue={provider.format}>
+            <NativeSelect name="format" className="ui-input h-10 w-full" defaultValue={provider.format}>
               <option value="openai">{t('openai')}</option>
               <option value="openai-responses">{t('openaiResponses')}</option>
               <option value="anthropic">{t('anthropic')}</option>
-            </select>
+            </NativeSelect>
           </Field>
           <Field icon={Link2} label={t('baseUrl')}>
             <input name="baseUrl" required defaultValue={provider.baseUrl} className="ui-input h-10 w-full" />
@@ -321,6 +323,7 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
 
 function ProviderCard({ slug, provider }: { slug: string; provider: ProviderRow }) {
   const t = useTranslations('console.agents');
+  const common = useTranslations('common');
   const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
 
   return (
@@ -362,18 +365,23 @@ function ProviderCard({ slug, provider }: { slug: string; provider: ProviderRow 
           <form action={deleteProviderAction}>
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="providerId" value={provider.id} />
-            <button
-              type="submit"
-              onClick={(event) => {
-                if (!window.confirm(t('removeProviderPrompt', { name: provider.name }))) {
-                  event.preventDefault();
-                }
-              }}
-              className="ui-button-secondary h-10 gap-2 px-4 text-sm text-red-600 dark:text-red-300"
-            >
-              <Trash2 className="size-[18px] shrink-0" />
-              {t('remove')}
-            </button>
+            <ConfirmSubmitButton
+              triggerLabel={
+                <>
+                  <Trash2 className="size-[18px] shrink-0" />
+                  {common('remove')}
+                </>
+              }
+              confirmLabel={common('confirm')}
+              cancelLabel={common('cancel')}
+              prompt={t('removeProviderPrompt', { name: provider.name })}
+              pendingLabel={t('removingProvider')}
+              className="items-center justify-end"
+              triggerClassName="ui-button-secondary h-10 gap-2 px-4 text-sm text-red-600 dark:text-red-300"
+              confirmClassName="inline-flex h-10 items-center rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700"
+              cancelClassName="ui-button-secondary h-10 px-4 text-sm"
+              promptClassName="max-w-sm text-xs text-muted-foreground"
+            />
           </form>
         </div>
       </div>

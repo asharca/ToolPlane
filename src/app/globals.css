@@ -158,30 +158,32 @@
   text-align: center;
 }
 
-.ui-input {
-  height: 2.5rem;
-  width: 100%;
-  border: 1px solid hsl(var(--input));
-  border-radius: calc(var(--radius) - 2px);
-  background: hsl(var(--card));
-  padding: 0 0.75rem;
-  color: hsl(var(--foreground));
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    background-color 160ms ease;
-}
+@layer components {
+  .ui-input {
+    height: 2.5rem;
+    width: 100%;
+    border: 1px solid hsl(var(--input));
+    border-radius: calc(var(--radius) - 2px);
+    background: hsl(var(--card));
+    padding: 0 0.75rem;
+    color: hsl(var(--foreground));
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      background-color 160ms ease;
+  }
 
-.ui-input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
+  .ui-input::placeholder {
+    color: hsl(var(--muted-foreground));
+  }
 
-.ui-input:focus {
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
-  outline: none;
+  .ui-input:focus {
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
+    outline: none;
+  }
 }
 
 .ui-input-search {
@@ -191,6 +193,29 @@
 
 .ui-input-icon {
   padding-left: 2.25rem;
+}
+
+.ui-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.ui-select-control {
+  display: block;
+  appearance: none;
+  padding-right: 2.5rem;
+}
+
+.ui-select-chevron {
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  color: hsl(var(--muted-foreground));
 }
 
 .ui-button-primary,

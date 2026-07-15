@@ -33,6 +33,7 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 type Provider = { id: string; name: string; models: string[] };
 type SaveStatus = 'idle' | 'dirty';
@@ -327,7 +328,7 @@ export function AgentSettingsForm({
               <Cpu className="size-4 shrink-0" />
               {t('provider')}
             </span>
-            <select
+            <NativeSelect
               name="providerId"
               value={selectedProvider}
               onChange={(event) => {
@@ -340,14 +341,14 @@ export function AgentSettingsForm({
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
           <label className="block">
             <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <BrainCircuit className="size-4 shrink-0" />
               {t('model')}
             </span>
-            <select
+            <NativeSelect
               name="model"
               value={selectedModel}
               onChange={(event) => setSelectedModel(event.target.value)}
@@ -357,7 +358,7 @@ export function AgentSettingsForm({
               {modelOptions.map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
           <label className="block">
             <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

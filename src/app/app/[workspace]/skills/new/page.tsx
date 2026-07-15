@@ -19,6 +19,7 @@ import {
   DashboardSection,
   DashboardTable,
 } from '@/components/dashboard/DashboardUI';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,17 +126,17 @@ export default async function BrowseSkillsPage({
                 className="ui-input ui-input-icon h-9 w-full"
               />
             </div>
-            <select name="source" defaultValue={source} aria-label={t('filterBySource')} className="ui-input h-9">
+            <NativeSelect name="source" defaultValue={source} aria-label={t('filterBySource')} className="ui-input h-9">
               <option value="all">{t('allSources')}</option>
               <option value="github">{t('github')}</option>
               <option value="other">{t('otherSources')}</option>
-            </select>
-            <select name="installation" defaultValue={installation} aria-label={t('filterByInstallation')} className="ui-input h-9">
+            </NativeSelect>
+            <NativeSelect name="installation" defaultValue={installation} aria-label={t('filterByInstallation')} className="ui-input h-9">
               <option value="all">{t('allInstallations')}</option>
               <option value="available">{t('availableToInstall')}</option>
               <option value="installed">{t('installed')}</option>
-            </select>
-            <select name="category" defaultValue={category} aria-label={t('filterByCategory')} className="ui-input h-9">
+            </NativeSelect>
+            <NativeSelect name="category" defaultValue={category} aria-label={t('filterByCategory')} className="ui-input h-9">
               <option value="all">{t('allCategories')}</option>
               <option value="uncategorized">{t('uncategorized')}</option>
               {categories.map((item) => (
@@ -143,12 +144,12 @@ export default async function BrowseSkillsPage({
                   {item.name} ({item._count.skills})
                 </option>
               ))}
-            </select>
-            <select name="sort" defaultValue={sort} aria-label={t('sortSkills')} className="ui-input h-9">
+            </NativeSelect>
+            <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortSkills')} className="ui-input h-9">
               <option value="top">{t('sortTop')}</option>
               <option value="newest">{t('sortNewest')}</option>
               <option value="name">{t('sortName')}</option>
-            </select>
+            </NativeSelect>
             <button className="ui-button-secondary h-9 w-full xl:w-auto">
               <SlidersHorizontal className="size-4" />
               {t('applyFilters')}

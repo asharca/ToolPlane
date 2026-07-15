@@ -24,6 +24,7 @@ import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skil
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -382,11 +383,11 @@ export default async function SkillInspectorPage({
                 </label>
                 <label className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {t('effort')}
-                  <select name="effort" defaultValue={install.effort} className={`${controlInput} mt-1 w-full`}>
+                  <NativeSelect name="effort" defaultValue={install.effort} className={`${controlInput} mt-1 w-full`}>
                     <option value="default">{t('default')}</option>
                     <option value="low">{t('low')}</option>
                     <option value="high">{t('high')}</option>
-                  </select>
+                  </NativeSelect>
                 </label>
                 <button className="ui-button-primary h-9">{t('save')}</button>
               </form>

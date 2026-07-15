@@ -5,6 +5,7 @@ import {
   cloneAgent,
   createAgent,
   deleteAgent,
+  deleteProvider,
   updateAgent,
   setAgentTools,
   setProviderModels,
@@ -187,6 +188,20 @@ describe('agents mutations', () => {
     expect(reread?.attachments).toHaveLength(0);
   });
 
+  it('does not copy a model when the source has no valid provider', async () => {
+    const source = await createAgent(workspaceId, 'Clone source without provider');
+    await db.agent.update({
+      where: { id: source.id },
+      data: { providerId: null, model: 'legacy-model' },
+    });
+
+    const cloned = await cloneAgent(workspaceId, source.id, 'Clone without provider');
+    const reread = await db.agent.findUniqueOrThrow({ where: { id: cloned!.id } });
+
+    expect(reread.providerId).toBeNull();
+    expect(reread.model).toBeNull();
+  });
+
   it('clones a Hermes agent into a distinct managed runtime', async () => {
     const source = await createAgent(workspaceId, 'Hermes clone source', {
       runtime: 'hermes',
@@ -360,6 +375,49 @@ describe('agents mutations', () => {
     const p = await db.modelProvider.findUnique({ where: { id: providerId } });
     expect(p?.models).toEqual(['gpt-x', 'gpt-y']);
     expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
+  });
+
+  it('clears the model from linked agents when deleting a provider', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Disposable provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://disposable.test/v1',
+        apiKey: 'k',
+      },
+    });
+    const agent = await createAgent(workspaceId, 'Disposable provider agent');
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: provider.id,
+      model: 'gpt-disposable',
+      maxSteps: 8,
+    });
+
+    await deleteProvider(workspaceId, provider.id);
+
+    const [deletedProvider, rereadAgent] = await Promise.all([
+      db.modelProvider.findUnique({ where: { id: provider.id } }),
+      db.agent.findUnique({ where: { id: agent.id } }),
+    ]);
+    expect(deletedProvider).toBeNull();
+    expect(rereadAgent?.providerId).toBeNull();
+    expect(rereadAgent?.model).toBeNull();
+
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: provider.id,
+      model: 'stale-model',
+      maxSteps: 8,
+    });
+    const afterStaleSave = await db.agent.findUnique({ where: { id: agent.id } });
+    expect(afterStaleSave?.providerId).toBeNull();
+    expect(afterStaleSave?.model).toBeNull();
+
+    await deleteAgent(workspaceId, agent.id);
   });
 
   it('updates providers within the workspace and keeps the API key when omitted', async () => {
