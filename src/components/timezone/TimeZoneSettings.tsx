@@ -15,6 +15,7 @@ import {
   listSupportedTimeZones,
 } from '@/lib/timezone';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import { useUserTimeZone } from './UserTimeZoneContext';
 
 export function TimeZoneSettings({
@@ -49,7 +50,7 @@ export function TimeZoneSettings({
         <label htmlFor="user-time-zone" className="sr-only">
           {t('timezone')}
         </label>
-        <select
+        <NativeSelect
           key={timeZoneOverride ?? AUTO_TIME_ZONE_VALUE}
           id="user-time-zone"
           name="timeZone"
@@ -66,7 +67,7 @@ export function TimeZoneSettings({
               {timeZone}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         {state.error ? (
           <p role="alert" className="mt-2 text-xs text-destructive">
             {t(state.error)}

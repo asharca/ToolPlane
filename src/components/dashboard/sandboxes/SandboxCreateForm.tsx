@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   DEFAULT_SANDBOX_IMAGE,
   SANDBOX_IMAGE_OPTIONS,
@@ -297,10 +298,10 @@ export function SandboxCreateForm({
                       <Field label={t('network')} className="mt-3" hint={t('isolatedKeepsItOffTheAppdatabaseNetworkWhileAllowingInternetEgress')}>
                         <div className="relative">
                           <Network className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                          <select name="network" defaultValue="isolated" className="ui-input ui-input-icon h-9 w-full">
+                          <NativeSelect name="network" defaultValue="isolated" className="ui-input ui-input-icon h-9 w-full">
                             <option value="isolated">{t('isolated')}</option>
                             <option value="none">{t('none')}</option>
-                          </select>
+                          </NativeSelect>
                         </div>
                       </Field>
                     ) : null}

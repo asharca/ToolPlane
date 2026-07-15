@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -12,12 +12,12 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date, timeZone: string) {
+function fmt(d: Date, timeZone: string, locale: string) {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }, 'en-US');
+  }, locale);
 }
 
 export default async function ToolkitsPage({
@@ -25,7 +25,10 @@ export default async function ToolkitsPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
-  const t = await getTranslations('console.toolkits');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.toolkits'),
+    getLocale(),
+  ]);
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -48,7 +51,7 @@ export default async function ToolkitsPage({
           visibility: t.visibility,
           enabled: t.enabled,
           toolCount: t.toolCount,
-          created: fmt(t.createdAt, timeZone),
+          created: fmt(t.createdAt, timeZone, locale),
         }))}
       />
     </>

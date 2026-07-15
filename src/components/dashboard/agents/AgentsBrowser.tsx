@@ -16,6 +16,7 @@ import {
   Server,
   Wrench,
   Users,
+  X,
 } from 'lucide-react';
 import { createAgentAction } from '@/lib/agents/actions';
 import { DEFAULT_HERMES_IMAGE } from '@/lib/agents/hermes/constants';
@@ -28,6 +29,7 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export type AgentRow = {
   id: string;
@@ -50,6 +52,10 @@ type CreateOptions = {
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
+}
+
+function isAgentReady(agent: Pick<AgentRow, 'providerName' | 'model'>) {
+  return Boolean(agent.providerName && agent.model);
 }
 
 function CountPill({
@@ -86,8 +92,17 @@ export function AgentsBrowser({
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
-  const setupCount = agents.filter((agent) => !agent.model).length;
+  const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
+
+  function closeCreateForm() {
+    setCreating(false);
+    setRuntime('native');
+    setProviderId('');
+    setSelectedDeploymentIds(new Set());
+    setSelectedSkillIds(new Set());
+    setSelectedToolkitIds(new Set());
+  }
 
   return (
     <DashboardPage className="space-y-5">
@@ -98,16 +113,22 @@ export function AgentsBrowser({
         </div>
         <button
           type="button"
-          onClick={() => setCreating((value) => !value)}
-          className="ui-button-primary h-10 gap-2 px-4"
+          onClick={() => {
+            if (creating) closeCreateForm();
+            else setCreating(true);
+          }}
+          aria-controls="agent-create-form"
+          aria-expanded={creating}
+          className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
         >
-          <Plus className="size-[18px] shrink-0" />
-          {t('newAgent')}
+          {creating ? <X className="size-[18px] shrink-0" /> : <Plus className="size-[18px] shrink-0" />}
+          {creating ? t('cancel') : t('newAgent')}
         </button>
       </div>
 
       {creating ? (
         <form
+          id="agent-create-form"
           action={createAgentAction}
           className="ui-panel space-y-5 p-5"
         >
@@ -173,7 +194,7 @@ export function AgentsBrowser({
               <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
                 <Cpu className="size-4 text-muted-foreground" /> {t('provider')}
               </span>
-              <select
+              <NativeSelect
                 name="providerId"
                 value={providerId}
                 onChange={(event) => setProviderId(event.target.value)}
@@ -183,14 +204,14 @@ export function AgentsBrowser({
                 {createOptions.providers.map((provider) => (
                   <option key={provider.id} value={provider.id}>{provider.name}</option>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
             <label className="block">
               <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
-              <select name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
+              <NativeSelect name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
                 <option value="">{t('select')}</option>
                 {models.map((model) => <option key={model} value={model}>{model}</option>)}
-              </select>
+              </NativeSelect>
             </label>
           </div>
 
@@ -221,7 +242,11 @@ export function AgentsBrowser({
             />
           </div>
 
-          <div className="flex justify-end border-t border-border pt-4">
+          <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+              <X className="size-4 shrink-0" />
+              {t('cancel')}
+            </button>
             <SubmitButton
               pendingLabel={t('creatingAgent')}
               savedLabel={t('agentCreated')}
@@ -255,7 +280,7 @@ export function AgentsBrowser({
 
           <ul className="divide-y divide-border">
             {agents.map((agent) => {
-              const ready = Boolean(agent.model);
+              const ready = isAgentReady(agent);
               const detailsHref = `/app/${slug}/agents/${agent.id}`;
               const model = agent.providerName
                 ? `${agent.providerName} / ${agent.model ?? t('noModelSelected')}`

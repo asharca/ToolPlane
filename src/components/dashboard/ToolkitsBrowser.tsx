@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Lock, Globe, Settings, Store, Wrench } from 'lucide-react';
+import { Plus, Lock, Globe, Settings, Store, Wrench, X } from 'lucide-react';
 import { createToolkitAction } from '@/lib/toolkits/actions';
 import {
   DashboardEmptyState,
@@ -23,6 +23,29 @@ export type ToolkitRow = {
   created: string;
 };
 
+function CreateToolkitToggle({
+  expanded,
+  onClick,
+}: {
+  expanded: boolean;
+  onClick: () => void;
+}) {
+  const t = useTranslations('console.toolkits');
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-controls="toolkit-create-form"
+      aria-expanded={expanded}
+      className={expanded ? 'ui-button-secondary' : 'ui-button-primary'}
+    >
+      {expanded ? <X className="size-4" /> : <Plus className="size-4" />}
+      {expanded ? t('cancel') : t('newToolkit')}
+    </button>
+  );
+}
+
 export function ToolkitsBrowser({
   slug,
   toolkits,
@@ -37,6 +60,7 @@ export function ToolkitsBrowser({
   const filtered = toolkits.filter((t) =>
     t.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
+  const toggleCreateForm = () => setCreating((value) => !value);
 
   return (
     <DashboardPage>
@@ -47,37 +71,7 @@ export function ToolkitsBrowser({
               <Store className="size-4" />
               {t('browseMarket')}
             </Link>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setCreating((v) => !v)}
-                className="ui-button-primary"
-              >
-                <Plus className="size-4" />
-                {t('newToolkit')}
-              </button>
-              {creating ? (
-                <div className="ui-panel absolute right-0 top-11 z-20 w-72 p-3">
-                  <form action={createToolkitAction} className="space-y-2">
-                    <input type="hidden" name="workspace" value={slug} />
-                    <label className="text-xs font-medium text-muted-foreground">
-                      {t('toolkitName')}
-                    </label>
-                    <input
-                      name="name"
-                      autoFocus
-                      required
-                      maxLength={60}
-                      placeholder={t('egResearchStack')}
-                      className="ui-input h-9"
-                    />
-                    <button className="ui-button-primary w-full">
-                      {t('createToolkit')}
-                    </button>
-                  </form>
-                </div>
-              ) : null}
-            </div>
+            <CreateToolkitToggle expanded={creating} onClick={toggleCreateForm} />
           </>
         }
       >
@@ -86,20 +80,47 @@ export function ToolkitsBrowser({
         </p>
       </DashboardToolbar>
 
+      {creating ? (
+        <form
+          id="toolkit-create-form"
+          action={createToolkitAction}
+          className="ui-panel grid gap-3 p-4 sm:grid-cols-[minmax(0,20rem)_auto] sm:items-end"
+        >
+          <input type="hidden" name="workspace" value={slug} />
+          <label htmlFor="toolkit-create-name" className="block text-xs font-medium text-muted-foreground">
+            {t('toolkitName')}
+            <input
+              id="toolkit-create-name"
+              name="name"
+              autoFocus
+              required
+              maxLength={60}
+              placeholder={t('egResearchStack')}
+              className="ui-input mt-1.5 h-9"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <button
+              type="button"
+              onClick={() => setCreating(false)}
+              className="ui-button-secondary"
+            >
+              {t('cancel')}
+            </button>
+            <button className="ui-button-primary">
+              {t('createToolkit')}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       {toolkits.length === 0 ? (
         <DashboardEmptyState
           icon={Wrench}
           description={t('noToolkitsYet')}
-          actions={
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              className="ui-button-primary"
-            >
-              <Plus className="size-4" />
-              {t('newToolkit')}
-            </button>
-          }
+          actions={!creating ? (
+            <CreateToolkitToggle expanded={creating} onClick={toggleCreateForm} />
+          ) : undefined}
         />
       ) : (
         <div className="ui-panel overflow-hidden">
@@ -116,16 +137,16 @@ export function ToolkitsBrowser({
 
           {filtered.length === 0 ? (
             <DashboardEmptyState
-              description={`No toolkits match "${query.trim()}".`}
+              description={t('noToolkitsMatch', { query: query.trim() })}
               className="min-h-64 rounded-none border-0 shadow-none"
             />
           ) : (
             <DashboardTable
               headers={[
-                { label: 'Toolkit' },
-                { label: 'Status' },
-                { label: 'Tools' },
-                { label: 'Created' },
+                { label: t('toolkitColumn') },
+                { label: t('status') },
+                { label: t('tools') },
+                { label: t('created') },
                 { label: t('settings'), align: 'right' },
               ]}
               panel={false}
@@ -146,7 +167,7 @@ export function ToolkitsBrowser({
                         ) : (
                           <Lock className="size-3" />
                         )}
-                        {toolkit.visibility}
+                        {toolkit.visibility === 'public' ? t('public') : t('private')}
                       </span>
                     </div>
                   </td>
@@ -157,7 +178,7 @@ export function ToolkitsBrowser({
                           toolkit.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
                         }`}
                       />
-                      {toolkit.enabled ? 'Enabled' : 'Disabled'}
+                      {toolkit.enabled ? t('enabled') : t('disabled')}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">

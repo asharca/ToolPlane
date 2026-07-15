@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { Search, X, type LucideIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 const RESOURCE_RENDER_LIMIT = 100;
 
@@ -174,36 +175,38 @@ export function AgentResourceSelect({
             {sourceOptions.length > 1 || statusOptions.length > 1 ? (
               <div className="flex gap-2">
                 {sourceOptions.length > 1 ? (
-                  <select
+                  <NativeSelect
                     value={source}
                     onChange={(event) => {
                       stopFormChange(event);
                       setSource(event.target.value);
                     }}
                     aria-label={`${label}: ${t('filterBySource')}`}
-                    className="ui-input h-9 min-w-0 flex-1"
+                    className="ui-input h-9"
+                    wrapperClassName="min-w-0 flex-1"
                   >
                     <option value="all">{t('allSources')}</option>
                     {sourceOptions.map((value) => (
                       <option key={value} value={value}>{sourceLabel(value, t)}</option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 ) : null}
                 {statusOptions.length > 1 ? (
-                  <select
+                  <NativeSelect
                     value={status}
                     onChange={(event) => {
                       stopFormChange(event);
                       setStatus(event.target.value);
                     }}
                     aria-label={`${label}: ${t('filterByStatus')}`}
-                    className="ui-input h-9 min-w-0 flex-1"
+                    className="ui-input h-9"
+                    wrapperClassName="min-w-0 flex-1"
                   >
                     <option value="all">{t('allStatuses')}</option>
                     {statusOptions.map((value) => (
                       <option key={value} value={value}>{statusLabel(value, t)}</option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 ) : null}
                 {hasFilters ? (
                   <button

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import {
   createAgent,
   deleteAgent,
+  deleteProvider,
   updateAgent,
   setAgentTools,
   setProviderModels,
@@ -205,6 +206,49 @@ describe('agents mutations', () => {
     const p = await db.modelProvider.findUnique({ where: { id: providerId } });
     expect(p?.models).toEqual(['gpt-x', 'gpt-y']);
     expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
+  });
+
+  it('clears the model from linked agents when deleting a provider', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Disposable provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://disposable.test/v1',
+        apiKey: 'k',
+      },
+    });
+    const agent = await createAgent(workspaceId, 'Disposable provider agent');
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: provider.id,
+      model: 'gpt-disposable',
+      maxSteps: 8,
+    });
+
+    await deleteProvider(workspaceId, provider.id);
+
+    const [deletedProvider, rereadAgent] = await Promise.all([
+      db.modelProvider.findUnique({ where: { id: provider.id } }),
+      db.agent.findUnique({ where: { id: agent.id } }),
+    ]);
+    expect(deletedProvider).toBeNull();
+    expect(rereadAgent?.providerId).toBeNull();
+    expect(rereadAgent?.model).toBeNull();
+
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: provider.id,
+      model: 'stale-model',
+      maxSteps: 8,
+    });
+    const afterStaleSave = await db.agent.findUnique({ where: { id: agent.id } });
+    expect(afterStaleSave?.providerId).toBeNull();
+    expect(afterStaleSave?.model).toBeNull();
+
+    await deleteAgent(workspaceId, agent.id);
   });
 
   it('creates a conversation and appends messages', async () => {

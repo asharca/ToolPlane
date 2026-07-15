@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
@@ -267,6 +267,24 @@ describe('AgentChat', () => {
     expect(screen.getByText('First chat')).toBeInTheDocument();
   });
 
+  it('collapses the conversation sidebar when the viewport becomes narrow', () => {
+    let handleViewportChange: ((event: MediaQueryListEvent) => void) | undefined;
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: false,
+      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+        handleViewportChange = listener;
+      },
+      removeEventListener: vi.fn(),
+    })));
+    renderChat();
+    expect(screen.getByText('First chat')).toBeInTheDocument();
+
+    act(() => handleViewportChange?.({ matches: true } as MediaQueryListEvent));
+
+    expect(screen.queryByText('First chat')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show conversations' })).toBeInTheDocument();
+  });
+
   it('opens agent settings from the chat header', async () => {
     renderChat();
 
@@ -291,6 +309,20 @@ describe('AgentChat', () => {
     dialog = screen.getByRole('dialog', { name: 'Settings' });
     fireEvent.mouseDown(dialog.parentElement!);
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
+  it('removes a deep-linked settings parameter when the dialog closes', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/app/acme/agents/agent-1?c=conv-1&settings=agent',
+    );
+    renderChat({ initialSettingsTab: 'agent' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+
+    expect(window.location.pathname).toBe('/app/acme/agents/agent-1');
+    expect(window.location.search).toBe('?c=conv-1');
   });
 
   it('keeps one stable settings frame while switching tabs', async () => {

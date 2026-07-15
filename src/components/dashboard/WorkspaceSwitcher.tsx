@@ -2,7 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronsUpDown, LogOut, Plus } from 'lucide-react';
 import { logoutAction } from '@/lib/auth/actions';
 import { createWorkspaceAction } from '@/lib/workspace/actions';
@@ -30,6 +30,61 @@ export function WorkspaceSwitcher({
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  function closeMenu({ restoreFocus = false } = {}) {
+    setOpen(false);
+    setCreating(false);
+    if (restoreFocus) triggerRef.current?.focus();
+  }
+
+  function menuItems(): HTMLElement[] {
+    return Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  }
+
+  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu({ restoreFocus: true });
+      return;
+    }
+
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.matches('input, textarea, select') || target.isContentEditable)
+    ) {
+      return;
+    }
+
+    const items = menuItems();
+    if (items.length === 0) return;
+
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    let nextIndex: number | undefined;
+
+    switch (event.key) {
+      case 'ArrowDown':
+        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+        break;
+      case 'ArrowUp':
+        nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = items.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    items[nextIndex].focus();
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -39,11 +94,12 @@ export function WorkspaceSwitcher({
         setCreating(false);
       }
     }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        setOpen(false);
-        setCreating(false);
-      }
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setOpen(false);
+      setCreating(false);
+      triggerRef.current?.focus();
     }
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -53,11 +109,25 @@ export function WorkspaceSwitcher({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || creating) return;
+    const items = menuItems();
+    const currentItem = items.find((item) => item.getAttribute('aria-current') === 'page');
+    (currentItem ?? items[0])?.focus();
+  }, [open, creating]);
+
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (open) {
+            closeMenu();
+          } else {
+            setOpen(true);
+          }
+        }}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
@@ -80,7 +150,9 @@ export function WorkspaceSwitcher({
 
       {open ? (
         <div
+          ref={menuRef}
           role="menu"
+          onKeyDown={onMenuKeyDown}
           className={`absolute z-20 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 ${
             compact
               ? 'bottom-full left-0 mb-2 w-full lg:bottom-0 lg:left-full lg:mb-0 lg:ml-2 lg:w-64'
@@ -98,7 +170,8 @@ export function WorkspaceSwitcher({
                   key={w.id}
                   href={`/app/${w.slug}/mcp`}
                   role="menuitem"
-                  onClick={() => setOpen(false)}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => closeMenu()}
                   className="flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
                 >
                   <span className="flex size-6 shrink-0 items-center justify-center rounded bg-zinc-900 text-[10px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">

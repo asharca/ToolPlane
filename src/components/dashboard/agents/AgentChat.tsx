@@ -187,6 +187,15 @@ export function AgentChat({
   const hermesIframeRef = useRef<HTMLIFrameElement>(null);
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('settings')) {
+      url.searchParams.delete('settings');
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }
     window.setTimeout(() => settingsButtonRef.current?.focus(), 0);
   }, []);
   const { messages, sendMessage, setMessages, status, error } = useChat<HermesUIMessage>({
@@ -211,6 +220,22 @@ export function AgentChat({
   useEffect(() => {
     setMessages(initialMessages);
   }, [conversationId, initialMessages, setMessages]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 1023px)');
+    if (!media) return;
+    const frame = media.matches
+      ? window.requestAnimationFrame(() => setSidebarCollapsed(true))
+      : null;
+    function handleViewportChange(event: MediaQueryListEvent) {
+      if (event.matches) setSidebarCollapsed(true);
+    }
+    media.addEventListener('change', handleViewportChange);
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      media.removeEventListener('change', handleViewportChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -337,7 +362,7 @@ export function AgentChat({
       <div
         className={cx(
           'grid min-h-0 flex-1 gap-3',
-          sidebarCollapsed ? 'xl:grid-cols-1' : 'xl:grid-cols-[14rem_minmax(0,1fr)]',
+          sidebarCollapsed ? 'grid-cols-1' : 'lg:grid-cols-[14rem_minmax(0,1fr)]',
         )}
       >
         {!sidebarCollapsed ? (

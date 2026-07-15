@@ -10,6 +10,7 @@ import {
   type RecipeActionState,
 } from '@/lib/admin/market-actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 type Initial = {
   source: string;
@@ -64,12 +65,12 @@ export function RecipeEditor({
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={lbl}>
             {t('source')}
-            <select name="recipeSource" defaultValue={initial.source || 'npm'} className={input}>
+            <NativeSelect name="recipeSource" defaultValue={initial.source || 'npm'} className={input}>
               <option value="npm">{t('npm')}</option>
               <option value="pypi">{t('pypi')}</option>
               <option value="github">{t('github')}</option>
               <option value="docker">{t('docker')}</option>
-            </select>
+            </NativeSelect>
           </label>
           <label className={lbl}>
             {t('referencePackageImageRepo')}
