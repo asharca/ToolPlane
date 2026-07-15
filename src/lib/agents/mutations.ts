@@ -332,6 +332,17 @@ export async function createProvider(
   return db.modelProvider.create({ data: { workspaceId, ...data } });
 }
 
+export async function updateProvider(
+  workspaceId: string,
+  providerId: string,
+  data: { name: string; format: string; baseUrl: string; apiKey?: string },
+) {
+  await db.modelProvider.updateMany({
+    where: { id: providerId, workspaceId },
+    data,
+  });
+}
+
 export async function deleteProvider(workspaceId: string, providerId: string) {
   await db.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
 }
