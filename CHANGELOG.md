@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.10.0...toolplane-v0.11.0) (2026-07-15)
+
+
+### Features
+
+* add MCP management and AI tool exposure ([#45](https://github.com/asharca/ToolPlane/issues/45)) ([922d262](https://github.com/asharca/ToolPlane/commit/922d262932cc730e34ee0c2cf51ebcd976355509))
+* improve model provider management ([#43](https://github.com/asharca/ToolPlane/issues/43)) ([d81781f](https://github.com/asharca/ToolPlane/commit/d81781fe8d8653fd085119047207cabcab0f71f9))
+
+
+### Bug Fixes
+
+* polish console controls and flows ([#44](https://github.com/asharca/ToolPlane/issues/44)) ([e223d78](https://github.com/asharca/ToolPlane/commit/e223d782081bba05a76d0f49add2cb55d72623c4))
+
 ## [0.10.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.9.0...toolplane-v0.10.0) (2026-07-14)
 
 
