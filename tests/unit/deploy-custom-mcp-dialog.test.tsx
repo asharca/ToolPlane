@@ -20,6 +20,22 @@ describe('DeployCustomMcpDialog', () => {
     expect(screen.getByText('Start Command')).toBeInTheDocument();
   });
 
+  it('defaults to isolated networking and exposes a fully offline mode', async () => {
+    render(<DeployCustomMcpDialog slug="acme" />);
+    await userEvent.click(screen.getByRole('button', { name: /add custom/i }));
+
+    const isolated = screen.getByRole('radio', { name: /isolated/i });
+    const none = screen.getByRole('radio', { name: /no network/i });
+    expect(isolated).toBeChecked();
+
+    await userEvent.click(none);
+    expect(none).toBeChecked();
+    expect(screen.getByText(/may fail to install or start/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Docker' }));
+    expect(screen.queryByText(/may fail to install or start/i)).not.toBeInTheDocument();
+  });
+
   it('accepts a JSON config and derives the server name from its outer key', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await userEvent.click(screen.getByRole('button', { name: /add custom/i }));
@@ -30,8 +46,11 @@ describe('DeployCustomMcpDialog', () => {
 
     const config = screen.getByLabelText('MCP JSON config');
     await userEvent.click(config);
-    await userEvent.paste(JSON.stringify({ fetcher: { command: 'npx', args: ['-y', 'fetch-mcp'] } }));
+    await userEvent.paste(JSON.stringify({
+      fetcher: { command: 'npx', args: ['-y', 'fetch-mcp'], network: 'none' },
+    }));
     expect(screen.getByText('/acme/mcp/fetcher')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /no network/i })).toBeChecked();
   });
 
   it('shows a validation error for unsupported JSON commands', async () => {
@@ -43,6 +62,6 @@ describe('DeployCustomMcpDialog', () => {
     await userEvent.paste(JSON.stringify({ unsafe: { command: 'bash', args: ['-lc', 'whoami'] } }));
     await userEvent.click(screen.getByRole('button', { name: 'Deploy MCP' }));
 
-    expect(screen.getByText(/command must be npx or uvx/i)).toBeInTheDocument();
+    expect(screen.getByText(/valid MCP configuration for this source/i)).toBeInTheDocument();
   });
 });

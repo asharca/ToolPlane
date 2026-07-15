@@ -57,6 +57,11 @@ Default smoke account:
 smoke@example.com / password123
 ```
 
+The smoke seed also creates eight stopped MCP deployments covering npm, PyPI,
+GitHub, Docker, JSON configuration, and a catalog-linked deployment, plus four
+installed debugging skills and a private `Debug Starter Kit`. It is
+deterministic and does not fetch external skill content or start MCP processes.
+
 Local app URL:
 
 ```txt
