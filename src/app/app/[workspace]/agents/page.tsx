@@ -115,6 +115,8 @@ export default async function AgentsPage({
             format: p.format,
             baseUrl: p.baseUrl,
             modelCount: p.models.length,
+            models: p.models,
+            modelsFetchedAt: p.modelsFetchedAt?.toLocaleString() ?? null,
           }))}
         />
       )}

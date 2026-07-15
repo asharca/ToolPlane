@@ -4,9 +4,26 @@ import { db } from '@/lib/db';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
 
+const UNAVAILABLE_SANDBOX_STATUSES = [
+  'copying',
+  'copy_failed',
+  'restoring',
+  'restore_failed',
+  'restore_cleanup_required',
+  'deleting',
+];
+
 function slugify(input: string): string {
   const base = input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return base || 'agent';
+}
+
+async function uniqueAgentSlug(workspaceId: string, baseSlug: string): Promise<string> {
+  let slug = baseSlug;
+  for (let i = 1; await db.agent.findFirst({ where: { workspaceId, slug } }); i += 1) {
+    slug = `${baseSlug}-${i}`;
+  }
+  return slug;
 }
 
 export type CreateAgentOptions = {
@@ -22,72 +39,194 @@ async function uniqueSandboxSlug(workspaceId: string, baseSlug: string): Promise
   return slug;
 }
 
+async function createAgentRecords(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  name: string,
+  slug: string,
+  options: CreateAgentOptions,
+  sandboxSlug?: string,
+) {
+  const agent = await tx.agent.create({ data: { workspaceId, name, slug } });
+  if (options.runtime !== HERMES_RUNTIME_KIND) return agent;
+  if (!sandboxSlug) throw new Error('A Hermes agent requires a sandbox slug.');
+
+  const image = resolveHermesImage(options.hermesImage);
+  const deployment = await tx.deployment.create({
+    data: {
+      workspaceId,
+      name: `Hermes runtime: ${name}`,
+      source: 'sandbox',
+      sourceRef: image,
+      status: 'stopped',
+    },
+  });
+  const sandbox = await tx.sandbox.create({
+    data: {
+      workspaceId,
+      deploymentId: deployment.id,
+      name: `${name} Hermes`,
+      slug: sandboxSlug,
+      kind: HERMES_RUNTIME_KIND,
+      image,
+      network: 'isolated',
+      config: { managedBy: 'agent-runtime' },
+    },
+  });
+  const runtime = await tx.agentRuntime.create({
+    data: {
+      workspaceId,
+      agentId: agent.id,
+      sandboxId: sandbox.id,
+      kind: HERMES_RUNTIME_KIND,
+      image,
+      status: 'setup_required',
+    },
+  });
+  await tx.deployment.update({
+    where: { id: deployment.id },
+    data: {
+      installCfg: {
+        sandboxId: sandbox.id,
+        kind: HERMES_RUNTIME_KIND,
+        image,
+        network: 'isolated',
+        volumeName: sandboxVolumeName(sandbox.id),
+        runtimeId: runtime.id,
+        runtimeModelName: slug,
+        env: {},
+      },
+    },
+  });
+  return agent;
+}
+
 export async function createAgent(
   workspaceId: string,
   name: string,
   options: CreateAgentOptions = {},
 ) {
-  const base = slugify(name);
-  let slug = base;
-  for (let i = 1; await db.agent.findFirst({ where: { workspaceId, slug } }); i += 1) {
-    slug = `${base}-${i}`;
-  }
   const cleanName = name.trim() || 'New agent';
-  if (options.runtime !== HERMES_RUNTIME_KIND) {
-    return db.agent.create({ data: { workspaceId, name: cleanName, slug } });
-  }
+  const slug = await uniqueAgentSlug(workspaceId, slugify(cleanName));
+  const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND
+    ? await uniqueSandboxSlug(workspaceId, slug)
+    : undefined;
+  return db.$transaction((tx) => (
+    createAgentRecords(tx, workspaceId, cleanName, slug, options, sandboxSlug)
+  ));
+}
 
-  const image = resolveHermesImage(options.hermesImage);
-  const sandboxSlug = await uniqueSandboxSlug(workspaceId, slug);
-  return db.$transaction(async (tx) => {
-    const agent = await tx.agent.create({ data: { workspaceId, name: cleanName, slug } });
-    const deployment = await tx.deployment.create({
-      data: {
-        workspaceId,
-        name: `Hermes runtime: ${cleanName}`,
-        source: 'sandbox',
-        sourceRef: image,
-        status: 'stopped',
+export async function cloneAgent(
+  workspaceId: string,
+  sourceAgentId: string,
+  requestedName?: string,
+) {
+  const source = await db.agent.findFirst({
+    where: { id: sourceAgentId, workspaceId },
+    select: {
+      name: true,
+      systemPrompt: true,
+      providerId: true,
+      model: true,
+      maxSteps: true,
+      runtime: { select: { workspaceId: true, kind: true, image: true } },
+      servers: {
+        where: { deployment: { workspaceId } },
+        select: { deploymentId: true },
       },
-    });
-    const sandbox = await tx.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: deployment.id,
-        name: `${cleanName} Hermes`,
-        slug: sandboxSlug,
-        kind: HERMES_RUNTIME_KIND,
-        image,
-        network: 'isolated',
-        config: { managedBy: 'agent-runtime' },
+      skills: {
+        where: { installedSkill: { workspaceId } },
+        select: { installedSkillId: true },
       },
-    });
-    const runtime = await tx.agentRuntime.create({
-      data: {
-        workspaceId,
-        agentId: agent.id,
-        sandboxId: sandbox.id,
-        kind: HERMES_RUNTIME_KIND,
-        image,
-        status: 'setup_required',
+      toolkits: {
+        where: { toolkit: { workspaceId } },
+        select: { toolkitId: true },
       },
-    });
-    await tx.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        installCfg: {
-          sandboxId: sandbox.id,
-          kind: HERMES_RUNTIME_KIND,
-          image,
-          network: 'isolated',
-          volumeName: sandboxVolumeName(sandbox.id),
-          runtimeId: runtime.id,
-          runtimeModelName: slug,
-          env: {},
+      sandboxes: {
+        where: {
+          sandbox: {
+            workspaceId,
+            kind: { not: HERMES_RUNTIME_KIND },
+            deployment: {
+              status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
+            },
+          },
         },
+        select: { sandboxId: true },
+      },
+      subAgents: {
+        where: { child: { workspaceId } },
+        select: { childId: true },
+      },
+    },
+  });
+  if (!source) return null;
+
+  const cleanName = requestedName?.trim() || `${source.name} copy`;
+  const slug = await uniqueAgentSlug(workspaceId, slugify(cleanName));
+  const runtime: CreateAgentOptions & { runtime: 'native' | 'hermes' } = source.runtime?.workspaceId === workspaceId
+    && source.runtime.kind === HERMES_RUNTIME_KIND
+    ? { runtime: 'hermes', hermesImage: source.runtime.image }
+    : { runtime: 'native' };
+  const sandboxSlug = runtime.runtime === HERMES_RUNTIME_KIND
+    ? await uniqueSandboxSlug(workspaceId, slug)
+    : undefined;
+
+  return db.$transaction(async (tx) => {
+    const providerId = source.providerId
+      && await lockProvider(tx, workspaceId, source.providerId)
+      ? source.providerId
+      : null;
+    const cloned = await createAgentRecords(
+      tx,
+      workspaceId,
+      cleanName,
+      slug,
+      runtime,
+      sandboxSlug,
+    );
+    await tx.agent.update({
+      where: { id: cloned.id },
+      data: {
+        systemPrompt: runtime.runtime === HERMES_RUNTIME_KIND ? null : source.systemPrompt,
+        providerId,
+        model: providerId ? source.model : null,
+        maxSteps: source.maxSteps,
       },
     });
-    return agent;
+    await Promise.all([
+      tx.agentServer.createMany({
+        data: source.servers.map((server) => ({
+          agentId: cloned.id,
+          deploymentId: server.deploymentId,
+        })),
+      }),
+      tx.agentSkill.createMany({
+        data: source.skills.map((skill) => ({
+          agentId: cloned.id,
+          installedSkillId: skill.installedSkillId,
+        })),
+      }),
+      tx.agentToolkit.createMany({
+        data: source.toolkits.map((toolkit) => ({
+          agentId: cloned.id,
+          toolkitId: toolkit.toolkitId,
+        })),
+      }),
+      tx.agentSandbox.createMany({
+        data: source.sandboxes.map((sandbox) => ({
+          agentId: cloned.id,
+          sandboxId: sandbox.sandboxId,
+        })),
+      }),
+      tx.agentSubAgent.createMany({
+        data: source.subAgents.map((subAgent) => ({
+          parentId: cloned.id,
+          childId: subAgent.childId,
+        })),
+      }),
+    ]);
+    return { ...cloned, runtimeKind: runtime.runtime };
   });
 }
 
@@ -161,16 +300,7 @@ export async function setAgentTools(
         workspaceId,
         kind: { not: HERMES_RUNTIME_KIND },
         deployment: {
-          status: {
-            notIn: [
-              'copying',
-              'copy_failed',
-              'restoring',
-              'restore_failed',
-              'restore_cleanup_required',
-              'deleting',
-            ],
-          },
+          status: { notIn: UNAVAILABLE_SANDBOX_STATUSES },
         },
       },
       select: { id: true },
@@ -215,6 +345,17 @@ export async function createProvider(
   data: { name: string; format: string; baseUrl: string; apiKey: string },
 ) {
   return db.modelProvider.create({ data: { workspaceId, ...data } });
+}
+
+export async function updateProvider(
+  workspaceId: string,
+  providerId: string,
+  data: { name: string; format: string; baseUrl: string; apiKey?: string },
+) {
+  await db.modelProvider.updateMany({
+    where: { id: providerId, workspaceId },
+    data,
+  });
 }
 
 export async function deleteProvider(workspaceId: string, providerId: string) {

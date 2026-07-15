@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.9.0...toolplane-v0.10.0) (2026-07-14)
+
+
+### Features
+
+* support MCP JSON configs ([#41](https://github.com/asharca/ToolPlane/issues/41)) ([d527bdb](https://github.com/asharca/ToolPlane/commit/d527bdbbf992faa4c96b59622f7b08f8c1673484))
+
+## [0.9.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.8.0...toolplane-v0.9.0) (2026-07-14)
+
+
+### Features
+
+* add agent clone and delete actions ([#37](https://github.com/asharca/ToolPlane/issues/37)) ([6030f12](https://github.com/asharca/ToolPlane/commit/6030f12a3d9f5b19bc2e3e2e62f4ebed79b4e465))
+* add sandbox clone and snapshots ([#39](https://github.com/asharca/ToolPlane/issues/39)) ([998dad2](https://github.com/asharca/ToolPlane/commit/998dad2c55c0285eda338f21ffd0144ab9ba789c))
+* add toolkit management actions ([#38](https://github.com/asharca/ToolPlane/issues/38)) ([167c24d](https://github.com/asharca/ToolPlane/commit/167c24dc3921e7a7a50de8d4bb34a4f0a9116873))
+
+
+### Bug Fixes
+
+* sync Hermes runtime and show action feedback ([#36](https://github.com/asharca/ToolPlane/issues/36)) ([498dddd](https://github.com/asharca/ToolPlane/commit/498dddd29e2f8936eb155c97b63d139e5658dcbe))
+
 ## [0.8.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.7.0...toolplane-v0.8.0) (2026-07-14)
 
 

@@ -30,6 +30,12 @@ import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { McpJsonConfigEditor } from '@/components/dashboard/McpJsonConfigEditor';
+import { McpToolExposureEditor } from '@/components/dashboard/McpToolExposureEditor';
+import {
+  isEditableMcpSource,
+  serializeMcpDeploymentConfig,
+} from '@/lib/workspace/custom-mcp';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,7 +85,6 @@ export default async function DeploymentInspectorPage({
   const t = await getTranslations('console.mcp');
   const { workspace: slug, deploymentId } = await params;
   const { tab } = await searchParams;
-  const current = TABS.some((t) => t.key === tab) ? tab! : 'overview';
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -93,9 +98,19 @@ export default async function DeploymentInspectorPage({
   });
   if (!dep) notFound();
 
+  const editableConfiguration = isEditableMcpSource(dep.source);
+  const tabs = editableConfiguration
+    ? [TABS[0], { key: 'configuration', label: 'Configuration' }, ...TABS.slice(1)]
+    : TABS;
+  const current = tabs.some((item) => item.key === tab) ? tab! : 'overview';
+
   const label = deploymentLabel(dep);
   const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string>; network?: string };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
+  const serializedConfig = editableConfiguration ? serializeMcpDeploymentConfig(dep) : '';
+  const maskedConfig = editableConfiguration
+    ? serializeMcpDeploymentConfig(dep, { maskSecrets: true })
+    : '';
 
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
@@ -178,7 +193,7 @@ export default async function DeploymentInspectorPage({
           </div>
         </div>
 
-        <TabBar tabs={TABS} current={current} basePath={base} />
+        <TabBar tabs={tabs} current={current} basePath={base} />
 
         {provisioning ? (
           <section className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
@@ -256,23 +271,51 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'variables' ? (
-          <VariablesEditor slug={slug} deploymentId={deploymentId} initial={envRows} network={envCfg.network} />
+          <VariablesEditor slug={slug} deploymentId={deploymentId} initial={envRows} />
+        ) : null}
+
+        {current === 'configuration' && editableConfiguration ? (
+          <McpJsonConfigEditor
+            slug={slug}
+            deploymentId={deploymentId}
+            maskedConfig={maskedConfig}
+            requiresReveal={serializedConfig !== maskedConfig}
+            initialNetwork={envCfg.network === 'none' ? 'none' : 'isolated'}
+            warnAboutPackageInstall={dep.source !== 'docker'}
+          />
         ) : null}
 
         {current === 'tools' ? (
-          <section>
+          <section className="space-y-6">
             <div className="mb-3 flex items-center gap-2">
               <Plug className="size-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                 {t('tools')} {tools.length > 0 ? `(${tools.length})` : ''}
               </h2>
             </div>
+            <McpToolExposureEditor
+              workspace={slug}
+              deploymentId={deploymentId}
+              tools={tools}
+              initialMode={dep.mcpToolExposure}
+              initialAllowedTools={dep.mcpAllowedTools}
+              running={running}
+            />
             {running ? (
-              <ToolPlayground deploymentId={deploymentId} tools={tools} />
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-foreground">{t('manualToolTesting')}</h3>
+                <ToolPlayground workspace={slug} deploymentId={deploymentId} tools={tools} />
+              </div>
             ) : (
               <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {t('thisDeploymentIs')} {status}{t('startItToInspectAndRunItsTools')}
+                  {t('deploymentNotRunningTools', {
+                    status: status === 'stopped'
+                      ? t('stopped')
+                      : status === 'error'
+                        ? t('error')
+                        : status,
+                  })}
                 </p>
               </div>
             )}

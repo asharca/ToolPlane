@@ -11,9 +11,18 @@ import {
   stopProcess,
   restartProcess,
   killProcess,
+  liveStatus,
 } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
-import { parseCustomMcpInput } from '@/lib/workspace/custom-mcp';
+import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
+import { logRequest } from '@/lib/observability/log';
+import {
+  EDITABLE_MCP_SOURCES,
+  isEditableMcpSource,
+  parseCustomMcpInput,
+  parseMcpDeploymentConfig,
+  serializeMcpDeploymentConfig,
+} from '@/lib/workspace/custom-mcp';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
@@ -103,6 +112,8 @@ export async function deployCustomServerAction(formData: FormData) {
       ref: String(formData.get('ref') ?? ''),
       name: String(formData.get('name') ?? ''),
       startCommand: String(formData.get('startCommand') ?? ''),
+      config: String(formData.get('config') ?? ''),
+      network: String(formData.get('network') ?? 'isolated'),
     });
   } catch {
     return;
@@ -137,6 +148,226 @@ export async function deployCustomServerAction(formData: FormData) {
   redirect(`/app/${slug}/mcp/${dep.id}`);
 }
 
+export type McpJsonConfigActionState = {
+  error?: 'invalidJsonConfig' | 'notAuthorized' | 'deploymentNotFound' | 'rebuildFailed';
+  savedAt?: number;
+};
+
+export type McpJsonConfigRevealResult = {
+  config?: string;
+  error?: 'notAuthorized' | 'deploymentNotFound';
+};
+
+export async function revealMcpJsonConfigAction({
+  workspace,
+  deploymentId,
+}: {
+  workspace: string;
+  deploymentId: string;
+}): Promise<McpJsonConfigRevealResult> {
+  if (!workspace || !deploymentId) return { error: 'deploymentNotFound' };
+  const ctx = await authorizedWorkspace(workspace);
+  if (!ctx) return { error: 'notAuthorized' };
+  const deployment = await db.deployment.findFirst({
+    where: {
+      id: deploymentId,
+      workspaceId: ctx.ws.id,
+      source: { in: [...EDITABLE_MCP_SOURCES] },
+    },
+    select: { source: true, sourceRef: true, installCfg: true },
+  });
+  if (!deployment || !isEditableMcpSource(deployment.source)) {
+    return { error: 'deploymentNotFound' };
+  }
+  return { config: serializeMcpDeploymentConfig(deployment) };
+}
+
+export async function updateMcpJsonConfigAction(
+  _previous: McpJsonConfigActionState,
+  formData: FormData,
+): Promise<McpJsonConfigActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  const config = String(formData.get('config') ?? '');
+  const network = formData.get('network');
+  if (!slug || !deploymentId || !config.trim()) return { error: 'invalidJsonConfig' };
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'notAuthorized' };
+  const deployment = await db.deployment.findFirst({
+    where: {
+      id: deploymentId,
+      workspaceId: ctx.ws.id,
+      source: { in: [...EDITABLE_MCP_SOURCES] },
+    },
+  });
+  if (!deployment || !isEditableMcpSource(deployment.source)) {
+    return { error: 'deploymentNotFound' };
+  }
+
+  let parsed;
+  try {
+    parsed = parseMcpDeploymentConfig(
+      config,
+      deployment.source,
+      deployment.name ?? undefined,
+      network === null ? undefined : String(network),
+    );
+  } catch {
+    return { error: 'invalidJsonConfig' };
+  }
+  if (deployment.serverId && parsed.ref !== deployment.sourceRef) {
+    return { error: 'invalidJsonConfig' };
+  }
+  const updated = await db.deployment.update({
+    where: { id: deployment.id },
+    data: {
+      source: parsed.source,
+      sourceRef: parsed.ref,
+      installCfg: parsed.installCfg as Prisma.InputJsonValue,
+      status: 'provisioning',
+    },
+    include: { server: { select: { name: true } } },
+  });
+
+  try {
+    await restartProcess(updated.id, resolveSpawnSpec(updated, true), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
+  } catch {
+    await db.deployment.update({
+      where: { id: deployment.id },
+      data: { status: 'error' },
+    });
+    revalidatePath(`/app/${slug}/mcp`);
+    revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+    return { error: 'rebuildFailed' };
+  }
+
+  revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+  return { savedAt: Date.now() };
+}
+
+export type McpToolExposureActionState = {
+  error?: 'notAuthorized' | 'deploymentNotFound' | 'invalidToolSelection';
+  savedAt?: number;
+  revision?: number;
+};
+
+const MAX_ALLOWED_MCP_TOOLS = 500;
+const MAX_MCP_TOOL_NAME_LENGTH = 256;
+
+function validMcpToolNames(values: FormDataEntryValue[]): string[] | null {
+  const names = [...new Set(values.map(String))];
+  if (names.length > MAX_ALLOWED_MCP_TOOLS) return null;
+  if (names.reduce((total, name) => total + name.length, 0) > 64_000) return null;
+  if (names.some((name) => (
+    !name
+    || name.length > MAX_MCP_TOOL_NAME_LENGTH
+    || name.includes('\0')
+  ))) return null;
+  return names;
+}
+
+export async function updateMcpToolExposureAction(
+  _previous: McpToolExposureActionState,
+  formData: FormData,
+): Promise<McpToolExposureActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  const mode = String(formData.get('mode') ?? '');
+  const rawRevision = Number(formData.get('revision') ?? 0);
+  const revision = Number.isSafeInteger(rawRevision) && rawRevision >= 0 ? rawRevision : 0;
+  if (!slug || !deploymentId || (mode !== 'all' && mode !== 'allowlist')) {
+    return { error: 'invalidToolSelection' };
+  }
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'notAuthorized' };
+  const deployment = await db.deployment.findFirst({
+    where: { id: deploymentId, workspaceId: ctx.ws.id },
+    select: {
+      id: true,
+      source: true,
+    },
+  });
+  if (!deployment || deployment.source === 'sandbox') {
+    return { error: 'deploymentNotFound' };
+  }
+
+  const selected = validMcpToolNames(formData.getAll('toolName'));
+  if (!selected) return { error: 'invalidToolSelection' };
+
+  await db.deployment.update({
+    where: { id: deployment.id },
+    data: {
+      mcpToolExposure: mode,
+      mcpAllowedTools: mode === 'allowlist' ? selected : [],
+    },
+  });
+  revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
+  return { savedAt: Date.now(), revision };
+}
+
+export type McpConsoleToolResult = {
+  result?: Record<string, unknown>;
+  error?: 'notAuthorized' | 'deploymentNotFound' | 'deploymentNotRunning' | 'invalidToolCall' | 'toolCallFailed';
+};
+
+export async function runMcpConsoleToolAction(input: {
+  workspace: string;
+  deploymentId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}): Promise<McpConsoleToolResult> {
+  const slug = input.workspace;
+  const deploymentId = input.deploymentId;
+  const toolName = input.toolName;
+  if (!slug || !deploymentId || !toolName || toolName.length > MAX_MCP_TOOL_NAME_LENGTH) {
+    return { error: 'invalidToolCall' };
+  }
+  if (!input.arguments || typeof input.arguments !== 'object' || Array.isArray(input.arguments)) {
+    return { error: 'invalidToolCall' };
+  }
+  let requestBody = '';
+  try {
+    requestBody = JSON.stringify({ name: toolName, arguments: input.arguments });
+  } catch {
+    return { error: 'invalidToolCall' };
+  }
+  if (requestBody.length > 16_000) return { error: 'invalidToolCall' };
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'notAuthorized' };
+  const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!deployment) return { error: 'deploymentNotFound' };
+  if (liveStatus(deployment.id) !== 'running') return { error: 'deploymentNotRunning' };
+
+  const availableTools = await listMcpTools(deployment.id);
+  if (!availableTools.some((tool) => tool.name === toolName)) {
+    return { error: 'invalidToolCall' };
+  }
+
+  const startedAt = Date.now();
+  const result = await mcpRpc(deployment.id, 'tools/call', {
+    name: toolName,
+    arguments: input.arguments,
+  });
+  await logRequest({
+    workspaceId: ctx.ws.id,
+    deploymentId: deployment.id,
+    method: 'POST',
+    path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
+    statusCode: result ? 200 : 502,
+    durationMs: Date.now() - startedAt,
+    requestBody,
+    responseBody: JSON.stringify(result ?? { error: 'unreachable' }).slice(0, 16_000),
+  });
+  return result ? { result } : { error: 'toolCallFailed' };
+}
+
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export async function setDeploymentEnvAction(formData: FormData) {
@@ -164,10 +395,6 @@ export async function setDeploymentEnvAction(formData: FormData) {
   }
 
   const next: Record<string, unknown> = { ...((dep.installCfg ?? {}) as Record<string, unknown>), env };
-  // `--network none` toggle: an unchecked checkbox submits nothing → isolated.
-  if (String(formData.get('network') ?? '') === 'none') next.network = 'none';
-  else delete next.network;
-
   await db.deployment.update({
     where: { id: deploymentId },
     data: { installCfg: next as Prisma.InputJsonValue },

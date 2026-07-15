@@ -84,19 +84,66 @@ export function buildSpawnSpec(
   }
 }
 
+export function buildStdioConfigSpawnSpec(
+  command: string,
+  commandArgs: string[],
+  env: Record<string, string> = {},
+  rebuild = false,
+  network: McpNetwork = 'isolated',
+): { command: string; args: string[] } {
+  const run = ['run', ...sandboxFlags(network)];
+  if (command === 'npx') {
+    const refresh = rebuild ? ['--prefer-online'] : [];
+    return {
+      command: 'docker',
+      args: [
+        ...run,
+        ...envFlags(CACHE_ENV.npm),
+        ...envFlags(env),
+        WRAP_IMAGE.npm,
+        'npx',
+        ...refresh,
+        ...commandArgs,
+      ],
+    };
+  }
+  if (command === 'uvx') {
+    const refresh = rebuild ? ['--refresh'] : [];
+    return {
+      command: 'docker',
+      args: [
+        ...run,
+        ...envFlags(CACHE_ENV.pypi),
+        ...envFlags(env),
+        WRAP_IMAGE.pypi,
+        'uvx',
+        ...refresh,
+        ...commandArgs,
+      ],
+    };
+  }
+  throw new Error(`Unsupported stdio MCP command: ${command || '(none)'}`);
+}
+
 function readCfg(installCfg: unknown): {
   env: Record<string, string>;
   startCommand?: string;
+  command?: string;
+  args: string[];
   network: McpNetwork;
 } {
   const c = (installCfg ?? {}) as {
     env?: Record<string, string>;
     startCommand?: string;
+    command?: string;
+    args?: string[];
     network?: string;
   };
   return {
     env: c.env ?? {},
     startCommand: c.startCommand,
+    command: c.command,
+    args: Array.isArray(c.args) ? c.args : [],
     network: c.network === 'none' ? 'none' : 'isolated',
   };
 }
@@ -164,8 +211,24 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
   // deployment WITH a source runs its real package in a container, same path as
   // a custom deployment.
   if (!d.source) return { kind: 'builtin', name: d.server?.name ?? d.name ?? 'mcp' };
-  const { env, startCommand, network } = readCfg(d.installCfg);
-  const { command, args } = buildSpawnSpec(
+  const { env, startCommand, command, args: commandArgs, network } = readCfg(d.installCfg);
+  if (d.source === 'config') {
+    const configSpec = buildStdioConfigSpawnSpec(
+      command ?? '',
+      commandArgs,
+      env,
+      rebuild,
+      network,
+    );
+    return {
+      kind: 'bridge',
+      name: d.name ?? 'custom',
+      command: configSpec.command,
+      args: configSpec.args,
+      env,
+    };
+  }
+  const packageSpec = buildSpawnSpec(
     d.source,
     d.sourceRef ?? '',
     startCommand,
@@ -173,5 +236,11 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
     rebuild,
     network,
   );
-  return { kind: 'bridge', name: d.name ?? d.server?.name ?? d.sourceRef ?? 'custom', command, args, env };
+  return {
+    kind: 'bridge',
+    name: d.name ?? d.server?.name ?? d.sourceRef ?? 'custom',
+    command: packageSpec.command,
+    args: packageSpec.args,
+    env,
+  };
 }

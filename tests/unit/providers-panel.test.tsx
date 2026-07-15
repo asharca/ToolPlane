@@ -9,6 +9,8 @@ const actions = vi.hoisted(() => ({
     formData.get('providerId');
   }),
   refreshModelsAction: vi.fn(async () => ({})),
+  testProviderModelAction: vi.fn(async () => ({})),
+  updateProviderAction: vi.fn(async () => ({})),
 }));
 
 vi.mock('@/lib/agents/actions', () => actions);
@@ -26,6 +28,8 @@ describe('ProvidersPanel', () => {
             format: 'openai',
             baseUrl: 'https://api.openai.com/v1',
             modelCount: 2,
+            models: ['gpt-4.1', 'gpt-4.1-mini'],
+            modelsFetchedAt: null,
           },
         ]}
       />,
