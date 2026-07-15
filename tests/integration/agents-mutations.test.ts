@@ -7,6 +7,7 @@ import {
   updateAgent,
   setAgentTools,
   setProviderModels,
+  updateProvider,
   appendMessage,
   createConversation,
 } from '@/lib/agents/mutations';
@@ -205,6 +206,64 @@ describe('agents mutations', () => {
     const p = await db.modelProvider.findUnique({ where: { id: providerId } });
     expect(p?.models).toEqual(['gpt-x', 'gpt-y']);
     expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
+  });
+
+  it('updates providers within the workspace and keeps the API key when omitted', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Update Me ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://old.example.test/v1',
+        apiKey: 'keep-me',
+      },
+    });
+
+    await updateProvider(workspaceId, provider.id, {
+      name: `${provider.name} Renamed`,
+      format: 'anthropic',
+      baseUrl: 'https://new.example.test/v1',
+    });
+
+    const reread = await db.modelProvider.findUnique({ where: { id: provider.id } });
+    expect(reread).toMatchObject({
+      name: `${provider.name} Renamed`,
+      format: 'anthropic',
+      baseUrl: 'https://new.example.test/v1',
+      apiKey: 'keep-me',
+    });
+    await db.modelProvider.delete({ where: { id: provider.id } });
+  });
+
+  it('does not update providers from another workspace', async () => {
+    const other = await db.workspace.create({
+      data: { slug: `provider-other-${Date.now()}`, name: 'Provider Other', ownerId: userId, members: { create: { userId, role: 'owner' } } },
+    });
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId: other.id,
+        name: `Foreign Provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://foreign.example.test/v1',
+        apiKey: 'foreign-key',
+      },
+    });
+
+    await updateProvider(workspaceId, provider.id, {
+      name: 'Should Not Change',
+      format: 'anthropic',
+      baseUrl: 'https://changed.example.test/v1',
+      apiKey: 'changed-key',
+    });
+
+    const reread = await db.modelProvider.findUnique({ where: { id: provider.id } });
+    expect(reread).toMatchObject({
+      name: provider.name,
+      format: 'openai',
+      baseUrl: 'https://foreign.example.test/v1',
+      apiKey: 'foreign-key',
+    });
+    await db.workspace.delete({ where: { id: other.id } });
   });
 
   it('creates a conversation and appends messages', async () => {

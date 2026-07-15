@@ -1,21 +1,27 @@
 'use server';
 
+import { generateText } from 'ai';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getProvider } from '@/lib/agents/queries';
+import { buildModel } from '@/lib/agents/model';
 import {
   createAgent,
   updateAgent,
   setAgentTools,
   deleteAgent,
   createProvider,
+  updateProvider,
   deleteProvider,
   setProviderModels,
   createConversation,
 } from '@/lib/agents/mutations';
-import { modelsEndpoint, modelsHeaders, parseModelList } from '@/lib/agents/models-fetch';
+import {
+  fetchProviderModels,
+  type ProviderModelFetchConfig,
+} from '@/lib/agents/models-fetch';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   createAgentChannelConnection,
@@ -42,9 +48,26 @@ async function authorizedWorkspace(slug: string) {
   return { user, ws };
 }
 
-export type ActionState = { error?: string; savedAt?: number };
+export type ActionState = { error?: string; warning?: string; savedAt?: number };
 
 const PROVIDER_FORMATS = new Set(['openai', 'openai-responses', 'anthropic']);
+
+function modelFetchError(result: Exclude<Awaited<ReturnType<typeof fetchProviderModels>>, { ok: true }>): string {
+  if (result.reason === 'status') return `Provider returned ${result.status}.`;
+  if (result.reason === 'empty') return 'No models found at that base URL.';
+  return 'Could not reach the provider base URL.';
+}
+
+async function refreshProviderModels(
+  workspaceId: string,
+  providerId: string,
+  provider: ProviderModelFetchConfig,
+): Promise<string | null> {
+  const result = await fetchProviderModels(provider);
+  if (!result.ok) return modelFetchError(result);
+  await setProviderModels(workspaceId, providerId, result.models);
+  return null;
+}
 
 export async function createProviderAction(
   _prev: ActionState,
@@ -59,13 +82,60 @@ export async function createProviderAction(
   if (!name || !baseUrl || !apiKey) return { error: 'Name, base URL and API key are required.' };
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  let provider: { id: string };
   try {
-    await createProvider(ctx.ws.id, { name, format, baseUrl, apiKey });
+    provider = await createProvider(ctx.ws.id, { name, format, baseUrl, apiKey });
   } catch {
     return { error: 'A provider with that name already exists.' };
   }
+  const refreshError = await refreshProviderModels(ctx.ws.id, provider.id, { format, baseUrl, apiKey });
   revalidatePath(`/app/${slug}/agents`);
-  return {};
+  if (refreshError) {
+    return { warning: `Provider added, but models were not refreshed: ${refreshError}`, savedAt: Date.now() };
+  }
+  return { savedAt: Date.now() };
+}
+
+export async function updateProviderAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const name = String(formData.get('name') ?? '').trim();
+  const requestedFormat = String(formData.get('format') ?? '');
+  const format = PROVIDER_FORMATS.has(requestedFormat) ? requestedFormat : 'openai';
+  const baseUrl = String(formData.get('baseUrl') ?? '').trim();
+  const apiKey = String(formData.get('apiKey') ?? '').trim();
+  if (!providerId || !name || !baseUrl) return { error: 'Provider, name and base URL are required.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  const existing = await getProvider(ctx.ws.id, providerId);
+  if (!existing) return { error: 'Provider not found.' };
+
+  try {
+    await updateProvider(ctx.ws.id, providerId, {
+      name,
+      format,
+      baseUrl,
+      ...(apiKey ? { apiKey } : {}),
+    });
+  } catch {
+    return { error: 'A provider with that name already exists.' };
+  }
+
+  const shouldRefreshModels = existing.format !== format || existing.baseUrl !== baseUrl || Boolean(apiKey);
+  let warning: string | undefined;
+  if (shouldRefreshModels) {
+    const refreshError = await refreshProviderModels(ctx.ws.id, providerId, {
+      format,
+      baseUrl,
+      apiKey: apiKey || existing.apiKey,
+    });
+    if (refreshError) warning = `Provider updated, but models were not refreshed: ${refreshError}`;
+  }
+  revalidatePath(`/app/${slug}/agents`);
+  return { ...(warning ? { warning } : {}), savedAt: Date.now() };
 }
 
 export async function deleteProviderAction(formData: FormData) {
@@ -87,21 +157,43 @@ export async function refreshModelsAction(
   if (!ctx) return { error: 'Not authorized.' };
   const provider = await getProvider(ctx.ws.id, providerId);
   if (!provider) return { error: 'Provider not found.' };
-  try {
-    const res = await fetch(modelsEndpoint(provider.baseUrl), {
-      headers: modelsHeaders(provider.format, provider.apiKey),
-      signal: AbortSignal.timeout(10000),
-      cache: 'no-store',
-    });
-    if (!res.ok) return { error: `Provider returned ${res.status}.` };
-    const models = parseModelList(await res.json());
-    if (models.length === 0) return { error: 'No models found at that base URL.' };
-    await setProviderModels(ctx.ws.id, providerId, models);
-  } catch {
-    return { error: 'Could not reach the provider base URL.' };
-  }
+  const refreshError = await refreshProviderModels(ctx.ws.id, providerId, provider);
+  if (refreshError) return { error: refreshError };
   revalidatePath(`/app/${slug}/agents`);
-  return {};
+  return { savedAt: Date.now() };
+}
+
+function sanitizeProviderError(error: unknown, apiKey: string): string {
+  const raw = error instanceof Error ? error.message : 'Model test failed.';
+  const trimmed = raw.replaceAll(apiKey, '[redacted]').slice(0, 240);
+  return trimmed || 'Model test failed.';
+}
+
+export async function testProviderModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const modelId = String(formData.get('model') ?? '').trim();
+  if (!modelId) return { error: 'Model is required.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  const provider = await getProvider(ctx.ws.id, providerId);
+  if (!provider) return { error: 'Provider not found.' };
+
+  try {
+    await generateText({
+      model: buildModel(provider, modelId),
+      prompt: 'Reply with exactly: ok',
+      maxOutputTokens: 8,
+      maxRetries: 0,
+      timeout: 10000,
+    });
+  } catch (error) {
+    return { error: sanitizeProviderError(error, provider.apiKey) };
+  }
+  return { savedAt: Date.now() };
 }
 
 export async function createAgentAction(formData: FormData) {
