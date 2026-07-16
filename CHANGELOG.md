@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.11.0...toolplane-v0.12.0) (2026-07-16)
+
+
+### Features
+
+* **agents:** adopt assistant-ui for chat ([#47](https://github.com/asharca/ToolPlane/issues/47)) ([172cdb9](https://github.com/asharca/ToolPlane/commit/172cdb95a7025c0323f0855824dd354b7273cc2b))
+
 ## [0.11.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.10.0...toolplane-v0.11.0) (2026-07-15)
 
 
