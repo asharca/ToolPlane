@@ -1,33 +1,156 @@
-import { getTranslations } from 'next-intl/server';
+import { Building2 } from 'lucide-react';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth/admin';
+import { redirect } from 'next/navigation';
+import {
+  AdminEmptyState,
+  AdminEntity,
+  AdminPage,
+  AdminPageHeader,
+  AdminPagination,
+  AdminSearchForm,
+  AdminTableLink,
+} from '@/components/admin/AdminUI';
+import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listWorkspaces } from '@/lib/admin/workspaces';
+import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { requireAdmin } from '@/lib/auth/admin';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminWorkspacesPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
-  const t = await getTranslations('admin');
-  await requireAdmin();
-  const { q = '', page = '1' } = await searchParams;
-  const { items, total } = await listWorkspaces({ page: Number(page) || 1, q });
+export default async function AdminWorkspacesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; page?: string }>;
+}) {
+  const [t, locale, admin, params] = await Promise.all([
+    getTranslations('admin'),
+    getLocale(),
+    requireAdmin(),
+    searchParams,
+  ]);
+  const { page = '1' } = params;
+  const rawQuery = params.q ?? '';
+  const q = rawQuery.trim();
+  const rawPage = Number(page);
+  const requestedPage = normalizeAdminPage(rawPage);
+  const timeZone = resolveUserTimeZone(admin);
+  const {
+    items,
+    total,
+    page: currentPage,
+    pageSize,
+  } = await listWorkspaces({ page: requestedPage, q });
+
+  const hrefForPage = (targetPage: number) => {
+    const query = new URLSearchParams({ page: String(targetPage) });
+    if (q) query.set('q', q);
+    return `/admin/workspaces?${query.toString()}`;
+  };
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  if (rawQuery !== q || rawPage !== requestedPage || currentPage > lastPage) {
+    redirect(hrefForPage(Math.min(currentPage, lastPage)));
+  }
 
   return (
-    <div className="space-y-4 px-8 py-6">
-      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('workspaces')} <span className="text-base font-normal text-zinc-500">({total})</span></h1>
-      <form className="flex gap-2">
-        <input name="q" defaultValue={q} placeholder={t('searchNameOrSlug')} className="h-9 w-72 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
-        <button className="h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700">{t('search')}</button>
-      </form>
-      <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-        {items.map((w) => (
-          <li key={w.id} className="flex items-center justify-between px-4 py-2.5">
-            <Link href={`/admin/workspaces/${w.id}`} className="min-w-0">
-              <span className="block truncate text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">{w.name} <span className="text-zinc-400">/{w.slug}</span></span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">{w.owner.email} · {w._count.members} {t('members')} {w._count.deployments} {t('deployments1')}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <AdminPage>
+      <AdminPageHeader
+        title={t('workspaces')}
+        description={t('workspacesDescription')}
+        meta={t('workspaceCount', { count: total.toLocaleString() })}
+      />
+
+      <AdminSearchForm
+        defaultValue={q}
+        placeholder={t('searchNameOrSlug')}
+        label={t('searchNameOrSlug')}
+        searchLabel={t('search')}
+        clearLabel={t('clear')}
+        clearHref="/admin/workspaces"
+      />
+
+      {items.length === 0 ? (
+        <AdminEmptyState
+          icon={Building2}
+          title={t('noWorkspaces')}
+          description={q ? t('noWorkspacesDescription') : t('emptyWorkspacesDescription')}
+        />
+      ) : (
+        <DashboardTable
+          ariaLabel={t('workspacesTableLabel')}
+          minWidth="70rem"
+          headers={[
+            { label: t('workspaceColumn'), className: 'w-full' },
+            { label: t('ownerColumn') },
+            { label: t('membersColumn'), align: 'right' },
+            { label: t('agentsColumn'), align: 'right' },
+            { label: t('deploymentsColumn'), align: 'right' },
+            { label: t('createdColumn') },
+            { label: <span className="sr-only">{t('viewDetails')}</span> },
+          ]}
+        >
+          {items.map((workspace) => (
+            <tr key={workspace.id}>
+              <td className="px-4 py-3">
+                <AdminEntity
+                  title={
+                    <Link
+                      href={`/admin/workspaces/${workspace.id}`}
+                      className="hover:underline"
+                    >
+                      {workspace.name}
+                    </Link>
+                  }
+                  description={`/${workspace.slug}`}
+                  initials={workspace.name}
+                />
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">
+                <Link
+                  href={`/admin/users/${workspace.owner.id}`}
+                  className="text-sm font-medium text-foreground hover:underline"
+                >
+                  {workspace.owner.email}
+                </Link>
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {workspace._count.members}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {workspace._count.agents}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {workspace._count.deployments}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
+                {formatInTimeZone(workspace.createdAt, timeZone, {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                }, locale)}
+              </td>
+              <td className="px-2 py-3">
+                <AdminTableLink
+                  href={`/admin/workspaces/${workspace.id}`}
+                  label={`${t('viewDetails')}: ${workspace.name}`}
+                />
+              </td>
+            </tr>
+          ))}
+        </DashboardTable>
+      )}
+
+      <AdminPagination
+        page={currentPage}
+        total={total}
+        pageSize={pageSize}
+        itemLabel={t('workspaces')}
+        pageLabel={t('page')}
+        previousLabel={t('prev')}
+        nextLabel={t('next')}
+        hrefForPage={hrefForPage}
+      />
+    </AdminPage>
   );
 }

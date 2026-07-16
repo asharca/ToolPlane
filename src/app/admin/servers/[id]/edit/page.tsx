@@ -8,6 +8,7 @@ import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 import { ServerForm } from '@/components/admin/ServerForm';
 import { RecipeEditor } from '@/components/admin/RecipeEditor';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
+import { AdminBadge, AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,18 +21,25 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
   const recipe = parseServerRecipe(server.installCfg);
 
   return (
-    <div className="space-y-6 px-8 py-6">
-      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('edit')} {server.name}</h1>
-      <ServerForm
-        action={updateServerAction}
-        initial={{
-          id: server.id, slug: server.slug, name: server.name, author: server.author, description: server.description,
-          iconUrl: server.iconUrl, stars: server.stars, isOfficial: server.isOfficial, isFeatured: server.isFeatured,
-          categoryIds: server.categories.map((c) => c.id),
-        }}
-        categories={categories}
-        submitLabel="Save changes"
+    <AdminPage className="max-w-5xl">
+      <AdminPageHeader
+        title={`${t('edit')} ${server.name}`}
+        meta={<AdminBadge tone="neutral">/{server.slug}</AdminBadge>}
+        backHref="/admin/servers"
+        backLabel={t('toolplane')}
       />
+      <section className="border-t border-border pt-6" aria-label={`${t('edit')} ${server.name}`}>
+        <ServerForm
+          action={updateServerAction}
+          initial={{
+            id: server.id, slug: server.slug, name: server.name, author: server.author, description: server.description,
+            iconUrl: server.iconUrl, stars: server.stars, isOfficial: server.isOfficial, isFeatured: server.isFeatured,
+            categoryIds: server.categories.map((c) => c.id),
+          }}
+          categories={categories}
+          submitLabel={t('saveChanges')}
+        />
+      </section>
       <RecipeEditor
         serverId={server.id}
         hasRecipe={!!recipe}
@@ -48,11 +56,13 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
         verifiedAt={server.verifiedAt ? server.verifiedAt.toISOString() : null}
         verifiedTools={server.verifiedTools ?? null}
       />
-      <section className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
-        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">{t('delete')}</h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{t('refusedWhileAnyDeploymentReferencesThisServer')}{server._count.deployments} {t('now')}</p>
-        <ConfirmDialog label={t('deleteServer')} prompt={t('deleteThisDirectoryEntry')} action={deleteServerAction} hidden={{ id: server.id }} pendingLabel={t('deleting')} />
-      </section>
-    </div>
+      <AdminPanel
+        title={t('dangerZone')}
+        description={`${t('refusedWhileAnyDeploymentReferencesThisServer')}${server._count.deployments} ${t('now')}`}
+        tone="danger"
+      >
+        <ConfirmDialog label={t('deleteServer')} prompt={t('deleteThisDirectoryEntry')} action={deleteServerAction} hidden={{ id: server.id }} pendingLabel={t('deleting')} tone="danger" />
+      </AdminPanel>
+    </AdminPage>
   );
 }

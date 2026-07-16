@@ -1,63 +1,142 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getWorkspaceDetail } from '@/lib/admin/workspaces';
 import { deleteWorkspaceAdminAction } from '@/lib/admin/workspace-actions';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
+import {
+  AdminBadge,
+  AdminPage,
+  AdminPageHeader,
+  AdminPanel,
+  type AdminBadgeTone,
+} from '@/components/admin/AdminUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
+function deploymentTone(status: string): AdminBadgeTone {
+  if (status === 'running') return 'success';
+  if (status === 'failed' || status === 'error') return 'danger';
+  if (status === 'provisioning' || status === 'starting') return 'warning';
+  return 'neutral';
+}
+
 export default async function AdminWorkspaceDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const t = await getTranslations('admin');
+  const [t, locale] = await Promise.all([getTranslations('admin'), getLocale()]);
   const admin = await requireAdmin();
   const timeZone = resolveUserTimeZone(admin);
   const { id } = await params;
   const w = await getWorkspaceDetail(id);
   if (!w) notFound();
+  const createdAt = formatInTimeZone(w.createdAt, timeZone, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }, locale);
+  const membersLabel = t('members');
+  const roleLabels: Record<string, string> = {
+    owner: t('workspaceRoleOwner'),
+    member: t('workspaceRoleMember'),
+  };
+  const statusLabels: Record<string, string> = {
+    running: t('deploymentStatusRunning'),
+    provisioning: t('deploymentStatusProvisioning'),
+    stopped: t('deploymentStatusStopped'),
+    error: t('deploymentStatusError'),
+  };
 
   return (
-    <div className="max-w-2xl space-y-6 px-8 py-6">
-      <Link href="/admin/workspaces" className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">{t('workspaces')}</Link>
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{w.name} <span className="text-base font-normal text-zinc-400">/{w.slug}</span></h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {t('owner')} {w.owner.email} {t('created')} {formatInTimeZone(w.createdAt, timeZone, {
-            year: 'numeric',
-            month: 'numeric',
-            day: 'numeric',
-          })}
-        </p>
-      </div>
+    <AdminPage className="max-w-5xl">
+      <AdminPageHeader
+        title={w.name}
+        description={(
+          <>
+            {t('owner')}{' '}
+            <Link href={`/admin/users/${w.owner.id}`} className="font-medium text-foreground hover:underline">
+              {w.owner.email}
+            </Link>{' '}
+            · {t('created')} {createdAt}
+          </>
+        )}
+        meta={<AdminBadge tone="neutral">/{w.slug}</AdminBadge>}
+        backHref="/admin/workspaces"
+        backLabel={t('workspaces')}
+      />
 
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('members')}</h2>
-        <ul className="space-y-1 text-sm">
-          {w.members.map((m) => <li key={m.user.id} className="text-zinc-700 dark:text-zinc-300">{m.user.email} <span className="text-zinc-400">· {m.role}</span></li>)}
+      <AdminPanel
+        title={membersLabel}
+        actions={<AdminBadge tone="neutral">{w.members.length}</AdminBadge>}
+        padded={false}
+      >
+        <ul className="divide-y divide-border">
+          {w.members.map((member) => (
+            <li key={member.user.id}>
+              <Link
+                href={`/admin/users/${member.user.id}`}
+                className="flex min-h-14 min-w-0 items-center justify-between gap-3 px-5 py-2.5 transition-colors hover:bg-muted/55"
+              >
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {member.user.email}
+                </span>
+                <AdminBadge tone={member.role === 'owner' ? 'brand' : 'neutral'}>
+                  {roleLabels[member.role] ?? member.role}
+                </AdminBadge>
+              </Link>
+            </li>
+          ))}
         </ul>
-      </section>
+      </AdminPanel>
 
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('deployments3')}{w.deployments.length})</h2>
-        <ul className="space-y-1 text-sm">
-          {w.deployments.map((d) => <li key={d.id} className="text-zinc-700 dark:text-zinc-300">{d.name ?? d.source ?? d.id} <span className="text-zinc-400">· {d.status}</span></li>)}
-          {w.deployments.length === 0 ? <li className="text-zinc-500">{t('none')}</li> : null}
-        </ul>
-      </section>
+      <AdminPanel
+        title={t('deployments')}
+        actions={<AdminBadge tone="neutral">{w.deployments.length}</AdminBadge>}
+        padded={false}
+      >
+        {w.deployments.length > 0 ? (
+          <ul className="divide-y divide-border">
+            {w.deployments.map((deployment) => (
+              <li
+                key={deployment.id}
+                className="flex min-h-14 min-w-0 items-center justify-between gap-3 px-5 py-2.5"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-foreground">
+                    {deployment.name ?? deployment.source ?? deployment.id}
+                  </span>
+                  {deployment.name && deployment.source ? (
+                    <code className="block truncate font-mono text-xs text-muted-foreground">
+                      {deployment.source}
+                    </code>
+                  ) : null}
+                </span>
+                <AdminBadge tone={deploymentTone(deployment.status)} dot>
+                  {statusLabels[deployment.status] ?? deployment.status}
+                </AdminBadge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">{t('none')}</p>
+        )}
+      </AdminPanel>
 
-      <section className="rounded-lg border border-red-200 p-4 dark:border-red-500/30">
-        <h2 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h2>
-        <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{t('stopsAllMcpProcessesAndDeletesTheWorkspaceAndEverythingInIt')}</p>
+      <AdminPanel
+        title={t('dangerZone')}
+        description={t('stopsAllMcpProcessesAndDeletesTheWorkspaceAndEverythingInIt')}
+        tone="danger"
+      >
         <ConfirmDialog
           label={t('deleteWorkspace')}
-          prompt={`Type ${w.slug} to confirm:`}
+          prompt={t('typeToConfirm', { value: w.slug })}
           action={deleteWorkspaceAdminAction}
           hidden={{ workspaceId: w.id, slug: w.slug }}
           confirmWord={w.slug}
           pendingLabel={t('deleting')}
+          tone="danger"
         />
-      </section>
-    </div>
+      </AdminPanel>
+    </AdminPage>
   );
 }

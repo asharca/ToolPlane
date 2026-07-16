@@ -1,14 +1,16 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { normalizeAdminPage } from '@/lib/admin/pagination';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
 const PAGE_SIZE = 25;
 
 export async function listUsers({ page = 1, q = '' }: { page?: number; q?: string }) {
+  const currentPage = normalizeAdminPage(page);
   const where = q
     ? { OR: [{ email: { contains: q, mode: 'insensitive' as const } }, { name: { contains: q, mode: 'insensitive' as const } }] }
     : {};
-  const skip = (Math.max(1, page) - 1) * PAGE_SIZE;
+  const skip = (currentPage - 1) * PAGE_SIZE;
   const [items, total] = await Promise.all([
     db.user.findMany({
       where,
@@ -22,7 +24,7 @@ export async function listUsers({ page = 1, q = '' }: { page?: number; q?: strin
     }),
     db.user.count({ where }),
   ]);
-  return { items, total, page: Math.max(1, page), pageSize: PAGE_SIZE };
+  return { items, total, page: currentPage, pageSize: PAGE_SIZE };
 }
 
 export async function getUserDetail(id: string) {

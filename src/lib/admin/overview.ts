@@ -7,8 +7,8 @@ export async function getSystemOverview() {
 
   const [
     users, admins, suspended, newUsers7d,
-    workspaces, agents, toolkits, installedSkills, providers,
-    servers, skills, clients,
+    workspaces, memberships, agents, toolkits, installedSkills, providers,
+    servers, skills, clients, categories,
     deploymentGroups, logs, scraper, recentUsers,
   ] = await Promise.all([
     db.user.count(),
@@ -16,6 +16,7 @@ export async function getSystemOverview() {
     db.user.count({ where: { status: 'suspended' } }),
     db.user.count({ where: { createdAt: { gte: since7d } } }),
     db.workspace.count(),
+    db.membership.count(),
     db.agent.count(),
     db.toolkit.count(),
     db.installedSkill.count(),
@@ -23,6 +24,7 @@ export async function getSystemOverview() {
     db.server.count(),
     db.skill.count(),
     db.client.count(),
+    db.category.count(),
     db.deployment.groupBy({ by: ['status'], _count: { _all: true } }),
     db.requestLog.findMany({
       where: { createdAt: { gte: since24h } },
@@ -48,8 +50,8 @@ export async function getSystemOverview() {
   return {
     counts: {
       users, admins, suspended, newUsers7d,
-      workspaces, agents, toolkits, installedSkills, providers,
-      servers, skills, clients, deployments,
+      workspaces, memberships, agents, toolkits, installedSkills, providers,
+      servers, skills, clients, categories, deployments,
     },
     requests: { total, errors, avgMs, p95Ms },
     scraper,
