@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.12.0...toolplane-v0.13.0) (2026-07-16)
+
+
+### Features
+
+* redesign admin console ([#49](https://github.com/asharca/ToolPlane/issues/49)) ([bf3cb3d](https://github.com/asharca/ToolPlane/commit/bf3cb3d565e7e554014aacb10332b42eabe89987))
+
 ## [0.12.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.11.0...toolplane-v0.12.0) (2026-07-16)
 
 
