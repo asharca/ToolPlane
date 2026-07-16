@@ -1,52 +1,163 @@
-import { getTranslations } from 'next-intl/server';
+import { Users } from 'lucide-react';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth/admin';
+import { redirect } from 'next/navigation';
+import {
+  AdminBadge,
+  AdminEmptyState,
+  AdminEntity,
+  AdminPage,
+  AdminPageHeader,
+  AdminPagination,
+  AdminSearchForm,
+  AdminTableLink,
+} from '@/components/admin/AdminUI';
+import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listUsers } from '@/lib/admin/users';
+import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { requireAdmin } from '@/lib/auth/admin';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminUsersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
-  const t = await getTranslations('admin');
-  await requireAdmin();
-  const { q = '', page = '1' } = await searchParams;
-  const { items, total, pageSize } = await listUsers({ page: Number(page) || 1, q });
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; page?: string }>;
+}) {
+  const [t, locale, admin, params] = await Promise.all([
+    getTranslations('admin'),
+    getLocale(),
+    requireAdmin(),
+    searchParams,
+  ]);
+  const { page = '1' } = params;
+  const rawQuery = params.q ?? '';
+  const q = rawQuery.trim();
+  const rawPage = Number(page);
+  const requestedPage = normalizeAdminPage(rawPage);
+  const timeZone = resolveUserTimeZone(admin);
+  const {
+    items,
+    total,
+    page: currentPage,
+    pageSize,
+  } = await listUsers({ page: requestedPage, q });
+
+  const hrefForPage = (targetPage: number) => {
+    const query = new URLSearchParams({ page: String(targetPage) });
+    if (q) query.set('q', q);
+    return `/admin/users?${query.toString()}`;
+  };
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  if (rawQuery !== q || rawPage !== requestedPage || currentPage > lastPage) {
+    redirect(hrefForPage(Math.min(currentPage, lastPage)));
+  }
 
   return (
-    <div className="space-y-4 px-8 py-6">
-      <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('users')} <span className="text-base font-normal text-zinc-500">({total})</span></h1>
-      <form className="flex gap-2">
-        <input name="q" defaultValue={q} placeholder={t('searchEmailOrName')} className="h-9 w-72 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
-        <button className="h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700">{t('search')}</button>
-      </form>
-      <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-        {items.map((u) => (
-          <li key={u.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <Link href={`/admin/users/${u.id}`} className="min-w-0">
-              <span className="block truncate text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">{u.name ?? u.email}</span>
-              <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{u.email} · {u._count.ownedWorkspaces} {t('ws')} {u._count.apiTokens} {t('tokens')}</span>
-            </Link>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {u.role === 'admin' ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 dark:bg-red-500/15 dark:text-red-300">{t('admin2')}</span> : null}
-              {u.status === 'suspended' ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">{t('suspended2')}</span> : null}
-            </div>
-          </li>
-        ))}
-      </ul>
-      <Pagination total={total} page={Number(page) || 1} pageSize={pageSize} q={q} />
-    </div>
-  );
-}
+    <AdminPage>
+      <AdminPageHeader
+        title={t('users')}
+        description={t('usersDescription')}
+        meta={t('accountCount', { count: total.toLocaleString() })}
+      />
 
-async function Pagination({ total, page, pageSize, q }: { total: number; page: number; pageSize: number; q: string }) {
-  const t = await getTranslations('admin');
-  const pages = Math.ceil(total / pageSize);
-  if (pages <= 1) return null;
-  const qs = (p: number) => `?q=${encodeURIComponent(q)}&page=${p}`;
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      {page > 1 ? <Link href={qs(page - 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">{t('prev')}</Link> : null}
-      <span className="text-zinc-500">{t('page')} {page} / {pages}</span>
-      {page < pages ? <Link href={qs(page + 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">{t('next')}</Link> : null}
-    </div>
+      <AdminSearchForm
+        defaultValue={q}
+        placeholder={t('searchEmailOrName')}
+        label={t('searchEmailOrName')}
+        searchLabel={t('search')}
+        clearLabel={t('clear')}
+        clearHref="/admin/users"
+      />
+
+      {items.length === 0 ? (
+        <AdminEmptyState
+          icon={Users}
+          title={t('noUsers')}
+          description={q ? t('noUsersDescription') : t('emptyUsersDescription')}
+        />
+      ) : (
+        <DashboardTable
+          ariaLabel={t('usersTableLabel')}
+          minWidth="69rem"
+          headers={[
+            { label: t('userColumn'), className: 'w-full' },
+            { label: t('roleColumn') },
+            { label: t('ownedWorkspacesColumn'), align: 'right' },
+            { label: t('membershipsColumn'), align: 'right' },
+            { label: t('tokensColumn'), align: 'right' },
+            { label: t('statusColumn') },
+            { label: t('joinedColumn') },
+            { label: <span className="sr-only">{t('viewDetails')}</span> },
+          ]}
+        >
+          {items.map((user) => (
+            <tr key={user.id}>
+              <td className="px-4 py-3">
+                <AdminEntity
+                  title={
+                    <Link
+                      href={`/admin/users/${user.id}`}
+                      className="hover:underline"
+                    >
+                      {user.name ?? user.email}
+                    </Link>
+                  }
+                  description={user.name ? user.email : undefined}
+                  initials={user.name ?? user.email}
+                />
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">
+                <AdminBadge tone={user.role === 'admin' ? 'brand' : 'neutral'}>
+                  {user.role === 'admin' ? t('administrator') : t('user')}
+                </AdminBadge>
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {user._count.ownedWorkspaces}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {user._count.memberships}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {user._count.apiTokens}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">
+                <AdminBadge
+                  tone={user.status === 'active' ? 'success' : 'warning'}
+                  dot
+                >
+                  {user.status === 'active' ? t('active') : t('suspended')}
+                </AdminBadge>
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
+                {formatInTimeZone(user.createdAt, timeZone, {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                }, locale)}
+              </td>
+              <td className="px-2 py-3">
+                <AdminTableLink
+                  href={`/admin/users/${user.id}`}
+                  label={`${t('viewDetails')}: ${user.name ?? user.email}`}
+                />
+              </td>
+            </tr>
+          ))}
+        </DashboardTable>
+      )}
+
+      <AdminPagination
+        page={currentPage}
+        total={total}
+        pageSize={pageSize}
+        itemLabel={t('users')}
+        pageLabel={t('page')}
+        previousLabel={t('prev')}
+        nextLabel={t('next')}
+        hrefForPage={hrefForPage}
+      />
+    </AdminPage>
   );
 }

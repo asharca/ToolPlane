@@ -1,53 +1,185 @@
-import { getTranslations } from 'next-intl/server';
+import { Plus, Server as ServerIcon } from 'lucide-react';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
-import { requireAdmin } from '@/lib/auth/admin';
+import { redirect } from 'next/navigation';
+import {
+  AdminBadge,
+  AdminEmptyState,
+  AdminEntity,
+  AdminPage,
+  AdminPageHeader,
+  AdminPagination,
+  AdminSearchForm,
+  AdminTableLink,
+} from '@/components/admin/AdminUI';
+import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listDirectoryServers } from '@/lib/admin/market';
+import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { requireAdmin } from '@/lib/auth/admin';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminServersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
-  const t = await getTranslations('admin');
-  await requireAdmin();
-  const { q = '', page = '1' } = await searchParams;
-  const { items, total, pageSize } = await listDirectoryServers({ page: Number(page) || 1, q });
+export default async function AdminServersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; page?: string }>;
+}) {
+  const [t, locale, admin, params] = await Promise.all([
+    getTranslations('admin'),
+    getLocale(),
+    requireAdmin(),
+    searchParams,
+  ]);
+  const { page = '1' } = params;
+  const rawQuery = params.q ?? '';
+  const q = rawQuery.trim();
+  const rawPage = Number(page);
+  const requestedPage = normalizeAdminPage(rawPage);
+  const timeZone = resolveUserTimeZone(admin);
+  const {
+    items,
+    total,
+    page: currentPage,
+    pageSize,
+  } = await listDirectoryServers({ page: requestedPage, q });
+
+  const hrefForPage = (targetPage: number) => {
+    const query = new URLSearchParams({ page: String(targetPage) });
+    if (q) query.set('q', q);
+    return `/admin/servers?${query.toString()}`;
+  };
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  if (rawQuery !== q || rawPage !== requestedPage || currentPage > lastPage) {
+    redirect(hrefForPage(Math.min(currentPage, lastPage)));
+  }
 
   return (
-    <div className="space-y-4 px-8 py-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('toolplane')} <span className="text-base font-normal text-zinc-500">({total})</span></h1>
-        <Link href="/admin/servers/new" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{t('addServer')}</Link>
-      </div>
-      <form className="flex gap-2"><input name="q" defaultValue={q} placeholder={t('search')} className="h-9 w-72 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" /><button className="h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700">{t('search')}</button></form>
-      <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-        {items.map((s) => (
-          <li key={s.id} className="flex items-center justify-between px-4 py-2.5">
-            <Link href={`/admin/servers/${s.id}/edit`} className="min-w-0">
-              <span className="block truncate text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100">{s.name} <span className="font-mono text-xs text-zinc-400">/{s.slug}</span></span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">{s.stars}★ · {s._count.deployments} {t('deployments2')}</span>
+    <AdminPage>
+      <AdminPageHeader
+        title={t('directoryServers')}
+        description={t('serversDescription')}
+        meta={t('serverCount', { count: total.toLocaleString() })}
+        actions={
+          <Link href="/admin/servers/new" className="ui-button-primary">
+            <Plus className="size-4" aria-hidden="true" />
+            {t('addServer')}
+          </Link>
+        }
+      />
+
+      <AdminSearchForm
+        defaultValue={q}
+        placeholder={t('searchNameOrSlug')}
+        label={t('searchNameOrSlug')}
+        searchLabel={t('search')}
+        clearLabel={t('clear')}
+        clearHref="/admin/servers"
+      />
+
+      {items.length === 0 ? (
+        <AdminEmptyState
+          icon={ServerIcon}
+          title={t('noServers')}
+          description={q ? t('noServersDescription') : t('emptyServersDescription')}
+          actions={q ? null : (
+            <Link href="/admin/servers/new" className="ui-button-primary">
+              <Plus className="size-4" aria-hidden="true" />
+              {t('addServer')}
             </Link>
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase">
-              {s.curated ? <span className="rounded bg-sky-100 px-1.5 py-0.5 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">{t('curated')}</span> : null}
-              {s.isOfficial ? <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">{t('official1')}</span> : null}
-              {s.isFeatured ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">{t('featured1')}</span> : null}
-            </div>
-          </li>
-        ))}
-      </ul>
-      <Pagination total={total} page={Number(page) || 1} pageSize={pageSize} q={q} />
-    </div>
-  );
-}
+          )}
+        />
+      ) : (
+        <DashboardTable
+          ariaLabel={t('serversTableLabel')}
+          minWidth="72rem"
+          headers={[
+            { label: t('serverColumn'), className: 'w-full' },
+            { label: t('verificationColumn') },
+            { label: t('starsColumn'), align: 'right' },
+            { label: t('deploymentsColumn'), align: 'right' },
+            { label: t('flagsColumn') },
+            { label: <span className="sr-only">{t('edit')}</span> },
+          ]}
+        >
+          {items.map((server) => (
+            <tr key={server.id}>
+              <td className="px-4 py-3">
+                <AdminEntity
+                  title={
+                    <Link
+                      href={`/admin/servers/${server.id}/edit`}
+                      className="hover:underline"
+                    >
+                      {server.name}
+                    </Link>
+                  }
+                  description={`/${server.slug}`}
+                  initials={server.name}
+                />
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">
+                {server.verifiedAt ? (
+                  <div className="flex flex-col items-start gap-1">
+                    <AdminBadge tone="success" dot>
+                      {t('verified')}
+                    </AdminBadge>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {formatInTimeZone(server.verifiedAt, timeZone, {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      }, locale)}
+                    </span>
+                  </div>
+                ) : (
+                  <AdminBadge tone="warning" dot>
+                    {t('unverified')}
+                  </AdminBadge>
+                )}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {server.stars.toLocaleString()}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-foreground">
+                {server._count.deployments}
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex min-w-52 flex-wrap gap-1.5">
+                  {server.isOfficial ? (
+                    <AdminBadge tone="brand">{t('official')}</AdminBadge>
+                  ) : null}
+                  {server.isFeatured ? (
+                    <AdminBadge tone="neutral">{t('featured')}</AdminBadge>
+                  ) : null}
+                  {server.curated ? (
+                    <AdminBadge tone="neutral">{t('curated')}</AdminBadge>
+                  ) : null}
+                  {!server.isOfficial && !server.isFeatured && !server.curated ? (
+                    <span className="text-sm text-muted-foreground">{t('none')}</span>
+                  ) : null}
+                </div>
+              </td>
+              <td className="px-2 py-3">
+                <AdminTableLink
+                  href={`/admin/servers/${server.id}/edit`}
+                  label={`${t('edit')}: ${server.name}`}
+                />
+              </td>
+            </tr>
+          ))}
+        </DashboardTable>
+      )}
 
-async function Pagination({ total, page, pageSize, q }: { total: number; page: number; pageSize: number; q: string }) {
-  const t = await getTranslations('admin');
-  const pages = Math.ceil(total / pageSize);
-  if (pages <= 1) return null;
-  const qs = (p: number) => `?q=${encodeURIComponent(q)}&page=${p}`;
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      {page > 1 ? <Link href={qs(page - 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">{t('prev')}</Link> : null}
-      <span className="text-zinc-500">{t('page')} {page} / {pages}</span>
-      {page < pages ? <Link href={qs(page + 1)} className="rounded-md border border-zinc-200 px-3 py-1 dark:border-zinc-700">{t('next')}</Link> : null}
-    </div>
+      <AdminPagination
+        page={currentPage}
+        total={total}
+        pageSize={pageSize}
+        itemLabel={t('directoryServers')}
+        pageLabel={t('page')}
+        previousLabel={t('prev')}
+        nextLabel={t('next')}
+        hrefForPage={hrefForPage}
+      />
+    </AdminPage>
   );
 }

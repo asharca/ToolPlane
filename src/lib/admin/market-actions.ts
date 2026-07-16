@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { getTranslations } from 'next-intl/server';
 import { requireAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/db';
 import {
@@ -32,9 +33,10 @@ export type SkillRegistrySyncActionState = {
 
 export async function createServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const slug = str(fd, 'slug').toLowerCase();
   const name = str(fd, 'name');
-  if (!name || !SLUG_RE.test(slug)) return { error: 'Name and a valid slug are required.' };
+  if (!name || !SLUG_RE.test(slug)) return { error: t('errorNameSlugRequired') };
   try {
     await createDirectoryServer({
       slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
@@ -42,7 +44,7 @@ export async function createServerAction(_prev: AdminActionState, fd: FormData):
       isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
     });
   } catch {
-    return { error: 'A server with that slug already exists.' };
+    return { error: t('errorServerExists') };
   }
   revalidatePath('/admin/servers');
   redirect('/admin/servers');
@@ -50,14 +52,19 @@ export async function createServerAction(_prev: AdminActionState, fd: FormData):
 
 export async function updateServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const id = str(fd, 'id');
   const name = str(fd, 'name');
-  if (!name) return { error: 'Name is required.' };
-  await updateDirectoryServer(id, {
-    name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-    iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
-    isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
-  });
+  if (!name) return { error: t('errorNameRequired') };
+  try {
+    await updateDirectoryServer(id, {
+      name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
+      iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
+      isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
+    });
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
   revalidatePath('/admin/servers');
   revalidatePath(`/admin/servers/${id}/edit`);
   return {};
@@ -65,10 +72,12 @@ export async function updateServerAction(_prev: AdminActionState, fd: FormData):
 
 export async function deleteServerAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   try {
     await deleteDirectoryServer(str(fd, 'id'));
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Failed.' };
+    const count = e instanceof Error ? /^(?:Refused: )?(\d+) live deployment/.exec(e.message)?.[1] : undefined;
+    return { error: count ? t('errorServerReferenced', { count: Number(count) }) : t('errorActionFailed') };
   }
   revalidatePath('/admin/servers');
   redirect('/admin/servers');
@@ -80,14 +89,15 @@ function slugify(name: string): string {
 
 export async function importSkillFromGithubAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const source = str(fd, 'githubSource').trim();
-  if (!source) return { error: 'GitHub source is required.' };
+  if (!source) return { error: t('errorGithubSourceRequired') };
 
   let bundle;
   try {
     bundle = await fetchGithubSkillBundle(source);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Network error fetching skill bundle from GitHub.' };
+    return { error: t('errorGithubFetch', { message: e instanceof Error ? e.message : t('errorActionFailed') }) };
   }
 
   const name = bundle.name;
@@ -98,7 +108,7 @@ export async function importSkillFromGithubAction(_prev: AdminActionState, fd: F
   if (!SLUG_RE.test(slug)) slug = slugify(`${bundle.source.owner}-${bundle.source.repo}`);
 
   const existing = await db.skill.findUnique({ where: { slug } });
-  if (existing?.githubSource === bundle.source.normalized) return { error: `Already imported: ${slug}.` };
+  if (existing?.githubSource === bundle.source.normalized) return { error: t('errorAlreadyImported', { slug }) };
   if (existing) slug = `${slug}-${Date.now().toString(36)}`;
 
   try {
@@ -115,7 +125,7 @@ export async function importSkillFromGithubAction(_prev: AdminActionState, fd: F
       categoryIds: [],
     });
   } catch {
-    return { error: 'Failed to create skill — slug conflict.' };
+    return { error: t('errorSkillCreate') };
   }
 
   revalidatePath('/admin/skills');
@@ -127,12 +137,13 @@ export async function syncSkillRegistryAction(
   fd: FormData,
 ): Promise<SkillRegistrySyncActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const owner = str(fd, 'owner');
   const repo = str(fd, 'repo');
   const ref = str(fd, 'ref') || 'main';
   const rootPath = str(fd, 'rootPath') || 'skills';
   const slugPrefix = str(fd, 'slugPrefix');
-  if (!owner || !repo) return { error: 'Owner and repo are required.' };
+  if (!owner || !repo) return { error: t('errorOwnerRepoRequired') };
 
   try {
     const result = await syncGithubSkillRegistry(db, { owner, repo, ref, rootPath, slugPrefix });
@@ -144,18 +155,19 @@ export async function syncSkillRegistryAction(
       created: result.created,
       updated: result.updated,
       failed: result.failed.length,
-      error: result.failed.length > 0 ? `${result.failed.length} skill(s) failed to sync.` : undefined,
+      error: result.failed.length > 0 ? t('errorSyncPartial', { count: result.failed.length }) : undefined,
     };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Failed to sync skill registry.' };
+    return { error: t('errorSyncFailed', { message: e instanceof Error ? e.message : t('errorActionFailed') }) };
   }
 }
 
 export async function createSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const slug = str(fd, 'slug').toLowerCase();
   const name = str(fd, 'name');
-  if (!name || !SLUG_RE.test(slug)) return { error: 'Name and a valid slug are required.' };
+  if (!name || !SLUG_RE.test(slug)) return { error: t('errorNameSlugRequired') };
   try {
     await createDirectorySkill({
       slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
@@ -163,7 +175,7 @@ export async function createSkillAction(_prev: AdminActionState, fd: FormData): 
       score: num(str(fd, 'score')), categoryIds: ids(fd),
     });
   } catch {
-    return { error: 'A skill with that slug already exists.' };
+    return { error: t('errorSkillExists') };
   }
   revalidatePath('/admin/skills');
   redirect('/admin/skills');
@@ -171,14 +183,19 @@ export async function createSkillAction(_prev: AdminActionState, fd: FormData): 
 
 export async function updateSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const id = str(fd, 'id');
   const name = str(fd, 'name');
-  if (!name) return { error: 'Name is required.' };
-  await updateDirectorySkill(id, {
-    name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
-    iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
-    score: num(str(fd, 'score')), categoryIds: ids(fd),
-  });
+  if (!name) return { error: t('errorNameRequired') };
+  try {
+    await updateDirectorySkill(id, {
+      name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
+      iconUrl: nul(str(fd, 'iconUrl')), githubSource: nul(str(fd, 'githubSource')),
+      score: num(str(fd, 'score')), categoryIds: ids(fd),
+    });
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
   revalidatePath('/admin/skills');
   revalidatePath(`/admin/skills/${id}/edit`);
   return {};
@@ -186,10 +203,12 @@ export async function updateSkillAction(_prev: AdminActionState, fd: FormData): 
 
 export async function deleteSkillAction(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   try {
     await deleteDirectorySkill(str(fd, 'id'));
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Failed.' };
+    const count = e instanceof Error ? /^(?:Refused: )?(\d+) workspace install/.exec(e.message)?.[1] : undefined;
+    return { error: count ? t('errorSkillInstalled', { count: Number(count) }) : t('errorActionFailed') };
   }
   revalidatePath('/admin/skills');
   redirect('/admin/skills');
@@ -231,33 +250,44 @@ function recipeFromForm(fd: FormData) {
 
 export async function setServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const id = str(fd, 'id');
   const recipe = recipeFromForm(fd);
-  if (!recipe) return { error: 'Invalid recipe: pick a source and a valid package/image reference.' };
-  await setServerRecipe(id, recipe);
+  if (!recipe) return { error: t('errorInvalidRecipe') };
+  try {
+    await setServerRecipe(id, recipe);
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
   revalidatePath(`/admin/servers/${id}/edit`);
   revalidatePath('/admin/servers');
-  return {};
+  return { ok: true };
 }
 
 export async function removeServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const id = str(fd, 'id');
-  await setServerRecipe(id, null);
+  try {
+    await setServerRecipe(id, null);
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
   revalidatePath(`/admin/servers/${id}/edit`);
   revalidatePath('/admin/servers');
-  return {};
+  return { ok: true };
 }
 
 export async function validateServerRecipeAction(_prev: RecipeActionState, fd: FormData): Promise<RecipeActionState> {
   await requireAdmin();
+  const t = await getTranslations('admin');
   const id = str(fd, 'id');
   const server = await db.server.findUnique({ where: { id }, select: { installCfg: true } });
   const recipe = parseServerRecipe(server?.installCfg);
-  if (!recipe) return { error: 'Save a valid recipe before validating.' };
+  if (!recipe) return { error: t('errorSaveRecipeFirst') };
 
   const result = await validateServerRecipe(recipe, envPairs(str(fd, 'testEnv')));
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { error: t('errorValidationFailed', { message: result.error }) };
 
   await setServerVerified(id, result.toolCount);
   revalidatePath(`/admin/servers/${id}/edit`);

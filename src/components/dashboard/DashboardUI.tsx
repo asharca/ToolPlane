@@ -201,15 +201,26 @@ export function DashboardTable({
   minWidth = '40rem',
   panel = true,
   className,
+  ariaLabel,
 }: {
   headers: Array<{ label?: ReactNode; className?: string; align?: 'left' | 'right' }>;
   children: ReactNode;
   minWidth?: string;
   panel?: boolean;
   className?: string;
+  ariaLabel?: string;
 }) {
   return (
-    <div className={cx(panel ? 'ui-panel' : '', 'overflow-x-auto', className)}>
+    <div
+      role={ariaLabel ? 'region' : undefined}
+      aria-label={ariaLabel}
+      tabIndex={ariaLabel ? 0 : undefined}
+      className={cx(
+        panel ? 'ui-panel' : '',
+        'relative overflow-x-auto overscroll-x-contain focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+        className,
+      )}
+    >
       <table className="ui-table" style={{ minWidth }}>
         <thead>
           <tr>

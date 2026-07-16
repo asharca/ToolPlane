@@ -26,6 +26,7 @@
   --accent-foreground: 187 65% 18%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 98%;
+  --destructive-text: 0 72% 42%;
   --border: 214 17% 86%;
   --input: 214 17% 84%;
   --ring: 174 78% 32%;
@@ -53,6 +54,7 @@
   --accent-foreground: 174 55% 86%;
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 0 0% 98%;
+  --destructive-text: 0 78% 72%;
   --border: 220 12% 20%;
   --input: 220 12% 22%;
   --ring: 174 65% 48%;
@@ -79,6 +81,7 @@
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-destructive-text: hsl(var(--destructive-text));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
@@ -135,6 +138,10 @@
   border-radius: var(--radius);
   background: hsl(var(--card));
   box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+}
+
+.ui-panel-danger {
+  border-color: hsl(var(--destructive) / 0.38);
 }
 
 .ui-panel-muted {
@@ -258,6 +265,30 @@
   border-color: hsl(var(--ring) / 0.55);
   background: hsl(var(--accent));
   color: hsl(var(--accent-foreground));
+}
+
+.ui-button-danger {
+  border-color: hsl(var(--destructive));
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
+.ui-button-danger:hover {
+  border-color: color-mix(in hsl, hsl(var(--destructive)) 88%, black 12%);
+  background: color-mix(in hsl, hsl(var(--destructive)) 88%, black 12%);
+  color: hsl(var(--destructive-foreground));
+}
+
+.ui-button-danger-secondary {
+  border-color: hsl(var(--destructive-text) / 0.42);
+  background: hsl(var(--card));
+  color: hsl(var(--destructive-text));
+}
+
+.ui-button-danger-secondary:hover {
+  border-color: hsl(var(--destructive-text) / 0.62);
+  background: hsl(var(--destructive) / 0.09);
+  color: hsl(var(--destructive-text));
 }
 
 .ui-button-ghost {

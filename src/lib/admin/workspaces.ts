@@ -1,14 +1,17 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { effectiveStatuses } from '@/lib/process/supervisor';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
 const PAGE_SIZE = 25;
 
 export async function listWorkspaces({ page = 1, q = '' }: { page?: number; q?: string }) {
+  const currentPage = normalizeAdminPage(page);
   const where = q
     ? { OR: [{ name: { contains: q, mode: 'insensitive' as const } }, { slug: { contains: q, mode: 'insensitive' as const } }] }
     : {};
-  const skip = (Math.max(1, page) - 1) * PAGE_SIZE;
+  const skip = (currentPage - 1) * PAGE_SIZE;
   const [items, total] = await Promise.all([
     db.workspace.findMany({
       where,
@@ -23,11 +26,11 @@ export async function listWorkspaces({ page = 1, q = '' }: { page?: number; q?: 
     }),
     db.workspace.count({ where }),
   ]);
-  return { items, total, page: Math.max(1, page), pageSize: PAGE_SIZE };
+  return { items, total, page: currentPage, pageSize: PAGE_SIZE };
 }
 
 export async function getWorkspaceDetail(id: string) {
-  return db.workspace.findUnique({
+  const workspace = await db.workspace.findUnique({
     where: { id },
     select: {
       id: true, slug: true, name: true, createdAt: true,
@@ -36,6 +39,16 @@ export async function getWorkspaceDetail(id: string) {
       deployments: { select: { id: true, name: true, source: true, status: true } },
     },
   });
+  if (!workspace) return null;
+
+  const statuses = effectiveStatuses(workspace.deployments);
+  return {
+    ...workspace,
+    deployments: workspace.deployments.map((deployment) => ({
+      ...deployment,
+      status: statuses.get(deployment.id) ?? deployment.status,
+    })),
+  };
 }
 
 export async function deleteManagedWorkspace(workspaceId: string) {

@@ -17,6 +17,7 @@ export function SubmitButton({
   savedLabel = 'Saved',
   flash = true,
   error,
+  disabled = false,
 }: {
   children?: ReactNode;
   className?: string;
@@ -26,6 +27,7 @@ export function SubmitButton({
   // where the page's own state already reflects the result.
   flash?: boolean;
   error?: string | boolean | null;
+  disabled?: boolean;
 }) {
   const { pending } = useFormStatus();
   const [justSaved, setJustSaved] = useState(false);
@@ -45,9 +47,10 @@ export function SubmitButton({
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || disabled}
       aria-busy={pending}
-      className={`${className ?? ''} disabled:cursor-wait disabled:opacity-70`}
+      aria-disabled={disabled || undefined}
+      className={`${className ?? ''} disabled:opacity-70 ${pending ? 'cursor-wait' : 'disabled:cursor-not-allowed'}`}
     >
       <span className="inline-flex items-center gap-1.5">
         {pending ? (

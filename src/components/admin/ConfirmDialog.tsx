@@ -1,7 +1,8 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useActionState, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
+import { AlertTriangle, Check, ShieldCheck, X } from 'lucide-react';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
@@ -9,60 +10,117 @@ import type { AdminActionState } from '@/lib/admin/user-actions';
 // useActionState action. When `confirmWord` is set, the user must type it.
 export function ConfirmDialog({
   label,
+  ariaLabel,
   prompt,
   action,
   hidden,
   confirmWord,
   pendingLabel,
+  tone = 'default',
 }: {
   label: string;
+  ariaLabel?: string;
   prompt: string;
   action: (prev: AdminActionState, fd: FormData) => Promise<AdminActionState>;
   hidden: Record<string, string>;
   confirmWord?: string;
   pendingLabel?: string;
+  tone?: 'default' | 'danger';
 }) {
   const [open, setOpen] = useState(false);
-  const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
+  const [state, formAction, isPending] = useActionState<AdminActionState, FormData>(action, {});
   const t = useTranslations('admin');
+  const confirmationId = useId();
+  const promptId = `${confirmationId}-prompt`;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const danger = tone === 'danger';
+  const TriggerIcon = danger ? AlertTriangle : ShieldCheck;
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex h-8 items-center rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30"
-      >
-        {label}
-      </button>
-    );
+  function closeConfirmation() {
+    if (isPending) return;
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
+  useEffect(() => {
+    if (!state.ok) return;
+    const frame = requestAnimationFrame(() => {
+      setOpen(false);
+      triggerRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state]);
+
   return (
-    <form action={formAction} className="flex flex-wrap items-center gap-2">
-      {Object.entries(hidden).map(([k, v]) => (
-        <input key={k} type="hidden" name={k} value={v} />
-      ))}
-      <span className="text-xs text-zinc-600 dark:text-zinc-300">{prompt}</span>
-      {confirmWord ? (
-        <input
-          name="confirm"
-          placeholder={confirmWord}
-          className="h-8 rounded-md border border-zinc-200 px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-        />
-      ) : null}
-      <SubmitButton
-        error={state.error}
-        flash={false}
-        pendingLabel={pendingLabel ?? 'Working…'}
-        className="inline-flex h-8 items-center rounded-md bg-red-600 px-2.5 text-xs font-medium text-white hover:bg-red-700"
+    <div className={open ? 'w-full' : undefined}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={isPending}
+        aria-expanded={open}
+        aria-controls={confirmationId}
+        aria-label={ariaLabel}
+        className={`ui-button-secondary h-11 disabled:cursor-wait disabled:opacity-70 ${danger ? 'ui-button-danger-secondary' : ''}`}
       >
-        {t('confirm')}
-      </SubmitButton>
-      <button type="button" onClick={() => setOpen(false)} className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-        {t('cancel')}
+        <TriggerIcon className="size-4" />
+        {label}
       </button>
-      {state.error ? <span className="text-xs text-red-600" role="alert">{state.error}</span> : null}
-    </form>
+      <form
+        id={confirmationId}
+        action={formAction}
+        hidden={!open}
+        className={`mt-3 w-full space-y-3 rounded-md p-3 ${danger ? 'bg-destructive/10' : 'bg-muted/55'}`}
+        aria-labelledby={promptId}
+        aria-busy={isPending}
+      >
+        {Object.entries(hidden).map(([k, v]) => (
+          <input key={k} type="hidden" name={k} value={v} />
+        ))}
+        <p id={promptId} className="text-sm font-medium text-foreground">{prompt}</p>
+        {confirmWord ? (
+          <input
+            name="confirm"
+            placeholder={confirmWord}
+            className="ui-input h-11 font-mono"
+            aria-label={`${prompt} ${confirmWord}`}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+          />
+        ) : null}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <SubmitButton
+            error={state.error}
+            flash={false}
+            pendingLabel={pendingLabel ?? t('saving')}
+            className={`ui-button-primary h-11 ${danger ? 'ui-button-danger' : ''}`}
+          >
+            <Check className="size-4" />
+            {t('confirm')}
+          </SubmitButton>
+          <button
+            type="button"
+            onClick={closeConfirmation}
+            disabled={isPending}
+            className="ui-button-ghost h-11 disabled:cursor-wait disabled:opacity-50"
+          >
+            <X className="size-4" />
+            {t('cancel')}
+          </button>
+        </div>
+        {state.error ? (
+          <p className="text-sm text-destructive-text" role="alert">
+            {state.error}
+          </p>
+        ) : null}
+      </form>
+      {state.ok && !open ? (
+        <p className="mt-2 text-xs font-medium text-accent-foreground" role="status">
+          {t('saved')}
+        </p>
+      ) : null}
+    </div>
   );
 }

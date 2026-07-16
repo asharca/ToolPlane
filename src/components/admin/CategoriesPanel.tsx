@@ -2,8 +2,11 @@
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
+import { Plus } from 'lucide-react';
 import { createCategoryAction, deleteCategoryAction } from '@/lib/admin/category-actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
+import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 type Row = { id: string; slug: string; name: string; _count: { servers: number; skills: number; clients: number } };
@@ -11,29 +14,85 @@ type Row = { id: string; slug: string; name: string; _count: { servers: number; 
 export function CategoriesPanel({ categories }: { categories: Row[] }) {
   const t = useTranslations('admin');
   const [state, action] = useActionState<AdminActionState, FormData>(createCategoryAction, {});
-  const [delState, delAction] = useActionState<AdminActionState, FormData>(deleteCategoryAction, {});
-  const input = 'h-9 rounded-md border border-zinc-200 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900';
 
   return (
-    <>
-      <form action={action} className="flex flex-wrap items-end gap-2">
-        <input name="name" placeholder={t('name')} className={input} />
-        <input name="slug" placeholder={t('slug3')} className={`${input} font-mono`} />
-        <SubmitButton error={state.error} pendingLabel={t('adding')} savedLabel={t('added')} className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{t('add')}</SubmitButton>
-        {state.error ? <span className="text-sm text-red-600" role="alert">{state.error}</span> : null}
-      </form>
-      {delState.error ? <p className="text-sm text-red-600" role="alert">{delState.error}</p> : null}
-      <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-        {categories.map((c) => (
-          <li key={c.id} className="flex items-center justify-between px-4 py-2 text-sm">
-            <span className="text-zinc-700 dark:text-zinc-300">{c.name} <span className="font-mono text-xs text-zinc-400">/{c.slug}</span> <span className="text-xs text-zinc-400">· {c._count.servers + c._count.skills + c._count.clients} {t('items')}</span></span>
-            <form action={delAction}>
-              <input type="hidden" name="categoryId" value={c.id} />
-              <button className="text-xs text-red-600 hover:underline">{t('delete')}</button>
-            </form>
-          </li>
-        ))}
-      </ul>
-    </>
+    <div className="grid items-start gap-6 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)]">
+      <AdminPanel title={t('add')}>
+        <form action={action} className="space-y-4">
+          <label className="block space-y-1.5 text-sm font-medium text-foreground">
+            <span>{t('name')}</span>
+            <input name="name" placeholder={t('name')} className="ui-input h-11" required />
+          </label>
+          <label className="block space-y-1.5 text-sm font-medium text-foreground">
+            <span>{t('slug3')}</span>
+            <input
+              name="slug"
+              placeholder={t('slug3')}
+              className="ui-input h-11 font-mono"
+              autoCapitalize="none"
+              spellCheck={false}
+              required
+            />
+          </label>
+          <SubmitButton
+            error={state.error}
+            pendingLabel={t('adding')}
+            savedLabel={t('added')}
+            className="ui-button-primary h-11 w-full sm:w-auto"
+          >
+            <Plus className="size-4" />
+            {t('add')}
+          </SubmitButton>
+          {state.error ? (
+            <p className="text-sm text-destructive-text" role="alert">
+              {state.error}
+            </p>
+          ) : null}
+        </form>
+      </AdminPanel>
+
+      <AdminPanel
+        title={t('categories')}
+        actions={<AdminBadge tone="neutral">{categories.length}</AdminBadge>}
+        padded={false}
+      >
+        {categories.length > 0 ? (
+          <ul className="divide-y divide-border">
+            {categories.map((category) => {
+              const itemCount = category._count.servers + category._count.skills + category._count.clients;
+
+              return (
+                <li
+                  key={category.id}
+                  className="flex min-w-0 flex-col gap-3 px-5 py-3 sm:min-h-16 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">{category.name}</p>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <code className="font-mono">/{category.slug}</code>
+                      <span aria-hidden="true">·</span>
+                      <span>{itemCount} {t('items')}</span>
+                    </p>
+                  </div>
+                  <div className="shrink-0">
+                    <ConfirmDialog
+                      label={t('delete')}
+                      ariaLabel={t('deleteCategoryLabel', { name: category.name })}
+                      prompt={t('deleteCategoryConfirm', { name: category.name })}
+                      action={deleteCategoryAction}
+                      hidden={{ categoryId: category.id }}
+                      pendingLabel={t('deleting')}
+                      tone="danger"
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">{t('none')}</p>
+        )}
+      </AdminPanel>
+    </div>
   );
 }
