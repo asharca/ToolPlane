@@ -8,6 +8,7 @@ const chatMocks = vi.hoisted(() => ({
   useChat: vi.fn(),
   sendMessage: vi.fn(),
   setMessages: vi.fn(),
+  stop: vi.fn(),
 }));
 
 const apiMocks = vi.hoisted(() => ({
@@ -18,7 +19,18 @@ vi.mock('@ai-sdk/react', () => ({
   useChat: chatMocks.useChat,
 }));
 
+vi.mock('@assistant-ui/react-streamdown', async () => {
+  const assistantUi = await vi.importActual<typeof import('@assistant-ui/react')>('@assistant-ui/react');
+  return {
+    StreamdownTextPrimitive: () => {
+      const part = assistantUi.useMessagePartText();
+      return <div>{part.text}</div>;
+    },
+  };
+});
+
 vi.mock('streamdown', () => ({
+  defaultRemarkPlugins: {},
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
 }));
 
@@ -126,6 +138,15 @@ function renderChat({
 describe('AgentChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('ResizeObserver', class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: vi.fn(),
+    });
     apiMocks.fetch.mockResolvedValue(
       new Response(JSON.stringify({ conversationId: 'conv-new' }), {
         status: 200,
@@ -137,6 +158,11 @@ describe('AgentChat', () => {
       messages: [{ id: 'local-1', role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }],
       sendMessage: chatMocks.sendMessage,
       setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: vi.fn(),
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
       status: 'ready',
       error: undefined,
     });
@@ -169,7 +195,37 @@ describe('AgentChat', () => {
       />,
     );
 
-    expect(chatMocks.setMessages).toHaveBeenLastCalledWith(secondMessages);
+    expect(chatMocks.useChat).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messages: secondMessages }),
+    );
+  });
+
+  it('re-syncs messages when the active conversation receives a server update', async () => {
+    const firstMessages: HermesUIMessage[] = [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first' }] }];
+    const updatedMessages: HermesUIMessage[] = [
+      ...firstMessages,
+      { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'external update' }] },
+    ];
+    const view = renderChat({ conversationId: 'conv-1', initialMessages: firstMessages });
+
+    view.rerender(
+      <AgentChat
+        slug="acme"
+        agentId="agent-1"
+        conversationId="conv-1"
+        initialMessages={updatedMessages}
+        conversations={[
+          { id: 'conv-1', title: 'First chat', createdAt: 'Jul 6', messageCount: 2, lastMessageAt: 'Jul 6', source: null },
+        ]}
+        settings={settings}
+        channelSettings={channelSettings}
+        ready
+        agentName="Test agent"
+        providerLabel="Provider · model"
+      />,
+    );
+
+    await waitFor(() => expect(chatMocks.setMessages).toHaveBeenCalledWith(updatedMessages));
   });
 
   it('renders Hermes assistant turn segments as separate messages', () => {
@@ -197,6 +253,11 @@ describe('AgentChat', () => {
       messages: segmentedMessages,
       sendMessage: chatMocks.sendMessage,
       setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: vi.fn(),
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
       status: 'ready',
       error: undefined,
     });
@@ -217,8 +278,11 @@ describe('AgentChat', () => {
 
     await waitFor(() => {
       expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        { text: 'Need status' },
-        { body: { conversationId: 'conv-2' } },
+        expect.objectContaining({
+          role: 'user',
+          parts: [{ type: 'text', text: 'Need status' }],
+        }),
+        expect.objectContaining({ body: { conversationId: 'conv-2' } }),
       );
     });
   });
@@ -230,8 +294,11 @@ describe('AgentChat', () => {
 
     await waitFor(() => {
       expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        { text: 'Need status' },
-        { body: { conversationId: 'conv-2' } },
+        expect.objectContaining({
+          role: 'user',
+          parts: [{ type: 'text', text: 'Need status' }],
+        }),
+        expect.objectContaining({ body: { conversationId: 'conv-2' } }),
       );
     });
   });
@@ -251,10 +318,299 @@ describe('AgentChat', () => {
         method: 'POST',
       });
       expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        { text: 'Start here' },
-        { body: { conversationId: 'conv-new' } },
+        expect.objectContaining({
+          role: 'user',
+          parts: [{ type: 'text', text: 'Start here' }],
+        }),
+        expect.objectContaining({ body: { conversationId: 'conv-new' } }),
       );
     });
+  });
+
+  it('restores the text draft when automatic conversation creation fails', async () => {
+    apiMocks.fetch.mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+    renderChat({ conversationId: null, initialMessages: [] });
+
+    const composer = screen.getByPlaceholderText('Message this agent');
+    await userEvent.type(composer, 'Keep this draft');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not create a conversation');
+    expect(composer).toHaveValue('Keep this draft');
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not let a late conversation creation overwrite a newly selected conversation', async () => {
+    let finishCreation!: (response: Response) => void;
+    apiMocks.fetch.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+      finishCreation = resolve;
+    }));
+    const view = renderChat({ conversationId: null, initialMessages: [] });
+
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'First draft');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
+      '/api/v1/agents/agent-1/conversations',
+      { method: 'POST' },
+    ));
+
+    view.rerender(
+      <AgentChat
+        slug="acme"
+        agentId="agent-1"
+        conversationId="conv-2"
+        initialMessages={[]}
+        conversations={[
+          { id: 'conv-1', title: 'First chat', createdAt: 'Jul 6', messageCount: 1, lastMessageAt: 'Jul 6', source: null },
+          { id: 'conv-2', title: 'Second chat', createdAt: 'Jul 6', messageCount: 1, lastMessageAt: 'Jul 6', source: null },
+        ]}
+        settings={settings}
+        channelSettings={channelSettings}
+        ready
+        agentName="Test agent"
+        providerLabel="Provider · model"
+      />,
+    );
+    finishCreation(new Response(JSON.stringify({ conversationId: 'late-conversation' }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    }));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalled());
+    chatMocks.sendMessage.mockClear();
+    const nextComposer = screen.getByPlaceholderText('Message this agent');
+    await waitFor(() => expect(nextComposer).toBeEnabled());
+    await userEvent.type(nextComposer, 'Second draft');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: [{ type: 'text', text: 'Second draft' }],
+      }),
+      expect.objectContaining({ body: { conversationId: 'conv-2' } }),
+    ));
+  });
+
+  it('uploads Hermes attachments through the assistant-ui adapter and creates one conversation', async () => {
+    apiMocks.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/conversations')) {
+        return new Response(JSON.stringify({ conversationId: 'conv-new' }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/attachments')) {
+        return new Response(JSON.stringify({
+          name: 'uploaded.txt',
+          runtimePath: `/workspace/${apiMocks.fetch.mock.calls.length}.txt`,
+        }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderChat({ conversationId: null, initialMessages: [], runtime: hermesRuntime });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).not.toBeNull();
+    await userEvent.upload(fileInput!, [
+      new File(['one'], 'one.txt', { type: 'text/plain' }),
+      new File(['two'], 'two.txt', { type: 'text/plain' }),
+    ]);
+    expect(await screen.findByText('one.txt')).toBeInTheDocument();
+    expect(screen.getByText('two.txt')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Review these');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalled());
+    const conversationCalls = apiMocks.fetch.mock.calls.filter(
+      ([input]) => String(input).endsWith('/conversations'),
+    );
+    const attachmentCalls = apiMocks.fetch.mock.calls.filter(
+      ([input]) => String(input).endsWith('/attachments'),
+    );
+    expect(conversationCalls).toHaveLength(1);
+    expect(attachmentCalls).toHaveLength(2);
+    expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        parts: expect.arrayContaining([
+          { type: 'text', text: 'Review these' },
+          expect.objectContaining({
+            type: 'text',
+            text: expect.stringContaining('Uploaded attachment in the Hermes workspace'),
+          }),
+        ]),
+      }),
+      expect.objectContaining({ body: { conversationId: 'conv-new' } }),
+    );
+  });
+
+  it('limits the assistant-ui composer to five attachments without an unhandled rejection', async () => {
+    renderChat();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await userEvent.upload(fileInput!, Array.from({ length: 6 }, (_, index) => (
+      new File([String(index)], `file-${index + 1}.txt`, { type: 'text/plain' })
+    )));
+
+    expect(await screen.findByText('file-1.txt')).toBeInTheDocument();
+    expect(screen.getByText('file-5.txt')).toBeInTheDocument();
+    expect(screen.queryByText('file-6.txt')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('up to 5 files');
+  });
+
+  it('keeps a batch attachment validation error after adding a valid file', async () => {
+    renderChat();
+    const oversized = new File(['large'], 'large.txt', { type: 'text/plain' });
+    Object.defineProperty(oversized, 'size', { value: 10_000_001 });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await userEvent.upload(fileInput!, [
+      oversized,
+      new File(['valid'], 'valid.txt', { type: 'text/plain' }),
+    ]);
+
+    expect(await screen.findByText('valid.txt')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('large.txt exceeds the 10 MB');
+  });
+
+  it('pins an attachment send to the conversation selected when upload starts', async () => {
+    let finishUpload!: (response: Response) => void;
+    apiMocks.fetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/attachments')) {
+        return new Promise<Response>((resolve) => {
+          finishUpload = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const view = renderChat({ conversationId: 'conv-1', runtime: hermesRuntime });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await userEvent.upload(fileInput!, new File(['one'], 'one.txt', { type: 'text/plain' }));
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Use this file');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
+      '/api/v1/agents/agent-1/attachments',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+
+    view.rerender(
+      <AgentChat
+        slug="acme"
+        agentId="agent-1"
+        conversationId="conv-2"
+        initialMessages={[]}
+        conversations={[
+          { id: 'conv-1', title: 'First chat', createdAt: 'Jul 6', messageCount: 1, lastMessageAt: 'Jul 6', source: null },
+          { id: 'conv-2', title: 'Second chat', createdAt: 'Jul 6', messageCount: 1, lastMessageAt: 'Jul 6', source: null },
+        ]}
+        settings={{ ...settings, runtime: hermesRuntime }}
+        channelSettings={channelSettings}
+        ready
+        agentName="Test agent"
+        providerLabel="Provider · model"
+      />,
+    );
+    finishUpload(new Response(JSON.stringify({
+      name: 'one.txt',
+      runtimePath: '/workspace/one.txt',
+    }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user' }),
+      expect.objectContaining({ body: { conversationId: 'conv-1' } }),
+    ));
+  });
+
+  it('restores the complete composer when a Hermes attachment upload fails', async () => {
+    apiMocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      error: 'Hermes storage is unavailable.',
+    }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    }));
+    renderChat({ conversationId: 'conv-1', runtime: hermesRuntime });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await userEvent.upload(fileInput!, new File(['one'], 'one.txt', { type: 'text/plain' }));
+    const composer = screen.getByPlaceholderText('Message this agent');
+    await userEvent.type(composer, 'Keep the file and text');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Hermes storage is unavailable.');
+    expect(composer).toHaveValue('Keep the file and text');
+    expect(screen.getByText('one.txt')).toBeInTheDocument();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('restores an attachment draft when its conversation cannot be created', async () => {
+    apiMocks.fetch.mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+    renderChat({ conversationId: null, initialMessages: [], runtime: hermesRuntime });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await userEvent.upload(fileInput!, new File(['one'], 'one.txt', { type: 'text/plain' }));
+    const composer = screen.getByPlaceholderText('Message this agent');
+    await userEvent.type(composer, 'Keep this first draft');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not create a conversation');
+    expect(composer).toHaveValue('Keep this first draft');
+    expect(screen.getByText('one.txt')).toBeInTheDocument();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('stops a streaming response through the assistant-ui composer', async () => {
+    chatMocks.useChat.mockReturnValue({
+      messages: [{ id: 'local-1', role: 'assistant', parts: [{ type: 'text', text: 'working' }] }],
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: vi.fn(),
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      status: 'streaming',
+      error: undefined,
+    });
+    renderChat();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+
+    expect(chatMocks.stop).toHaveBeenCalledOnce();
+  });
+
+  it('reveals the assistant-ui scroll control after scrolling away from the latest message', async () => {
+    renderChat();
+    const composer = screen.getByPlaceholderText('Message this agent');
+    const viewport = composer.closest('form')?.parentElement?.previousElementSibling as HTMLElement;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 800 },
+      scrollTop: { configurable: true, value: 120, writable: true },
+    });
+
+    fireEvent.pointerDown(viewport);
+    fireEvent.scroll(viewport);
+    viewport.scrollTop = 80;
+    fireEvent.scroll(viewport);
+
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: 'Scroll to latest message' }),
+    ).toBeEnabled());
   });
 
   it('lets the conversation sidebar collapse and reopen', async () => {
@@ -268,10 +624,13 @@ describe('AgentChat', () => {
   });
 
   it('collapses the conversation sidebar when the viewport becomes narrow', () => {
-    let handleViewportChange: ((event: MediaQueryListEvent) => void) | undefined;
+    let narrowViewport = false;
+    let handleViewportChange: (() => void) | undefined;
     vi.stubGlobal('matchMedia', vi.fn(() => ({
-      matches: false,
-      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+      get matches() {
+        return narrowViewport;
+      },
+      addEventListener: (_type: string, listener: () => void) => {
         handleViewportChange = listener;
       },
       removeEventListener: vi.fn(),
@@ -279,9 +638,25 @@ describe('AgentChat', () => {
     renderChat();
     expect(screen.getByText('First chat')).toBeInTheDocument();
 
-    act(() => handleViewportChange?.({ matches: true } as MediaQueryListEvent));
+    act(() => {
+      narrowViewport = true;
+      handleViewportChange?.();
+    });
 
     expect(screen.queryByText('First chat')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show conversations' })).toBeInTheDocument();
+  });
+
+  it('starts with the conversation sidebar collapsed on a narrow viewport', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+
+    renderChat();
+
+    await waitFor(() => expect(screen.queryByText('First chat')).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Show conversations' })).toBeInTheDocument();
   });
 

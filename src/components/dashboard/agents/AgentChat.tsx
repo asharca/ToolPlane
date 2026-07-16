@@ -1,39 +1,36 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type FileUIPart } from 'ai';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import dynamic from 'next/dynamic';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
+import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
 import Link from 'next/link';
 import {
-  Bot,
-  Clock3,
   Container,
   MessageCircle,
-  Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Radio,
   Route,
-  Send,
   Settings2,
   Terminal,
-  Wrench,
   X,
 } from 'lucide-react';
-import { code } from '@streamdown/code';
 import { createConversationAction } from '@/lib/agents/actions';
-import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
 import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
-import {
-  expandHermesAssistantMessages,
-  type HermesUIMessage,
-} from '@/lib/agents/hermes/message-segments';
+import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 const AgentSettingsForm = dynamic(() =>
   import('@/components/dashboard/agents/AgentSettingsForm').then(
@@ -99,6 +96,22 @@ const FOCUSABLE_SETTINGS_ELEMENTS = [
   'textarea:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+const NARROW_VIEWPORT_QUERY = '(max-width: 1023px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia?.(NARROW_VIEWPORT_QUERY);
+  if (!media) return () => undefined;
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function getNarrowViewportSnapshot() {
+  return window.matchMedia?.(NARROW_VIEWPORT_QUERY).matches ?? false;
+}
+
+function getServerNarrowViewportSnapshot() {
+  return false;
+}
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -120,24 +133,6 @@ function sourceLabel(source: ParsedMessagingSession | null) {
 function sourceDetail(source: ParsedMessagingSession | null) {
   if (!source) return 'ToolPlane';
   return [source.chatId, source.contextId ? `context ${source.contextId}` : null].filter(Boolean).join(' · ');
-}
-
-function displayUserText(text: string) {
-  return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
-}
-
-function fileToUIPart(file: File): Promise<FileUIPart> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-    reader.onload = () => resolve({
-      type: 'file',
-      mediaType: file.type || 'application/octet-stream',
-      filename: file.name,
-      url: String(reader.result ?? ''),
-    });
-    reader.readAsDataURL(file);
-  });
 }
 
 export function AgentChat({
@@ -171,15 +166,29 @@ export function AgentChat({
   const initialTab = !supportsChannelSettings && requestedSettingsTab === 'channels'
     ? 'agent'
     : requestedSettingsTab;
-  const [text, setText] = useState('');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const narrowViewport = useSyncExternalStore(
+    subscribeToNarrowViewport,
+    getNarrowViewportSnapshot,
+    getServerNarrowViewportSnapshot,
+  );
+  const viewportMode = narrowViewport ? 'narrow' : 'wide';
+  const [sidebarOverrides, setSidebarOverrides] = useState<
+    Partial<Record<'narrow' | 'wide', boolean>>
+  >({});
+  const sidebarCollapsed = sidebarOverrides[viewportMode] ?? narrowViewport;
+  const setSidebarCollapsed = useCallback((collapsed: boolean) => {
+    setSidebarOverrides((current) => ({ ...current, [viewportMode]: collapsed }));
+  }, [viewportMode]);
   const [settingsOpen, setSettingsOpen] = useState(Boolean(initialSettingsTab));
   const [settingsTab, setSettingsTab] = useState<'agent' | 'channels' | 'hermes' | 'terminal'>(initialTab);
-  const [createdConversationId, setCreatedConversationId] = useState<string | null>(null);
+  const [createdConversation, setCreatedConversation] = useState<{
+    selectedConversationId: string | null;
+    id: string;
+  } | null>(null);
   const [creatingConversation, setCreatingConversation] = useState(false);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
-  const [attachments, setAttachments] = useState<File[]>([]);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const selectedConversationIdRef = useRef<string | null>(conversationId);
+  const activeConversationIdRef = useRef<string | null>(conversationId);
+  const conversationCreationRef = useRef<Promise<string> | null>(null);
   const settingsTitleId = useId();
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -198,18 +207,10 @@ export function AgentChat({
     }
     window.setTimeout(() => settingsButtonRef.current?.focus(), 0);
   }, []);
-  const { messages, sendMessage, setMessages, status, error } = useChat<HermesUIMessage>({
-    transport: new DefaultChatTransport({
-      api: `/api/v1/agents/${agentId}/chat`,
-    }),
-    messages: initialMessages,
-  });
-
-  const busy = status === 'streaming' || status === 'submitted';
-  const sending = busy || creatingConversation || uploadingAttachments;
-  const canSend = Boolean((text.trim() || attachments.length) && ready && !sending);
+  const createdConversationId = createdConversation?.selectedConversationId === conversationId
+    ? createdConversation.id
+    : null;
   const activeConversationId = createdConversationId ?? conversationId;
-  const displayMessages = useMemo(() => expandHermesAssistantMessages(messages), [messages]);
 
   const conversationGroups = useMemo(() => {
     const external = conversations.filter((conversation) => conversation.source);
@@ -218,24 +219,9 @@ export function AgentChat({
   }, [conversations]);
 
   useEffect(() => {
-    setMessages(initialMessages);
-  }, [conversationId, initialMessages, setMessages]);
-
-  useEffect(() => {
-    const media = window.matchMedia?.('(max-width: 1023px)');
-    if (!media) return;
-    const frame = media.matches
-      ? window.requestAnimationFrame(() => setSidebarCollapsed(true))
-      : null;
-    function handleViewportChange(event: MediaQueryListEvent) {
-      if (event.matches) setSidebarCollapsed(true);
-    }
-    media.addEventListener('change', handleViewportChange);
-    return () => {
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      media.removeEventListener('change', handleViewportChange);
-    };
-  }, []);
+    selectedConversationIdRef.current = conversationId;
+    activeConversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -289,73 +275,39 @@ export function AgentChat({
     };
   }, [closeSettings, settingsOpen]);
 
-  async function ensureConversation() {
-    if (activeConversationId) return activeConversationId;
+  const ensureConversation = useCallback(async (): Promise<string> => {
+    if (activeConversationIdRef.current) return activeConversationIdRef.current;
+    if (conversationCreationRef.current) return conversationCreationRef.current;
 
     setCreatingConversation(true);
-    try {
+    const selectedConversationId = selectedConversationIdRef.current;
+    const creation = (async () => {
       const response = await fetch(`/api/v1/agents/${agentId}/conversations`, {
         method: 'POST',
       });
       if (!response.ok) throw new Error('conversation');
       const body = await response.json() as { conversationId?: string };
       if (!body.conversationId) throw new Error('conversation');
-      setCreatedConversationId(body.conversationId);
-      return body.conversationId;
-    } finally {
-      setCreatingConversation(false);
-    }
-  }
-
-  async function submitMessage() {
-    if (!canSend) return;
-    const nextText = text;
-    setSubmitError(null);
-    try {
-      const activeConversationId = await ensureConversation();
-      let messageText = nextText;
-      let fileParts: FileUIPart[] = [];
-      if (attachments.length) {
-        setUploadingAttachments(true);
-        if (settings.runtime?.kind === 'hermes') {
-          const uploaded: Array<{ name: string; runtimePath: string }> = [];
-          for (const file of attachments) {
-            const body = new FormData();
-            body.set('conversationId', activeConversationId);
-            body.set('file', file);
-            const response = await fetch(`/api/v1/agents/${agentId}/attachments`, { method: 'POST', body });
-            const result = await response.json().catch(() => ({})) as { name?: string; runtimePath?: string; error?: string };
-            if (!response.ok || !result.runtimePath) throw new Error(result.error || t('attachmentUploadFailed'));
-            uploaded.push({ name: result.name || file.name, runtimePath: result.runtimePath });
-          }
-          const attachmentContext = [
-            'Uploaded attachments in the Hermes workspace:',
-            ...uploaded.map((file) => `- ${file.name}: ${file.runtimePath}`),
-          ].join('\n');
-          messageText = [nextText, attachmentContext].filter(Boolean).join('\n\n');
-          fileParts = await Promise.all(
-            attachments
-              .filter((file) => file.type.startsWith('image/') && file.size <= 5_000_000)
-              .map(fileToUIPart),
-          );
-        } else {
-          fileParts = await Promise.all(attachments.map(fileToUIPart));
-        }
+      if (selectedConversationIdRef.current === selectedConversationId) {
+        activeConversationIdRef.current = body.conversationId;
+        setCreatedConversation({
+          selectedConversationId,
+          id: body.conversationId,
+        });
       }
-      void sendMessage(
-        { text: messageText || t('attachedFiles'), ...(fileParts.length ? { files: fileParts } : {}) },
-        { body: { conversationId: activeConversationId } },
-      );
-      setText('');
-      setAttachments([]);
-    } catch (error) {
-      setSubmitError(error instanceof Error && error.message !== 'conversation'
-        ? error.message
-        : t('couldNotCreateConversation'));
+      return body.conversationId;
+    })();
+    conversationCreationRef.current = creation;
+
+    try {
+      return await creation;
     } finally {
-      setUploadingAttachments(false);
+      if (conversationCreationRef.current === creation) {
+        conversationCreationRef.current = null;
+        setCreatingConversation(false);
+      }
     }
-  }
+  }, [agentId]);
 
   return (
     <div className="box-border flex h-[calc(100dvh-7.5rem-1px)] min-h-0 p-3 sm:p-4 lg:h-[calc(100dvh-4rem-1px)] lg:p-3">
@@ -514,208 +466,17 @@ export function AgentChat({
             </div>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-5">
-            {displayMessages.length === 0 ? (
-              <div className="flex min-h-full items-center justify-center">
-                <div className="max-w-md px-5 py-6 text-center">
-                  <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-                    <MessageCircle className="size-6" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-foreground">{t('startAConversation')}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t('sendAConsoleMessageHereOrLetAConnectedChannelCreateItsOwnSessionAfterTheFirstInboundMessage')}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {displayMessages.map((message) => {
-                  const isUser = message.role === 'user';
-                  return (
-                    <article key={message.id} className={cx('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
-                      {!isUser ? (
-                        <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-                          <Bot className="size-[18px]" />
-                        </div>
-                      ) : null}
-                      <div className={cx('min-w-0 max-w-[min(72rem,94%)]', isUser && 'order-first')}>
-                        <div className={cx('mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground', isUser && 'text-right')}>
-                          {isUser ? t('user') : agentName}
-                        </div>
-                        <div
-                          className={cx(
-                            'min-w-0 break-words rounded-md border px-3 py-2 text-sm leading-relaxed',
-                            isUser
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border bg-card text-foreground',
-                          )}
-                        >
-                          {message.parts.map((part, index) => {
-                            if (part.type === 'text') {
-                              if (isUser) {
-                                return (
-                                  <span key={index} className="whitespace-pre-wrap">
-                                    {displayUserText(part.text)}
-                                  </span>
-                                );
-                              }
-                              return (
-                                <SafeStreamdown
-                                  key={index}
-                                  plugins={{ code }}
-                                  className="space-y-2 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5"
-                                >
-                                  {part.text}
-                                </SafeStreamdown>
-                              );
-                            }
-                            if (part.type === 'file') {
-                              return (
-                                <a
-                                  key={index}
-                                  href={part.url}
-                                  download={part.filename}
-                                  className="my-1 inline-flex max-w-full items-center gap-2 rounded-md border border-current/20 px-2 py-1 text-xs underline-offset-2 hover:underline"
-                                >
-                                  <Paperclip className="size-3.5 shrink-0" />
-                                  <span className="truncate">{part.filename || t('attachment')}</span>
-                                </a>
-                              );
-                            }
-                            if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
-                              const toolPart = part as { type: string; state?: string; input?: unknown; output?: unknown };
-                              return (
-                                <div key={index} className="my-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
-                                  <div className="flex items-center gap-2 font-medium text-foreground">
-                                    <Wrench className="size-4 shrink-0" />
-                                    {toolPart.type.replace(/^tool-/, '')} {toolPart.state ? `(${toolPart.state})` : ''}
-                                  </div>
-                                  {toolPart.output !== undefined ? (
-                                    <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-background p-2 text-[11px] leading-relaxed">
-                                      {JSON.stringify(toolPart.output, null, 2)}
-                                    </pre>
-                                  ) : null}
-                                </div>
-                              );
-                            }
-                            return null;
-                          })}
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-                {busy ? (
-                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-                    <Clock3 className="size-[18px] shrink-0 animate-pulse" />
-                    {t('agentIsResponding')}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-
-          {error ? (
-            <p
-              role="alert"
-              className="mx-5 mt-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
-            >
-              {error.message}
-            </p>
-          ) : null}
-
-          {submitError ? (
-            <p
-              role="alert"
-              className="mx-5 mt-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
-            >
-              {submitError}
-            </p>
-          ) : null}
-
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitMessage();
-            }}
-            className="shrink-0 border-t border-border bg-card px-4 py-4"
-          >
-            <div className="rounded-md border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
-              {attachments.length ? (
-                <div className="flex flex-wrap gap-2 border-b border-border/70 px-2 pb-2">
-                  {attachments.map((file, index) => (
-                    <span key={`${file.name}-${index}`} className="inline-flex h-8 max-w-full items-center gap-2 rounded-md bg-muted px-2 text-xs text-foreground">
-                      <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="max-w-48 truncate">{file.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                        aria-label={t('removeAttachment', { name: file.name })}
-                        title={t('removeAttachment', { name: file.name })}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <textarea
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                placeholder={t('messageThisAgent')}
-                disabled={sending}
-                rows={3}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void submitMessage();
-                  }
-                }}
-                className="min-h-24 w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
-              />
-              <div className="flex items-center justify-between gap-3 border-t border-border/70 px-2 pt-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <label
-                    className="ui-button-secondary flex size-10 shrink-0 cursor-pointer items-center justify-center px-0"
-                    aria-label={t('addAttachment')}
-                    title={t('addAttachment')}
-                  >
-                    <Paperclip className="size-[18px]" />
-                    <input
-                      type="file"
-                      multiple
-                      className="sr-only"
-                      onChange={(event) => {
-                        const selected = Array.from(event.target.files ?? []).slice(0, 5);
-                        const oversized = selected.find((file) => file.size > 10_000_000);
-                        if (oversized) {
-                          setSubmitError(t('attachmentTooLarge', { name: oversized.name }));
-                        } else {
-                          setSubmitError(null);
-                          setAttachments(selected);
-                        }
-                        event.target.value = '';
-                      }}
-                    />
-                  </label>
-                  <div className="min-w-0 truncate text-xs text-muted-foreground">
-                    {!ready ? t('chooseAModelBeforeSending') : uploadingAttachments ? t('uploadingAttachments') : activeConversationId ? t('conversationSelected') : t('conversationWillBeCreated')}
-                  </div>
-                </div>
-              <button
-                type="submit"
-                disabled={!canSend}
-                aria-label={t('send')}
-                title={t('send')}
-                className="ui-button-primary h-10 gap-2 px-4 disabled:opacity-60"
-              >
-                  <Send className="size-[18px] shrink-0" />
-                  {creatingConversation ? t('creating') : t('send')}
-              </button>
-              </div>
-            </div>
-          </form>
+          <AgentConversation
+            key={`conversation:${conversationId ?? 'new'}`}
+            activeConversationId={activeConversationId}
+            agentId={agentId}
+            agentName={agentName}
+            creatingConversation={creatingConversation}
+            ensureConversation={ensureConversation}
+            initialMessages={initialMessages}
+            ready={ready}
+            runtimeKind={settings.runtime?.kind ?? null}
+          />
         </section>
       </div>
 
