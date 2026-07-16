@@ -13,7 +13,7 @@ import { ThemeToggle } from '@/components/theme/ThemeToggle';
 describe('ThemeToggle', () => {
   it('renders a toggle button and switches theme on click', async () => {
     render(<ThemeToggle />);
-    const btn = screen.getByRole('button', { name: /toggle theme/i });
+    const btn = screen.getByRole('button', { name: /switch to dark theme/i });
     expect(btn).toBeInTheDocument();
 
     await userEvent.click(btn);
