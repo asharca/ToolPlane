@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.13.0...toolplane-v0.14.0) (2026-07-17)
+
+
+### Features
+
+* let Hermes agents use multiple providers ([#51](https://github.com/asharca/ToolPlane/issues/51)) ([651e3b6](https://github.com/asharca/ToolPlane/commit/651e3b6ab1ca883dbb4247c25feceac45e90ffc0))
+
 ## [0.13.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.12.0...toolplane-v0.13.0) (2026-07-16)
 
 
