@@ -203,6 +203,15 @@ describe('agents mutations', () => {
   });
 
   it('clones a Hermes agent into a distinct managed runtime', async () => {
+    const secondProvider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Hermes clone provider ${Date.now()}`,
+        format: 'anthropic',
+        baseUrl: 'https://anthropic.example/v1',
+        apiKey: 'k2',
+      },
+    });
     const source = await createAgent(workspaceId, 'Hermes clone source', {
       runtime: 'hermes',
       hermesImage: 'nousresearch/hermes-agent:v-clone',
@@ -210,8 +219,9 @@ describe('agents mutations', () => {
     await updateAgent(workspaceId, source.id, {
       name: source.name,
       systemPrompt: null,
-      providerId,
-      model: 'hermes-model',
+      providerId: null,
+      providerIds: [providerId, secondProvider.id],
+      model: null,
       maxSteps: 9,
     });
 
@@ -220,7 +230,10 @@ describe('agents mutations', () => {
     const [sourceRuntime, clonedRuntime, clonedAgent] = await Promise.all([
       db.agentRuntime.findUniqueOrThrow({ where: { agentId: source.id } }),
       db.agentRuntime.findUniqueOrThrow({ where: { agentId: cloned!.id } }),
-      db.agent.findUniqueOrThrow({ where: { id: cloned!.id } }),
+      db.agent.findUniqueOrThrow({
+        where: { id: cloned!.id },
+        include: { modelProviders: true },
+      }),
     ]);
 
     expect(clonedRuntime.id).not.toBe(sourceRuntime.id);
@@ -228,11 +241,14 @@ describe('agents mutations', () => {
     expect(clonedRuntime.image).toBe(sourceRuntime.image);
     expect(clonedRuntime.status).toBe('setup_required');
     expect(clonedAgent).toMatchObject({
-      providerId,
-      model: 'hermes-model',
+      providerId: null,
+      model: null,
       maxSteps: 9,
       systemPrompt: null,
     });
+    expect(clonedAgent.modelProviders.map((link) => link.providerId).sort()).toEqual(
+      [providerId, secondProvider.id].sort(),
+    );
 
     await deleteAgent(workspaceId, source.id);
     await deleteAgent(workspaceId, cloned!.id);
@@ -388,6 +404,9 @@ describe('agents mutations', () => {
       },
     });
     const agent = await createAgent(workspaceId, 'Disposable provider agent');
+    const hermesAgent = await createAgent(workspaceId, 'Disposable Hermes provider agent', {
+      runtime: 'hermes',
+    });
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
       systemPrompt: null,
@@ -395,16 +414,26 @@ describe('agents mutations', () => {
       model: 'gpt-disposable',
       maxSteps: 8,
     });
+    await updateAgent(workspaceId, hermesAgent.id, {
+      name: hermesAgent.name,
+      systemPrompt: null,
+      providerId: null,
+      providerIds: [provider.id],
+      model: null,
+      maxSteps: 8,
+    });
 
     await deleteProvider(workspaceId, provider.id);
 
-    const [deletedProvider, rereadAgent] = await Promise.all([
+    const [deletedProvider, rereadAgent, hermesProviderLinks] = await Promise.all([
       db.modelProvider.findUnique({ where: { id: provider.id } }),
       db.agent.findUnique({ where: { id: agent.id } }),
+      db.agentModelProvider.count({ where: { agentId: hermesAgent.id } }),
     ]);
     expect(deletedProvider).toBeNull();
     expect(rereadAgent?.providerId).toBeNull();
     expect(rereadAgent?.model).toBeNull();
+    expect(hermesProviderLinks).toBe(0);
 
     await updateAgent(workspaceId, agent.id, {
       name: agent.name,
@@ -418,6 +447,7 @@ describe('agents mutations', () => {
     expect(afterStaleSave?.model).toBeNull();
 
     await deleteAgent(workspaceId, agent.id);
+    await deleteAgent(workspaceId, hermesAgent.id);
   });
 
   it('updates providers within the workspace and keeps the API key when omitted', async () => {
@@ -515,6 +545,18 @@ describe('agents mutations', () => {
     });
     const reread = await db.agent.findUnique({ where: { id: a.id } });
     expect(reread?.providerId).toBeNull();
+
+    const hermes = await createAgent(workspaceId, 'Hermes provider scope', { runtime: 'hermes' });
+    await updateAgent(workspaceId, hermes.id, {
+      name: hermes.name,
+      systemPrompt: null,
+      providerId: null,
+      providerIds: [providerId, fprov.id],
+      model: null,
+      maxSteps: 8,
+    });
+    const links = await db.agentModelProvider.findMany({ where: { agentId: hermes.id } });
+    expect(links.map((link) => link.providerId)).toEqual([providerId]);
     await db.workspace.delete({ where: { id: other.id } });
   });
 

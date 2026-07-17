@@ -34,6 +34,7 @@ export type RunAgent = LoadedAgentTools & {
   model: string | null;
   maxSteps: number;
   provider: ProviderConfig | null;
+  modelProviders?: Array<{ provider: ProviderConfig }>;
   runtime?: { id: string; kind: string } | null;
 };
 
@@ -115,11 +116,13 @@ export async function runAgentTurn(
 
   const agent = await deps.loadAgent(agentId, ctx.workspaceId);
   if (!agent) return `Sub-agent ${agentId} not found in this workspace.`;
-  if (!agent.provider || !agent.model) {
+  const isHermes = agent.runtime?.kind === 'hermes';
+  if (isHermes ? !agent.modelProviders?.length : !agent.provider || !agent.model) {
+    if (isHermes) return `Hermes sub-agent "${agent.name}" has no model provider configured.`;
     return `Sub-agent "${agent.name}" has no model configured.`;
   }
 
-  if (agent.runtime?.kind === 'hermes') {
+  if (isHermes) {
     const sessionId = randomUUID();
     try {
       return await runHermesText({
@@ -127,7 +130,7 @@ export async function runAgentTurn(
           id: agentId,
           slug: agent.slug ?? agentId,
           workspaceId: ctx.workspaceId,
-          runtime: agent.runtime,
+          runtime: agent.runtime ?? null,
         },
         messages: [{ id: randomUUID(), role: 'user', parts: [{ type: 'text', text: prompt }] }],
         sessionId,
@@ -136,6 +139,10 @@ export async function runAgentTurn(
     } catch (error) {
       return `Hermes sub-agent failed: ${error instanceof Error ? error.message : String(error)}`;
     }
+  }
+
+  if (!agent.provider || !agent.model) {
+    return `Sub-agent "${agent.name}" has no model configured.`;
   }
 
   const resolved = resolveAgentTools(agent);

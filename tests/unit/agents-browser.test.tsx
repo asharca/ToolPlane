@@ -68,6 +68,32 @@ describe('AgentsBrowser', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Created' })).toBeEnabled());
   });
 
+  it('offers multiple providers and no model picker for a Hermes agent', async () => {
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [
+            { id: 'provider-1', name: 'OpenAI', models: ['gpt-4.1'] },
+            { id: 'provider-2', name: 'Anthropic', models: ['claude-sonnet'] },
+          ],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
+    await userEvent.click(screen.getByText('Hermes'));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select OpenAI' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
+
+    expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(2);
+    expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
+  });
+
   it('requires both a provider and model before marking an agent ready', () => {
     render(
       <AgentsBrowser
@@ -77,6 +103,7 @@ describe('AgentsBrowser', () => {
             id: 'agent-1',
             name: 'Orphaned model',
             providerName: null,
+            providerNames: [],
             model: 'gpt-4.1',
             toolCount: 0,
             subAgentCount: 0,
@@ -89,11 +116,39 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    expect(screen.getByText('1 agent(s) need a model before it can reply.')).toBeInTheDocument();
+    expect(screen.getByText('1 agent(s) need a model or model provider before they can reply.')).toBeInTheDocument();
     const row = screen.getByRole('link', { name: 'Orphaned model' }).closest('li');
     expect(row).not.toBeNull();
     expect(within(row!).getByText('needs model')).toBeInTheDocument();
     expect(within(row!).queryByText('Ready')).not.toBeInTheDocument();
+  });
+
+  it('marks a Hermes agent ready from its provider inventory without a fixed model', () => {
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[
+          {
+            id: 'agent-hermes',
+            name: 'Hermes researcher',
+            providerName: null,
+            providerNames: ['OpenAI', 'Anthropic'],
+            model: null,
+            toolCount: 0,
+            subAgentCount: 0,
+            conversationCount: 0,
+            runtimeKind: 'hermes',
+            runtimeStatus: 'running',
+          },
+        ]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    const row = screen.getByRole('link', { name: 'Hermes researcher' }).closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText('Ready')).toBeInTheDocument();
+    expect(within(row!).getByText(/2 selected: OpenAI, Anthropic/)).toBeInTheDocument();
   });
 
   it('offers clone and confirmed delete actions for each agent', async () => {
@@ -106,6 +161,7 @@ describe('AgentsBrowser', () => {
             id: 'agent-1',
             name: 'Researcher',
             providerName: 'OpenAI',
+            providerNames: [],
             model: 'gpt-4.1',
             toolCount: 2,
             subAgentCount: 1,

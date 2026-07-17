@@ -36,7 +36,7 @@ import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
-const HERMES_CONFIG_VERSION = 4;
+const HERMES_CONFIG_VERSION = 5;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'copying',
@@ -78,10 +78,69 @@ destination = pathlib.Path(sys.argv[1])
 managed = load_mapping(pathlib.Path(sys.argv[2]))
 current = load_mapping(destination)
 
-if "model" in managed:
-    current["model"] = managed["model"]
-else:
-    current.pop("model", None)
+provider_prefix = "toolplane-"
+managed_providers = managed.get("providers", {})
+if not isinstance(managed_providers, dict):
+    managed_providers = {}
+current_providers = current.get("providers", {})
+if not isinstance(current_providers, dict):
+    current_providers = {}
+
+
+def provider_name(entry):
+    if not isinstance(entry, dict):
+        return ""
+    value = entry.get("name", "")
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+current["providers"] = {
+    **{
+        key: value for key, value in current_providers.items()
+        if not str(key).strip().lower().startswith(provider_prefix)
+    },
+    **managed_providers,
+}
+
+# Remove entries written by older ToolPlane projections. Hermes may migrate
+# custom_providers into providers on startup, so both shapes are cleaned.
+current_custom_providers = current.get("custom_providers", [])
+if isinstance(current_custom_providers, list):
+    current_custom_providers = [
+        entry for entry in current_custom_providers
+        if not provider_name(entry).startswith(provider_prefix)
+        and not str(entry.get("provider_key", "") if isinstance(entry, dict) else "").strip().lower().startswith(provider_prefix)
+    ]
+    if current_custom_providers:
+        current["custom_providers"] = current_custom_providers
+    else:
+        current.pop("custom_providers", None)
+
+managed_models = {}
+for key, entry in managed_providers.items():
+    models = entry.get("models", {}) if isinstance(entry, dict) else {}
+    if isinstance(models, dict):
+        provider_key = str(key).strip().lower()
+        managed_models[provider_key] = set(models.keys())
+        managed_models[f"custom:{provider_key}"] = set(models.keys())
+
+current_model = current.get("model")
+managed_model = managed.get("model")
+replace_model = not isinstance(current_model, dict)
+if isinstance(current_model, dict):
+    current_provider = str(current_model.get("provider", "")).strip().lower()
+    current_default = str(current_model.get("default", "")).strip()
+    if not current_provider or not current_default:
+        replace_model = True
+    elif current_provider.startswith(f"custom:{provider_prefix}") or current_provider.startswith(provider_prefix):
+        allowed_models = managed_models.get(current_provider)
+        replace_model = allowed_models is None or (bool(allowed_models) and current_default not in allowed_models)
+
+if replace_model:
+    if isinstance(managed_model, dict):
+        current["model"] = managed_model
+    else:
+        current.pop("model", None)
 
 for section in ("agent", "approvals", "tool_loop_guardrails"):
     incoming = managed.get(section, {})
@@ -244,14 +303,14 @@ async function buildProjection(
   const resolved = resolveAgentTools(agent);
   const config = renderHermesConfig({
     maxSteps: agent.maxSteps,
-    provider: agent.provider && agent.model
-      ? {
-          format: agent.provider.format,
-          baseUrl: agent.provider.baseUrl,
-          apiKey: agent.provider.apiKey,
-          model: agent.model,
-        }
-      : null,
+    providers: agent.modelProviders.map(({ provider }) => ({
+      id: provider.id,
+      name: provider.name,
+      format: provider.format,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      models: provider.models,
+    })),
     mcpUrl: hermesRuntimeMcpUrl(agent.runtime.id),
     mcpToken: deriveHermesRuntimeToken(agent.runtime.id, 'toolplane-mcp'),
   });
@@ -352,7 +411,7 @@ async function syncHermesRuntimeUnlocked(
 
   try {
     projection = await buildProjection(agent);
-    const configured = Boolean(agent.provider && agent.model);
+    const configured = agent.modelProviders.length > 0;
     if (
       projection.configHash === runtime.configHash
       && runtime.configVersion >= HERMES_CONFIG_VERSION
@@ -485,8 +544,8 @@ async function ensureHermesRuntimeReadyUnlocked(
   if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) {
     return { error: SANDBOX_LIFECYCLE_ERROR };
   }
-  if (!agent.provider || !agent.model) {
-    return { error: 'This Hermes agent has no model configured.' };
+  if (agent.modelProviders.length === 0) {
+    return { error: 'This Hermes agent has no model provider configured.' };
   }
 
   const deploymentId = agent.runtime.sandbox.deploymentId;
@@ -558,7 +617,7 @@ async function ensureHermesDashboardReadyUnlocked(
     return { error: message };
   }
   await updateRuntimeState(workspaceId, agent.runtime.id, {
-    ...(agent.provider && agent.model ? { status: 'running' } : {}),
+    ...(agent.modelProviders.length > 0 ? { status: 'running' } : {}),
     lastError: null,
   });
   dashboardReadyCache().set(deploymentId, { port, checkedAt: Date.now() });

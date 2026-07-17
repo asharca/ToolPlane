@@ -1,16 +1,20 @@
 export type HermesProviderProjection = {
+  id: string;
+  name: string;
   format: string;
   baseUrl: string;
   apiKey: string;
-  model: string;
+  models: string[];
 };
 
 export type HermesConfigProjection = {
   maxSteps: number;
-  provider: HermesProviderProjection | null;
+  providers: HermesProviderProjection[];
   mcpUrl: string;
   mcpToken: string;
 };
+
+const TOOLPLANE_PROVIDER_PREFIX = 'toolplane-';
 
 function yamlString(value: string): string {
   return JSON.stringify(value);
@@ -36,21 +40,50 @@ function hermesApiMode(format: string): string {
   return 'chat_completions';
 }
 
+export function hermesProviderName(providerId: string): string {
+  const suffix = providerId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${TOOLPLANE_PROVIDER_PREFIX}${suffix || 'provider'}`;
+}
+
 export function renderHermesConfig(input: HermesConfigProjection): string {
   const maxTurns = Math.max(1, Math.min(Math.trunc(input.maxSteps) || 1, 500));
-  const model = input.provider
+  const providers = input.providers.map((provider) => ({
+    ...provider,
+    models: [...new Set(provider.models.map((model) => model.trim()).filter(Boolean))],
+    key: hermesProviderName(provider.id),
+  }));
+  const bootstrapProvider = providers.find((provider) => provider.models.length > 0);
+  const model = bootstrapProvider
     ? [
         'model:',
-        '  provider: custom',
-        `  default: ${yamlString(input.provider.model)}`,
-        `  base_url: ${yamlString(normalizedBaseUrl(input.provider))}`,
-        `  api_key: ${yamlString(input.provider.apiKey)}`,
-        `  api_mode: ${hermesApiMode(input.provider.format)}`,
+        `  provider: ${yamlString(`custom:${bootstrapProvider.key}`)}`,
+        `  default: ${yamlString(bootstrapProvider.models[0])}`,
       ]
     : [];
+  const providerInventory = providers.length === 0
+    ? ['providers: {}']
+    : [
+        'providers:',
+        ...providers.flatMap((provider) => [
+          `  ${yamlString(provider.key)}:`,
+          `    name: ${yamlString(provider.name)}`,
+          `    api: ${yamlString(normalizedBaseUrl(provider))}`,
+          `    api_key: ${yamlString(provider.apiKey)}`,
+          `    transport: ${hermesApiMode(provider.format)}`,
+          `    discover_models: ${provider.models.length === 0 ? 'true' : 'false'}`,
+          ...(provider.models.length > 0
+            ? [
+                `    default_model: ${yamlString(provider.models[0])}`,
+                '    models:',
+                ...provider.models.map((providerModel) => `      ${yamlString(providerModel)}: {}`),
+              ]
+            : ['    models: {}']),
+        ]),
+      ];
 
   return [
     ...model,
+    ...providerInventory,
     'agent:',
     `  max_turns: ${maxTurns}`,
     'approvals:',

@@ -63,6 +63,7 @@ type SettingsData = {
   name: string;
   systemPrompt: string;
   providerId: string | null;
+  providerIds: string[];
   model: string | null;
   maxSteps: number;
   providers: Array<{ id: string; name: string; models: string[] }>;
@@ -584,6 +585,7 @@ export function AgentChat({
                   name={settings.name}
                   systemPrompt={settings.systemPrompt}
                   providerId={settings.providerId}
+                  providerIds={settings.providerIds}
                   model={settings.model}
                   maxSteps={settings.maxSteps}
                   providers={settings.providers}

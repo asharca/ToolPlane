@@ -49,6 +49,16 @@ function deletingAgent() {
     id: 'agent-1',
     provider: { format: 'openai', baseUrl: 'https://example.test', apiKey: 'secret' },
     model: 'model-1',
+    modelProviders: [{
+      provider: {
+        id: 'provider-1',
+        name: 'Provider 1',
+        format: 'openai',
+        baseUrl: 'https://example.test',
+        apiKey: 'secret',
+        models: ['model-1'],
+      },
+    }],
     maxSteps: 8,
     runtime: {
       id: 'runtime-1',

@@ -128,6 +128,10 @@ export async function cloneAgent(
       systemPrompt: true,
       providerId: true,
       model: true,
+      modelProviders: {
+        where: { provider: { workspaceId } },
+        select: { providerId: true },
+      },
       maxSteps: true,
       runtime: { select: { workspaceId: true, kind: true, image: true } },
       servers: {
@@ -173,10 +177,21 @@ export async function cloneAgent(
     : undefined;
 
   return db.$transaction(async (tx) => {
-    const providerId = source.providerId
+    const providerId = runtime.runtime === HERMES_RUNTIME_KIND
+      ? null
+      : source.providerId
       && await lockProvider(tx, workspaceId, source.providerId)
       ? source.providerId
       : null;
+    const modelProviderIds: string[] = [];
+    if (runtime.runtime === HERMES_RUNTIME_KIND) {
+      const requestedIds = source.modelProviders.length > 0
+        ? source.modelProviders.map((link) => link.providerId)
+        : source.providerId ? [source.providerId] : [];
+      for (const requestedId of [...new Set(requestedIds)]) {
+        if (await lockProvider(tx, workspaceId, requestedId)) modelProviderIds.push(requestedId);
+      }
+    }
     const cloned = await createAgentRecords(
       tx,
       workspaceId,
@@ -190,7 +205,7 @@ export async function cloneAgent(
       data: {
         systemPrompt: runtime.runtime === HERMES_RUNTIME_KIND ? null : source.systemPrompt,
         providerId,
-        model: providerId ? source.model : null,
+        model: runtime.runtime === HERMES_RUNTIME_KIND ? null : providerId ? source.model : null,
         maxSteps: source.maxSteps,
       },
     });
@@ -225,6 +240,12 @@ export async function cloneAgent(
           childId: subAgent.childId,
         })),
       }),
+      tx.agentModelProvider.createMany({
+        data: modelProviderIds.map((modelProviderId) => ({
+          agentId: cloned.id,
+          providerId: modelProviderId,
+        })),
+      }),
     ]);
     return { ...cloned, runtimeKind: runtime.runtime };
   });
@@ -235,6 +256,7 @@ export type AgentConfig = {
   systemPrompt: string | null;
   providerId: string | null;
   model: string | null;
+  providerIds?: string[];
   maxSteps: number;
 };
 
@@ -260,19 +282,33 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     });
     if (!agent) return;
 
-    let providerId = cfg.providerId;
-    if (providerId && !await lockProvider(tx, workspaceId, providerId)) {
+    const isHermes = agent.runtime?.kind === HERMES_RUNTIME_KIND;
+    let providerId = isHermes ? null : cfg.providerId;
+    const modelProviderIds: string[] = [];
+    if (isHermes) {
+      const requestedIds = cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : []);
+      for (const requestedId of [...new Set(requestedIds.filter(Boolean))]) {
+        if (await lockProvider(tx, workspaceId, requestedId)) modelProviderIds.push(requestedId);
+      }
+    } else if (providerId && !await lockProvider(tx, workspaceId, providerId)) {
       providerId = null;
     }
     await tx.agent.updateMany({
       where: { id: agentId, workspaceId },
       data: {
         name: cfg.name,
-        ...(agent.runtime?.kind === HERMES_RUNTIME_KIND ? {} : { systemPrompt: cfg.systemPrompt }),
+        ...(isHermes ? {} : { systemPrompt: cfg.systemPrompt }),
         providerId,
-        model: providerId ? cfg.model : null,
+        model: isHermes ? null : providerId ? cfg.model : null,
         maxSteps: cfg.maxSteps,
       },
+    });
+    await tx.agentModelProvider.deleteMany({ where: { agentId } });
+    await tx.agentModelProvider.createMany({
+      data: modelProviderIds.map((modelProviderId) => ({
+        agentId,
+        providerId: modelProviderId,
+      })),
     });
   });
 }

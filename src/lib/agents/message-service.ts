@@ -73,10 +73,15 @@ async function runLoadedAgentMessage(params: {
   defaults?: Partial<AgentMessageBody>;
 }): Promise<AgentMessageResult> {
   const { agent } = params;
-  if (!agent.provider || !agent.model) {
+  const isHermes = agent.runtime?.kind === 'hermes';
+  if (isHermes ? agent.modelProviders.length === 0 : !agent.provider || !agent.model) {
     return {
       status: 400,
-      body: { error: 'This agent has no model configured. Open Settings and pick a provider + model.' },
+      body: {
+        error: isHermes
+          ? 'This Hermes agent has no model provider configured. Open Settings and select one or more providers.'
+          : 'This agent has no model configured. Open Settings and pick a provider + model.',
+      },
     };
   }
 
@@ -112,7 +117,7 @@ async function runLoadedAgentMessage(params: {
   };
 
   let text: string;
-  if (agent.runtime?.kind === 'hermes') {
+  if (isHermes) {
     try {
       text = await runHermesText({
         agent,
@@ -127,6 +132,9 @@ async function runLoadedAgentMessage(params: {
       };
     }
   } else {
+    if (!agent.provider || !agent.model) {
+      return { status: 400, body: { error: 'This agent has no model configured.' } };
+    }
     const resolved = resolveAgentTools(agent);
     const tools = await buildAgentToolSet(resolved, {
       workspaceId: agent.workspaceId,

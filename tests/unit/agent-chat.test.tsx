@@ -65,6 +65,7 @@ const settings = {
   name: 'Test agent',
   systemPrompt: '',
   providerId: null,
+  providerIds: [],
   model: null,
   maxSteps: 8,
   providers: [],

@@ -21,6 +21,7 @@ const baseProps = {
   name: 'Test agent',
   systemPrompt: '',
   providerId: null,
+  providerIds: [],
   model: null,
   maxSteps: 8,
   providers: [
@@ -75,6 +76,33 @@ describe('AgentSettingsForm', () => {
 
     expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
     expect(document.querySelector('[name="systemPrompt"]')).toBeNull();
+    expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
+  });
+
+  it('lets Hermes agents select multiple providers without selecting a model', async () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        providers={[
+          ...baseProps.providers,
+          { id: 'provider-2', name: 'Anthropic', models: ['claude-sonnet'] },
+        ]}
+        providerIds={['provider-1']}
+        runtime={{
+          kind: 'hermes',
+          image: 'nousresearch/hermes-agent:latest',
+          status: 'running',
+          lastError: null,
+          lastSyncedAt: null,
+          sandboxId: 'sandbox-1',
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Select OpenAI' })).toBeChecked();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
+    expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(2);
+    expect(document.querySelector('[name="model"]')).toBeNull();
   });
 
   it('shows pending and completed feedback for Hermes sync and stop actions', async () => {
