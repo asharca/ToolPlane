@@ -48,6 +48,7 @@ export function AgentSettingsForm({
   name,
   systemPrompt,
   providerId,
+  providerIds = [],
   model,
   maxSteps,
   providers,
@@ -64,6 +65,7 @@ export function AgentSettingsForm({
   name: string;
   systemPrompt: string;
   providerId: string | null;
+  providerIds?: string[];
   model: string | null;
   maxSteps: number;
   providers: Provider[];
@@ -100,6 +102,7 @@ export function AgentSettingsForm({
   const [nameValue, setNameValue] = useState(name);
   const [systemPromptValue, setSystemPromptValue] = useState(systemPrompt);
   const [selectedProvider, setSelectedProvider] = useState(providerId ?? '');
+  const [selectedProviderIds, setSelectedProviderIds] = useState(() => new Set(providerIds));
   const [selectedModel, setSelectedModel] = useState(model ?? '');
   const [maxStepsValue, setMaxStepsValue] = useState(String(maxSteps));
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() => checkedIds(deployments));
@@ -117,6 +120,12 @@ export function AgentSettingsForm({
     if (selectedModel && !models.includes(selectedModel)) return [selectedModel, ...models];
     return models;
   }, [models, selectedModel]);
+  const providerOptions = useMemo(() => providers.map((provider) => ({
+    id: provider.id,
+    label: provider.name,
+    description: t('providerModelCount', { count: provider.models.length }),
+    keywords: provider.models,
+  })), [providers, t]);
 
   useEffect(() => {
     if (!state.savedAt) return;
@@ -320,46 +329,67 @@ export function AgentSettingsForm({
       <section className="rounded-md border border-border bg-background">
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
           <BrainCircuit className="size-[18px] shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-semibold text-foreground">{t('model')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {runtime?.kind === 'hermes' ? t('modelProviders') : t('model')}
+          </h3>
         </div>
-        <div className="grid gap-3 px-4 py-4 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <Cpu className="size-4 shrink-0" />
-              {t('provider')}
-            </span>
-            <NativeSelect
-              name="providerId"
-              value={selectedProvider}
-              onChange={(event) => {
-                setSelectedProvider(event.target.value);
-                setSelectedModel('');
-              }}
-              className="ui-input h-10 w-full"
-            >
-              <option value="">{t('none')}</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </NativeSelect>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <BrainCircuit className="size-4 shrink-0" />
-              {t('model')}
-            </span>
-            <NativeSelect
-              name="model"
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              className="ui-input h-10 w-full"
-            >
-              <option value="">{t('select')}</option>
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </NativeSelect>
-          </label>
+        <div className="grid items-start gap-3 px-4 py-4 sm:grid-cols-3">
+          {runtime?.kind === 'hermes' ? (
+            <div className="space-y-2 sm:col-span-2">
+              <AgentResourceSelect
+                icon={Cpu}
+                label={t('modelProviders')}
+                name="providerId"
+                options={providerOptions}
+                selectedIds={selectedProviderIds}
+                onSelectionChange={(next) => {
+                  setSelectedProviderIds(next);
+                  scheduleAutoSave();
+                }}
+              />
+              <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
+            </div>
+          ) : (
+            <>
+              <label className="block">
+                <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Cpu className="size-4 shrink-0" />
+                  {t('provider')}
+                </span>
+                <NativeSelect
+                  name="providerId"
+                  value={selectedProvider}
+                  onChange={(event) => {
+                    setSelectedProvider(event.target.value);
+                    setSelectedModel('');
+                  }}
+                  className="ui-input h-10 w-full"
+                >
+                  <option value="">{t('none')}</option>
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </NativeSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <BrainCircuit className="size-4 shrink-0" />
+                  {t('model')}
+                </span>
+                <NativeSelect
+                  name="model"
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                  className="ui-input h-10 w-full"
+                >
+                  <option value="">{t('select')}</option>
+                  {modelOptions.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </NativeSelect>
+              </label>
+            </>
+          )}
           <label className="block">
             <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <Blocks className="size-4 shrink-0" />
@@ -376,7 +406,7 @@ export function AgentSettingsForm({
             />
             <span className="mt-1 block text-xs font-normal text-muted-foreground">{t('0NoLimit')}</span>
           </label>
-          {selectedProvider && models.length === 0 ? (
+          {runtime?.kind !== 'hermes' && selectedProvider && models.length === 0 ? (
             <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-3">
               {t('thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab')}
             </p>

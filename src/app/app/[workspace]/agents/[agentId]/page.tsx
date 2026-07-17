@@ -57,10 +57,17 @@ export default async function AgentDetailPage({
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
 
-  const ready = Boolean(agent.providerId && agent.model);
-  const providerLabel = agent.provider
-    ? `${agent.provider.name} · ${agent.model ?? 'no model selected'}`
-    : 'No model provider selected';
+  const isHermes = agent.runtime?.kind === 'hermes';
+  const ready = isHermes
+    ? agent.modelProviders.length > 0
+    : Boolean(agent.providerId && agent.model);
+  const providerLabel = isHermes
+    ? agent.modelProviders.length > 0
+      ? agent.modelProviders.map((link) => link.provider.name).join(', ')
+      : 'No model providers selected'
+    : agent.provider
+      ? `${agent.provider.name} · ${agent.model ?? 'no model selected'}`
+      : 'No model provider selected';
   const selectedDeps = new Set(agent.servers.map((server) => server.deploymentId));
   const selectedSkills = new Set(agent.skills.map((skill) => skill.installedSkillId));
   const [
@@ -126,6 +133,7 @@ export default async function AgentDetailPage({
           name: agent.name,
           systemPrompt: agent.runtime?.kind === 'hermes' ? '' : agent.systemPrompt ?? '',
           providerId: agent.providerId,
+          providerIds: agent.modelProviders.map((link) => link.providerId),
           model: agent.model,
           maxSteps: agent.maxSteps,
           providers: providers.map((p) => ({ id: p.id, name: p.name, models: p.models })),

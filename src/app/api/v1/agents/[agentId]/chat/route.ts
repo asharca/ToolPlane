@@ -36,9 +36,12 @@ export async function POST(
 
   const agent = await getAgentForRequest(agentId, user.id);
   if (!agent) return new Response('Not found', { status: 404 });
-  if (!agent.provider || !agent.model) {
+  const isHermes = agent.runtime?.kind === 'hermes';
+  if (isHermes ? agent.modelProviders.length === 0 : !agent.provider || !agent.model) {
     return new Response(
-      'This agent has no model configured. Open Settings and pick a provider + model.',
+      isHermes
+        ? 'This Hermes agent has no model provider configured. Open Settings and select one or more providers.'
+        : 'This agent has no model configured. Open Settings and pick a provider + model.',
       { status: 400 },
     );
   }
@@ -65,7 +68,7 @@ export async function POST(
 
   const last = messages[messages.length - 1];
 
-  if (agent.runtime?.kind === 'hermes') {
+  if (isHermes) {
     const runtimeSessionId = conversationId ?? randomUUID();
     const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
@@ -96,6 +99,10 @@ export async function POST(
       },
     });
     return createUIMessageStreamResponse({ stream });
+  }
+
+  if (!agent.provider || !agent.model) {
+    return new Response('This agent has no model configured.', { status: 400 });
   }
 
   const resolved = resolveAgentTools(agent);

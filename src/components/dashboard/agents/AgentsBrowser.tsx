@@ -37,6 +37,7 @@ export type AgentRow = {
   id: string;
   name: string;
   providerName: string | null;
+  providerNames: string[];
   model: string | null;
   toolCount: number;
   subAgentCount: number;
@@ -56,8 +57,10 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-function isAgentReady(agent: Pick<AgentRow, 'providerName' | 'model'>) {
-  return Boolean(agent.providerName && agent.model);
+function isAgentReady(agent: Pick<AgentRow, 'providerName' | 'providerNames' | 'model' | 'runtimeKind'>) {
+  return agent.runtimeKind === 'hermes'
+    ? agent.providerNames.length > 0
+    : Boolean(agent.providerName && agent.model);
 }
 
 function CountPill({
@@ -91,16 +94,24 @@ export function AgentsBrowser({
   const [creating, setCreating] = useState(false);
   const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
   const [providerId, setProviderId] = useState('');
+  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => new Set());
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
+  const providerOptions = createOptions.providers.map((provider) => ({
+    id: provider.id,
+    label: provider.name,
+    description: t('providerModelCount', { count: provider.models.length }),
+    keywords: provider.models,
+  }));
 
   function closeCreateForm() {
     setCreating(false);
     setRuntime('native');
     setProviderId('');
+    setSelectedProviderIds(new Set());
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
@@ -191,31 +202,45 @@ export function AgentsBrowser({
             </label>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                <Cpu className="size-4 text-muted-foreground" /> {t('provider')}
-              </span>
-              <NativeSelect
+          {runtime === 'hermes' ? (
+            <div className="space-y-2">
+              <AgentResourceSelect
+                icon={Cpu}
+                label={t('modelProviders')}
                 name="providerId"
-                value={providerId}
-                onChange={(event) => setProviderId(event.target.value)}
-                className="ui-input h-10 w-full"
-              >
-                <option value="">{t('none')}</option>
-                {createOptions.providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>{provider.name}</option>
-                ))}
-              </NativeSelect>
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
-              <NativeSelect name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
-                <option value="">{t('select')}</option>
-                {models.map((model) => <option key={model} value={model}>{model}</option>)}
-              </NativeSelect>
-            </label>
-          </div>
+                options={providerOptions}
+                selectedIds={selectedProviderIds}
+                onSelectionChange={setSelectedProviderIds}
+              />
+              <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                  <Cpu className="size-4 text-muted-foreground" /> {t('provider')}
+                </span>
+                <NativeSelect
+                  name="providerId"
+                  value={providerId}
+                  onChange={(event) => setProviderId(event.target.value)}
+                  className="ui-input h-10 w-full"
+                >
+                  <option value="">{t('none')}</option>
+                  {createOptions.providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>{provider.name}</option>
+                  ))}
+                </NativeSelect>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
+                <NativeSelect name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
+                  <option value="">{t('select')}</option>
+                  {models.map((model) => <option key={model} value={model}>{model}</option>)}
+                </NativeSelect>
+              </label>
+            </div>
+          )}
 
           <div className="grid items-start gap-3 lg:grid-cols-2">
             <AgentResourceSelect
@@ -274,8 +299,8 @@ export function AgentsBrowser({
               <h2 className="text-sm font-semibold text-foreground">{t('agents')}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {setupCount > 0
-                  ? t('agentsNeedModel', { count: setupCount })
-                  : t('allAgentsHaveModel')}
+                  ? t('agentsNeedConfiguration', { count: setupCount })
+                  : t('allAgentsConfigured')}
               </p>
             </div>
           </div>
@@ -284,7 +309,14 @@ export function AgentsBrowser({
             {agents.map((agent) => {
               const ready = isAgentReady(agent);
               const detailsHref = `/app/${slug}/agents/${agent.id}`;
-              const model = agent.providerName
+              const model = agent.runtimeKind === 'hermes'
+                ? agent.providerNames.length > 0
+                  ? t('providerSummary', {
+                      count: agent.providerNames.length,
+                      names: agent.providerNames.join(', '),
+                    })
+                  : t('noProviderSelected')
+                : agent.providerName
                 ? `${agent.providerName} / ${agent.model ?? t('noModelSelected')}`
                 : t('noProviderSelected');
 
@@ -319,7 +351,7 @@ export function AgentsBrowser({
                             )}
                           >
                             {ready ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
-                            {ready ? t('ready') : t('needsModel')}
+                            {ready ? t('ready') : agent.runtimeKind === 'hermes' ? t('needsProvider') : t('needsModel')}
                           </span>
                           <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
                             {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}
@@ -328,7 +360,7 @@ export function AgentsBrowser({
                           </span>
                         </div>
                         <p className="mt-1 truncate text-sm text-muted-foreground">
-                          {t('model')}: {model}
+                          {agent.runtimeKind === 'hermes' ? t('modelProviders') : t('model')}: {model}
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <CountPill icon={Wrench} label={t('tools')} value={agent.toolCount} />

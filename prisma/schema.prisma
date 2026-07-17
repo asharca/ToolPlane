@@ -339,6 +339,7 @@ model ModelProvider {
   modelsFetchedAt DateTime?
   createdAt       DateTime  @default(now())
   agents          Agent[]
+  agentLinks      AgentModelProvider[]
 
   @@unique([workspaceId, name])
 }
@@ -353,6 +354,7 @@ model Agent {
   providerId    String?
   provider      ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model         String?
+  modelProviders AgentModelProvider[]
   maxSteps      Int                      @default(8)
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
@@ -368,6 +370,17 @@ model Agent {
   attachments   AgentAttachment[]
 
   @@unique([workspaceId, slug])
+}
+
+model AgentModelProvider {
+  agentId    String
+  agent      Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  providerId String
+  provider   ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+
+  @@id([agentId, providerId])
+  @@index([providerId])
 }
 
 model AgentRuntime {

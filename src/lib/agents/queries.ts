@@ -21,6 +21,10 @@ const INSTALLED_SKILL_INCLUDE = {
 } as const;
 
 const TOOL_INCLUDE = {
+  modelProviders: {
+    include: { provider: true },
+    orderBy: { provider: { createdAt: 'asc' } },
+  },
   servers: { select: { deploymentId: true } },
   skills: {
     select: {
@@ -166,6 +170,13 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       model: true,
       maxSteps: true,
       provider: { select: { name: true } },
+      modelProviders: {
+        orderBy: { provider: { createdAt: 'asc' } },
+        select: {
+          providerId: true,
+          provider: { select: { name: true, models: true } },
+        },
+      },
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
@@ -198,6 +209,13 @@ export async function listAgents(workspaceId: string) {
     orderBy: { createdAt: 'desc' },
     include: {
       provider: { select: { name: true } },
+      modelProviders: {
+        orderBy: { provider: { createdAt: 'asc' } },
+        select: {
+          providerId: true,
+          provider: { select: { name: true, models: true } },
+        },
+      },
       runtime: {
         select: {
           id: true,

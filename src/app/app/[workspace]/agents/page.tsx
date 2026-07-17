@@ -80,6 +80,7 @@ export default async function AgentsPage({
             id: a.id,
             name: a.name,
             providerName: a.provider?.name ?? null,
+            providerNames: a.modelProviders.map((link) => link.provider.name),
             model: a.model,
             toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
             subAgentCount: a._count.subAgents,

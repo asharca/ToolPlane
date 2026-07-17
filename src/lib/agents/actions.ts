@@ -208,17 +208,17 @@ export async function createAgentAction(formData: FormData) {
     hermesImage: String(formData.get('hermesImage') ?? ''),
   });
 
-  const providerId = String(formData.get('providerId') ?? '') || null;
+  const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
+  const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
-  if (providerId || model) {
-    await updateAgent(ctx.ws.id, agent.id, {
-      name,
-      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
-      providerId,
-      model,
-      maxSteps: AGENT_STEP_BOUNDS.default,
-    });
-  }
+  await updateAgent(ctx.ws.id, agent.id, {
+    name,
+    systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+    providerId,
+    providerIds,
+    model,
+    maxSteps: AGENT_STEP_BOUNDS.default,
+  });
   await setAgentTools(ctx.ws.id, agent.id, {
     deploymentIds: formData.getAll('deploymentId').map(String),
     installedSkillIds: formData.getAll('installedSkillId').map(String),
@@ -265,7 +265,8 @@ export async function updateAgentAction(
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
 
-  const providerId = String(formData.get('providerId') ?? '') || null;
+  const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
+  const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
   const maxStepsRaw = Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default);
   const maxSteps = Number.isFinite(maxStepsRaw)
@@ -276,6 +277,7 @@ export async function updateAgentAction(
     name: String(formData.get('name') ?? '').trim() || 'New agent',
     systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
     providerId,
+    providerIds,
     model,
     maxSteps,
   });
