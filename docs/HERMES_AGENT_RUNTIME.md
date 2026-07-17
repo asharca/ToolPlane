@@ -40,6 +40,8 @@ ToolPlane 根据 Agent 当前授权关系生成 Hermes 的 `/opt/data` 内容：
 ```text
 /opt/data/
 ├─ config.yaml
+├─ .env                         # Hermes 与 ToolPlane 变量的合并结果
+├─ .toolplane-env-keys.json     # ToolPlane 受管键清单
 ├─ sessions/                     # Hermes 管理，ToolPlane 不覆盖
 ├─ memories/                     # Hermes 管理，ToolPlane 不覆盖
 ├─ workspace/
@@ -57,12 +59,18 @@ ToolPlane 根据 Agent 当前授权关系生成 Hermes 的 `/opt/data` 内容：
 
 - `skills/toolplane-agent`
 - `skill-bundles/toolplane-agent.yaml`
+- `.env` 中从 Agent 设置保存的 ToolPlane 受管环境变量
 - `config.yaml` 中 ToolPlane 命名空间下的 `providers`、`agent.max_turns`、`approvals`、
   `tool_loop_guardrails` 和 `mcp_servers.toolplane`
 
 `config.yaml` 使用 YAML 结构化合并，Hermes Dashboard 写入的 memory provider、cron、plugins、
 channels、其他 MCP 和其他原生配置会保留。Hermes 的 sessions、memories、cron、logs、plugins、
 本地 Skills 和用户工作区也不会被同步操作删除。
+
+Agent 设置中的 Hermes 环境变量以 `KEY=value` 编辑，并投影到 `hermes config env-path` 返回的
+`/opt/data/.env`。同步根据 `.toolplane-env-keys.json` 仅替换或删除 ToolPlane 曾管理的键，Hermes
+Dashboard、终端或镜像预置的其他变量及注释会原样保留。`.env` 与受管键清单均以 `0600` 权限
+原子写入；保存后会立即同步并重启 Hermes runtime，使新变量生效。
 
 `agent.system_prompt` 完全由 Hermes 管理。ToolPlane 不展示该字段、不把 `Agent.systemPrompt`
 投影到 Hermes，也不会在配置同步时新增、修改或删除它。系统提示词只能通过 Hermes Dashboard

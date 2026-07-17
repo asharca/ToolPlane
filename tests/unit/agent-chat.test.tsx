@@ -58,6 +58,7 @@ vi.mock('@/lib/agents/actions', () => ({
   stopAgentChannelConnectionAction: vi.fn(),
   stopAgentRuntimeAction: vi.fn(),
   syncAgentRuntimeAction: vi.fn(),
+  updateHermesRuntimeEnvAction: vi.fn(),
   updateAgentAction: vi.fn(),
 }));
 

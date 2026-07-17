@@ -10,6 +10,7 @@ vi.mock('next/navigation', () => ({
 const actions = vi.hoisted(() => ({
   stopAgentRuntimeAction: vi.fn(),
   syncAgentRuntimeAction: vi.fn(),
+  updateHermesRuntimeEnvAction: vi.fn(async () => ({ savedAt: Date.now() })),
   updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
 }));
 
@@ -103,6 +104,38 @@ describe('AgentSettingsForm', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
     expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(2);
     expect(document.querySelector('[name="model"]')).toBeNull();
+  });
+
+  it('edits the Hermes volume environment separately from agent autosave', async () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        runtime={{
+          kind: 'hermes',
+          image: 'nousresearch/hermes-agent:latest',
+          status: 'running',
+          lastError: null,
+          lastSyncedAt: null,
+          sandboxId: 'sandbox-1',
+          environment: 'EXISTING=value',
+        }}
+      />,
+    );
+
+    const environment = screen.getByLabelText('Hermes environment variables');
+    expect(environment).toHaveValue('EXISTING=value');
+    await userEvent.clear(environment);
+    await userEvent.type(environment, 'API_KEY=secret');
+    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save environment' }));
+    await waitFor(() => expect(actions.updateHermesRuntimeEnvAction).toHaveBeenCalled());
+    const formData = actions.updateHermesRuntimeEnvAction.mock.calls.at(-1)?.[1];
+    expect(formData).toBeInstanceOf(FormData);
+    if (!formData) throw new Error('Environment form was not submitted.');
+    expect(formData.get('workspace')).toBe('acme');
+    expect(formData.get('agentId')).toBe('agent-1');
+    expect(formData.get('hermesEnv')).toBe('API_KEY=secret');
   });
 
   it('shows pending and completed feedback for Hermes sync and stop actions', async () => {

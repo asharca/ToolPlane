@@ -14,6 +14,8 @@ export type HermesConfigProjection = {
   mcpToken: string;
 };
 
+export type HermesEnvProjection = Record<string, string>;
+
 const TOOLPLANE_PROVIDER_PREFIX = 'toolplane-';
 
 function yamlString(value: string): string {
@@ -100,6 +102,12 @@ export function renderHermesConfig(input: HermesConfigProjection): string {
     `      Authorization: ${yamlString(`Bearer ${input.mcpToken}`)}`,
     '',
   ].join('\n');
+}
+
+export function renderHermesEnvPayload(env: HermesEnvProjection): string {
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(env).sort(([left], [right]) => left.localeCompare(right)),
+  ));
 }
 
 export function renderHermesMcpBindingFingerprint(deploymentIds: string[]): string {

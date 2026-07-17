@@ -28,15 +28,18 @@ import {
 import { HERMES_RUNTIME_KIND } from './constants';
 import {
   renderHermesConfig,
+  renderHermesEnvPayload,
   renderHermesMcpBindingFingerprint,
   renderHermesSkillBundle,
 } from './config';
 import { deriveHermesRuntimeToken } from './token';
+import { HERMES_ENV_MERGE_SCRIPT } from './env-merge-script';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
+import { readSandboxEnv } from '@/lib/sandboxes/env';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
-const HERMES_CONFIG_VERSION = 5;
+const HERMES_CONFIG_VERSION = 6;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'copying',
@@ -314,13 +317,21 @@ async function buildProjection(
     mcpUrl: hermesRuntimeMcpUrl(agent.runtime.id),
     mcpToken: deriveHermesRuntimeToken(agent.runtime.id, 'toolplane-mcp'),
   });
+  const envPayload = renderHermesEnvPayload(readSandboxEnv(agent.runtime.sandbox.config));
   await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
+  await writeFile(path.join(directory, 'env.json'), envPayload, { mode: 0o600 });
   await writeFile(
     path.join(directory, '.toolplane-merge-config.py'),
     CONFIG_MERGE_SCRIPT,
     { mode: 0o600 },
   );
+  await writeFile(
+    path.join(directory, '.toolplane-merge-env.py'),
+    HERMES_ENV_MERGE_SCRIPT,
+    { mode: 0o600 },
+  );
   hash.update(config);
+  hash.update(`env\0${envPayload}\0`);
   hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
 
   const usedNames = new Set<string>();
@@ -355,7 +366,8 @@ async function installProjection(params: {
     `if [ -d /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} ]; then cp -R /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} /opt/data/skills/; fi`,
     `if [ -f /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml ]; then cp /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml /opt/data/skill-bundles/; fi`,
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml',
-    'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/config.yaml /opt/data/skills /opt/data/skill-bundles /opt/data/memories /opt/data/workspace 2>/dev/null || true; fi',
+    '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json',
+    'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/skills /opt/data/skill-bundles /opt/data/memories /opt/data/workspace 2>/dev/null || true; fi',
   ].join(' && ');
   await runDocker([
     'create', '--name', initContainer, '--network', 'none',

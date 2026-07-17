@@ -18,6 +18,7 @@ import {
   deleteProvider,
   setProviderModels,
   createConversation,
+  setHermesRuntimeEnv,
 } from '@/lib/agents/mutations';
 import {
   fetchProviderModels,
@@ -40,6 +41,7 @@ import {
   stopHermesRuntime,
   syncHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
+import { parseSandboxEnvText } from '@/lib/sandboxes/env';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -310,6 +312,31 @@ export async function syncAgentRuntimeAction(
   } catch {
     return { error: 'Could not sync the Hermes runtime.' };
   }
+}
+
+export async function updateHermesRuntimeEnvAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+
+  let env: ReturnType<typeof parseSandboxEnvText>;
+  try {
+    env = parseSandboxEnvText(formData.get('hermesEnv'));
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Invalid environment variables.' };
+  }
+
+  if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) {
+    return { error: 'Hermes runtime not found.' };
+  }
+  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+  if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
+  return { savedAt: Date.now() };
 }
 
 export async function stopAgentRuntimeAction(

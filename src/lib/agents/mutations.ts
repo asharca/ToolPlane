@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
+import { sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
 
 const UNAVAILABLE_SANDBOX_STATUSES = [
   'copying',
@@ -310,6 +311,29 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
         providerId: modelProviderId,
       })),
     });
+  });
+}
+
+export async function setHermesRuntimeEnv(
+  workspaceId: string,
+  agentId: string,
+  env: SandboxEnv,
+): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const runtime = await tx.agentRuntime.findFirst({
+      where: { agentId, workspaceId, kind: HERMES_RUNTIME_KIND },
+      select: {
+        sandbox: { select: { id: true, workspaceId: true, config: true } },
+      },
+    });
+    if (!runtime || runtime.sandbox.workspaceId !== workspaceId) return false;
+
+    const config = sandboxConfigWithEnv(runtime.sandbox.config, env);
+    const updated = await tx.sandbox.updateMany({
+      where: { id: runtime.sandbox.id, workspaceId },
+      data: { config: config ?? {} },
+    });
+    return updated.count === 1;
   });
 }
 
