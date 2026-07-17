@@ -23,6 +23,7 @@ import {
 import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
+  updateHermesRuntimeEnvAction,
   updateAgentAction,
   type ActionState,
 } from '@/lib/agents/actions';
@@ -81,6 +82,7 @@ export function AgentSettingsForm({
     lastError: string | null;
     lastSyncedAt: string | null;
     sandboxId: string;
+    environment?: string;
   } | null;
   className?: string;
 }) {
@@ -97,6 +99,10 @@ export function AgentSettingsForm({
   );
   const [stopState, stopFormAction, isStopPending] = useActionState<ActionState, FormData>(
     stopAgentRuntimeAction,
+    {},
+  );
+  const [envState, envFormAction, isEnvPending] = useActionState<ActionState, FormData>(
+    updateHermesRuntimeEnvAction,
     {},
   );
   const [nameValue, setNameValue] = useState(name);
@@ -134,10 +140,10 @@ export function AgentSettingsForm({
   }, [router, state.savedAt]);
 
   useEffect(() => {
-    if (!syncState.savedAt && !stopState.savedAt) return;
+    if (!syncState.savedAt && !stopState.savedAt && !envState.savedAt) return;
 
     router.refresh();
-  }, [router, stopState.savedAt, syncState.savedAt]);
+  }, [envState.savedAt, router, stopState.savedAt, syncState.savedAt]);
 
   useEffect(() => () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -183,7 +189,15 @@ export function AgentSettingsForm({
   const runtimeControlsDisabled = isPending
     || saveStatus === 'dirty'
     || isSyncPending
-    || isStopPending;
+    || isStopPending
+    || isEnvPending;
+  const envMessage = isEnvPending
+    ? t('savingAndSyncingEnvironment')
+    : envState.error
+      ? envState.error
+      : envState.savedAt
+        ? t('environmentSaved')
+        : null;
 
   return (
     <form
@@ -322,6 +336,43 @@ export function AgentSettingsForm({
                 {runtimeActionMessage}
               </p>
             ) : null}
+          </div>
+          <div className="space-y-3 border-t border-border px-4 py-4">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">{t('hermesEnvironmentVariables')}</h4>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t('hermesEnvironmentHelp')}</p>
+            </div>
+            <textarea
+              name="hermesEnv"
+              defaultValue={runtime.environment ?? ''}
+              onChange={(event) => event.stopPropagation()}
+              rows={6}
+              spellCheck={false}
+              placeholder={t('hermesEnvPlaceholder')}
+              className="ui-input min-h-32 w-full resize-y font-mono text-xs leading-5"
+              aria-label={t('hermesEnvironmentVariables')}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p
+                role={envState.error ? 'alert' : 'status'}
+                aria-live="polite"
+                className={envState.error ? 'text-xs text-red-600' : 'text-xs text-muted-foreground'}
+              >
+                {envMessage}
+              </p>
+              <button
+                type="submit"
+                formAction={envFormAction}
+                formNoValidate
+                disabled={runtimeControlsDisabled}
+                aria-busy={isEnvPending}
+                onClick={clearAutoSaveTimer}
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
+              >
+                {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                {isEnvPending ? t('savingAndSyncingEnvironment') : t('saveEnvironment')}
+              </button>
+            </div>
           </div>
         </section>
       ) : null}

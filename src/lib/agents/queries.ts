@@ -193,6 +193,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
           sandboxId: true,
           sandbox: {
             select: {
+              config: true,
               deploymentId: true,
               deployment: { select: { status: true } },
             },

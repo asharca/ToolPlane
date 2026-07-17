@@ -79,6 +79,7 @@ type SettingsData = {
     lastError: string | null;
     lastSyncedAt: string | null;
     sandboxId: string;
+    environment?: string;
     deploymentId: string;
     dashboardUrl: string;
   } | null;

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_HERMES_IMAGE, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import {
   renderHermesConfig,
+  renderHermesEnvPayload,
   renderHermesMcpBindingFingerprint,
   renderHermesSkillBundle,
 } from '@/lib/agents/hermes/config';
@@ -180,5 +181,11 @@ describe('Hermes agent runtime contract', () => {
     expect(config).toContain('name: "Provider B"');
     expect(config).toContain('"a-small": {}');
     expect(config).toContain('"b-sonnet": {}');
+  });
+
+  it('renders a deterministic managed environment payload for the Hermes volume', () => {
+    expect(renderHermesEnvPayload({ ZED: 'last', API_KEY: 'secret' })).toBe(
+      '{"API_KEY":"secret","ZED":"last"}',
+    );
   });
 });

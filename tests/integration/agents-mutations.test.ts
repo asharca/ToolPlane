@@ -9,6 +9,7 @@ import {
   updateAgent,
   setAgentTools,
   setProviderModels,
+  setHermesRuntimeEnv,
   updateProvider,
   appendMessage,
   createConversation,
@@ -287,6 +288,25 @@ describe('agents mutations', () => {
         sandbox: expect.objectContaining({ id: runtime?.sandboxId }),
       }),
     ]));
+
+    await expect(setHermesRuntimeEnv(workspaceId, agent.id, {
+      OPENROUTER_API_KEY: 'secret',
+      FEATURE_FLAG: 'enabled',
+    })).resolves.toBe(true);
+    await expect(setHermesRuntimeEnv('other-workspace', agent.id, {
+      LEAKED: 'no',
+    })).resolves.toBe(false);
+    const updatedSandbox = await db.sandbox.findUniqueOrThrow({
+      where: { id: runtime!.sandboxId },
+      select: { config: true },
+    });
+    expect(updatedSandbox.config).toMatchObject({
+      managedBy: 'agent-runtime',
+      env: {
+        OPENROUTER_API_KEY: 'secret',
+        FEATURE_FLAG: 'enabled',
+      },
+    });
 
     await deleteAgent(workspaceId, agent.id);
     expect(await db.agentRuntime.findUnique({ where: { id: runtime!.id } })).toBeNull();

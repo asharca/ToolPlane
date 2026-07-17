@@ -22,6 +22,7 @@ import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -181,6 +182,7 @@ export default async function AgentDetailPage({
               lastError: agent.runtime.lastError,
               lastSyncedAt: agent.runtime.lastSyncedAt?.toISOString() ?? null,
               sandboxId: agent.runtime.sandboxId,
+              environment: sandboxEnvToText(readSandboxEnv(agent.runtime.sandbox.config)),
               deploymentId: agent.runtime.sandbox.deploymentId,
               dashboardUrl: createHermesDashboardPath(agent.runtime.id),
             };
