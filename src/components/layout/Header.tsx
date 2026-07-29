@@ -31,6 +31,12 @@ export async function Header() {
               >
                 {t('agentSkills')}
               </Link>
+              <Link
+                href="/agents"
+                className="inline-flex items-center gap-1 px-2 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {t('agentMarket')}
+              </Link>
             </nav>
           </div>
 
@@ -75,6 +81,12 @@ export async function Header() {
                     className="flex min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-muted"
                   >
                     {t('agentSkills')}
+                  </Link>
+                  <Link
+                    href="/agents"
+                    className="flex min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-muted"
+                  >
+                    {t('agentMarket')}
                   </Link>
                   <a
                     href={SITE.sourceUrl}

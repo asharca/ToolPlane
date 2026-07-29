@@ -165,6 +165,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
     select: {
       id: true,
       name: true,
+      slug: true,
       systemPrompt: true,
       providerId: true,
       model: true,
