@@ -16,6 +16,7 @@ import { AgentConversation } from '@/components/dashboard/agents/AgentConversati
 import Link from 'next/link';
 import {
   Container,
+  Globe2,
   MessageCircle,
   PanelLeftClose,
   PanelLeftOpen,
@@ -445,20 +446,29 @@ export function AgentChat({
                   <p className="mt-1 truncate text-xs text-muted-foreground">{providerLabel}</p>
                 </div>
               </div>
-              <button
-                ref={settingsButtonRef}
-                type="button"
-                aria-label={t('settings')}
-                title={t('settings')}
-                onClick={() => {
-                  setSettingsTab('agent');
-                  setSettingsOpen(true);
-                }}
-                className="ui-button-secondary h-10 shrink-0 gap-2 px-4"
-              >
-                <Settings2 className="size-[18px] shrink-0" />
-                {t('settings')}
-              </button>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Link
+                  href={`/app/${slug}/agents/${agentId}/publish`}
+                  className="ui-button-secondary h-10 shrink-0 gap-2 px-4"
+                >
+                  <Globe2 className="size-[18px] shrink-0" />
+                  {t('publishAgent')}
+                </Link>
+                <button
+                  ref={settingsButtonRef}
+                  type="button"
+                  aria-label={t('settings')}
+                  title={t('settings')}
+                  onClick={() => {
+                    setSettingsTab('agent');
+                    setSettingsOpen(true);
+                  }}
+                  className="ui-button-secondary h-10 shrink-0 gap-2 px-4"
+                >
+                  <Settings2 className="size-[18px] shrink-0" />
+                  {t('settings')}
+                </button>
+              </div>
             </div>
           </header>
 

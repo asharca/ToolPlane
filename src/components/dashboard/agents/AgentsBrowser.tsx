@@ -14,6 +14,7 @@ import {
   PackageCheck,
   Plus,
   Server,
+  Store,
   Wrench,
   Users,
   X,
@@ -124,19 +125,25 @@ export function AgentsBrowser({
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('agent')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (creating) closeCreateForm();
-            else setCreating(true);
-          }}
-          aria-controls="agent-create-form"
-          aria-expanded={creating}
-          className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
-        >
-          {creating ? <X className="size-[18px] shrink-0" /> : <Plus className="size-[18px] shrink-0" />}
-          {creating ? t('cancel') : t('newAgent')}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/agents" className="ui-button-secondary h-10 gap-2 px-4">
+            <Store className="size-[18px] shrink-0" />
+            {t('browseAgentMarket')}
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              if (creating) closeCreateForm();
+              else setCreating(true);
+            }}
+            aria-controls="agent-create-form"
+            aria-expanded={creating}
+            className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
+          >
+            {creating ? <X className="size-[18px] shrink-0" /> : <Plus className="size-[18px] shrink-0" />}
+            {creating ? t('cancel') : t('newAgent')}
+          </button>
+        </div>
       </div>
 
       {creating ? (

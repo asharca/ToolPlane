@@ -11,6 +11,7 @@ const BROWSE: FooterLink[] = [
   { labelKey: 'mcpServers', href: '/server' },
   { labelKey: 'mcpClients', href: '/client' },
   { labelKey: 'agentSkills', href: '/tools/skills' },
+  { labelKey: 'agentMarket', href: '/agents' },
   { labelKey: 'categories', href: '/categories' },
   { labelKey: 'whatIsMcp', href: '/what-is-an-mcp-server' },
   { labelKey: 'mcp', href: SITE.protocolUrl },

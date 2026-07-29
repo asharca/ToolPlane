@@ -42,6 +42,13 @@ import {
   syncHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
 import { parseSandboxEnvText } from '@/lib/sandboxes/env';
+import {
+  AgentMarketError,
+  materializeAgentRelease,
+  publishAgentRelease,
+  unpublishAgentListing,
+} from '@/lib/agents/market';
+import { safeRelativePath } from '@/lib/auth/safe-redirect';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -256,6 +263,111 @@ export async function cloneAgentAction(formData: FormData) {
   }
   revalidatePath(`/app/${slug}/agents`);
   redirect(`/app/${slug}/agents/${cloned.id}?settings=agent`);
+}
+
+function marketTags(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== 'string') return [];
+  return [...new Set(value
+    .split(',')
+    .map((tag) => tag.trim().slice(0, 32))
+    .filter(Boolean))]
+    .slice(0, 6);
+}
+
+function marketErrorCode(error: unknown) {
+  return error instanceof AgentMarketError ? error.code : 'install_failed';
+}
+
+export async function publishAgentReleaseAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !agentId) return;
+
+  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
+  if (ctx.ws.ownerId !== ctx.user.id) {
+    redirect(`${publishPath}?error=owner_only`);
+  }
+  if (formData.get('confirmPublicContents') !== 'yes') {
+    redirect(`${publishPath}?error=confirm_required`);
+  }
+
+  const name = String(formData.get('name') ?? '').trim().slice(0, 80);
+  const summary = String(formData.get('summary') ?? '').trim().slice(0, 360);
+  if (!name || !summary) {
+    redirect(`${publishPath}?error=missing_fields`);
+  }
+
+  let errorCode: string | null = null;
+  try {
+    await publishAgentRelease({
+      workspaceId: ctx.ws.id,
+      agentId,
+      publishedById: ctx.user.id,
+      listing: {
+        slug: String(formData.get('listingSlug') ?? '').trim() || undefined,
+        name,
+        summary,
+        tags: marketTags(formData.get('tags')),
+      },
+    });
+  } catch (error) {
+    errorCode = marketErrorCode(error);
+  }
+  if (errorCode) redirect(`${publishPath}?error=${encodeURIComponent(errorCode)}`);
+
+  revalidatePath('/agents');
+  revalidatePath(publishPath);
+  redirect(`${publishPath}?published=1`);
+}
+
+export async function unpublishAgentListingAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !agentId || ctx.ws.ownerId !== ctx.user.id) return;
+
+  await unpublishAgentListing({
+    workspaceId: ctx.ws.id,
+    agentId,
+    actorId: ctx.user.id,
+  });
+  const publishPath = `/app/${slug}/agents/${agentId}/publish`;
+  revalidatePath('/agents');
+  revalidatePath(publishPath);
+  redirect(`${publishPath}?unpublished=1`);
+}
+
+export async function clonePublicAgentAction(formData: FormData) {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const releaseId = String(formData.get('releaseId') ?? '');
+  const idempotencyKey = String(formData.get('idempotencyKey') ?? '').slice(0, 128);
+  const returnTo = safeRelativePath(formData.get('returnTo')) ?? '/agents';
+  const ctx = await authorizedWorkspace(workspaceSlug);
+  if (!ctx || !releaseId || !idempotencyKey) return;
+
+  let clonedAgentId: string | null = null;
+  let errorCode: string | null = null;
+  try {
+    const result = await materializeAgentRelease({
+      releaseId,
+      targetWorkspaceId: ctx.ws.id,
+      installedById: ctx.user.id,
+      idempotencyKey,
+      name: String(formData.get('name') ?? '').trim().slice(0, 80) || undefined,
+    });
+    clonedAgentId = result.agent.id;
+  } catch (error) {
+    errorCode = marketErrorCode(error);
+  }
+  if (errorCode) {
+    const separator = returnTo.includes('?') ? '&' : '?';
+    redirect(`${returnTo}${separator}cloneError=${encodeURIComponent(errorCode)}`);
+  }
+  if (!clonedAgentId) return;
+
+  revalidatePath(`/app/${workspaceSlug}/agents`);
+  redirect(`/app/${workspaceSlug}/agents/${clonedAgentId}?settings=agent&from=market`);
 }
 
 export async function updateAgentAction(
