@@ -48,8 +48,13 @@ describe('release artifact updater', () => {
     try {
       process.env.TOOLPLANE_VERSION = 'v-local';
       await expect(getLocalSystemUpdateStatus()).resolves.toMatchObject({
+        runtimeId: expect.any(String),
         currentVersion: 'v-local',
         artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
+        updateJob: {
+          status: 'idle',
+          targetVersion: null,
+        },
       });
     } finally {
       if (previous === undefined) delete process.env.TOOLPLANE_VERSION;
