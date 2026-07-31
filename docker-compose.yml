@@ -84,6 +84,7 @@ services:
       TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}
       TOOLPLANE_UPDATE_REPO: ${TOOLPLANE_UPDATE_REPO:-asharca/ToolPlane}
       TOOLPLANE_UPDATE_ARTIFACT: ${TOOLPLANE_UPDATE_ARTIFACT:-toolplane-runtime-linux-amd64.tar.gz}
+      TOOLPLANE_MAX_ATTACHMENT_BYTES: ${TOOLPLANE_MAX_ATTACHMENT_BYTES:-1000000000}
       TOOLPLANE_RUNTIME_ROOT: /app
       # These paths are baked into the Docker image. Local `pnpm dev` may still
       # override them through .env when running outside Compose.

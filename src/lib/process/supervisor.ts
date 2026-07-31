@@ -422,6 +422,7 @@ async function launchProcess(
               ? deriveHermesRuntimeToken(spec.runtimeId, 'hermes-api')
               : '',
             HERMES_RUNTIME_MODEL_NAME: spec.runtimeModelName ?? 'hermes-agent',
+            TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? '',
           }
         : { ...process.env, MCP_PORT: '0', MCP_NAME: spec.name };
 
