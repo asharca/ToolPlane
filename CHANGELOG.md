@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.14.0...toolplane-v0.15.0) (2026-07-31)
+
+
+### Features
+
+* add agent marketplace and portable cloning ([#56](https://github.com/asharca/ToolPlane/issues/56)) ([1beda23](https://github.com/asharca/ToolPlane/commit/1beda2310b635988400976bdce0423954c28153b))
+* add MCP clone and rename actions ([1e691ee](https://github.com/asharca/ToolPlane/commit/1e691eee0e397456d4d152e523b350c13fa55a6f))
+* add MCP clone and rename actions ([49968ac](https://github.com/asharca/ToolPlane/commit/49968ac825496ac22b78acfffcf74df8d1f04d54))
+* manage Hermes runtime environment ([#54](https://github.com/asharca/ToolPlane/issues/54)) ([8aa964f](https://github.com/asharca/ToolPlane/commit/8aa964f2f0be6a52c54575a5f1a368e403f2fe3e))
+
+
+### Bug Fixes
+
+* stream agent attachments outside model context ([6a97281](https://github.com/asharca/ToolPlane/commit/6a97281c5247851383af859458a2327883fc0435))
+* stream agent attachments outside model context ([#58](https://github.com/asharca/ToolPlane/issues/58)) ([b641eb5](https://github.com/asharca/ToolPlane/commit/b641eb52d79cee5c0856de00b6393e462ee458f8))
+
 ## [0.14.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.13.0...toolplane-v0.14.0) (2026-07-17)
 
 
