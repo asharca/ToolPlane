@@ -210,7 +210,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
   // rows that have no admin-wired recipe (serverId set, source null). A catalog
   // deployment WITH a source runs its real package in a container, same path as
   // a custom deployment.
-  if (!d.source) return { kind: 'builtin', name: d.server?.name ?? d.name ?? 'mcp' };
+  if (!d.source) return { kind: 'builtin', name: d.name ?? d.server?.name ?? 'mcp' };
   const { env, startCommand, command, args: commandArgs, network } = readCfg(d.installCfg);
   if (d.source === 'config') {
     const configSpec = buildStdioConfigSpawnSpec(

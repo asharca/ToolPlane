@@ -24,6 +24,7 @@ import {
   serializeMcpDeploymentConfig,
 } from '@/lib/workspace/custom-mcp';
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
@@ -369,6 +370,29 @@ export async function runMcpConsoleToolAction(input: {
 }
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_DEPLOYMENT_NAME_LENGTH = 80;
+
+function deploymentName(value: FormDataEntryValue | null): string {
+  return String(value ?? '').trim().slice(0, MAX_DEPLOYMENT_NAME_LENGTH);
+}
+
+function cloneInstallCfg(
+  value: Prisma.JsonValue,
+  copyEnvironmentVariables: boolean,
+): Prisma.InputJsonValue | undefined {
+  if (value === null) return undefined;
+  if (
+    copyEnvironmentVariables
+    || typeof value !== 'object'
+    || Array.isArray(value)
+  ) {
+    return value as Prisma.InputJsonValue;
+  }
+
+  const configuration = { ...value };
+  delete configuration.env;
+  return configuration as Prisma.InputJsonValue;
+}
 
 export async function setDeploymentEnvAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
@@ -400,6 +424,74 @@ export async function setDeploymentEnvAction(formData: FormData) {
     data: { installCfg: next as Prisma.InputJsonValue },
   });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+}
+
+export async function renameDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  const name = deploymentName(formData.get('name'));
+  if (!slug || !deploymentId || !name) return;
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!deployment) return;
+
+  await db.deployment.update({
+    where: { id: deployment.id },
+    data: { name },
+  });
+  revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
+}
+
+export async function cloneDeploymentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentId = String(formData.get('deploymentId') ?? '');
+  if (!slug || !deploymentId) return;
+
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const source = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+  if (!source) return;
+
+  const defaultName = `${deploymentLabel(source).name
+    .slice(0, MAX_DEPLOYMENT_NAME_LENGTH - 5)
+    .trimEnd()} Copy`;
+  const nameEntry = formData.get('name');
+  const name = nameEntry === null ? defaultName : deploymentName(nameEntry);
+  if (!name) return;
+
+  // The form submits a hidden `false` plus a checked `true`. Calls that omit
+  // the field retain the secure in-workspace default of copying the complete
+  // runtime configuration, including environment variables.
+  const copyEnvironmentEntries = formData.getAll('copyEnvironmentVariables').map(String);
+  const copyEnvironmentVariables = copyEnvironmentEntries.length === 0
+    || copyEnvironmentEntries.includes('true');
+
+  const cloned = await db.deployment.create({
+    data: {
+      workspaceId: ctx.ws.id,
+      // Catalog deployments are unique per workspace. A clone is deliberately
+      // detached from that directory identity so it can run independently.
+      serverId: null,
+      name,
+      source: source.source,
+      sourceRef: source.sourceRef,
+      installCfg: cloneInstallCfg(source.installCfg, copyEnvironmentVariables),
+      status: 'provisioning',
+      mcpToolExposure: source.mcpToolExposure,
+      mcpAllowedTools: source.mcpAllowedTools,
+    },
+    include: { server: { select: { name: true } } },
+  });
+
+  await startProcess(cloned.id, resolveSpawnSpec(cloned), {
+    awaitReady: false,
+    workspaceId: ctx.ws.id,
+  });
+  revalidatePath(`/app/${slug}/mcp`);
+  redirect(`/app/${slug}/mcp/${cloned.id}`);
 }
 
 export async function removeDeploymentAction(formData: FormData) {
