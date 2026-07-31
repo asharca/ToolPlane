@@ -60,8 +60,10 @@ vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
 import {
   deployCustomServerAction,
+  cloneDeploymentAction,
   inviteWorkspaceMemberAction,
   removeDeploymentAction,
+  renameDeploymentAction,
   revealMcpJsonConfigAction,
   runMcpConsoleToolAction,
   setDeploymentEnvAction,
@@ -160,6 +162,131 @@ describe('removeDeploymentAction', () => {
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
+  });
+});
+
+describe('MCP deployment management actions', () => {
+  const sourceDeployment = {
+    id: 'dep1',
+    workspaceId: 'ws1',
+    serverId: 'server1',
+    server: { name: 'Catalog MCP' },
+    name: null,
+    source: 'npm',
+    sourceRef: '@example/mcp',
+    installCfg: {
+      env: { API_TOKEN: 'secret-value' },
+      network: 'none',
+    },
+    status: 'running',
+    mcpToolExposure: 'allowlist',
+    mcpAllowedTools: ['search'],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+  });
+
+  it('renames a deployment only after a workspace-scoped lookup', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    const fd = formData('dep1');
+    fd.set('name', '  Renamed MCP  ');
+
+    await renameDeploymentAction(fd);
+
+    expect(mocks.deploymentFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: 'dep1',
+        workspaceId: 'ws1',
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+    }));
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: { name: 'Renamed MCP' },
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
+  });
+
+  it('clones runtime configuration, environment variables, and tool exposure by default', async () => {
+    const clonedDeployment = {
+      ...sourceDeployment,
+      id: 'dep-copy',
+      serverId: null,
+      server: null,
+      name: 'Catalog MCP Copy',
+      status: 'provisioning',
+    };
+    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
+
+    await cloneDeploymentAction(formData('dep1'));
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith({
+      data: {
+        workspaceId: 'ws1',
+        serverId: null,
+        name: 'Catalog MCP Copy',
+        source: 'npm',
+        sourceRef: '@example/mcp',
+        installCfg: {
+          env: { API_TOKEN: 'secret-value' },
+          network: 'none',
+        },
+        status: 'provisioning',
+        mcpToolExposure: 'allowlist',
+        mcpAllowedTools: ['search'],
+      },
+      include: { server: { select: { name: true } } },
+    });
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(clonedDeployment);
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep-copy',
+      { kind: 'bridge', command: 'docker', args: [] },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep-copy');
+  });
+
+  it('can clone without environment variables when the default is explicitly disabled', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    mocks.deploymentCreate.mockResolvedValue({
+      ...sourceDeployment,
+      id: 'dep-copy',
+      serverId: null,
+      server: null,
+      name: 'No secrets',
+    });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
+    const fd = formData('dep1');
+    fd.set('name', 'No secrets');
+    fd.set('copyEnvironmentVariables', 'false');
+
+    await cloneDeploymentAction(fd);
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        name: 'No secrets',
+        installCfg: { network: 'none' },
+      }),
+    }));
+  });
+
+  it('does not rename or clone a deployment outside the workspace', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue(null);
+    const renameFd = formData('foreign-dep');
+    renameFd.set('name', 'Blocked');
+
+    await renameDeploymentAction(renameFd);
+    await cloneDeploymentAction(formData('foreign-dep'));
+
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.deploymentCreate).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 });
 

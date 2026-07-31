@@ -10,7 +10,7 @@ export type DeploymentLabel = { name: string; source: string; ref: string | null
 
 export function deploymentLabel(d: LabelInput): DeploymentLabel {
   if (d.serverId && d.server) {
-    return { name: d.server.name, source: 'catalog', ref: null };
+    return { name: d.name ?? d.server.name, source: 'catalog', ref: null };
   }
   return {
     name: d.name ?? d.sourceRef ?? 'Untitled server',

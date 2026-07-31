@@ -1,7 +1,7 @@
 import { getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { Plug, BarChart3 } from 'lucide-react';
+import { Plug, BarChart3, CopyPlus, Pencil, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -22,6 +22,8 @@ import {
   restartDeploymentAction,
   rebuildDeploymentAction,
   removeDeploymentAction,
+  renameDeploymentAction,
+  cloneDeploymentAction,
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
@@ -73,6 +75,7 @@ const TABS = [
   { key: 'variables', label: 'Variables' },
   { key: 'tools', label: 'Tools' },
   { key: 'logs', label: 'Logs' },
+  { key: 'settings', label: 'Settings' },
 ];
 
 export default async function DeploymentInspectorPage({
@@ -105,6 +108,7 @@ export default async function DeploymentInspectorPage({
   const current = tabs.some((item) => item.key === tab) ? tab! : 'overview';
 
   const label = deploymentLabel(dep);
+  const defaultCloneName = `${label.name.slice(0, 75).trimEnd()} Copy`;
   const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string>; network?: string };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
   const serializedConfig = editableConfiguration ? serializeMcpDeploymentConfig(dep) : '';
@@ -320,6 +324,103 @@ export default async function DeploymentInspectorPage({
               </div>
             )}
           </section>
+        ) : null}
+
+        {current === 'settings' ? (
+          <div className="max-w-3xl divide-y divide-border">
+            <section className="pb-6">
+              <div className="flex items-center gap-2">
+                <Settings className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('generalSettings')}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('renameMcpDescription')}
+              </p>
+              <form
+                action={renameDeploymentAction}
+                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
+              >
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                  {t('mcpName')}
+                  <input
+                    name="name"
+                    defaultValue={label.name}
+                    required
+                    maxLength={80}
+                    pattern=".*\S.*"
+                    title={t('nameCannotBeBlank')}
+                    className="ui-input h-9 min-w-0 text-sm"
+                  />
+                </label>
+                <SubmitButton
+                  pendingLabel={t('renaming')}
+                  savedLabel={t('renamed')}
+                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
+                >
+                  <Pencil className="size-3.5" />
+                  {t('rename')}
+                </SubmitButton>
+              </form>
+            </section>
+
+            <section className="py-6">
+              <div className="flex items-center gap-2">
+                <CopyPlus className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('cloneMcp')}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('cloneMcpDescription')}
+              </p>
+              <form action={cloneDeploymentAction} className="mt-4 max-w-xl space-y-4">
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <input type="hidden" name="copyEnvironmentVariables" value="false" />
+                <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
+                  {t('copyName')}
+                  <input
+                    name="name"
+                    defaultValue={defaultCloneName}
+                    required
+                    maxLength={80}
+                    pattern=".*\S.*"
+                    title={t('nameCannotBeBlank')}
+                    className="ui-input h-9 text-sm"
+                  />
+                </label>
+                <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <input
+                    type="checkbox"
+                    name="copyEnvironmentVariables"
+                    value="true"
+                    defaultChecked
+                    className="mt-0.5 size-4 rounded border-border accent-brand"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-foreground">
+                      {t('copyEnvironmentVariables')}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                      {t('copyEnvironmentVariablesDescription')}
+                    </span>
+                  </span>
+                </label>
+                <SubmitButton
+                  flash={false}
+                  pendingLabel={t('cloning')}
+                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
+                >
+                  <CopyPlus className="size-3.5" />
+                  {t('clone')}
+                </SubmitButton>
+              </form>
+            </section>
+          </div>
         ) : null}
 
         {current === 'logs' ? (
