@@ -45,7 +45,7 @@ async function deploymentInWorkspace(deploymentId: string, workspaceId: string) 
       workspaceId,
       OR: [{ source: null }, { source: { not: 'sandbox' } }],
     },
-    include: { server: { select: { name: true } } },
+    include: { server: { select: { name: true, slug: true } } },
   });
 }
 
@@ -58,7 +58,7 @@ export async function deployServerAction(formData: FormData) {
 
   const server = await db.server.findUnique({
     where: { id: serverId },
-    select: { name: true, installCfg: true, verifiedAt: true },
+    select: { slug: true, name: true, installCfg: true, verifiedAt: true },
   });
   if (!server) return;
   // Only deploy a catalog server an admin has wired up AND validated. Without a
@@ -96,7 +96,8 @@ export async function deployServerAction(formData: FormData) {
   );
 
   revalidatePath(`/app/${slug}/mcp`);
-  revalidatePath(`/app/${slug}/mcp/new`);
+  revalidatePath(`/app/${slug}/market/mcp`);
+  revalidatePath(`/app/${slug}/market/mcp/${server.slug}`);
 }
 
 export async function deployCustomServerAction(formData: FormData) {
@@ -417,6 +418,10 @@ export async function removeDeploymentAction(formData: FormData) {
     where: { id: dep.id, workspaceId: ctx.ws.id },
   });
   revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/market/mcp`);
+  if (dep.server?.slug) {
+    revalidatePath(`/app/${slug}/market/mcp/${dep.server.slug}`);
+  }
   // Redirect to the list: this action also fires from the deployment detail
   // page, which would otherwise re-render against the now-deleted row → 404.
   redirect(`/app/${slug}/mcp`);
@@ -496,13 +501,22 @@ export async function installSkillAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
+  // The workspace market exposes only administrator-curated skills. Recheck
+  // the boundary in the action so a forged form cannot install a hidden row.
+  const skill = await db.skill.findFirst({
+    where: { id: skillId, curated: true },
+    select: { slug: true },
+  });
+  if (!skill) return;
+
   await db.installedSkill.upsert({
     where: { workspaceId_skillId: { workspaceId: ctx.ws.id, skillId } },
     update: {},
     create: { workspaceId: ctx.ws.id, skillId },
   });
   revalidatePath(`/app/${slug}/skills`);
-  revalidatePath(`/app/${slug}/skills/new`);
+  revalidatePath(`/app/${slug}/market/skills`);
+  revalidatePath(`/app/${slug}/market/skills/${skill.slug}`);
 }
 
 export async function uninstallSkillAction(formData: FormData) {
@@ -512,10 +526,20 @@ export async function uninstallSkillAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
+  const installed = await db.installedSkill.findFirst({
+    where: { id: installId, workspaceId: ctx.ws.id },
+    select: { skill: { select: { slug: true } } },
+  });
+  if (!installed) return;
+
   await db.installedSkill.deleteMany({
     where: { id: installId, workspaceId: ctx.ws.id },
   });
   revalidatePath(`/app/${slug}/skills`);
+  revalidatePath(`/app/${slug}/market/skills`);
+  if (installed.skill?.slug) {
+    revalidatePath(`/app/${slug}/market/skills/${installed.skill.slug}`);
+  }
 }
 
 export async function renameWorkspaceAction(formData: FormData) {

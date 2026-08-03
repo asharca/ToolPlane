@@ -61,6 +61,7 @@ type CustomSkillData = {
   userInvocable?: boolean;
   agentInvocable?: boolean;
   effort?: string | null;
+  source?: string | null;
 };
 
 export function buildCustomSkillMarkdown(s: CustomSkillData): string {
@@ -86,6 +87,11 @@ export function buildInstalledSkillMarkdown(installed: {
   skillId: string | null;
   skill: SkillMeta | null;
 } & CustomSkillData): string {
+  // Agent marketplace installs retain the catalog relation while pinning the
+  // reviewed release contents on InstalledSkill. Prefer that explicit
+  // snapshot; ordinary catalog installs leave it null and continue to resolve
+  // the live directory artifact below.
+  if (installed.source === 'agent-market' && installed.content?.trim()) return installed.content;
   if (installed.skillId && installed.skill) return buildSkillMarkdown(installed.skill);
   return buildCustomSkillMarkdown(installed);
 }
@@ -94,7 +100,11 @@ export function installedSkillExtraFiles(installed: {
   skillId: string | null;
   skill: SkillMeta | null;
 } & CustomSkillData): SkillBundleFile[] {
-  const files = installed.skillId && installed.skill ? installed.skill.files : installed.files;
+  const files = installed.source === 'agent-market' && installed.files != null
+    ? installed.files
+    : installed.skillId && installed.skill
+      ? installed.skill.files
+      : installed.files;
   if (!Array.isArray(files)) return [];
   return normalizeSkillFiles(files as SkillBundleFile[]);
 }

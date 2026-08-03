@@ -12,6 +12,7 @@ import {
   listAgentSkillOptions,
   listConversations,
   listProviders,
+  resolveAgentMarketSetupGuide,
 } from '@/lib/agents/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
@@ -105,6 +106,7 @@ export default async function AgentDetailPage({
   const selectedToolkits = new Set(agent.toolkits.map((toolkit) => toolkit.toolkitId));
   const selectedSandboxes = new Set(agent.sandboxes.map((sandbox) => sandbox.sandboxId));
   const selectedSubAgents = new Set(agent.subAgents.map((subAgent) => subAgent.childId));
+  const marketSetup = await resolveAgentMarketSetupGuide(ws.id, agent.marketInstall);
 
   return (
     <>
@@ -194,6 +196,7 @@ export default async function AgentDetailPage({
         ready={ready}
         agentName={agent.name}
         providerLabel={providerLabel}
+        marketSetup={marketSetup}
         initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </>

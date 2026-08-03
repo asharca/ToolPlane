@@ -13,20 +13,29 @@ function pageWindow(page: number, total: number): number[] {
 const itemCls =
   'inline-flex h-9 min-w-9 items-center justify-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent';
 
-export async function Pagination({
-  page,
-  totalPages,
-  basePath,
-  pagePath,
-}: {
+type PaginationProps = {
   page: number;
   totalPages: number;
-  basePath: string;
-  pagePath: string;
-}) {
+} & (
+  | {
+      basePath: string;
+      pagePath: string;
+      hrefForPage?: never;
+    }
+  | {
+      basePath?: never;
+      pagePath?: never;
+      hrefForPage: (page: number) => string;
+    }
+);
+
+export async function Pagination(props: PaginationProps) {
+  const { page, totalPages } = props;
   const t = await getTranslations('common');
   if (totalPages <= 1) return null;
-  const href = (p: number) => (p <= 1 ? basePath : `${pagePath}/${p}`);
+  const href = props.hrefForPage ?? ((p: number) =>
+    p <= 1 ? props.basePath : `${props.pagePath}/${p}`
+  );
   const nums = pageWindow(page, totalPages);
 
   return (

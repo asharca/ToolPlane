@@ -13,6 +13,7 @@ import {
   BarChart3,
   Users,
   Settings,
+  Store,
   Shield,
   PanelLeftClose,
   PanelLeftOpen,
@@ -38,6 +39,7 @@ const SECTIONS: { titleKey: string; items: NavItem[] }[] = [
   {
     titleKey: 'manage',
     items: [
+      { labelKey: 'market', segment: 'market', icon: Store },
       { labelKey: 'agents', segment: 'agents', icon: Bot },
       { labelKey: 'mcpServers', segment: 'mcp', icon: Plug },
       { labelKey: 'skills', segment: 'skills', icon: Brain },

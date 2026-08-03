@@ -126,7 +126,7 @@ export function AgentsBrowser({
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href={`/app/${slug}/agents/new`} className="ui-button-secondary h-10 gap-2 px-4">
+          <Link href={`/app/${encodeURIComponent(slug)}/market/agents`} className="ui-button-secondary h-10 gap-2 px-4">
             <Store className="size-[18px] shrink-0" />
             {t('browseAgentMarket')}
           </Link>

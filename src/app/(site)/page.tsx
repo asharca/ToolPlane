@@ -1,23 +1,8 @@
-import { getHomeSections } from '@/lib/queries/home';
-import { listCategories } from '@/lib/queries/categories';
-import { db } from '@/lib/db';
-import { HomeView } from '@/components/home/HomeView';
-
-export const dynamic = 'force-dynamic';
+import { getLocale } from 'next-intl/server';
+import { MarketingHome } from '@/components/marketing/MarketingHome';
+import { getMarketingContent } from '@/lib/marketing/content';
 
 export default async function Home() {
-  const [sections, cats, serverCount] = await Promise.all([
-    getHomeSections(),
-    listCategories(),
-    db.server.count(),
-  ]);
-
-  const categories = [...cats]
-    .sort((a, b) => b._count.servers - a._count.servers)
-    .slice(0, 8)
-    .map((c) => ({ slug: c.slug, name: c.name }));
-
-  return (
-    <HomeView {...sections} categories={categories} serverCount={serverCount} />
-  );
+  const locale = await getLocale();
+  return <MarketingHome content={getMarketingContent(locale)} />;
 }

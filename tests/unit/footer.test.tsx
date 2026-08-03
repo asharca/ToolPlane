@@ -11,6 +11,10 @@ vi.mock('next-intl', async () => {
   return { useTranslations: (ns: string) => (k: string) => getNs(ns)[k] ?? k, useLocale: () => 'en' };
 });
 
+vi.mock('next-intl/server', () => ({
+  getLocale: () => Promise.resolve('en'),
+}));
+
 vi.mock('next-themes', () => ({
   useTheme: () => ({ resolvedTheme: 'light', setTheme: vi.fn() }),
 }));
@@ -18,26 +22,25 @@ vi.mock('next-themes', () => ({
 import { Footer } from '@/components/layout/Footer';
 
 describe('Footer', () => {
-  it('renders all column headings and key links', () => {
-    render(<Footer />);
+  it('renders product navigation without directory or ranking links', async () => {
+    render(await Footer());
 
-    for (const heading of ['Browse', 'Rankings', 'About']) {
+    for (const heading of ['Product', 'Resources', 'Workspace']) {
       expect(
         screen.getByRole('heading', { name: heading }),
       ).toBeInTheDocument();
     }
 
-    expect(screen.getByRole('link', { name: 'MCP Servers' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'MCP runtime' })).toHaveAttribute(
       'href',
       '/server',
     );
-    expect(screen.getByRole('link', { name: 'Categories' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Open console' })).toHaveAttribute(
       'href',
-      '/categories',
+      '/app',
     );
-    expect(
-      screen.getByRole('link', { name: 'Top 100 MCP Servers' }),
-    ).toHaveAttribute('href', '/leaderboards');
+    expect(screen.queryByRole('link', { name: 'Categories' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Top 100/)).not.toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Privacy' })[0]).toHaveAttribute(
       'href',
       '/privacy',

@@ -163,6 +163,7 @@ export default async function AdminOverviewPage() {
               items={[
                 { label: t('directoryServers'), value: o.counts.servers },
                 { label: t('directorySkills'), value: o.counts.skills },
+                { label: t('directoryAgents'), value: o.counts.agentListings },
                 { label: t('clients'), value: o.counts.clients },
                 { label: t('categories'), value: o.counts.categories },
               ]}

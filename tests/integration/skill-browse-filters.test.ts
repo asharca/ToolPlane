@@ -11,7 +11,12 @@ const ownerSlug = `skill-filter-owner-${stamp}`;
 const foreignSlug = `skill-filter-foreign-${stamp}`;
 const networkCategorySlug = `network-${stamp}`;
 const docsCategorySlug = `docs-${stamp}`;
-const skillSlugs = [`${query}-github`, `${query}-other`, `${query}-uncategorized`];
+const skillSlugs = [
+  `${query}-github`,
+  `${query}-other`,
+  `${query}-uncategorized`,
+  `${query}-hidden`,
+];
 
 let ownerWorkspaceId = '';
 
@@ -60,7 +65,7 @@ describe('skill browse filters', () => {
           slug: skillSlugs[1],
           name: `${query} Other`,
           description: 'Document automation',
-          curated: false,
+          curated: true,
           score: 20,
           categories: { connect: { id: docsCategory.id } },
         },
@@ -71,8 +76,18 @@ describe('skill browse filters', () => {
         slug: skillSlugs[2],
         name: `${query} Uncategorized`,
         description: 'No category',
-        curated: false,
+        curated: true,
         score: 10,
+      },
+    });
+    await db.skill.create({
+      data: {
+        slug: skillSlugs[3],
+        name: `${query} Hidden`,
+        description: 'Not approved for the workspace market',
+        curated: false,
+        score: 100,
+        categories: { connect: { id: docsCategory.id } },
       },
     });
     await Promise.all([
@@ -129,6 +144,12 @@ describe('skill browse filters', () => {
     expect(sorted.all.map((skill) => skill.name)).toEqual(
       sorted.all.map((skill) => skill.name).toSorted((a, b) => a.localeCompare(b)),
     );
+  });
+
+  it('never returns non-curated skills from the workspace market', async () => {
+    const result = await getBrowseSkills(1, query, filters());
+    expect(result.all.map((skill) => skill.slug)).not.toContain(skillSlugs[3]);
+    expect(result.total).toBe(3);
   });
 
   it('lists only categories that contain skills', async () => {
