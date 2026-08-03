@@ -18,6 +18,21 @@ describe('AgentsBrowser', () => {
     actions.deleteAgentAction.mockReset();
   });
 
+  it('opens the agent market within the current workspace', () => {
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Browse market' })).toHaveAttribute(
+      'href',
+      '/app/acme/agents/new',
+    );
+  });
+
   it('labels the open form as cancellable and clears its controlled draft state', async () => {
     const user = userEvent.setup();
     render(

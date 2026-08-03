@@ -357,6 +357,7 @@ export async function clonePublicAgentAction(formData: FormData) {
       name: String(formData.get('name') ?? '').trim().slice(0, 80) || undefined,
     });
     clonedAgentId = result.agent.id;
+    await syncHermesRuntime(ctx.ws.id, clonedAgentId);
   } catch (error) {
     errorCode = marketErrorCode(error);
   }

@@ -62,6 +62,9 @@ export default async function PublicAgentPage({
   const returnTo = `/agents/${encodeURIComponent(workspace.slug)}/${encodeURIComponent(listing.slug)}`;
   const cloneError = cloneErrorMessage(t, query.cloneError);
   const preferredModel = rootAgent.modelRequirement?.model ?? t('notSpecified');
+  const runtime = rootAgent.runtime?.kind === 'hermes'
+    ? t('hermesRuntime')
+    : t('nativeRuntime');
   const contract = [
     [CheckCircle2, t('copiesDefinition')],
     [Settings2, t('matchesProvider')],
@@ -242,7 +245,7 @@ export default async function PublicAgentPage({
             <h2 className="text-sm font-semibold text-foreground">{t('configurationSummary')}</h2>
             <dl className="mt-4 divide-y divide-border text-xs">
               {[
-                [t('runtime'), t('nativeRuntime')],
+                [t('runtime'), runtime],
                 [t('modelPreference'), preferredModel],
                 [t('maximumSteps'), String(rootAgent.maxSteps)],
                 [t('mcp'), String(release.summary.deploymentCount)],

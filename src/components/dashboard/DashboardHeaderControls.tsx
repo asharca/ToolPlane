@@ -83,6 +83,7 @@ export function DashboardHeaderControls() {
         { id: 'settings', label: 'Settings', group: 'Workspace', icon: Settings, run: go(`${b}/settings`) },
         { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/mcp/new`) },
         { id: 'browse-skills', label: 'Browse Skills', group: 'Actions', icon: Brain, run: go(`${b}/skills/new`) },
+        { id: 'browse-agents', label: 'Browse Agents', group: 'Actions', icon: Bot, run: go(`${b}/agents/new`) },
       );
     }
     list.push(
