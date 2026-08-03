@@ -680,6 +680,13 @@ describe.sequential('agent marketplace releases and installs', () => {
       expect(serializedManifest).not.toContain(privateValue);
     }
 
+    await approvePendingAgentRelease({
+      listingId: published.listing.id,
+      releaseId: published.release.id,
+      reviewedById: sourceUserId,
+      reviewNote: 'Approved Hermes release for installation test.',
+    });
+
     const idempotencyKey = `hermes-market-install-${stamp}`;
     const first = await materializeAgentRelease({
       releaseId: published.release.id,
