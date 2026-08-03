@@ -25,6 +25,7 @@ import {
 import {
   publishAgentReleaseAction,
   unpublishAgentListingAction,
+  withdrawPendingAgentReleaseAction,
 } from '@/lib/agents/actions';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
@@ -32,8 +33,8 @@ import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 
-function publicListingHref(workspaceSlug: string, listingSlug: string) {
-  return `/agents/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(listingSlug)}`;
+function marketListingHref(workspace: string, listingId: string) {
+  return `/app/${encodeURIComponent(workspace)}/market/agents/${encodeURIComponent(listingId)}`;
 }
 
 function errorMessage(t: (key: 'ownerOnlyPublish' | 'confirmRequired' | 'publishError') => string, error?: string) {
@@ -48,7 +49,7 @@ export default async function AgentPublishPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; agentId: string }>;
-  searchParams: Promise<{ published?: string; unpublished?: string; error?: string }>;
+  searchParams: Promise<{ submitted?: string; unpublished?: string; withdrawn?: string; error?: string }>;
 }) {
   const [{ workspace: workspaceSlug, agentId }, statusParams, t] = await Promise.all([
     params,
@@ -70,15 +71,21 @@ export default async function AgentPublishPage({
   const isOwner = workspace.ownerId === user.id;
   const currentListing = listing;
   const latestRelease = listing?.latestRelease ?? null;
+  const pendingRelease = listing?.pendingRelease ?? null;
   const manifest = assessment.portable ? assessment.manifest : null;
   const issueText = assessment.portable
     ? []
     : assessment.issues.map((issue) => issue.message);
   const formError = errorMessage(t, statusParams.error);
   const isPublished = currentListing?.status === 'published' && Boolean(latestRelease);
+  const isPending = pendingRelease?.reviewStatus === 'pending';
   const previewHref = isPublished && currentListing
-    ? publicListingHref(workspaceSlug, currentListing.slug)
+    ? marketListingHref(workspaceSlug, currentListing.id)
     : null;
+  const draftName = pendingRelease?.name ?? currentListing?.name ?? agent.name;
+  const draftSummary = pendingRelease?.summary ?? currentListing?.summary ?? '';
+  const draftIconUrl = pendingRelease?.iconUrl ?? currentListing?.iconUrl ?? '';
+  const draftTags = pendingRelease?.tags ?? currentListing?.tags ?? [];
 
   return (
     <>
@@ -107,13 +114,23 @@ export default async function AgentPublishPage({
             <span className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
               isPublished
                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : isPending
+                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
                 : 'bg-muted text-muted-foreground'
             }`}>
               <Globe2 className="size-3.5" />
               {isPublished && latestRelease
                 ? t('publishedVersion', { version: latestRelease.version })
+                : isPending && pendingRelease
+                  ? t('pendingReviewVersion', { version: pendingRelease.version })
                 : t('notPublished')}
             </span>
+            {isPublished && isPending && pendingRelease ? (
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500/10 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <FileLock2 className="size-3.5" />
+                {t('pendingUpdateVersion', { version: pendingRelease.version })}
+              </span>
+            ) : null}
             {previewHref ? (
               <Link href={previewHref} className="ui-button-secondary h-8 gap-1.5 px-2.5 text-xs">
                 <Eye className="size-3.5" /> {t('previewListing')}
@@ -122,14 +139,19 @@ export default async function AgentPublishPage({
           </div>
         </div>
 
-        {statusParams.published ? (
+        {statusParams.submitted ? (
           <p role="status" className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
-            {t('publishSuccess')}
+            {t('submissionSuccess')}
           </p>
         ) : null}
         {statusParams.unpublished ? (
           <p role="status" className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground">
             {t('unpublishedSuccess')}
+          </p>
+        ) : null}
+        {statusParams.withdrawn ? (
+          <p role="status" className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground">
+            {t('withdrawnSuccess')}
           </p>
         ) : null}
         {formError ? (
@@ -163,7 +185,7 @@ export default async function AgentPublishPage({
                   name="name"
                   required
                   maxLength={80}
-                  defaultValue={currentListing?.name ?? agent.name}
+                  defaultValue={draftName}
                   className="ui-input h-10"
                 />
               </label>
@@ -172,8 +194,8 @@ export default async function AgentPublishPage({
                 <input
                   name="tags"
                   maxLength={240}
-                  defaultValue={currentListing?.tags.join(', ') ?? ''}
-                  placeholder="research, writing, support"
+                  defaultValue={draftTags.join(', ')}
+                  placeholder={t('marketTagsPlaceholder')}
                   className="ui-input h-10"
                 />
                 <span className="mt-1.5 block text-xs text-muted-foreground">{t('marketTagsHint')}</span>
@@ -185,9 +207,20 @@ export default async function AgentPublishPage({
                   required
                   maxLength={360}
                   rows={4}
-                  defaultValue={currentListing?.summary ?? ''}
+                  defaultValue={draftSummary}
                   placeholder={t('publicSummaryPlaceholder')}
                   className="ui-input min-h-28 resize-y py-3"
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicIconUrl')}</span>
+                <input
+                  name="iconUrl"
+                  type="url"
+                  maxLength={2000}
+                  defaultValue={draftIconUrl}
+                  placeholder="https://example.com/agent-icon.png"
+                  className="ui-input h-10"
                 />
               </label>
             </div>
@@ -270,24 +303,46 @@ export default async function AgentPublishPage({
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background/95 py-3 backdrop-blur-sm">
             <p className="text-xs text-muted-foreground">{t('releaseContentsDescription')}</p>
             <SubmitButton
-              pendingLabel={isPublished ? t('updateRelease') : t('publishRelease')}
-              savedLabel={t('publishSuccess')}
+              pendingLabel={isPublished ? t('submitUpdateForReview') : t('submitForReview')}
+              savedLabel={t('submissionSuccess')}
               disabled={!assessment.portable || !isOwner}
               flash={false}
               className="ui-button-primary h-10 gap-2 px-4"
             >
               <Globe2 className="size-4" />
-              {isPublished ? t('updateRelease') : t('publishRelease')}
+              {isPublished ? t('submitUpdateForReview') : t('submitForReview')}
             </SubmitButton>
           </div>
         </form>
+
+        {isPending && isOwner ? (
+          <section className="ui-panel p-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">{t('withdrawSubmission')}</h2>
+                <p className="mt-1 text-xs text-muted-foreground">{t('withdrawSubmissionDescription')}</p>
+              </div>
+              <form action={withdrawPendingAgentReleaseAction}>
+                <input type="hidden" name="workspace" value={workspaceSlug} />
+                <input type="hidden" name="agentId" value={agentId} />
+                <button type="submit" className="ui-button-secondary h-9 px-3 text-xs">
+                  {t('withdrawSubmission')}
+                </button>
+              </form>
+            </div>
+          </section>
+        ) : null}
 
         {isPublished && isOwner ? (
           <section className="ui-panel ui-panel-danger p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-sm font-semibold text-foreground">{t('unpublish')}</h2>
-                <p className="mt-1 text-xs text-muted-foreground">{t('willNotPublishDescription')}</p>
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('unpublish')}
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('unpublishDescription')}
+                </p>
               </div>
               <form action={unpublishAgentListingAction}>
                 <input type="hidden" name="workspace" value={workspaceSlug} />

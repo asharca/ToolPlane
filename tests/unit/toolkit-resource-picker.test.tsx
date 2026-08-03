@@ -50,7 +50,7 @@ describe('ToolkitResourcePicker', () => {
         workspaceSlug="acme"
         toolkitSlug="networking"
         items={skills}
-        emptyHref="/app/acme/skills/new"
+        emptyHref="/app/acme/market/skills"
       />,
     );
 
@@ -87,7 +87,7 @@ describe('ToolkitResourcePicker', () => {
         workspaceSlug="acme"
         toolkitSlug="ops"
         items={mcps}
-        emptyHref="/app/acme/mcp/new"
+        emptyHref="/app/acme/market/mcp"
       />,
     );
 
@@ -108,7 +108,7 @@ describe('ToolkitResourcePicker', () => {
         workspaceSlug="acme"
         toolkitSlug="networking"
         items={skills}
-        emptyHref="/app/acme/skills/new"
+        emptyHref="/app/acme/market/skills"
       />,
     );
 
@@ -134,7 +134,7 @@ describe('ToolkitResourcePicker', () => {
         workspaceSlug="acme"
         toolkitSlug="large"
         items={manySkills}
-        emptyHref="/app/acme/skills/new"
+        emptyHref="/app/acme/market/skills"
       />,
     );
 
@@ -159,7 +159,7 @@ describe('ToolkitResourcePicker', () => {
         workspaceSlug="acme"
         toolkitSlug="large"
         items={manySkills}
-        emptyHref="/app/acme/skills/new"
+        emptyHref="/app/acme/market/skills"
       />,
     );
 

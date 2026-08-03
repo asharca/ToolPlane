@@ -1,85 +1,49 @@
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
+import { getLocale } from 'next-intl/server';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { SITE, mailto } from '@/lib/site';
+import { getMarketingContent } from '@/lib/marketing/content';
+import { SITE } from '@/lib/site';
 import { Logo } from './Logo';
 
-type FooterLink = { labelKey: string; href: string };
-
-const BROWSE: FooterLink[] = [
-  { labelKey: 'mcpSearch', href: '/search' },
-  { labelKey: 'mcpServers', href: '/server' },
-  { labelKey: 'mcpClients', href: '/client' },
-  { labelKey: 'agentSkills', href: '/tools/skills' },
-  { labelKey: 'agentMarket', href: '/agents' },
-  { labelKey: 'categories', href: '/categories' },
-  { labelKey: 'whatIsMcp', href: '/what-is-an-mcp-server' },
-  { labelKey: 'mcp', href: SITE.protocolUrl },
-];
-
-const RANKINGS: FooterLink[] = [
-  { labelKey: 'topMcpsToday', href: '/daily' },
-  { labelKey: 'topSkillsToday', href: '/daily/skills' },
-  { labelKey: 'top100Skills', href: '/tools/skills/leaderboard' },
-  { labelKey: 'top100Servers', href: '/leaderboards' },
-];
-
-const ABOUT: FooterLink[] = [
-  { labelKey: 'news', href: '/news' },
-  { labelKey: 'sourceCode', href: SITE.sourceUrl },
-  { labelKey: 'contact', href: mailto(SITE.supportEmail) },
-];
+type FooterLink = {
+  label: string;
+  href: string;
+};
 
 const itemClass =
   'inline-flex min-h-8 items-center text-sm text-muted-foreground transition-colors hover:text-foreground';
 
-function FooterItem({
-  link,
-  label,
-}: {
-  link: FooterLink;
-  label: string;
-}) {
-  const isExternal =
-    link.href.startsWith('http') || link.href.startsWith('mailto:');
-  const isHttp = link.href.startsWith('http');
-  if (isExternal) {
+function FooterItem({ link }: { link: FooterLink }) {
+  const external = link.href.startsWith('http');
+  if (external) {
     return (
       <a
         href={link.href}
         className={itemClass}
-        target={isHttp ? '_blank' : undefined}
-        rel={isHttp ? 'noopener noreferrer' : undefined}
+        target="_blank"
+        rel="noopener noreferrer"
       >
-        {label}
+        {link.label}
       </a>
     );
   }
   return (
     <Link href={link.href} className={itemClass}>
-      {label}
+      {link.label}
     </Link>
   );
 }
 
-function Column({
-  title,
-  links,
-  tLinks,
-}: {
-  title: string;
-  links: FooterLink[];
-  tLinks: (key: string) => string;
-}) {
+function Column({ title, links }: { title: string; links: FooterLink[] }) {
   return (
     <div>
-      <h4 className="mb-4 font-mono text-xs font-semibold uppercase tracking-wider text-foreground">
+      <h2 className="mb-4 font-mono text-xs font-semibold uppercase tracking-wider text-foreground">
         {title}
-      </h4>
+      </h2>
       <ul className="space-y-3">
         {links.map((link) => (
           <li key={link.href}>
-            <FooterItem link={link} label={tLinks(link.labelKey)} />
+            <FooterItem link={link} />
           </li>
         ))}
       </ul>
@@ -87,9 +51,20 @@ function Column({
   );
 }
 
-export function Footer() {
-  const t = useTranslations('footer');
-  const tLinks = useTranslations('footer.links');
+export async function Footer() {
+  const locale = await getLocale();
+  const content = getMarketingContent(locale);
+  const { footer, navigation } = content;
+  const productLinks = navigation.links.filter((link) => link.href !== '/');
+  const resourceLinks: FooterLink[] = [
+    { label: footer.sourceCode, href: SITE.sourceUrl },
+    { label: footer.mcpProtocol, href: SITE.protocolUrl },
+    { label: footer.documentation, href: '/what-is-an-mcp-server' },
+  ];
+  const accessLinks: FooterLink[] = [
+    { label: footer.openConsole, href: '/app' },
+    { label: footer.signIn, href: '/app/login' },
+  ];
 
   return (
     <footer className="border-t border-border bg-background">
@@ -97,24 +72,27 @@ export function Footer() {
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 md:col-span-1">
             <Logo />
+            <p className="mt-4 max-w-xs text-sm leading-6 text-muted-foreground">
+              {footer.tagline}
+            </p>
           </div>
-          <Column title={t('browse')} links={BROWSE} tLinks={tLinks} />
-          <Column title={t('rankings')} links={RANKINGS} tLinks={tLinks} />
-          <Column title={t('about')} links={ABOUT} tLinks={tLinks} />
+          <Column title={footer.product} links={productLinks} />
+          <Column title={footer.resources} links={resourceLinks} />
+          <Column title={footer.access} links={accessLinks} />
         </div>
         <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-border pt-6 md:mt-12 md:flex-row md:pt-8">
           <div className="order-2 md:order-1">
             <ThemeToggle />
           </div>
           <p className="order-1 font-mono text-xs text-muted-foreground md:order-2">
-            © {new Date().getFullYear()} {SITE.name}{t('allRightsReserved')}
+            © {new Date().getFullYear()} {SITE.name}. {footer.rights}
             <span className="mx-1.5">·</span>
             <Link href="/privacy" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
-              {t('privacy')}
+              {footer.privacy}
             </Link>
             <span className="mx-1.5">·</span>
             <Link href="/terms" className="inline-flex min-h-8 items-center transition-colors hover:text-foreground">
-              {t('terms')}
+              {footer.terms}
             </Link>
           </p>
         </div>

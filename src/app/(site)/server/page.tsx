@@ -1,7 +1,10 @@
-import { ServerList } from '@/components/server/ServerList';
+import { getLocale } from 'next-intl/server';
+import { CapabilityPage } from '@/components/marketing/CapabilityPage';
+import { getMarketingContent } from '@/lib/marketing/content';
 
-export const dynamic = 'force-dynamic';
-
-export default function Page() {
-  return <ServerList page={1} />;
+export default async function Page() {
+  const locale = await getLocale();
+  return (
+    <CapabilityPage capability="mcp" content={getMarketingContent(locale)} />
+  );
 }

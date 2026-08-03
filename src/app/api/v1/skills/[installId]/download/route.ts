@@ -18,7 +18,10 @@ export async function GET(
   if (!user) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'private, no-store',
+      },
     });
   }
 
@@ -37,7 +40,10 @@ export async function GET(
   if (!install) {
     return new Response(JSON.stringify({ error: 'not found' }), {
       status: 404,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'private, no-store',
+      },
     });
   }
 
@@ -57,6 +63,8 @@ export async function GET(
     headers: {
       'content-type': 'text/markdown; charset=utf-8',
       'content-disposition': `attachment; filename="${slug}.SKILL.md"`,
+      'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
     },
   });
 }

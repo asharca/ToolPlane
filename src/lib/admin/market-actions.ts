@@ -148,7 +148,7 @@ export async function syncSkillRegistryAction(
   try {
     const result = await syncGithubSkillRegistry(db, { owner, repo, ref, rootPath, slugPrefix });
     revalidatePath('/admin/skills');
-    revalidatePath('/tools/skills');
+    revalidatePath('/app/[workspace]/market/skills', 'page');
     return {
       ok: true,
       found: result.found,
