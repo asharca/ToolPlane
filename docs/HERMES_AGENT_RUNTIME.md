@@ -33,6 +33,28 @@ Agent
 
 没有选择 provider 时，runtime 保持 `setup_required`，但 Agent、Sandbox 和配置卷已经创建。选择至少一个 provider 并保存后，ToolPlane 同步 provider inventory 并启动 gateway。
 
+### 导入已有 `.hermes` 主目录
+
+在 **Sandboxes → New sandbox → Import .hermes archive** 中可以上传已有 Hermes
+主目录的 ZIP 备份。ZIP 可以以单个 `.hermes/` 目录为根，也可以直接以该目录
+的内容为根，压缩包上限为 48 MB。
+
+导入不会创建一个脱离 Agent 的通用 Sandbox；它会创建同样的
+`Agent → AgentRuntime → Sandbox(kind=hermes) → Deployment → named volume`
+链路，并把解包后的内容写入该 Agent 私有的 `/opt/data` volume。这样已有的
+sessions、memories、workspace、本地 skills 和 Hermes 原生设置都可继续由
+Hermes runtime 生命周期管理。
+
+归档会在写入 Docker volume 前检查 ZIP 路径、重复/Unicode 冲突、链接/特殊文件、
+加密条目、权限、文件数、大小、压缩比和解压时间；归档内容不会进入数据库或错误
+响应。ToolPlane 会丢弃自身受管的 `.toolplane-env-keys.json`、
+`skills/toolplane-agent/` 和 `skill-bundles/toolplane-agent.yaml`，随后由首次
+同步重新生成。
+
+导入后的 runtime 默认保持停止且没有自动选择 provider。只有在新 Agent 设置中
+确认模型配置并显式启动后，导入的 plugin、hook、MCP 或其他 Hermes 配置才可能运行。
+因此只能上传自己信任的归档；归档中可能包含凭据、会话和可执行配置。
+
 ## 3. 配置投影
 
 ToolPlane 根据 Agent 当前授权关系生成 Hermes 的 `/opt/data` 内容：

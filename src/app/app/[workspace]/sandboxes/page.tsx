@@ -109,6 +109,15 @@ function connectorMeta(connector: SandboxConnectorConfig | null): string {
   return 'open sandbox to generate command';
 }
 
+function isImportedHermesArchive(config: unknown): boolean {
+  return Boolean(
+    config
+    && typeof config === 'object'
+    && !Array.isArray(config)
+    && (config as { importSource?: unknown }).importSource === 'hermes-archive',
+  );
+}
+
 export default async function SandboxesPage({
   params,
 }: {
@@ -192,6 +201,7 @@ export default async function SandboxesPage({
               {managedRuntimes.map((runtime) => {
                 const status = managedStatus(runtime);
                 const agentHref = `/app/${slug}/agents/${runtime.agent.id}`;
+                const imported = isImportedHermesArchive(runtime.sandbox.config);
                 return (
                   <article key={runtime.id} className="ui-panel p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -201,7 +211,9 @@ export default async function SandboxesPage({
                         </span>
                         <div className="min-w-0">
                           <h3 className="truncate text-sm font-semibold text-foreground">{runtime.sandbox.name}</h3>
-                          <p className="truncate text-xs text-muted-foreground">{runtime.sandbox.slug}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {runtime.sandbox.slug}{imported ? ` · ${t('importedHermesArchiveLabel')}` : ''}
+                          </p>
                         </div>
                       </div>
                       <StatusBadge status={status} />
@@ -272,6 +284,7 @@ export default async function SandboxesPage({
               {managedRuntimes.map((runtime) => {
                 const status = managedStatus(runtime);
                 const agentHref = `/app/${slug}/agents/${runtime.agent.id}`;
+                const imported = isImportedHermesArchive(runtime.sandbox.config);
                 return (
                   <tr key={runtime.id}>
                     <td className="px-4 py-3">
@@ -290,7 +303,9 @@ export default async function SandboxesPage({
                         <Bot className="size-3.5 text-muted-foreground" />
                         {runtime.agent.name}
                       </Link>
-                      <div className="mt-0.5 text-xs text-muted-foreground">{t('managedByAgent')}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {imported ? t('importedHermesArchiveLabel') : t('managedByAgent')}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={status} />

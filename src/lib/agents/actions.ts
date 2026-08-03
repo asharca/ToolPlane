@@ -41,6 +41,11 @@ import {
   stopHermesRuntime,
   syncHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
+import {
+  HermesArchiveError,
+  importHermesArchive,
+  isHermesArchiveUpload,
+} from '@/lib/agents/hermes/import';
 import { parseSandboxEnvText } from '@/lib/sandboxes/env';
 import {
   AgentMarketError,
@@ -237,6 +242,40 @@ export async function createAgentAction(formData: FormData) {
   if (runtime === 'hermes') await syncHermesRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);
   redirect(`/app/${slug}/agents/${agent.id}?settings=agent`);
+}
+
+export async function importHermesArchiveAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  if (formData.get('trustArchive') !== 'on') {
+    return { error: 'Confirm that you trust this archive before importing it.' };
+  }
+  const archive = formData.get('hermesArchive');
+  if (!isHermesArchiveUpload(archive)) {
+    return { error: 'Choose a .zip archive containing your .hermes folder or its contents at the ZIP root.' };
+  }
+
+  let imported: { agentId: string };
+  try {
+    imported = await importHermesArchive({
+      workspaceId: ctx.ws.id,
+      name: String(formData.get('name') ?? ''),
+      archive,
+    });
+  } catch (error) {
+    return {
+      error: error instanceof HermesArchiveError
+        ? error.message
+        : 'Could not import the Hermes archive.',
+    };
+  }
+  revalidatePath(`/app/${slug}/sandboxes`);
+  revalidatePath(`/app/${slug}/agents`);
+  redirect(`/app/${slug}/agents/${imported.agentId}?settings=agent&imported=hermes`);
 }
 
 export async function deleteAgentAction(formData: FormData) {
