@@ -8,7 +8,7 @@ export async function getSystemOverview() {
   const [
     users, admins, suspended, newUsers7d,
     workspaces, memberships, agents, toolkits, installedSkills, providers,
-    servers, skills, clients, categories,
+    servers, skills, clients, agentListings, categories,
     deploymentGroups, logs, scraper, recentUsers,
   ] = await Promise.all([
     db.user.count(),
@@ -24,6 +24,7 @@ export async function getSystemOverview() {
     db.server.count(),
     db.skill.count(),
     db.client.count(),
+    db.agentListing.count(),
     db.category.count(),
     db.deployment.groupBy({ by: ['status'], _count: { _all: true } }),
     db.requestLog.findMany({
@@ -51,7 +52,7 @@ export async function getSystemOverview() {
     counts: {
       users, admins, suspended, newUsers7d,
       workspaces, memberships, agents, toolkits, installedSkills, providers,
-      servers, skills, clients, categories, deployments,
+      servers, skills, clients, agentListings, categories, deployments,
     },
     requests: { total, errors, avgMs, p95Ms },
     scraper,

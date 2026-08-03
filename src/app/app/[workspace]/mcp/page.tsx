@@ -65,7 +65,7 @@ export default async function McpServersPage({
         <DashboardToolbar
           actions={
             <>
-              <Link href={`/app/${slug}/mcp/new`} className="ui-button-secondary">
+              <Link href={`/app/${slug}/market/mcp`} className="ui-button-secondary">
                 <Store className="size-4" />
                 {t('browseToolplane')}
               </Link>
@@ -84,7 +84,7 @@ export default async function McpServersPage({
             actions={
               <>
                 <Link
-                  href={`/app/${slug}/mcp/new`}
+                  href={`/app/${slug}/market/mcp`}
                   className="ui-button-secondary"
                 >
                   <Store className="size-4" />

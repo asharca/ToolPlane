@@ -1,43 +1,73 @@
+import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
-import { buildSkillMarkdown } from '@/lib/skills/artifact';
+import { logRequest } from '@/lib/observability/log';
+import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
+import { skillLabel } from '@/lib/workspace/skill-label';
 
-// Public endpoint: GET /api/v1/skills/<slug>/skill.md
-// Serves the catalog SKILL.md. Imported bundles keep the exact SKILL.md content;
-// metadata-only skills get a generated starter artifact. No auth required —
-// public directory content.
+// Compatibility alias for installed-skill downloads. Like /download, this
+// accepts either the dashboard session or a Bearer API token and scopes the
+// install to a workspace owned by (or shared with) the caller.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ installId: string }> },
 ) {
-  const { installId: slug } = await params;
-  const skill = await db.skill.findUnique({ where: { slug } });
+  const start = Date.now();
+  const { installId } = await params;
 
-  if (!skill) {
-    return new Response('# Not found\n', { status: 404, headers: { 'content-type': 'text/markdown' } });
-  }
-
-  if (skill.content?.trim()) {
-    return new Response(skill.content, {
-      headers: {
-        'content-type': 'text/markdown; charset=utf-8',
-        'content-disposition': `attachment; filename="${slug}.SKILL.md"`,
-      },
+  const user = await resolveRequestUser(req);
+  if (!user) {
+    return Response.json({ error: 'unauthorized' }, {
+      status: 401,
+      headers: { 'cache-control': 'private, no-store' },
     });
   }
 
-  if (skill.githubSource && !skill.githubSource.startsWith('https://github.com/')) {
-    const parts = skill.githubSource.split('/');
-    const [owner, repo, ...pathParts] = parts;
-    const skillPath = pathParts.length > 0 ? `${pathParts.join('/')}/SKILL.md` : 'SKILL.md';
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${skillPath}`;
-    return Response.redirect(rawUrl, 302);
+  const install = await db.installedSkill.findFirst({
+    where: {
+      id: installId,
+      workspace: {
+        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+      },
+    },
+    include: {
+      skill: {
+        select: {
+          slug: true,
+          name: true,
+          description: true,
+          author: true,
+          content: true,
+          files: true,
+        },
+      },
+      workspace: { select: { id: true } },
+    },
+  });
+  if (!install) {
+    return Response.json({ error: 'not found' }, {
+      status: 404,
+      headers: { 'cache-control': 'private, no-store' },
+    });
   }
 
-  const markdown = buildSkillMarkdown(skill);
+  const markdown = buildInstalledSkillMarkdown(install);
+  const slug = skillLabel(install).slug;
+
+  await logRequest({
+    workspaceId: install.workspace.id,
+    method: 'GET',
+    path: `/skills/${slug}/skill.md`,
+    statusCode: 200,
+    durationMs: Date.now() - start,
+  });
+
   return new Response(markdown, {
+    status: 200,
     headers: {
       'content-type': 'text/markdown; charset=utf-8',
       'content-disposition': `attachment; filename="${slug}.SKILL.md"`,
+      'cache-control': 'private, no-store',
+      'x-content-type-options': 'nosniff',
     },
   });
 }

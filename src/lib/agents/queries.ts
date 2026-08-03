@@ -3,6 +3,11 @@ import { db } from '@/lib/db';
 import { effectiveStatuses } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
+import {
+  parseAgentMarketSetupGuide,
+  parseAgentMarketSetupResourceIds,
+  type AgentMarketSetupGuide,
+} from '@/lib/agents/market-setup';
 
 export type AgentResourceOption = {
   id: string;
@@ -183,6 +188,13 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       toolkits: { select: { toolkitId: true } },
       sandboxes: { select: { sandboxId: true } },
       subAgents: { select: { childId: true } },
+      marketInstall: {
+        select: {
+          status: true,
+          requirements: true,
+          resourceMap: true,
+        },
+      },
       runtime: {
         select: {
           id: true,
@@ -203,6 +215,40 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       },
     },
   });
+}
+
+/**
+ * Recomputes marketplace setup against current workspace-owned resources.
+ * Provider credentials are never selected, and deployment environment values
+ * remain server-side inputs to the client-safe guide parser.
+ */
+export async function resolveAgentMarketSetupGuide(
+  workspaceId: string,
+  input: unknown,
+): Promise<AgentMarketSetupGuide | null> {
+  const resourceIds = parseAgentMarketSetupResourceIds(input);
+  if (!resourceIds) return null;
+
+  const [agents, deployments] = await Promise.all([
+    resourceIds.agentIds.length > 0
+      ? db.agent.findMany({
+          where: { workspaceId, id: { in: resourceIds.agentIds } },
+          select: {
+            id: true,
+            model: true,
+            provider: { select: { format: true } },
+          },
+        })
+      : Promise.resolve([]),
+    resourceIds.deploymentIds.length > 0
+      ? db.deployment.findMany({
+          where: { workspaceId, id: { in: resourceIds.deploymentIds } },
+          select: { id: true, installCfg: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return parseAgentMarketSetupGuide(input, { agents, deployments });
 }
 
 export async function listAgents(workspaceId: string) {

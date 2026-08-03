@@ -1,6 +1,7 @@
 import 'server-only';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 
 function slugifyEmail(email: string): string {
   const handle = email
@@ -85,7 +86,19 @@ export async function getInstalledSkills(workspaceId: string) {
 }
 
 const BROWSE_PAGE_SIZE = 25;
-const BROWSE_SELECT = { id: true, name: true, description: true, iconUrl: true, verifiedAt: true } as const;
+const BROWSE_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  author: true,
+  description: true,
+  iconUrl: true,
+  stars: true,
+  isOfficial: true,
+  isFeatured: true,
+  installCfg: true,
+  categories: { select: { name: true, slug: true } },
+} as const;
 const SKILL_BROWSE_SELECT = {
   id: true,
   slug: true,
@@ -98,8 +111,19 @@ const SKILL_BROWSE_SELECT = {
   categories: { select: { name: true, slug: true } },
 } as const;
 
-type RawBrowse = { id: string; name: string; description: string | null; iconUrl: string | null; verifiedAt: Date | null };
-export type BrowseServer = { id: string; name: string; description: string | null; iconUrl: string | null; deployable: boolean };
+type RawBrowse = Prisma.ServerGetPayload<{ select: typeof BROWSE_SELECT }>;
+export type BrowseServer = {
+  id: string;
+  slug: string;
+  name: string;
+  author: string | null;
+  description: string | null;
+  iconUrl: string | null;
+  stars: number;
+  isOfficial: boolean;
+  categories: { name: string; slug: string }[];
+  deployable: true;
+};
 export type BrowseSkill = {
   id: string;
   slug: string;
@@ -121,43 +145,110 @@ export type SkillBrowseFilters = {
   sort: 'top' | 'newest' | 'name';
 };
 
-// A catalog server is deployable only once an admin has wired up a recipe and
-// it has passed validation (verifiedAt set).
+// The authenticated market is an operational catalog, not the public showcase:
+// never return demo rows that cannot actually be deployed.
 function toBrowse(rows: RawBrowse[]): BrowseServer[] {
-  return rows.map(({ verifiedAt, ...r }) => ({ ...r, deployable: verifiedAt !== null }));
+  return rows.flatMap((server) => (
+    parseServerRecipe(server.installCfg)
+      ? [{
+          id: server.id,
+          slug: server.slug,
+          name: server.name,
+          author: server.author,
+          description: server.description,
+          iconUrl: server.iconUrl,
+          stars: server.stars,
+          isOfficial: server.isOfficial,
+          categories: server.categories,
+          deployable: true as const,
+        }]
+      : []
+  ));
 }
 
 export async function getBrowseServers(page: number, q = '') {
   const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
-  const where = term
-    ? {
+  const where: Prisma.ServerWhereInput = {
+    verifiedAt: { not: null },
+    ...(term
+      ? {
         OR: [
           { name: { contains: term, mode: 'insensitive' as const } },
           { description: { contains: term, mode: 'insensitive' as const } },
+          { author: { contains: term, mode: 'insensitive' as const } },
+          { slug: { contains: term, mode: 'insensitive' as const } },
+          { categories: { some: { name: { contains: term, mode: 'insensitive' as const } } } },
         ],
       }
-    : {};
-  const [featured, total, all] = await Promise.all([
-    // Skip the Featured rail while searching — the result list is what matters.
-    term
-      ? Promise.resolve([] as RawBrowse[])
-      : db.server.findMany({
-          where: { isFeatured: true },
-          orderBy: { stars: 'desc' },
-          take: 12,
-          select: BROWSE_SELECT,
-        }),
-    db.server.count({ where }),
-    db.server.findMany({
-      where,
-      orderBy: { stars: 'desc' },
-      skip,
-      take: BROWSE_PAGE_SIZE,
-      select: BROWSE_SELECT,
-    }),
-  ]);
-  return { featured: toBrowse(featured), all: toBrowse(all), total, pageSize: BROWSE_PAGE_SIZE };
+      : {}),
+  };
+
+  // Recipe validity is stronger than a JSON-not-null database predicate, so
+  // validate before paginating to keep totals and pages accurate.
+  const rows = await db.server.findMany({
+    where,
+    orderBy: [{ stars: 'desc' }, { name: 'asc' }],
+    select: BROWSE_SELECT,
+  });
+  const valid = toBrowse(rows);
+  const featured = term
+    ? []
+    : toBrowse(rows.filter((server) => server.isFeatured)).slice(0, 12);
+  return {
+    featured,
+    all: valid.slice(skip, skip + BROWSE_PAGE_SIZE),
+    total: valid.length,
+    pageSize: BROWSE_PAGE_SIZE,
+  };
+}
+
+export async function getMarketServer(slug: string, workspaceId: string) {
+  const server = await db.server.findFirst({
+    where: { slug, verifiedAt: { not: null } },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      author: true,
+      description: true,
+      iconUrl: true,
+      stars: true,
+      isOfficial: true,
+      readme: true,
+      verifiedTools: true,
+      installCfg: true,
+      categories: { select: { name: true, slug: true } },
+      deployments: {
+        where: { workspaceId },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!server) return null;
+  const recipe = parseServerRecipe(server.installCfg);
+  if (!recipe) return null;
+  return {
+    id: server.id,
+    slug: server.slug,
+    name: server.name,
+    author: server.author,
+    description: server.description,
+    iconUrl: server.iconUrl,
+    stars: server.stars,
+    isOfficial: server.isOfficial,
+    readme: server.readme,
+    verifiedTools: server.verifiedTools,
+    categories: server.categories,
+    recipe: {
+      source: recipe.source,
+      ref: recipe.ref,
+      requiredEnv: recipe.env,
+      network: recipe.network ?? 'isolated',
+    },
+    deploymentId: server.deployments[0]?.id ?? null,
+  };
 }
 
 type RawBrowseSkill = Omit<BrowseSkill, 'installed'> & { installs: { id: string }[] };
@@ -168,16 +259,20 @@ function toBrowseSkills(rows: RawBrowseSkill[]): BrowseSkill[] {
 
 export async function getSkillBrowseCategories() {
   return db.category.findMany({
-    where: { skills: { some: {} } },
+    where: { skills: { some: { curated: true } } },
     orderBy: { name: 'asc' },
-    select: { name: true, slug: true, _count: { select: { skills: true } } },
+    select: {
+      name: true,
+      slug: true,
+      _count: { select: { skills: { where: { curated: true } } } },
+    },
   });
 }
 
 export async function getBrowseSkills(page: number, q: string, filters: SkillBrowseFilters) {
   const term = q.trim();
   const skip = (Math.max(1, page) - 1) * BROWSE_PAGE_SIZE;
-  const whereParts: Prisma.SkillWhereInput[] = [];
+  const whereParts: Prisma.SkillWhereInput[] = [{ curated: true }];
   if (term) {
     whereParts.push({
       OR: [
@@ -248,4 +343,31 @@ export async function getBrowseSkills(page: number, q: string, filters: SkillBro
     total,
     pageSize: BROWSE_PAGE_SIZE,
   };
+}
+
+export async function getMarketSkill(slug: string, workspaceId: string) {
+  const skill = await db.skill.findFirst({
+    where: { slug, curated: true },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      author: true,
+      description: true,
+      iconUrl: true,
+      githubSource: true,
+      content: true,
+      files: true,
+      score: true,
+      categories: { select: { name: true, slug: true } },
+      installs: {
+        where: { workspaceId },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!skill) return null;
+  const { installs, ...marketSkill } = skill;
+  return { ...marketSkill, installId: installs[0]?.id ?? null };
 }

@@ -13,6 +13,7 @@ import {
 import dynamic from 'next/dynamic';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
+import { AgentMarketSetupBanner } from '@/components/dashboard/agents/AgentMarketSetupBanner';
 import Link from 'next/link';
 import {
   Container,
@@ -32,6 +33,7 @@ import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-conn
 import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
+import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
 
 const AgentSettingsForm = dynamic(() =>
   import('@/components/dashboard/agents/AgentSettingsForm').then(
@@ -149,6 +151,7 @@ export function AgentChat({
   ready,
   agentName,
   providerLabel,
+  marketSetup = null,
   initialSettingsTab,
 }: {
   slug: string;
@@ -161,6 +164,7 @@ export function AgentChat({
   ready: boolean;
   agentName: string;
   providerLabel: string;
+  marketSetup?: AgentMarketSetupGuide | null;
   initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
 }) {
   const t = useTranslations('console.agents');
@@ -472,7 +476,14 @@ export function AgentChat({
             </div>
           </header>
 
-          {!ready ? (
+          {marketSetup ? (
+            <AgentMarketSetupBanner
+              slug={slug}
+              setup={marketSetup}
+            />
+          ) : null}
+
+          {!ready && !marketSetup ? (
             <div className="mx-5 mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
               {t('pickAProviderAndModelOnSettingsBeforeChatting')}
             </div>
