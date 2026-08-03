@@ -78,7 +78,7 @@ export default async function SkillsPage({
         <DashboardToolbar
           actions={
             <>
-              <Link href={`/app/${slug}/skills/new`} className="ui-button-secondary">
+              <Link href={`/app/${slug}/market/skills`} className="ui-button-secondary">
                 <Store className="size-4" />
                 {t('browseSkillMarket')}
               </Link>
@@ -137,7 +137,7 @@ export default async function SkillsPage({
               <>
                 <AddSkillDialog slug={slug} />
                 <Link
-                  href={`/app/${slug}/skills/new`}
+                  href={`/app/${slug}/market/skills`}
                   className="ui-button-secondary"
                 >
                   {t('browseSkillMarket')}

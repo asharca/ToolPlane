@@ -19,6 +19,7 @@ export type SkillForPrompt = {
   agentInvocable?: boolean;
   status?: string | null;
   effort?: string | null;
+  source?: string | null;
 };
 
 type AttachedSkill = { installedSkill: { id: string } & SkillForPrompt };

@@ -81,8 +81,9 @@ export function DashboardHeaderControls() {
         { id: 'obs', label: 'Logs', group: 'Monitor', icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: 'Members', group: 'Workspace', icon: Users, run: go(`${b}/members`) },
         { id: 'settings', label: 'Settings', group: 'Workspace', icon: Settings, run: go(`${b}/settings`) },
-        { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/mcp/new`) },
-        { id: 'browse-skills', label: 'Browse Skills', group: 'Actions', icon: Brain, run: go(`${b}/skills/new`) },
+        { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/market/mcp`) },
+        { id: 'browse-skills', label: 'Browse Skills', group: 'Actions', icon: Brain, run: go(`${b}/market/skills`) },
+        { id: 'browse-agents', label: 'Browse Agents', group: 'Actions', icon: Bot, run: go(`${b}/market/agents`) },
       );
     }
     list.push(

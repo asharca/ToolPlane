@@ -12,13 +12,7 @@ vi.mock('next-intl', async () => {
 });
 
 vi.mock('next-intl/server', async () => {
-  const en = (await import('../../messages/en.json')).default as Record<string, unknown>;
-  function getNs(ns: string): Record<string, string> {
-    let obj: unknown = en;
-    for (const part of ns.split('.')) obj = (obj as Record<string, unknown>)[part];
-    return obj as Record<string, string>;
-  }
-  return { getTranslations: (ns: string) => Promise.resolve((k: string) => getNs(ns)[k] ?? k) };
+  return { getLocale: () => Promise.resolve('en') };
 });
 
 import { Header } from '@/components/layout/Header';
@@ -31,21 +25,19 @@ describe('Header', () => {
       'href',
       '/',
     );
-    expect(
-      screen
-        .getAllByRole('link', { name: 'MCP Servers' })
-        .every((link) => link.getAttribute('href') === '/server'),
-    ).toBe(true);
-    expect(
-      screen
-        .getAllByRole('link', { name: 'Agent Skills' })
-        .every((link) => link.getAttribute('href') === '/tools/skills'),
-    ).toBe(true);
-    expect(
-      screen
-        .getAllByRole('link', { name: 'Dashboard' })
-        .every((link) => link.getAttribute('href') === '/app'),
-    ).toBe(true);
+    for (const [name, href] of [
+      ['MCP runtime', '/server'],
+      ['Skills', '/tools/skills'],
+      ['Agents', '/agents'],
+      ['Integrations', '/client'],
+      ['Open console', '/app'],
+    ]) {
+      expect(
+        screen
+          .getAllByRole('link', { name })
+          .every((link) => link.getAttribute('href') === href),
+      ).toBe(true);
+    }
     expect(document.querySelector('summary[aria-label="Menu"]')).toBeInTheDocument();
   });
 });

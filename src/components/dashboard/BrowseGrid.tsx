@@ -1,6 +1,8 @@
 import { getTranslations } from 'next-intl/server';
+import Link from 'next/link';
 type BrowseItem = {
   id: string;
+  slug: string;
   name: string;
   description: string | null;
   iconUrl: string | null;
@@ -18,6 +20,7 @@ export async function BrowseGrid({
   idField,
   actionLabel,
   installedLabel,
+  detailKind,
 }: {
   items: BrowseItem[];
   installedIds: Set<string>;
@@ -26,6 +29,7 @@ export async function BrowseGrid({
   idField: string;
   actionLabel: string;
   installedLabel: string;
+  detailKind: 'mcp' | 'skills';
 }) {
   const t = await getTranslations('console.common');
   return (
@@ -48,7 +52,12 @@ export async function BrowseGrid({
             ) : (
               <span className="size-5 rounded bg-muted" />
             )}
-            <span className="font-medium text-foreground">{it.name}</span>
+            <Link
+              href={`/app/${encodeURIComponent(slug)}/market/${detailKind}/${encodeURIComponent(it.slug)}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              {it.name}
+            </Link>
           </div>
           <p className="mb-4 line-clamp-2 flex-1 text-sm text-muted-foreground">
             {it.description}

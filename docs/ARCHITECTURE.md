@@ -1,6 +1,6 @@
 # ToolPlane — 架构文档
 
-> ToolPlane 是一个自托管 Agent 工具控制面，包含一个**公开目录站**、一个**带真实 MCP/Agent/Sandbox 运行时的控制台**，以及一套 **JSON API**。
+> ToolPlane 是一个自托管 Agent 工具控制面，包含一个**独立的公开产品站**、一个**带真实市场和 MCP/Agent/Sandbox 运行时的登录后控制台**，以及一套 **JSON API**。
 
 ---
 
@@ -8,8 +8,8 @@
 
 本项目是一个 MCP（Model Context Protocol）生态平台，分三大功能区：
 
-1. **公开目录站** `(site)` —— 浏览/搜索 MCP 服务器、客户端、技能（Skills），含分类、排行榜、每日榜。
-2. **控制台 / Hub** `app/[workspace]` —— 登录后的工作区：部署 MCP 服务器（**真实子进程**）、安装技能、把它们**自由组装**成 Toolkit、通过网关调用工具、查看可观测性。
+1. **公开产品站** `(site)` —— 只展示 ToolPlane 的产品优势与能力，不读取或镜像真实 MCP、Skill、Agent 市场数据。
+2. **控制台 / Hub** `app/[workspace]` —— 登录后的工作区：浏览真实市场、部署 MCP 服务器（**真实子进程**）、安装技能和智能体、把资源**自由组装**成 Toolkit、通过网关调用工具、查看可观测性。
 3. **JSON API** `api/v1/*` —— MCP JSON-RPC 网关、技能下载、Toolkit/工作区 manifest 导出。
 
 核心特点：控制台里的 MCP 不是“假数据”——每次部署都会 `spawn` 一个真实的 Node 子进程跑 JSON-RPC server，网关把请求代理过去并记录可观测性。
@@ -45,10 +45,10 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
                           ┌─────────────────────────────────────────┐
    Browser                │            Next.js (App Router)          │
    ──────                  │                                         │
-   Public visitor ──────► │  (site)  Public directory (RSC)          │
-                          │     └─ queries/*  ──► Prisma ──► Postgres│
-   Signed-in user ──────► │  app/[workspace]  Console (session)      │
-                          │     └─ workspace/* toolkits/* actions    │
+   Public visitor ──────► │  (site)  Static product marketing        │
+                          │     └─ marketing/content (no market DB)  │
+   Signed-in user ──────► │  app/[workspace]  Console + market       │
+                          │     └─ workspace/* agents/* ──► Prisma   │
    Agent / CLI ─────────► │  api/v1/*  JSON API (Bearer/session)     │
                           │     └─ /mcp/[id]/rpc  Gateway proxy      │
                           └──────────────┬──────────────────────────┘
@@ -63,7 +63,7 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
 
 **路由分组（route groups）：**
 
-- `src/app/(site)/...` —— 公开站，套 `(site)/layout.tsx`（Header/Footer/公告条），**不含任何个人数据/认证**；只通过 `/app/login`、`/app/signup` 链接进入 app。
+- `src/app/(site)/...` —— 独立公开产品站，套 `(site)/layout.tsx`（Header/Footer），只使用静态营销内容，**不读取真实市场或个人数据**；通过 `/app`、`/app/login` 进入控制台。
 - `src/app/app/(auth)/...` —— 登录/注册（URL `/app/login`、`/app/signup`），套居中的 `(auth)/layout.tsx`。
 - `src/app/app/[workspace]/...` —— 工作区控制台，套 `DashboardChrome`（侧栏 + 顶栏 + 移动抽屉）；Settings 内含 **API Tokens**（`/app/[workspace]/settings/tokens`）。
 - `src/app/api/v1/...` —— 无 UI 的 JSON 路由。
@@ -75,22 +75,23 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
 ```
 src/
 ├─ app/
-│  ├─ (site)/            Public directory
-│  │  ├─ page.tsx                Home (HomeView)
-│  │  ├─ server/ ... /[slug]     MCP server list/pages/detail
-│  │  ├─ client/ ... /[slug]     MCP client list/detail
-│  │  ├─ tools/skills/ ...       Skill list/detail/leaderboard
-│  │  ├─ categories/ ... /[slug] Category pages
-│  │  ├─ leaderboards, daily, daily/skills, search
-│  │  ├─ hub, sell, submit       Public hub/seller/submit pages
+│  ├─ (site)/            Static product marketing
+│  │  ├─ page.tsx                Product overview
+│  │  ├─ server                  MCP capability page (static)
+│  │  ├─ client                  Client integration page (static)
+│  │  ├─ tools/skills            Skill capability page (static)
+│  │  ├─ agents                  Agent capability page (static)
+│  │  ├─ legacy detail/search/rank routes -> fixed marketing redirects
+│  │  ├─ hub, sell, submit       Public landing/console entry pages
 │  │  └─ privacy, terms, news, what-is-an-mcp-server  Static pages
 │  ├─ app/               Console namespace (URL /app)
 │  │  ├─ page.tsx                /app -> default workspace -> /app/<slug>/mcp
 │  │  ├─ (auth)/login, signup    /app/login, /app/signup (centered auth layout)
 │  │  └─ [workspace]/   Workspace console (see sec. 8; settings/tokens = API tokens)
 │  │  ├─ layout.tsx              DashboardChrome
-│  │  ├─ mcp, mcp/new, mcp/[deploymentId]
-│  │  ├─ skills, skills/new, skills/[installId]
+│  │  ├─ market/{mcp,skills,agents}/...  Authenticated real market
+│  │  ├─ mcp, mcp/new, mcp/[deploymentId]       (`mcp/new` redirects to market)
+│  │  ├─ skills, skills/new, skills/[installId] (`skills/new` redirects to market)
 │  │  ├─ toolkits, toolkits/[slug]
 │  │  ├─ observability, members, settings
 │  │  ├─ seller -> seller/overview, agents
@@ -168,18 +169,17 @@ tests/, e2e/
 
 ---
 
-## 7. 公开目录站 `(site)`
+## 7. 公开产品站 `(site)`
 
-Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
+公开站与后台市场严格解耦：页面只读取 `lib/marketing/content.ts` 中的独立中英文静态内容，不导入 `lib/db`、`lib/queries`、`lib/agents/market`、工作区或当前用户模块。
 
-- **首页** `/` —— `HomeView`：两段式 mono 大标题 + `RotatingHeadline`、分区网格（Top MCP / Top Skills，带“What are Agent Skills?”徽章）、`FaqSection`。
-- **MCP 服务器** —— `/server`（列表，`ListingHero` + 分类 chips + 分页）、`/server/page/[page]`、`/server/[slug]`（两栏详情：面包屑、作者/星标、About、Deploy & connect 面板（网关用法）、Open dashboard CTA、相关 MCP/Skills）。
-- **MCP 客户端** —— `/client`、`/client/[slug]`。
-- **技能** —— `/tools/skills`、`/tools/skills/[slug]`、`/tools/skills/leaderboard`。
-- **分类** —— `/categories`（关键词→lucide 图标映射）、`/categories/[slug]`。
-- **榜单** —— `/leaderboards`（Top 100，排名角标）、`/daily`、`/daily/skills`、`/search`（跨 Server/Client/Skill 搜索）。
-- **静态/落地** —— `/hub`（**纯公开营销落地页**；"Get started"→`/app/signup`、"Sign in"→`/app/login`）、`/sell`、`/submit`、`/privacy`、`/terms`、`/news`、`/what-is-an-mcp-server`。
-- **认证已移出公开站** —— 登录注册在 `/app/login`、`/app/signup`；API Token 在工作区 `/app/[workspace]/settings/tokens`。**Hub 功能已移除**（原 `/app/account`、`/api/v1/hub` 删除）。公开站不含任何个人数据/认证页。
+- **首页** `/` —— 独立产品介绍：自托管、真实 MCP 进程、工作区隔离、工具链能力和控制台入口。
+- **能力页** —— `/server`、`/tools/skills`、`/agents`、`/client` 分别介绍 MCP、Skill、Agent 和客户端集成的产品价值，不渲染真实市场条目。
+- **旧目录地址** —— `/server/[slug]`、`/tools/skills/[slug]`、`/agents/*`、客户端详情、分类、搜索、榜单和 Daily 地址固定重定向到对应营销页，不查询数据库。
+- **静态/落地** —— `/hub`、`/sell`、`/submit`、`/privacy`、`/terms`、`/news`、`/what-is-an-mcp-server`；`/submit` 进入登录后控制台。
+- **认证与真实数据** —— 登录注册在 `/app/login`、`/app/signup`；真实市场、详情、安装/添加操作和 API Token 均只存在于登录后工作区。
+
+`tests/unit/public-site-boundary.test.ts` 会递归检查公开页面的本地依赖图，防止通过共享组件把真实市场查询重新引入前台。
 
 ---
 
@@ -189,7 +189,8 @@ Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
 
 ### 8.1 MCP 服务器
 - `/mcp` —— 已部署列表（状态、创建时间、Inspect/Start/Stop/Restart/Remove）。`displayStatus()` 会用进程表对账 DB 状态，避免“DB 说 running 但进程已死”。
-- `/mcp/new` —— 从目录浏览并部署（`deployServerAction`）。
+- `/market/mcp`、`/market/mcp/[serverSlug]` —— 登录后 MCP 市场列表与详情；只展示管理员已验证且部署配方可解析的条目，所有详情、添加和管理链接都留在控制台。
+- `/mcp/new` —— 保留旧书签兼容，携带查询参数重定向到 `/market/mcp`。
 - `/mcp/[deploymentId]` —— **检查器**：面包屑、标题 + Running + `Refreshed` 时间、动作 Connect/Restart/Stop/Rebuild，标签页 **Overview / Variables / Tools / Logs**（用 `?tab=` 切换）。
   - Overview：`ReadyToConnectBanner`（内置 `ConnectDialog`）+ Identity 卡（Endpoint + 复制、Created）+ Observability 入口。
   - Tools：`ToolPlayground`，对运行中的进程实时 `tools/list` 并可调用工具。
@@ -197,7 +198,8 @@ Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
 
 ### 8.2 Skills
 - `/skills` —— 列表；空态是「Create. Refine. Sync.」三步引导卡（STEP 01/02/03）。
-- `/skills/new` —— 浏览安装（`installSkillAction`）。
+- `/market/skills`、`/market/skills/[skillSlug]` —— 登录后 Skill 市场列表与详情；只展示管理员精选（`curated`）条目。
+- `/skills/new` —— 保留旧书签兼容，携带查询参数重定向到 `/market/skills`。
 - `/skills/[installId]` —— 技能检查器：「How to use」+ `SKILL.md` 预览/复制/下载。
 
 ### 8.3 Toolkits（自由组装）
@@ -216,7 +218,9 @@ Server Components 直接走 `lib/queries/*` 查 Prisma 渲染。
 - `/members` —— 「Invite your team」Team-plan 引导卡（对齐ToolPlane的付费门）+ 下方真实成员表。
 - `/settings` —— 子导航（General / API Tokens / Integrations / Billing）+ Organization name & URL slug 表单（`renameWorkspaceAction`）+ 时区显示 + Danger zone「Delete organization」（`deleteWorkspaceAction`，删前 `killMany` 关停子进程）。
 - `/seller` → 重定向 `/seller/overview` —— Marketplace 引导卡 + 真实发布技能表单（`submitSkillAction`）+ 我的上架列表。
-- `/agents` —— Coming soon 占位。
+- `/agents`、`/agents/[agentId]` —— 工作区智能体管理与运行界面。
+- `/market/agents`、`/market/agents/[listingId]` —— 登录后智能体市场；只展示已发布且最新版本已经管理员批准的模板。添加后在目标工作区创建独立副本，密钥、对话、日志和运行数据不会复制。
+- `/agents/[agentId]/publish` —— 工作区所有者提交不可变可移植版本供管理员审核；管理员在 `/admin/agents` 管理条目、版本和发布状态。
 
 ### 8.6 认证 `/app/(auth)` + API Token `settings/tokens`
 
