@@ -17,6 +17,7 @@ export type AgentMarketCardData = {
   tags: string[];
   cloneCount: number;
   model: string | null;
+  runtime: string;
   agentCount: number;
   serverCount: number;
   skillCount: number;
@@ -24,6 +25,7 @@ export type AgentMarketCardData = {
 
 export type AgentMarketCardLabels = {
   model: string;
+  runtime: string;
   bringYourOwn: string;
   mcpSkills: string;
   clones: string;
@@ -74,6 +76,10 @@ export function FeaturedAgentCard({
           </dd>
         </div>
         <div className="flex items-center justify-between gap-5 border-b border-background/15 py-2.5 text-xs">
+          <dt className="text-background/55">{labels.runtime}</dt>
+          <dd className="max-w-28 truncate font-semibold text-background">{agent.runtime}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-5 border-b border-background/15 py-2.5 text-xs">
           <dt className="text-background/55">{labels.mcpSkills}</dt>
           <dd className="font-semibold text-background">
             {agent.serverCount} / {agent.skillCount}
@@ -106,6 +112,9 @@ export function AgentMarketRow({ agent }: { agent: AgentMarketCardData }) {
         <span className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-semibold text-foreground group-hover:underline">
             {agent.name}
+          </span>
+          <span className="inline-flex h-6 items-center rounded-md bg-muted px-2 text-[11px] font-medium text-muted-foreground">
+            {agent.runtime}
           </span>
           {agent.agentCount > 1 ? (
             <span className="inline-flex h-6 items-center gap-1 rounded-md bg-muted px-2 text-[11px] font-medium text-muted-foreground">

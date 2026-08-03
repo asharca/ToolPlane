@@ -1,9 +1,11 @@
 import 'server-only';
 
-import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { agentReleaseChecksum } from '@/lib/agents/market-artifact';
+import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
+import { createAgentRecords } from '@/lib/agents/mutations';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 
@@ -20,6 +22,15 @@ const modelRequirementSchema = z.object({
   model: z.string().min(1).max(240),
 }).strict();
 
+const hermesRuntimeSchema = z.object({
+  kind: z.literal(HERMES_RUNTIME_KIND),
+  image: z.string().min(1).max(255),
+}).strict();
+
+const hermesProviderRequirementSchema = z.object({
+  format: z.string().min(1).max(64),
+}).strict();
+
 const portableAgentSchema = z.object({
   key: z.string().min(1).max(80),
   name: z.string().min(1).max(240),
@@ -27,11 +38,37 @@ const portableAgentSchema = z.object({
   systemPrompt: z.string().nullable(),
   maxSteps: z.number().int().min(0).max(1000),
   modelRequirement: modelRequirementSchema.nullable(),
+  // Optional fields preserve the canonical checksum of existing native v1 releases.
+  runtime: hermesRuntimeSchema.optional(),
+  modelProviderRequirements: z.array(hermesProviderRequirementSchema).max(64).optional(),
   deploymentKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_RESOURCES),
   skillKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_RESOURCES),
   toolkitKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_RESOURCES),
   subAgentKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_AGENTS),
-}).strict();
+}).strict().superRefine((agent, context) => {
+  if (agent.runtime?.kind === HERMES_RUNTIME_KIND) {
+    if (agent.systemPrompt !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['systemPrompt'],
+        message: 'Hermes runtime prompts are private and cannot be included in a market release.',
+      });
+    }
+    if (agent.modelRequirement !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['modelRequirement'],
+        message: 'Hermes runtimes use model provider links instead of a single model requirement.',
+      });
+    }
+  } else if (agent.modelProviderRequirements !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['modelProviderRequirements'],
+      message: 'Only Hermes runtimes may declare model provider requirements.',
+    });
+  }
+});
 
 const portableDeploymentSchema = z.object({
   key: z.string().min(1).max(80),
@@ -95,7 +132,7 @@ const agentReleaseSummarySchema = z.object({
   resourceCount: z.number().int().nonnegative(),
   toolCount: z.number().int().nonnegative(),
   models: z.array(modelRequirementSchema),
-  runtimes: z.array(z.literal('native')),
+  runtimes: z.array(z.enum(['native', HERMES_RUNTIME_KIND])).min(1),
 }).strict();
 
 const agentInstallRequirementsSchema = z.object({
@@ -111,6 +148,11 @@ const agentInstallRequirementsSchema = z.object({
     variable: z.string(),
     required: z.literal(true),
   }).strict()),
+  runtimes: z.array(z.object({
+    agentKey: z.string(),
+    kind: z.literal(HERMES_RUNTIME_KIND),
+    setupRequired: z.literal(true),
+  }).strict()).default([]),
 }).strict();
 
 const agentInstallResourceMapSchema = z.object({
@@ -309,7 +351,18 @@ const MARKET_AGENT_SELECT = {
   model: true,
   maxSteps: true,
   provider: { select: { id: true, workspaceId: true, format: true } },
-  runtime: { select: { id: true, kind: true } },
+  modelProviders: {
+    select: { provider: { select: { id: true, workspaceId: true, format: true } } },
+  },
+  runtime: {
+    select: {
+      id: true,
+      workspaceId: true,
+      kind: true,
+      image: true,
+      sandbox: { select: { workspaceId: true } },
+    },
+  },
   sandboxes: { select: { sandbox: { select: { id: true, workspaceId: true, kind: true } } } },
   servers: { select: { deployment: { select: MARKET_DEPLOYMENT_SELECT } } },
   skills: { select: { installedSkill: { select: MARKET_INSTALLED_SKILL_SELECT } } },
@@ -356,6 +409,22 @@ function slugify(value: string, fallback: string): string {
   return slug || fallback;
 }
 
+async function uniqueDirectorySlug(
+  tx: Prisma.TransactionClient,
+  desired: string,
+): Promise<string> {
+  const base = slugify(desired, 'agent');
+  for (let suffix = 0; suffix < 10_000; suffix += 1) {
+    const candidate = suffix === 0 ? base : `${base}-${suffix}`;
+    const conflict = await tx.agentListing.findUnique({
+      where: { directorySlug: candidate },
+      select: { id: true },
+    });
+    if (!conflict) return candidate;
+  }
+  throw new AgentMarketError('listing_conflict', 'Could not allocate a unique agent directory slug.');
+}
+
 function sortedUnique(values: readonly string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
@@ -364,18 +433,8 @@ function sortedRecord(values: Record<string, string> | undefined): Record<string
   return Object.fromEntries(Object.entries(values ?? {}).sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort((a, b) => a.localeCompare(b))
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(',')}}`;
-}
-
 function manifestChecksum(manifest: AgentReleaseManifestV1): string {
-  return createHash('sha256').update(canonicalJson(manifest)).digest('hex');
+  return agentReleaseChecksum(manifest);
 }
 
 function parseManifest(raw: unknown, expectedChecksum?: string): AgentReleaseManifestV1 {
@@ -404,6 +463,9 @@ function buildReleaseSummary(manifest: AgentReleaseManifestV1): AgentReleaseSumm
   const skillCount = manifest.skills.length;
   const toolkitCount = manifest.toolkits.length;
   const subAgentCount = Math.max(0, manifest.agents.length - 1);
+  const runtimes = [...new Set(
+    manifest.agents.map((agent) => agent.runtime?.kind ?? 'native'),
+  )].sort((a, b) => a.localeCompare(b)) as Array<'native' | 'hermes'>;
   return {
     agentCount: manifest.agents.length,
     subAgentCount,
@@ -415,7 +477,7 @@ function buildReleaseSummary(manifest: AgentReleaseManifestV1): AgentReleaseSumm
     models: [...models.values()].sort((a, b) => (
       a.format.localeCompare(b.format) || a.model.localeCompare(b.model)
     )),
-    runtimes: ['native'],
+    runtimes,
   };
 }
 
@@ -666,11 +728,23 @@ async function collectPortableManifest(
       });
       continue;
     }
-    if (agent.runtime) {
+    const isHermes = agent.runtime?.kind === HERMES_RUNTIME_KIND;
+    if (agent.runtime && !isHermes) {
       pushIssue(state, {
         code: 'unsupported_runtime',
         path: `${path}.runtime`,
         message: `Runtime "${agent.runtime.kind}" is not portable in agent marketplace v1.`,
+        resourceId: agent.runtime.id,
+      });
+    }
+    if (isHermes && agent.runtime && (
+      agent.runtime.workspaceId !== workspaceId
+      || agent.runtime.sandbox.workspaceId !== workspaceId
+    )) {
+      pushIssue(state, {
+        code: 'invalid_definition',
+        path: `${path}.runtime`,
+        message: 'The Hermes runtime and its sandbox must belong to the published workspace.',
         resourceId: agent.runtime.id,
       });
     }
@@ -684,13 +758,24 @@ async function collectPortableManifest(
         });
       }
     }
-    if (agent.provider && agent.provider.workspaceId !== workspaceId) {
+    if (!isHermes && agent.provider && agent.provider.workspaceId !== workspaceId) {
       pushIssue(state, {
         code: 'cross_workspace_provider',
         path: `${path}.provider`,
         message: 'The model provider belongs to another workspace.',
         resourceId: agent.provider.id,
       });
+    }
+    if (isHermes) {
+      for (const { provider } of agent.modelProviders) {
+        if (provider.workspaceId === workspaceId) continue;
+        pushIssue(state, {
+          code: 'cross_workspace_provider',
+          path: `${path}.modelProviders`,
+          message: 'A Hermes model provider belongs to another workspace.',
+          resourceId: provider.id,
+        });
+      }
     }
 
     const deploymentKeys = agent.servers
@@ -737,15 +822,25 @@ async function collectPortableManifest(
       subAgentKeys.push(childKey);
     }
 
+    const modelProviderRequirements = isHermes
+      ? sortedUnique(agent.modelProviders
+        .filter(({ provider }) => provider.workspaceId === workspaceId)
+        .map(({ provider }) => provider.format))
+        .map((format) => ({ format }))
+      : undefined;
+    const runtime = isHermes && agent.runtime
+      ? { kind: 'hermes' as const, image: resolveHermesImage(agent.runtime.image) }
+      : undefined;
     state.agents.push({
       key,
       name: agent.name,
       slug: slugify(agent.slug || agent.name, 'agent'),
-      systemPrompt: agent.systemPrompt,
+      systemPrompt: isHermes ? null : agent.systemPrompt,
       maxSteps: agent.maxSteps,
-      modelRequirement: agent.provider && agent.provider.workspaceId === workspaceId && agent.model
+      modelRequirement: !isHermes && agent.provider && agent.provider.workspaceId === workspaceId && agent.model
         ? { format: agent.provider.format, model: agent.model }
         : null,
+      ...(runtime ? { runtime, modelProviderRequirements } : {}),
       deploymentKeys: sortedUnique(deploymentKeys),
       skillKeys: sortedUnique(skillKeys),
       toolkitKeys: sortedUnique(toolkitKeys),
@@ -853,7 +948,12 @@ export async function publishAgentRelease(input: {
       await assertPublisherAccess(tx, input.workspaceId, input.publishedById);
       const sourceAgent = await tx.agent.findFirst({
         where: { id: input.agentId, workspaceId: input.workspaceId },
-        select: { id: true, slug: true, name: true },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          workspace: { select: { name: true } },
+        },
       });
       if (!sourceAgent) {
         throw new AgentMarketError('agent_not_found', 'The source agent was not found.');
@@ -894,6 +994,8 @@ export async function publishAgentRelease(input: {
           'Another agent listing in this workspace already uses that slug.',
         );
       }
+      const directorySlug = existing?.directorySlug
+        ?? await uniqueDirectorySlug(tx, listingSlug);
 
       const listing = existing
         ? await tx.agentListing.update({
@@ -902,6 +1004,7 @@ export async function publishAgentRelease(input: {
               publishedById: input.publishedById,
               slug: listingSlug,
               name: listingName,
+              author: sourceAgent.workspace.name,
               summary: listingSummary,
               iconUrl,
               tags,
@@ -913,7 +1016,9 @@ export async function publishAgentRelease(input: {
               sourceAgentId: sourceAgent.id,
               publishedById: input.publishedById,
               slug: listingSlug,
+              directorySlug,
               name: listingName,
+              author: sourceAgent.workspace.name,
               summary: listingSummary,
               iconUrl,
               tags,
@@ -929,6 +1034,13 @@ export async function publishAgentRelease(input: {
           manifest: assessment.manifest as Prisma.InputJsonValue,
           releaseSummary: assessment.summary as Prisma.InputJsonValue,
           checksum,
+          name: listingName,
+          summary: listingSummary,
+          iconUrl,
+          tags,
+          reviewStatus: 'approved',
+          reviewedById: input.publishedById,
+          reviewedAt: new Date(),
         },
       });
       const publishedAt = release.publishedAt;
@@ -1060,14 +1172,17 @@ export async function listPublicAgentListings(input: {
   const where: Prisma.AgentListingWhereInput = {
     status: 'published',
     latestReleaseId: { not: null },
+    // Listings without a publisher workspace cannot produce a valid public URL,
+    // so exclude them from both the count and result set.
+    publisherWorkspace: { is: {} },
     ...(term
       ? {
           OR: [
             { name: { contains: term, mode: 'insensitive' } },
             { summary: { contains: term, mode: 'insensitive' } },
             { slug: { contains: term, mode: 'insensitive' } },
-            { publisherWorkspace: { name: { contains: term, mode: 'insensitive' } } },
-            { publisherWorkspace: { slug: { contains: term, mode: 'insensitive' } } },
+            { publisherWorkspace: { is: { name: { contains: term, mode: 'insensitive' } } } },
+            { publisherWorkspace: { is: { slug: { contains: term, mode: 'insensitive' } } } },
             { tags: { has: normalizedTag } },
           ],
         }
@@ -1102,7 +1217,9 @@ export async function listPublicAgentListings(input: {
 
   const items: PublicAgentListingSummary[] = [];
   for (const row of rows) {
-    if (!row.latestRelease || !row.publishedAt) continue;
+    // Keep this guard even though the query filters the relation: it protects
+    // the directory from an inconsistent row returned by the database.
+    if (!row.publisherWorkspace || !row.latestRelease || !row.publishedAt) continue;
     items.push({
       id: row.id,
       slug: row.slug,
@@ -1131,7 +1248,7 @@ export async function getPublicAgentListing(
     where: {
       slug: listingSlug,
       status: 'published',
-      publisherWorkspace: { slug: workspaceSlug },
+      publisherWorkspace: { is: { slug: workspaceSlug } },
       latestReleaseId: { not: null },
     },
     select: {
@@ -1159,7 +1276,9 @@ export async function getPublicAgentListing(
       },
     },
   });
-  if (!row?.latestRelease || !row.publishedAt || row.latestRelease.manifestVersion !== 1) return null;
+  if (!row?.publisherWorkspace || !row.latestRelease || !row.publishedAt || row.latestRelease.manifestVersion !== 1) {
+    return null;
+  }
   const manifest = parseManifest(row.latestRelease.manifest, row.latestRelease.checksum);
   return {
     listing: {
@@ -1281,6 +1400,28 @@ async function uniqueAgentSlugForInstall(
     }
   }
   throw new AgentMarketError('install_failed', 'Could not allocate a unique agent slug.');
+}
+
+async function uniqueSandboxSlugForInstall(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  desired: string,
+  reserved: Set<string>,
+): Promise<string> {
+  const base = `${slugify(desired, 'agent')}-runtime`;
+  for (let suffix = 0; suffix < 10_000; suffix += 1) {
+    const candidate = suffix === 0 ? base : `${base}-${suffix}`;
+    if (reserved.has(candidate)) continue;
+    const exists = await tx.sandbox.findFirst({
+      where: { workspaceId, slug: candidate },
+      select: { id: true },
+    });
+    if (!exists) {
+      reserved.add(candidate);
+      return candidate;
+    }
+  }
+  throw new AgentMarketError('install_failed', 'Could not allocate a unique Hermes runtime sandbox slug.');
 }
 
 async function uniqueToolkitSlugForInstall(
@@ -1410,10 +1551,18 @@ async function materializeAgentReleaseTransaction(
       agent.modelRequirement,
     );
   }
-  const providerClauses = [...uniqueModelRequirements.values()].map((requirement) => ({
-    format: requirement.format,
-    models: { has: requirement.model },
-  }));
+  const hermesProviderFormats = sortedUnique(manifest.agents.flatMap((agent) => (
+    agent.runtime?.kind === HERMES_RUNTIME_KIND
+      ? (agent.modelProviderRequirements ?? []).map(({ format }) => format)
+      : []
+  )));
+  const providerClauses: Prisma.ModelProviderWhereInput[] = [
+    ...[...uniqueModelRequirements.values()].map((requirement) => ({
+      format: requirement.format,
+      models: { has: requirement.model },
+    })),
+    ...hermesProviderFormats.map((format) => ({ format })),
+  ];
   const providers = providerClauses.length
     ? await tx.modelProvider.findMany({
         where: { workspaceId: input.targetWorkspaceId, OR: providerClauses },
@@ -1429,6 +1578,11 @@ async function materializeAgentReleaseTransaction(
     if (provider) {
       providerByRequirement.set(`${requirement.format}\0${requirement.model}`, provider);
     }
+  }
+  const providerByFormat = new Map<string, { id: string }>();
+  for (const format of hermesProviderFormats) {
+    const provider = providers.find((candidate) => candidate.format === format);
+    if (provider) providerByFormat.set(format, provider);
   }
 
   const deploymentMap: Record<string, string> = {};
@@ -1519,6 +1673,7 @@ async function materializeAgentReleaseTransaction(
   const agentMap: Record<string, string> = {};
   const createdAgents = new Map<string, { id: string; name: string; slug: string }>();
   const reservedAgentSlugs = new Set<string>();
+  const reservedSandboxSlugs = new Set<string>();
   for (const definition of manifest.agents) {
     const isRoot = definition.key === manifest.rootAgentKey;
     const requestedName = isRoot && input.name?.trim()
@@ -1537,20 +1692,56 @@ async function materializeAgentReleaseTransaction(
     const provider = requirement
       ? providerByRequirement.get(`${requirement.format}\0${requirement.model}`)
       : undefined;
-    const agent = await tx.agent.create({
-      data: {
-        workspaceId: input.targetWorkspaceId,
-        name: requestedName,
-        slug: agentSlug,
-        systemPrompt: definition.systemPrompt,
-        providerId: provider?.id ?? null,
-        model: provider && requirement ? requirement.model : null,
-        maxSteps: definition.maxSteps,
-      },
-      select: { id: true, name: true, slug: true },
-    });
+    const isHermes = definition.runtime?.kind === HERMES_RUNTIME_KIND;
+    const hermesProviderIds = isHermes
+      ? [...new Set((definition.modelProviderRequirements ?? [])
+        .map(({ format }) => providerByFormat.get(format)?.id)
+        .filter((providerId): providerId is string => Boolean(providerId)))]
+      : [];
+    const agent = isHermes
+      ? await createAgentRecords(
+          tx,
+          input.targetWorkspaceId,
+          requestedName,
+          agentSlug,
+          { runtime: HERMES_RUNTIME_KIND, hermesImage: definition.runtime?.image },
+          await uniqueSandboxSlugForInstall(
+            tx,
+            input.targetWorkspaceId,
+            agentSlug,
+            reservedSandboxSlugs,
+          ),
+        )
+      : await tx.agent.create({
+          data: {
+            workspaceId: input.targetWorkspaceId,
+            name: requestedName,
+            slug: agentSlug,
+            systemPrompt: definition.systemPrompt,
+            providerId: provider?.id ?? null,
+            model: provider && requirement ? requirement.model : null,
+            maxSteps: definition.maxSteps,
+          },
+          select: { id: true, name: true, slug: true },
+        });
+    if (isHermes) {
+      await Promise.all([
+        tx.agent.update({
+          where: { id: agent.id },
+          data: {
+            systemPrompt: null,
+            providerId: null,
+            model: null,
+            maxSteps: definition.maxSteps,
+          },
+        }),
+        tx.agentModelProvider.createMany({
+          data: hermesProviderIds.map((providerId) => ({ agentId: agent.id, providerId })),
+        }),
+      ]);
+    }
     agentMap[definition.key] = agent.id;
-    createdAgents.set(definition.key, agent);
+    createdAgents.set(definition.key, { id: agent.id, name: agent.name, slug: agent.slug });
   }
 
   for (const definition of manifest.agents) {
@@ -1604,6 +1795,11 @@ async function materializeAgentReleaseTransaction(
         required: true as const,
       }))
     )),
+    runtimes: manifest.agents.flatMap((definition) => (
+      definition.runtime?.kind === HERMES_RUNTIME_KIND
+        ? [{ agentKey: definition.key, kind: HERMES_RUNTIME_KIND, setupRequired: true as const }]
+        : []
+    )),
   };
   const resourceMap: AgentInstallResourceMap = {
     agents: agentMap,
@@ -1612,7 +1808,8 @@ async function materializeAgentReleaseTransaction(
     toolkits: toolkitMap,
   };
   const needsSetup = requirements.environment.length > 0
-    || requirements.providers.some(({ satisfied }) => !satisfied);
+    || requirements.providers.some(({ satisfied }) => !satisfied)
+    || requirements.runtimes.length > 0;
   const rootAgent = createdAgents.get(manifest.rootAgentKey);
   if (!rootAgent) throw new AgentMarketError('invalid_manifest', 'The root agent could not be created.');
   const install = await tx.agentInstall.create({

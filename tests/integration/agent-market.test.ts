@@ -22,6 +22,9 @@ const ORIGINAL_PROMPT = `Original market prompt ${stamp}`;
 const UPDATED_PROMPT = `Updated market prompt ${stamp}`;
 const MODEL_ID = `market-model-${stamp}`;
 const REQUIRED_ENV = 'MARKET_TEST_API_KEY';
+const HERMES_IMAGE = 'nousresearch/hermes-agent:test';
+const HERMES_PROMPT_CANARY = `hermes-private-prompt-${stamp}`;
+const HERMES_RUNTIME_ENV_CANARY = `hermes-runtime-env-${stamp}`;
 
 let sourceUserId = '';
 let targetUserId = '';
@@ -309,6 +312,7 @@ describe.sequential('agent marketplace releases and installs', () => {
       })],
       toolkits: [expect.objectContaining({ name: 'Research Toolkit' })],
     });
+    expect(firstReleaseManifest.agents[0]).not.toHaveProperty('runtime');
     expect(serialized).not.toContain(sourceProviderId);
     expect(serialized).not.toContain(sourceDeploymentId);
     expect(serialized).not.toContain(sourceCustomSkillId);
@@ -514,15 +518,168 @@ describe.sequential('agent marketplace releases and installs', () => {
     expect(listing.installCount).toBe(1);
   });
 
-  it('assesses custom MCP, Hermes runtime, attached sandbox, and foreign links as non-portable', async () => {
-    const [customAgent, hermesAgent, sandboxAgent, foreignAgent] = await Promise.all([
+  it('publishes and materializes an isolated Hermes runtime without its private state', async () => {
+    const hermesAgent = await db.agent.create({
+      data: {
+        workspaceId: sourceWorkspaceId,
+        name: 'Portable Hermes Agent',
+        slug: `portable-hermes-${stamp}`,
+        systemPrompt: HERMES_PROMPT_CANARY,
+        maxSteps: 13,
+      },
+    });
+    const hermesDeployment = await db.deployment.create({
+      data: {
+        workspaceId: sourceWorkspaceId,
+        name: 'Portable Hermes runtime',
+        source: 'sandbox',
+        sourceRef: HERMES_IMAGE,
+        status: 'stopped',
+        installCfg: { env: { HERMES_TOKEN: HERMES_RUNTIME_ENV_CANARY } },
+      },
+    });
+    const hermesSandbox = await db.sandbox.create({
+      data: {
+        workspaceId: sourceWorkspaceId,
+        deploymentId: hermesDeployment.id,
+        name: 'Portable Hermes sandbox',
+        slug: `portable-hermes-runtime-${stamp}`,
+        kind: 'hermes',
+        image: HERMES_IMAGE,
+        config: { env: { HERMES_TOKEN: HERMES_RUNTIME_ENV_CANARY } },
+      },
+    });
+    const hermesRuntime = await db.agentRuntime.create({
+      data: {
+        workspaceId: sourceWorkspaceId,
+        agentId: hermesAgent.id,
+        sandboxId: hermesSandbox.id,
+        kind: 'hermes',
+        image: HERMES_IMAGE,
+        status: 'running',
+        configHash: `private-runtime-hash-${stamp}`,
+      },
+    });
+    await db.agentModelProvider.create({
+      data: { agentId: hermesAgent.id, providerId: sourceProviderId },
+    });
+
+    const published = await publishAgentRelease({
+      workspaceId: sourceWorkspaceId,
+      agentId: hermesAgent.id,
+      publishedById: sourceUserId,
+      listing: { name: 'Portable Hermes Agent', tags: ['hermes', 'portable'] },
+    });
+    const manifest = manifestOf(published.release.manifest);
+    const serializedManifest = JSON.stringify(manifest);
+
+    expect(manifest.agents).toEqual([
+      expect.objectContaining({
+        name: 'Portable Hermes Agent',
+        systemPrompt: null,
+        modelRequirement: null,
+        runtime: { kind: 'hermes', image: HERMES_IMAGE },
+        modelProviderRequirements: [{ format: 'openai' }],
+      }),
+    ]);
+    expect(published.release.releaseSummary).toMatchObject({ runtimes: ['hermes'] });
+    for (const privateValue of [
+      SOURCE_PROVIDER_KEY,
+      SOURCE_PROVIDER_BASE_URL,
+      HERMES_PROMPT_CANARY,
+      HERMES_RUNTIME_ENV_CANARY,
+      hermesAgent.id,
+      hermesDeployment.id,
+      hermesSandbox.id,
+      hermesRuntime.id,
+    ]) {
+      expect(serializedManifest).not.toContain(privateValue);
+    }
+
+    const idempotencyKey = `hermes-market-install-${stamp}`;
+    const first = await materializeAgentRelease({
+      releaseId: published.release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey,
+      name: 'Installed Hermes Agent',
+    });
+    const second = await materializeAgentRelease({
+      releaseId: published.release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey,
+    });
+    const installed = await db.agent.findUniqueOrThrow({
+      where: { id: first.agent.id },
+      include: {
+        runtime: { include: { sandbox: { include: { deployment: true } } } },
+        modelProviders: { include: { provider: true } },
+      },
+    });
+
+    expect(first.install.status).toBe('needs_setup');
+    expect(first.requirements.runtimes).toEqual([
+      { agentKey: manifest.rootAgentKey, kind: 'hermes', setupRequired: true },
+    ]);
+    expect(second.reused).toBe(true);
+    expect(second.agent.id).toBe(first.agent.id);
+    expect(installed).toMatchObject({
+      workspaceId: targetWorkspaceId,
+      name: 'Installed Hermes Agent',
+      systemPrompt: null,
+      providerId: null,
+      model: null,
+      maxSteps: 13,
+    });
+    expect(installed.modelProviders.map(({ providerId }) => providerId)).toEqual([targetProviderId]);
+    expect(installed.modelProviders[0]?.provider.workspaceId).toBe(targetWorkspaceId);
+    expect(installed.runtime).toMatchObject({
+      workspaceId: targetWorkspaceId,
+      kind: 'hermes',
+      image: HERMES_IMAGE,
+      status: 'setup_required',
+      sandbox: {
+        workspaceId: targetWorkspaceId,
+        kind: 'hermes',
+        image: HERMES_IMAGE,
+        network: 'isolated',
+        config: { managedBy: 'agent-runtime' },
+        deployment: {
+          workspaceId: targetWorkspaceId,
+          source: 'sandbox',
+          sourceRef: HERMES_IMAGE,
+          status: 'stopped',
+        },
+      },
+    });
+    expect(installed.runtime?.id).not.toBe(hermesRuntime.id);
+    expect(installed.runtime?.sandboxId).not.toBe(hermesSandbox.id);
+    expect(installed.runtime?.sandbox.deploymentId).not.toBe(hermesDeployment.id);
+    const serializedTarget = JSON.stringify(installed);
+    for (const privateValue of [
+      SOURCE_PROVIDER_KEY,
+      HERMES_PROMPT_CANARY,
+      HERMES_RUNTIME_ENV_CANARY,
+      sourceProviderId,
+      hermesAgent.id,
+      hermesDeployment.id,
+      hermesSandbox.id,
+      hermesRuntime.id,
+    ]) {
+      expect(serializedTarget).not.toContain(privateValue);
+    }
+  });
+
+  it('assesses custom MCP, unknown runtime, attached sandbox, and foreign links as non-portable', async () => {
+    const [customAgent, unknownRuntimeAgent, sandboxAgent, foreignAgent] = await Promise.all([
       createAgent('Custom MCP Agent', `custom-mcp-${stamp}`),
-      createAgent('Hermes Agent', `hermes-${stamp}`),
+      createAgent('Unknown Runtime Agent', `unknown-runtime-${stamp}`),
       createAgent('Sandbox Agent', `sandbox-${stamp}`),
       createAgent('Foreign Link Agent', `foreign-link-${stamp}`),
     ]);
 
-    const [customDeployment, hermesDeployment, sandboxDeployment, foreignDeployment] = await Promise.all([
+    const [customDeployment, unknownRuntimeDeployment, sandboxDeployment, foreignDeployment] = await Promise.all([
       db.deployment.create({
         data: {
           workspaceId: sourceWorkspaceId,
@@ -536,7 +693,7 @@ describe.sequential('agent marketplace releases and installs', () => {
       db.deployment.create({
         data: {
           workspaceId: sourceWorkspaceId,
-          name: 'Hermes runtime deployment',
+          name: 'Unknown runtime deployment',
           source: 'sandbox',
           status: 'stopped',
         },
@@ -560,15 +717,15 @@ describe.sequential('agent marketplace releases and installs', () => {
       }),
     ]);
 
-    const [hermesSandbox, attachedSandbox] = await Promise.all([
+    const [unknownRuntimeSandbox, attachedSandbox] = await Promise.all([
       db.sandbox.create({
         data: {
           workspaceId: sourceWorkspaceId,
-          deploymentId: hermesDeployment.id,
-          name: 'Hermes runtime',
-          slug: `hermes-runtime-${stamp}`,
-          kind: 'hermes',
-          image: 'nousresearch/hermes-agent:test',
+          deploymentId: unknownRuntimeDeployment.id,
+          name: 'Unknown runtime',
+          slug: `unknown-runtime-${stamp}`,
+          kind: 'unknown',
+          image: 'example/unknown-runtime:test',
         },
       }),
       db.sandbox.create({
@@ -590,10 +747,10 @@ describe.sequential('agent marketplace releases and installs', () => {
       db.agentRuntime.create({
         data: {
           workspaceId: sourceWorkspaceId,
-          agentId: hermesAgent.id,
-          sandboxId: hermesSandbox.id,
-          kind: 'hermes',
-          image: 'nousresearch/hermes-agent:test',
+          agentId: unknownRuntimeAgent.id,
+          sandboxId: unknownRuntimeSandbox.id,
+          kind: 'unknown',
+          image: 'example/unknown-runtime:test',
           status: 'setup_required',
         },
       }),
@@ -605,22 +762,22 @@ describe.sequential('agent marketplace releases and installs', () => {
       }),
     ]);
 
-    const [custom, hermes, sandbox, foreign] = await Promise.all([
+    const [custom, unknownRuntime, sandbox, foreign] = await Promise.all([
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: customAgent.id }),
-      assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: hermesAgent.id }),
+      assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: unknownRuntimeAgent.id }),
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: sandboxAgent.id }),
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: foreignAgent.id }),
     ]);
 
     expect(custom).toMatchObject({ portable: false });
-    expect(hermes).toMatchObject({ portable: false });
+    expect(unknownRuntime).toMatchObject({ portable: false });
     expect(sandbox).toMatchObject({ portable: false });
     expect(foreign).toMatchObject({ portable: false });
-    if (custom.portable || hermes.portable || sandbox.portable || foreign.portable) {
+    if (custom.portable || unknownRuntime.portable || sandbox.portable || foreign.portable) {
       throw new Error('Expected every unsafe agent fixture to be non-portable.');
     }
     expect(custom.issues.map(({ code }) => code)).toContain('custom_mcp');
-    expect(hermes.issues.map(({ code }) => code)).toContain('unsupported_runtime');
+    expect(unknownRuntime.issues.map(({ code }) => code)).toContain('unsupported_runtime');
     expect(sandbox.issues.map(({ code }) => code)).toContain('external_sandbox');
     expect(foreign.issues.map(({ code }) => code)).toContain('cross_workspace_deployment');
   });

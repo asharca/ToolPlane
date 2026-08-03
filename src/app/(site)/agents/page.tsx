@@ -27,8 +27,14 @@ function marketHref(input: { q?: string; page?: number; sort?: string }) {
   return query ? `/agents?${query}` : '/agents';
 }
 
-function toCardData(item: Awaited<ReturnType<typeof listPublicAgentListings>>['items'][number]): AgentMarketCardData {
+function toCardData(
+  item: Awaited<ReturnType<typeof listPublicAgentListings>>['items'][number],
+  runtimeLabels: { native: string; hermes: string },
+): AgentMarketCardData {
   const preferredModel = item.releaseSummary.models[0]?.model ?? null;
+  const runtime = item.releaseSummary.runtimes
+    .map((kind) => kind === 'hermes' ? runtimeLabels.hermes : runtimeLabels.native)
+    .join(' + ');
   return {
     slug: item.slug,
     name: item.name,
@@ -38,6 +44,7 @@ function toCardData(item: Awaited<ReturnType<typeof listPublicAgentListings>>['i
     tags: item.tags,
     cloneCount: item.installCount,
     model: preferredModel,
+    runtime,
     agentCount: item.releaseSummary.agentCount,
     serverCount: item.releaseSummary.deploymentCount,
     skillCount: item.releaseSummary.skillCount,
@@ -67,13 +74,18 @@ export default async function AgentMarketPage({
     getTranslations('agentMarket'),
     listPublicAgentListings({ page, q, sort }),
   ]);
-  const cards = result.items.map(toCardData);
+  const runtimeLabels = {
+    native: t('nativeRuntime'),
+    hermes: t('hermesRuntime'),
+  };
+  const cards = result.items.map((item) => toCardData(item, runtimeLabels));
   const featured = cards[0] ?? null;
   const rest = featured ? cards.slice(1) : [];
   const tags = popularTags(cards);
   const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
   const cardLabels: AgentMarketCardLabels = {
     model: t('model'),
+    runtime: t('runtime'),
     bringYourOwn: t('bringYourOwnModel'),
     mcpSkills: t('mcpSkills'),
     clones: t('clones'),

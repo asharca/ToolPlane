@@ -233,6 +233,7 @@
     "toolkits": "Toolkits",
     "subAgents": "Sub-agents",
     "nativeRuntime": "Native",
+    "hermesRuntime": "Hermes",
     "notSpecified": "Not specified",
     "safetyBoundary": "Safety boundary",
     "safetyBoundaryDescription": "The release contains portable configuration only. Credential values are empty and private workspace activity is never included.",

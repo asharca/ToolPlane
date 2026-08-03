@@ -40,7 +40,7 @@ async function uniqueSandboxSlug(workspaceId: string, baseSlug: string): Promise
   return slug;
 }
 
-async function createAgentRecords(
+export async function createAgentRecords(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   name: string,
