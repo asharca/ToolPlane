@@ -1,6 +1,6 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   HermesArchiveError,
   stageHermesArchive,
@@ -92,6 +92,26 @@ function upload(name: string, content: Buffer): HermesArchiveUpload {
 }
 
 describe('Hermes archive staging', () => {
+  it('enforces a configured upload limit before reading the file body', async () => {
+    const arrayBuffer = vi.fn();
+    await expect(stageHermesArchive({
+      name: 'too-large.zip',
+      size: 2 * 1024 * 1024,
+      arrayBuffer,
+    }, { maxUploadMiB: 1 })).rejects.toBeInstanceOf(HermesArchiveError);
+
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the actual file body against the configured upload limit', async () => {
+    const body = new Uint8Array(1024 * 1024 + 1).buffer;
+    await expect(stageHermesArchive({
+      name: 'mismatched-size.zip',
+      size: 1,
+      arrayBuffer: async () => body,
+    }, { maxUploadMiB: 1 })).rejects.toBeInstanceOf(HermesArchiveError);
+  });
+
   it('normalizes a .hermes wrapper and strips ToolPlane-owned paths', async () => {
     const staged = await stageHermesArchive(upload('backup.zip', zip([
       { name: '.hermes/' },

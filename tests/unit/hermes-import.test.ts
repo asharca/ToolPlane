@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   stageHermesArchive: vi.fn(),
   resolveHermesImage: vi.fn(),
   beginWorkspaceOperation: vi.fn(),
+  getSystemSettings: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -40,6 +41,7 @@ vi.mock('@/lib/agents/hermes/archive', async (importOriginal) => {
   return { ...actual, stageHermesArchive: mocks.stageHermesArchive };
 });
 vi.mock('@/lib/workspace/operation-gate', () => ({ beginWorkspaceOperation: mocks.beginWorkspaceOperation }));
+vi.mock('@/lib/admin/settings', () => ({ getSystemSettings: mocks.getSystemSettings }));
 
 import { importHermesArchive } from '@/lib/agents/hermes/import';
 
@@ -47,6 +49,7 @@ describe('importHermesArchive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveHermesImage.mockReturnValue('nousresearch/hermes-agent:test');
+    mocks.getSystemSettings.mockResolvedValue({ hermesArchiveMaxUploadMiB: 17 });
     mocks.stageHermesArchive.mockResolvedValue({
       directory: '/tmp/staged-hermes-home',
       cleanup: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +78,9 @@ describe('importHermesArchive', () => {
     expect(mocks.createAgent).toHaveBeenCalledWith('workspace-1', 'Recovered assistant', {
       runtime: 'hermes',
       hermesImage: 'nousresearch/hermes-agent:test',
+    });
+    expect(mocks.stageHermesArchive).toHaveBeenCalledWith(expect.any(Object), {
+      maxUploadMiB: 17,
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenNthCalledWith(1, {
       where: {

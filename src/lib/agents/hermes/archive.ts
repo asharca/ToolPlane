@@ -4,8 +4,11 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  hermesArchiveMaxUploadBytes,
+  normalizeHermesArchiveMaxUploadMiB,
+} from './archive-limits';
 
-export const MAX_HERMES_ARCHIVE_BYTES = 48 * 1024 * 1024;
 export const MAX_HERMES_ARCHIVE_FILES = 2_000;
 export const MAX_HERMES_ARCHIVE_FILE_BYTES = 32 * 1024 * 1024;
 export const MAX_HERMES_ARCHIVE_UNPACKED_BYTES = 256 * 1024 * 1024;
@@ -32,6 +35,10 @@ export type StagedHermesArchive = {
   fileCount: number;
   unpackedBytes: number;
   cleanup: () => Promise<void>;
+};
+
+export type HermesArchiveStageOptions = {
+  maxUploadMiB?: number;
 };
 
 export function isHermesArchiveUpload(value: FormDataEntryValue | null): value is File & HermesArchiveUpload {
@@ -346,20 +353,29 @@ async function extractZipArchive(archivePath: string, destination: string): Prom
   });
 }
 
-export async function stageHermesArchive(upload: HermesArchiveUpload): Promise<StagedHermesArchive> {
+function archiveSizeError(maxUploadMiB: number): HermesArchiveError {
+  return new HermesArchiveError(`The archive must be ${maxUploadMiB} MiB or smaller.`);
+}
+
+export async function stageHermesArchive(
+  upload: HermesArchiveUpload,
+  options: HermesArchiveStageOptions = {},
+): Promise<StagedHermesArchive> {
+  const maxUploadMiB = normalizeHermesArchiveMaxUploadMiB(options.maxUploadMiB);
+  const maxUploadBytes = hermesArchiveMaxUploadBytes(maxUploadMiB);
   if (!isSupportedHermesArchiveName(upload.name)) {
     throw new HermesArchiveError('Upload a .zip archive containing a .hermes folder or its contents at the ZIP root.');
   }
-  if (!Number.isFinite(upload.size) || upload.size <= 0 || upload.size > MAX_HERMES_ARCHIVE_BYTES) {
-    throw new HermesArchiveError(`The archive must be smaller than ${MAX_HERMES_ARCHIVE_BYTES / 1024 / 1024} MB.`);
+  if (!Number.isFinite(upload.size) || upload.size <= 0 || upload.size > maxUploadBytes) {
+    throw archiveSizeError(maxUploadMiB);
   }
 
   const directory = await mkdtemp(path.join(os.tmpdir(), 'toolplane-hermes-import-'));
   try {
     const archivePath = path.join(directory, 'upload.zip');
     const archive = await upload.arrayBuffer();
-    if (archive.byteLength > MAX_HERMES_ARCHIVE_BYTES) {
-      throw new HermesArchiveError(`The archive must be smaller than ${MAX_HERMES_ARCHIVE_BYTES / 1024 / 1024} MB.`);
+    if (archive.byteLength > maxUploadBytes) {
+      throw archiveSizeError(maxUploadMiB);
     }
     await writeFile(archivePath, Buffer.from(archive), { mode: 0o600 });
     const extractionRoot = path.join(directory, 'home');

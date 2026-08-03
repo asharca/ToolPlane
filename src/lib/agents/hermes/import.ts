@@ -13,6 +13,7 @@ import {
   stageHermesArchive,
   type HermesArchiveUpload,
 } from './archive';
+import { getSystemSettings } from '@/lib/admin/settings';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 
 export { HermesArchiveError } from './archive';
@@ -46,7 +47,10 @@ export async function importHermesArchive(params: {
   archive: HermesArchiveUpload;
   image?: string;
 }): Promise<HermesArchiveImportResult> {
-  const staged = await stageHermesArchive(params.archive);
+  const settings = await getSystemSettings();
+  const staged = await stageHermesArchive(params.archive, {
+    maxUploadMiB: settings.hermesArchiveMaxUploadMiB,
+  });
   const releaseWorkspaceOperation = beginWorkspaceOperation(params.workspaceId);
   if (!releaseWorkspaceOperation) {
     await staged.cleanup();

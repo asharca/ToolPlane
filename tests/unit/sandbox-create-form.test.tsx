@@ -8,7 +8,7 @@ vi.mock('@/lib/agents/actions', () => ({ importHermesArchiveAction: vi.fn() }));
 
 describe('SandboxCreateForm', () => {
   it('offers a safe .hermes ZIP import flow', async () => {
-    render(<SandboxCreateForm workspace="acme" />);
+    render(<SandboxCreateForm workspace="acme" hermesArchiveMaxUploadMiB={17} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'New sandbox' }));
     await userEvent.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
@@ -16,6 +16,7 @@ describe('SandboxCreateForm', () => {
     const archive = screen.getByLabelText('Hermes archive');
     expect(archive).toHaveAttribute('type', 'file');
     expect(archive).toHaveAttribute('accept', '.zip,application/zip');
+    expect(screen.getByText(/up to 17 MiB/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox')).toBeRequired();
     expect(screen.getByText('What gets imported')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Import and create Hermes sandbox' })).toBeInTheDocument();

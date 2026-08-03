@@ -27,6 +27,7 @@ import {
   SANDBOX_IMAGE_OPTIONS,
   type SandboxImageOption,
 } from '@/lib/sandboxes/images';
+import { DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB } from '@/lib/agents/hermes/archive-limits';
 
 type Mode = 'docker' | 'connector' | 'hermes-import';
 
@@ -235,8 +236,10 @@ function CreateSandboxFooter({ mode }: { mode: Mode }) {
 
 export function SandboxCreateForm({
   workspace,
+  hermesArchiveMaxUploadMiB = DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
 }: {
   workspace: string;
+  hermesArchiveMaxUploadMiB?: number;
 }) {
   const [mode, setMode] = useState<Mode>('docker');
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
@@ -340,7 +343,11 @@ export function SandboxCreateForm({
 
                     {isHermesImport ? (
                       <>
-                        <Field label={t('hermesArchive')} className="mt-3" hint={t('hermesArchiveHint')}>
+                        <Field
+                          label={t('hermesArchive')}
+                          className="mt-3"
+                          hint={t('hermesArchiveHint', { max: hermesArchiveMaxUploadMiB })}
+                        >
                           <input
                             name="hermesArchive"
                             type="file"

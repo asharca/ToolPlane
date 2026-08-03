@@ -38,6 +38,7 @@ import {
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { getSystemSettings } from '@/lib/admin/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,9 +133,10 @@ export default async function SandboxesPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
 
-  const [sandboxes, rawManagedRuntimes] = await Promise.all([
+  const [sandboxes, rawManagedRuntimes, systemSettings] = await Promise.all([
     listSandboxes(ws.id),
     listManagedAgentRuntimes(ws.id),
+    getSystemSettings(),
   ]);
   const managedRuntimes = rawManagedRuntimes.map((runtime) => ({
     ...runtime,
@@ -171,7 +173,10 @@ export default async function SandboxesPage({
       <DashboardPage>
         <DashboardToolbar
           actions={
-            <SandboxCreateForm workspace={slug} />
+            <SandboxCreateForm
+              workspace={slug}
+              hermesArchiveMaxUploadMiB={systemSettings.hermesArchiveMaxUploadMiB}
+            />
           }
         >
           <p className="text-sm text-muted-foreground">

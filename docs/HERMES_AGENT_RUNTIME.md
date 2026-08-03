@@ -37,7 +37,9 @@ Agent
 
 在 **Sandboxes → New sandbox → Import .hermes archive** 中可以上传已有 Hermes
 主目录的 ZIP 备份。ZIP 可以以单个 `.hermes/` 目录为根，也可以直接以该目录
-的内容为根，压缩包上限为 48 MB。
+的内容为根。压缩包大小由 **管理后台 → 系统设置** 配置，默认 48 MiB，
+可在 1–60 MiB 之间调整。60 MiB 是当前 64 MiB Server Action 请求上限下的
+固定安全上限；如需更大的归档，需要改用流式上传入口并同步调整部署代理限制。
 
 导入不会创建一个脱离 Agent 的通用 Sandbox；它会创建同样的
 `Agent → AgentRuntime → Sandbox(kind=hermes) → Deployment → named volume`

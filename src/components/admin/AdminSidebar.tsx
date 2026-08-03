@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Plug,
   ShieldCheck,
+  SlidersHorizontal,
   Tags,
   Users,
   X,
@@ -21,6 +22,7 @@ import { Logo } from '@/components/layout/Logo';
 
 type AdminPageLabelKey =
   | 'adminNavOverview'
+  | 'adminNavSettings'
   | 'adminNavUsers'
   | 'adminNavWorkspaces'
   | 'adminNavMcpServers'
@@ -54,6 +56,11 @@ const NAV_SECTIONS: NavSection[] = [
         href: '/admin',
         icon: LayoutDashboard,
         exact: true,
+      },
+      {
+        labelKey: 'adminNavSettings',
+        href: '/admin/settings',
+        icon: SlidersHorizontal,
       },
     ],
   },
