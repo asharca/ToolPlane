@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.2](https://github.com/asharca/ToolPlane/releases/tag/v0.15.2) (2026-08-03)
+
+### What's Changed
+* feat: separate public site from workspace marketplace by @renhedata in https://github.com/asharca/ToolPlane/pull/61
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.15.1...v0.15.2
+
 ## [0.15.1](https://github.com/asharca/ToolPlane/releases/tag/v0.15.1) (2026-08-03)
 
 ### What's Changed
