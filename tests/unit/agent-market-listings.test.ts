@@ -14,7 +14,7 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-import { listPublicAgentListings } from '@/lib/agents/market';
+import { listAgentMarketListings } from '@/lib/agents/market';
 
 const releaseSummary = {
   agentCount: 1,
@@ -39,14 +39,14 @@ function listing(overrides: Record<string, unknown> = {}) {
     publishedAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     installCount: 0,
-    latestVersion: 1,
+    categories: [],
     publisherWorkspace: { slug: 'acme', name: 'Acme' },
-    latestRelease: { id: 'release-1', releaseSummary },
+    latestRelease: { id: 'release-1', version: 1, releaseSummary },
     ...overrides,
   };
 }
 
-describe('listPublicAgentListings', () => {
+describe('listAgentMarketListings', () => {
   beforeEach(() => {
     mocks.count.mockReset();
     mocks.findMany.mockReset();
@@ -59,7 +59,7 @@ describe('listPublicAgentListings', () => {
       listing({ id: 'orphaned-listing', publisherWorkspace: null }),
     ]);
 
-    const result = await listPublicAgentListings();
+    const result = await listAgentMarketListings();
 
     expect(mocks.count).toHaveBeenCalledWith({
       where: expect.objectContaining({ publisherWorkspace: { is: {} } }),
