@@ -18,7 +18,7 @@ describe('AgentsBrowser', () => {
     actions.deleteAgentAction.mockReset();
   });
 
-  it('opens the agent market within the current workspace', () => {
+  it('keeps the market entry inside the authenticated workspace console', () => {
     render(
       <AgentsBrowser
         slug="acme"
@@ -29,7 +29,7 @@ describe('AgentsBrowser', () => {
 
     expect(screen.getByRole('link', { name: 'Browse market' })).toHaveAttribute(
       'href',
-      '/app/acme/agents/new',
+      '/app/acme/market/agents',
     );
   });
 

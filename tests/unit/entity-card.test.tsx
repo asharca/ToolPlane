@@ -26,6 +26,7 @@ describe('entity cards', () => {
       '/server/firecrawl',
     );
     expect(screen.getByText('Firecrawl')).toBeInTheDocument();
+    expect(screen.getByText('mendableai')).toBeInTheDocument();
     expect(screen.getByText('Web scraping for LLMs')).toBeInTheDocument();
     expect(screen.getByText('Web Scraping')).toBeInTheDocument();
     expect(screen.getByText('1.5k')).toBeInTheDocument();

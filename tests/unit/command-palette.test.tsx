@@ -43,6 +43,16 @@ describe('DashboardHeaderControls (command palette)', () => {
     expect(screen.queryByRole('button', { name: /^Members/ })).toBeNull();
   });
 
+  it('opens workspace market routes instead of legacy create pages', async () => {
+    render(<DashboardHeaderControls />);
+    await userEvent.click(screen.getByRole('button', { name: /search/i }));
+    const input = screen.getByPlaceholderText(/type a command/i);
+    await userEvent.type(input, 'Browse MCP');
+    await userEvent.click(screen.getByRole('button', { name: /^Browse MCP/ }));
+
+    expect(pushMock).toHaveBeenCalledWith('/app/acme/market/mcp');
+  });
+
   it('toggles the theme from the header button', async () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(screen.getByRole('button', { name: /toggle theme/i }));

@@ -9,7 +9,12 @@ import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
-type Row = { id: string; slug: string; name: string; _count: { servers: number; skills: number; clients: number } };
+type Row = {
+  id: string;
+  slug: string;
+  name: string;
+  _count: { servers: number; skills: number; clients: number; agentListings: number };
+};
 
 export function CategoriesPanel({ categories }: { categories: Row[] }) {
   const t = useTranslations('admin');
@@ -59,7 +64,10 @@ export function CategoriesPanel({ categories }: { categories: Row[] }) {
         {categories.length > 0 ? (
           <ul className="divide-y divide-border">
             {categories.map((category) => {
-              const itemCount = category._count.servers + category._count.skills + category._count.clients;
+              const itemCount = category._count.servers
+                + category._count.skills
+                + category._count.clients
+                + category._count.agentListings;
 
               return (
                 <li

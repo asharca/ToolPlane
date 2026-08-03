@@ -468,7 +468,7 @@ model AgentRelease {
 }
 
 // One materialization attempt that produced a private target-workspace Agent.
-// requirements contain only missing secret *names* and model requirements;
+// requirements contain only secret *names* (never values) and model requirements;
 // resourceMap contains only newly-created target workspace ids.
 model AgentInstall {
   id                String       @id @default(cuid())

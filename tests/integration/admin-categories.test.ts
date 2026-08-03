@@ -19,4 +19,19 @@ describe('admin categories', () => {
     await db.skill.create({ data: { slug: `cs-${stamp}`, name: 'cs', categories: { connect: { id: c.id } } } });
     await expect(deleteCategory(c.id)).rejects.toThrow(/not empty/i);
   });
+
+  it('counts agent listings as directory items when guarding deletion', async () => {
+    const c = await createCategory(`cata-${stamp}`, `CatA ${stamp}`);
+    const listing = await db.agentListing.create({
+      data: {
+        slug: `category-agent-${stamp}`,
+        directorySlug: `category-agent-${stamp}`,
+        name: 'Category Agent',
+        categories: { connect: { id: c.id } },
+      },
+    });
+    await expect(deleteCategory(c.id)).rejects.toThrow(/not empty/i);
+    await db.agentListing.delete({ where: { id: listing.id } });
+    await deleteCategory(c.id);
+  });
 });

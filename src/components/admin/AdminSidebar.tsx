@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import {
   ArrowLeft,
+  Bot,
   Brain,
   Building2,
   LayoutDashboard,
@@ -26,6 +27,7 @@ type AdminPageLabelKey =
   | 'adminNavWorkspaces'
   | 'adminNavMcpServers'
   | 'adminNavSkills'
+  | 'adminNavAgents'
   | 'adminNavCategories';
 
 type AdminSectionLabelKey =
@@ -78,6 +80,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Plug,
       },
       { labelKey: 'adminNavSkills', href: '/admin/skills', icon: Brain },
+      { labelKey: 'adminNavAgents', href: '/admin/agents', icon: Bot },
       {
         labelKey: 'adminNavCategories',
         href: '/admin/categories',

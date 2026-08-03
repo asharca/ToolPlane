@@ -62,6 +62,7 @@ export function EntityCard({
   href,
   name,
   description,
+  author,
   iconUrl,
   category,
   stat,
@@ -98,9 +99,14 @@ export function EntityCard({
                   className="size-8 shrink-0 rounded-full bg-muted"
                 />
               )}
-              <h3 className="line-clamp-1 text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
-                {name}
-              </h3>
+              <div className="min-w-0">
+                <h3 className="line-clamp-1 text-base font-semibold text-foreground transition-colors group-hover:text-foreground/80">
+                  {name}
+                </h3>
+                {author ? (
+                  <p className="truncate text-[11px] text-muted-foreground">{author}</p>
+                ) : null}
+              </div>
             </div>
             <ArrowUpRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-foreground/60" />
           </div>

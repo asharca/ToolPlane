@@ -50,4 +50,18 @@ describe('buildInstalledSkillMarkdown', () => {
     });
     expect(md).toBe('---\nname: pdf\n---\n\n# Real PDF Skill');
   });
+
+  it('prefers a reviewed marketplace snapshot while retaining the catalog relation', () => {
+    const md = buildInstalledSkillMarkdown({
+      skillId: 's1',
+      skill: {
+        slug: 'pdf',
+        name: 'PDF',
+        content: '# New catalog contents',
+      },
+      content: '# Approved release snapshot',
+      source: 'agent-market',
+    });
+    expect(md).toBe('# Approved release snapshot');
+  });
 });

@@ -297,7 +297,7 @@ export default async function ToolkitDetailPage({
               workspaceSlug={wsSlug}
               toolkitSlug={toolkitSlug}
               items={mcpPickerItems}
-              emptyHref={`/app/${wsSlug}/mcp/new`}
+              emptyHref={`/app/${wsSlug}/market/mcp`}
             />
           </div>
         ) : null}
@@ -354,7 +354,7 @@ export default async function ToolkitDetailPage({
               workspaceSlug={wsSlug}
               toolkitSlug={toolkitSlug}
               items={skillPickerItems}
-              emptyHref={`/app/${wsSlug}/skills/new`}
+              emptyHref={`/app/${wsSlug}/market/skills`}
             />
           </div>
         ) : null}
