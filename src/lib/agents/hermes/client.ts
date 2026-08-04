@@ -1,6 +1,9 @@
 import 'server-only';
 import type { FileUIPart, UIMessage } from 'ai';
-import { ensureHermesRuntimeReady } from './runtime';
+import {
+  ensureHermesRuntimeReady,
+  type HermesRuntimeWriteLease,
+} from './runtime';
 import type {
   HermesAssistantSegment,
   HermesUIMessage,
@@ -72,11 +75,16 @@ async function hermesFetch(params: {
   sessionId: string;
   sessionKey: string;
   stream: boolean;
+  writeLease?: HermesRuntimeWriteLease;
 }): Promise<{ baseUrl: string; response: Response }> {
   if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
     throw new Error('Hermes runtime is not configured.');
   }
-  const ready = await ensureHermesRuntimeReady(params.agent.workspaceId, params.agent.id);
+  const ready = await ensureHermesRuntimeReady(
+    params.agent.workspaceId,
+    params.agent.id,
+    { writeLease: params.writeLease },
+  );
   if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
 
   const baseUrl = `http://127.0.0.1:${ready.port}/hermes`;
@@ -172,16 +180,22 @@ async function readHermesAssistantSegments(
 export async function writeHermesChatStream(params: {
   agent: HermesRuntimeAgent;
   messages: UIMessage[];
+  // The ToolPlane conversation ID remains useful for UI stream identifiers.
+  // A cloned conversation can supply its source-volume Hermes session ID here.
   conversationId: string;
+  runtimeSessionId?: string;
   sessionKey?: string;
+  writeLease?: HermesRuntimeWriteLease;
   writer: import('ai').UIMessageStreamWriter<HermesUIMessage>;
 }) {
+  const runtimeSessionId = params.runtimeSessionId || params.conversationId;
   const { baseUrl, response } = await hermesFetch({
     agent: params.agent,
     messages: uiMessagesToHermes(params.messages),
-    sessionId: params.conversationId,
-    sessionKey: params.sessionKey || `agent:${params.agent.id}:console:${params.conversationId}`,
+    sessionId: runtimeSessionId,
+    sessionKey: params.sessionKey || `agent:${params.agent.id}:console:${runtimeSessionId}`,
     stream: true,
+    writeLease: params.writeLease,
   });
   if (!response.ok) throw await responseError(response);
   if (!response.body) throw new Error('Hermes runtime returned an empty stream.');
@@ -208,7 +222,7 @@ export async function writeHermesChatStream(params: {
   const trailing = textDelta(sseData(buffer));
   if (trailing) params.writer.write({ type: 'text-delta', id: textPartId, delta: trailing });
   params.writer.write({ type: 'text-end', id: textPartId });
-  const segments = await readHermesAssistantSegments(baseUrl, params.conversationId);
+  const segments = await readHermesAssistantSegments(baseUrl, runtimeSessionId);
   if (segments.length) {
     params.writer.write({
       type: 'data-hermes-messages',
@@ -223,6 +237,7 @@ export async function runHermesText(params: {
   messages: UIMessage[];
   sessionId: string;
   sessionKey: string;
+  writeLease?: HermesRuntimeWriteLease;
 }): Promise<string> {
   const { response } = await hermesFetch({
     agent: params.agent,
@@ -230,6 +245,7 @@ export async function runHermesText(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     stream: false,
+    writeLease: params.writeLease,
   });
   if (!response.ok) throw await responseError(response);
   const body = await response.json() as {

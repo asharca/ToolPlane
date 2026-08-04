@@ -382,7 +382,12 @@ export function AgentsBrowser({
                         <MessageCircle className="size-[18px] shrink-0" />
                         {t('chat')}
                       </Link>
-                      <CloneAgentButton slug={slug} agentId={agent.id} agentName={agent.name} />
+                      <CloneAgentButton
+                        slug={slug}
+                        agentId={agent.id}
+                        agentName={agent.name}
+                        runtimeKind={agent.runtimeKind}
+                      />
                       <DeleteAgentButton slug={slug} agentId={agent.id} />
                     </div>
                   </div>

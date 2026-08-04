@@ -9,6 +9,7 @@ import { getProvider } from '@/lib/agents/queries';
 import { buildModel } from '@/lib/agents/model';
 import {
   cloneAgent,
+  cloneHermesVolumeData,
   createAgent,
   updateAgent,
   setAgentTools,
@@ -37,6 +38,7 @@ import {
 } from '@/lib/agents/channel-pairing';
 import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/platforms';
 import {
+  copyHermesRuntimeVolume,
   cleanupHermesRuntime,
   stopHermesRuntime,
   syncHermesRuntime,
@@ -67,6 +69,23 @@ async function authorizedWorkspace(slug: string) {
 export type ActionState = { error?: string; warning?: string; savedAt?: number };
 
 const PROVIDER_FORMATS = new Set(['openai', 'openai-responses', 'anthropic']);
+
+function cloneOptionsFromFormData(formData: FormData) {
+  // Existing integrations can keep posting the old minimal form. Only forms
+  // that opt into the scoped-clone UI override the safe historical defaults.
+  if (formData.get('cloneOptions') !== '1') return undefined;
+  const checked = (name: string) => formData.get(name) === 'on';
+  return {
+    copyMcp: checked('copyMcp'),
+    copySkills: checked('copySkills'),
+    copyToolkits: checked('copyToolkits'),
+    copySandboxes: checked('copySandboxes'),
+    copySubAgents: checked('copySubAgents'),
+    copyConversations: checked('copyConversations'),
+    copyHermesEnvironment: checked('copyHermesEnvironment'),
+    copyHermesVolume: checked('copyHermesVolume'),
+  };
+}
 
 function modelFetchError(result: Exclude<Awaited<ReturnType<typeof fetchProviderModels>>, { ok: true }>): string {
   if (result.reason === 'status') return `Provider returned ${result.status}.`;
@@ -293,16 +312,32 @@ export async function cloneAgentAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const sourceAgentId = String(formData.get('agentId') ?? '');
   const requestedName = String(formData.get('cloneName') ?? '').trim().slice(0, 60) || undefined;
+  const cloneOptions = cloneOptionsFromFormData(formData);
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sourceAgentId) return;
 
-  const cloned = await cloneAgent(ctx.ws.id, sourceAgentId, requestedName);
+  const cloned = await cloneAgent(ctx.ws.id, sourceAgentId, requestedName, cloneOptions);
   if (!cloned) return;
+  const targetPath = `/app/${slug}/agents/${cloned.id}`;
   if (cloned.runtimeKind === 'hermes') {
+    if (cloneOptions?.copyHermesVolume) {
+      const copied = await copyHermesRuntimeVolume(
+        ctx.ws.id,
+        sourceAgentId,
+        cloned.id,
+        () => cloneHermesVolumeData(ctx.ws.id, sourceAgentId, cloned.id),
+      );
+      if (copied.status === 'error') {
+        revalidatePath(`/app/${slug}/agents`);
+        revalidatePath(targetPath);
+        redirect(`${targetPath}?settings=agent`);
+      }
+    }
     await syncHermesRuntime(ctx.ws.id, cloned.id);
   }
   revalidatePath(`/app/${slug}/agents`);
-  redirect(`/app/${slug}/agents/${cloned.id}?settings=agent`);
+  revalidatePath(targetPath);
+  redirect(`${targetPath}?settings=agent`);
 }
 
 function marketTags(value: FormDataEntryValue | null): string[] {

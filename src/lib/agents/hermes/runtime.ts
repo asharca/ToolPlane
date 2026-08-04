@@ -12,6 +12,7 @@ import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/ski
 import { parseSkillFrontmatter } from '@/lib/skills/bundle';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import {
+  effectiveStatus,
   killProcess,
   livePort,
   restartProcess,
@@ -19,11 +20,13 @@ import {
   stopProcess,
 } from '@/lib/process/supervisor';
 import {
+  copyDockerVolume,
   removeDockerSandboxContainer,
   removeDockerSandboxRuntimeStrict,
   sandboxContainerName,
   sandboxSyncContainerName,
   sandboxVolumeName,
+  stopDockerSandboxContainer,
 } from '@/lib/sandboxes/runtime';
 import { HERMES_RUNTIME_KIND } from './constants';
 import {
@@ -176,9 +179,34 @@ finally:
 type DockerResult = { stdout: string; stderr: string };
 
 type DashboardReadyEntry = { port: number; checkedAt: number };
+type HermesRuntimeAccessState = {
+  activeWrites: number;
+  copyInProgress: boolean;
+  pendingCopies: number;
+  drained?: Promise<void>;
+  resolveDrained?: () => void;
+  available?: Promise<void>;
+  resolveAvailable?: () => void;
+};
+
+export type HermesRuntimeWriteLease = {
+  release: () => void;
+};
+
+type HermesRuntimeWriteLeaseInfo = {
+  key: string;
+  released: boolean;
+};
+
+const runtimeWriteLeaseInfo = new WeakMap<HermesRuntimeWriteLease, HermesRuntimeWriteLeaseInfo>();
+
+export const HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR =
+  'The Hermes runtime is temporarily unavailable while a clone is in progress.';
+
 const globalRuntime = globalThis as unknown as {
   __hermesDashboardReady?: Map<string, DashboardReadyEntry>;
   __hermesOperationQueues?: Map<string, Promise<void>>;
+  __hermesRuntimeAccessStates?: Map<string, HermesRuntimeAccessState>;
 };
 
 function dashboardReadyCache(): Map<string, DashboardReadyEntry> {
@@ -186,12 +214,212 @@ function dashboardReadyCache(): Map<string, DashboardReadyEntry> {
   return globalRuntime.__hermesDashboardReady;
 }
 
+function hermesRuntimeAccessKey(workspaceId: string, agentId: string) {
+  return `${workspaceId}:${agentId}`;
+}
+
+function hermesRuntimeAccessStates(): Map<string, HermesRuntimeAccessState> {
+  return globalRuntime.__hermesRuntimeAccessStates ??= new Map();
+}
+
+function getHermesRuntimeAccessState(
+  workspaceId: string,
+  agentId: string,
+): HermesRuntimeAccessState {
+  const states = hermesRuntimeAccessStates();
+  const key = hermesRuntimeAccessKey(workspaceId, agentId);
+  let state = states.get(key);
+  if (!state) {
+    state = {
+      activeWrites: 0,
+      copyInProgress: false,
+      pendingCopies: 0,
+    };
+    states.set(key, state);
+  }
+  return state;
+}
+
+function clearHermesRuntimeAccessStateIfIdle(
+  workspaceId: string,
+  agentId: string,
+  state: HermesRuntimeAccessState,
+) {
+  if (
+    state.activeWrites !== 0
+    || state.copyInProgress
+    || state.pendingCopies !== 0
+    || state.drained
+    || state.available
+  ) return;
+  const states = hermesRuntimeAccessStates();
+  const key = hermesRuntimeAccessKey(workspaceId, agentId);
+  if (states.get(key) === state) states.delete(key);
+}
+
+function runtimeAccessIsClosed(workspaceId: string, agentId: string): boolean {
+  const state = hermesRuntimeAccessStates().get(hermesRuntimeAccessKey(workspaceId, agentId));
+  return Boolean(state && (state.copyInProgress || state.pendingCopies > 0));
+}
+
+function holdsHermesRuntimeWriteLease(
+  workspaceId: string,
+  agentId: string,
+  lease: HermesRuntimeWriteLease | undefined,
+): boolean {
+  if (!lease) return false;
+  const info = runtimeWriteLeaseInfo.get(lease);
+  return Boolean(
+    info
+    && !info.released
+    && info.key === hermesRuntimeAccessKey(workspaceId, agentId),
+  );
+}
+
+/**
+ * Admit a request that can mutate a Hermes volume or its paired conversation
+ * records. A volume clone closes this shared gate before it queues lifecycle
+ * work, so already-admitted requests can drain without deadlocking on
+ * `ensureHermesRuntimeReady`, while new requests fail fast.
+ */
+export function acquireHermesRuntimeWriteLease(
+  workspaceId: string,
+  agentId: string,
+): HermesRuntimeWriteLease | null {
+  const state = getHermesRuntimeAccessState(workspaceId, agentId);
+  if (state.copyInProgress || state.pendingCopies > 0) return null;
+
+  state.activeWrites += 1;
+  const info: HermesRuntimeWriteLeaseInfo = {
+    key: hermesRuntimeAccessKey(workspaceId, agentId),
+    released: false,
+  };
+  const lease: HermesRuntimeWriteLease = {
+    release: () => {
+      if (info.released) return;
+      info.released = true;
+      state.activeWrites -= 1;
+      if (state.activeWrites === 0) {
+        state.resolveDrained?.();
+        state.drained = undefined;
+        state.resolveDrained = undefined;
+      }
+      clearHermesRuntimeAccessStateIfIdle(workspaceId, agentId, state);
+    },
+  };
+  runtimeWriteLeaseInfo.set(lease, info);
+  return lease;
+}
+
+function reserveHermesRuntimeCopyLease(
+  workspaceId: string,
+  agentId: string,
+): HermesRuntimeAccessState {
+  const state = getHermesRuntimeAccessState(workspaceId, agentId);
+  state.pendingCopies += 1;
+  return state;
+}
+
+function cancelHermesRuntimeCopyReservation(
+  workspaceId: string,
+  agentId: string,
+  state: HermesRuntimeAccessState,
+) {
+  state.pendingCopies -= 1;
+  clearHermesRuntimeAccessStateIfIdle(workspaceId, agentId, state);
+}
+
+async function activateHermesRuntimeCopyLease(
+  workspaceId: string,
+  agentId: string,
+  state: HermesRuntimeAccessState,
+): Promise<() => void> {
+  while (state.copyInProgress) {
+    if (!state.available) {
+      state.available = new Promise<void>((resolve) => {
+        state.resolveAvailable = resolve;
+      });
+    }
+    await state.available;
+  }
+  state.pendingCopies -= 1;
+  state.copyInProgress = true;
+
+  if (state.activeWrites > 0) {
+    if (!state.drained) {
+      state.drained = new Promise<void>((resolve) => {
+        state.resolveDrained = resolve;
+      });
+    }
+    await state.drained;
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    state.copyInProgress = false;
+    state.resolveAvailable?.();
+    state.available = undefined;
+    state.resolveAvailable = undefined;
+    clearHermesRuntimeAccessStateIfIdle(workspaceId, agentId, state);
+  };
+}
+
+async function acquireHermesRuntimePairCopyLeases(
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+): Promise<() => void> {
+  const agentIds = [sourceAgentId, targetAgentId].sort();
+  // Reserve both gates synchronously before awaiting either drain. This is
+  // what makes the barrier atomic from callers' perspective: no new write can
+  // sneak into the second runtime while the first one is still draining.
+  const reservations = agentIds.map((agentId) => ({
+    agentId,
+    state: reserveHermesRuntimeCopyLease(workspaceId, agentId),
+  }));
+  const releases: Array<() => void> = [];
+  try {
+    for (const reservation of reservations) {
+      releases.push(await activateHermesRuntimeCopyLease(
+        workspaceId,
+        reservation.agentId,
+        reservation.state,
+      ));
+    }
+  } catch (error) {
+    for (const release of releases.reverse()) release();
+    for (const reservation of reservations.slice(releases.length)) {
+      cancelHermesRuntimeCopyReservation(workspaceId, reservation.agentId, reservation.state);
+    }
+    throw error;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const release of releases.reverse()) release();
+  };
+}
+
+type HermesOperationAccess = {
+  bypassRuntimeAccessGate?: boolean;
+  writeLease?: HermesRuntimeWriteLease;
+};
+
 function enqueueHermesOperation<T>(
   workspaceId: string,
   agentId: string,
   rejected: T,
   operation: () => Promise<T>,
+  access: HermesOperationAccess = {},
 ): Promise<T> {
+  if (
+    !access.bypassRuntimeAccessGate
+    && runtimeAccessIsClosed(workspaceId, agentId)
+    && !holdsHermesRuntimeWriteLease(workspaceId, agentId, access.writeLease)
+  ) return Promise.resolve(rejected);
   const releaseWorkspaceOperation = beginWorkspaceOperation(workspaceId);
   if (!releaseWorkspaceOperation) return Promise.resolve(rejected);
   const queues = globalRuntime.__hermesOperationQueues ??= new Map();
@@ -204,6 +432,35 @@ function enqueueHermesOperation<T>(
     if (queues.get(key) === tail) queues.delete(key);
     releaseWorkspaceOperation();
   });
+}
+
+/**
+ * Acquire both runtime queues in a stable order. A volume copy temporarily
+ * stops the source and prepares the target, so it must not race a sync,
+ * readiness check, or cleanup on either agent.
+ */
+function enqueueHermesPairOperation<T>(
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+  rejected: T,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (sourceAgentId === targetAgentId) return Promise.resolve(rejected);
+  const [firstAgentId, secondAgentId] = [sourceAgentId, targetAgentId].sort();
+  return enqueueHermesOperation(
+    workspaceId,
+    firstAgentId,
+    rejected,
+    () => enqueueHermesOperation(
+      workspaceId,
+      secondAgentId,
+      rejected,
+      operation,
+      { bypassRuntimeAccessGate: true },
+    ),
+    { bypassRuntimeAccessGate: true },
+  );
 }
 
 function dockerEnv(): NodeJS.ProcessEnv {
@@ -425,6 +682,295 @@ async function updateRuntimeState(
   await db.agentRuntime.updateMany({ where: { id: runtimeId, workspaceId }, data });
 }
 
+export type HermesRuntimeVolumeCopyResult<T = undefined> =
+  | {
+      status: 'copied';
+      data?: T;
+      // A source restart failure must not turn a completed target copy into a
+      // false negative. The source runtime is marked with this error as well.
+      sourceRestartError?: string;
+    }
+  | {
+      status: 'error';
+      error: string;
+    };
+
+function copyErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim().slice(0, 4000) || 'Could not copy the Hermes runtime volume.';
+}
+
+function isMissingDockerVolume(error: unknown): boolean {
+  return /no such volume/i.test(copyErrorMessage(error));
+}
+
+/**
+ * Copies the persistent data volume between two workspace-owned Hermes
+ * runtimes. `afterCopy` runs while the source is quiesced, after its volume
+ * is copied but before it is resumed. Callers use it to atomically map
+ * database records (conversations and attachments) to the copied files.
+ * The caller must run syncHermesRuntime for the target afterwards: sync
+ * regenerates the target's runtime-scoped MCP token, provider projection, and
+ * ToolPlane-managed skills.
+ */
+export async function copyHermesRuntimeVolume<T = undefined>(
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+  afterCopy?: () => Promise<T>,
+): Promise<HermesRuntimeVolumeCopyResult<T>> {
+  const invalid: HermesRuntimeVolumeCopyResult<T> = {
+    status: 'error' as const,
+    error: 'Source and target must be distinct Hermes agents in this workspace.',
+  };
+  if (sourceAgentId === targetAgentId) return invalid;
+
+  // Close and drain the access gates *before* taking either lifecycle queue.
+  // An admitted chat can still call ensure with its lease, whereas a new
+  // readiness/sync request cannot get in front of the pending copy.
+  const releaseCopyLeases = await acquireHermesRuntimePairCopyLeases(
+    workspaceId,
+    sourceAgentId,
+    targetAgentId,
+  );
+  try {
+    return await enqueueHermesPairOperation(
+      workspaceId,
+      sourceAgentId,
+      targetAgentId,
+      invalid,
+      () => copyHermesRuntimeVolumeUnlocked(workspaceId, sourceAgentId, targetAgentId, afterCopy),
+    );
+  } finally {
+    releaseCopyLeases();
+  }
+}
+
+async function copyHermesRuntimeVolumeUnlocked<T>(
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+  afterCopy?: () => Promise<T>,
+): Promise<HermesRuntimeVolumeCopyResult<T>> {
+  const [sourceAgent, targetAgent] = await Promise.all([
+    getAgent(workspaceId, sourceAgentId),
+    getAgent(workspaceId, targetAgentId),
+  ]);
+  const sourceRuntime = sourceAgent?.runtime;
+  const targetRuntime = targetAgent?.runtime;
+  if (
+    !sourceAgent
+    || !targetAgent
+    || !sourceRuntime
+    || !targetRuntime
+    || sourceAgent.workspaceId !== workspaceId
+    || targetAgent.workspaceId !== workspaceId
+    || sourceRuntime.workspaceId !== workspaceId
+    || targetRuntime.workspaceId !== workspaceId
+    || sourceRuntime.kind !== HERMES_RUNTIME_KIND
+    || targetRuntime.kind !== HERMES_RUNTIME_KIND
+    || sourceRuntime.sandbox.workspaceId !== workspaceId
+    || targetRuntime.sandbox.workspaceId !== workspaceId
+    || sourceRuntime.sandbox.deployment.workspaceId !== workspaceId
+    || targetRuntime.sandbox.deployment.workspaceId !== workspaceId
+    || sourceRuntime.sandbox.deployment.source !== 'sandbox'
+    || targetRuntime.sandbox.deployment.source !== 'sandbox'
+  ) {
+    return {
+      status: 'error',
+      error: 'Source and target must be workspace-owned Hermes runtimes.',
+    };
+  }
+
+  const sourceDeployment = sourceRuntime.sandbox.deployment;
+  const targetDeployment = targetRuntime.sandbox.deployment;
+  const sourceStatus = effectiveStatus(sourceDeployment.id, sourceDeployment.status);
+  const targetStatus = effectiveStatus(targetDeployment.id, targetDeployment.status);
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceDeployment.status)
+    || BLOCKED_SANDBOX_LIFECYCLE_STATES.has(sourceStatus)) {
+    return { status: 'error', error: SANDBOX_LIFECYCLE_ERROR };
+  }
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetDeployment.status)
+    || BLOCKED_SANDBOX_LIFECYCLE_STATES.has(targetStatus)) {
+    return { status: 'error', error: 'The target Hermes sandbox has a pending lifecycle operation.' };
+  }
+
+  // The operation is intentionally destructive to its destination volume on a
+  // failed copy. Only accept an untouched runtime created for this clone.
+  if (
+    targetDeployment.status !== 'stopped'
+    || targetStatus !== 'stopped'
+    || targetRuntime.configHash !== null
+    || targetRuntime.lastSyncedAt !== null
+  ) {
+    return {
+      status: 'error',
+      error: 'The target Hermes runtime must be newly created and stopped before copying its volume.',
+    };
+  }
+
+  const sourceWasLive = sourceStatus === 'running' || sourceStatus === 'provisioning';
+  const sourceVolume = sandboxVolumeName(sourceRuntime.sandboxId);
+  const targetVolume = sandboxVolumeName(targetRuntime.sandboxId);
+  const targetRuntimeStatus = targetAgent.modelProviders.length > 0
+    ? 'stopped'
+    : 'setup_required';
+  let sourceQuiesceAttempted = false;
+  let result: HermesRuntimeVolumeCopyResult<T>;
+
+  try {
+    const [targetDeploymentUpdate, targetRuntimeUpdate] = await Promise.all([
+      db.deployment.updateMany({
+        where: {
+          id: targetDeployment.id,
+          workspaceId,
+          source: 'sandbox',
+          status: 'stopped',
+        },
+        data: { status: 'copying' },
+      }),
+      db.agentRuntime.updateMany({
+        where: {
+          id: targetRuntime.id,
+          workspaceId,
+          agentId: targetAgentId,
+          sandboxId: targetRuntime.sandboxId,
+          kind: HERMES_RUNTIME_KIND,
+        },
+        data: { status: 'copying', lastError: null },
+      }),
+    ]);
+    if (targetDeploymentUpdate.count !== 1 || targetRuntimeUpdate.count !== 1) {
+      throw new Error('The target Hermes runtime changed before its volume could be copied.');
+    }
+    const sourceRuntimeUpdate = await db.agentRuntime.updateMany({
+      where: {
+        id: sourceRuntime.id,
+        workspaceId,
+        agentId: sourceAgentId,
+        sandboxId: sourceRuntime.sandboxId,
+        kind: HERMES_RUNTIME_KIND,
+      },
+      data: { status: 'copying' },
+    });
+    if (sourceRuntimeUpdate.count !== 1) {
+      throw new Error('The source Hermes runtime changed before its volume could be copied.');
+    }
+
+    // From this point the source runtime is marked unavailable even if a stop
+    // command fails, so the recovery branch below restores a coherent status.
+    sourceQuiesceAttempted = true;
+    // Persist the maintenance state so requests from another app process are
+    // rejected while this process holds the in-memory paired runtime locks.
+    await killProcess(sourceDeployment.id, { finalStatus: 'copying' });
+    await stopDockerSandboxContainer(sourceRuntime.sandboxId);
+    try {
+      await copyDockerVolume(sourceVolume, targetVolume);
+    } catch (error) {
+      // A fresh Hermes agent has no volume until its first projection sync.
+      // Treat that as an empty, valid source snapshot rather than a failed
+      // clone. Any other Docker error remains fatal.
+      if (!isMissingDockerVolume(error)) throw error;
+    }
+    const data = afterCopy ? await afterCopy() : undefined;
+
+    const [targetDeploymentReady, targetRuntimeReady] = await Promise.all([
+      db.deployment.updateMany({
+        where: { id: targetDeployment.id, workspaceId, source: 'sandbox' },
+        data: { status: 'stopped' },
+      }),
+      db.agentRuntime.updateMany({
+        where: { id: targetRuntime.id, workspaceId, agentId: targetAgentId },
+        data: {
+          status: targetRuntimeStatus,
+          configVersion: 1,
+          configHash: null,
+          lastSyncedAt: null,
+          lastStartedAt: null,
+          lastError: null,
+        },
+      }),
+    ]);
+    if (targetDeploymentReady.count !== 1 || targetRuntimeReady.count !== 1) {
+      throw new Error('The copied Hermes runtime could not be finalized.');
+    }
+    result = data === undefined ? { status: 'copied' } : { status: 'copied', data };
+  } catch (error) {
+    const copyError = copyErrorMessage(error);
+    let cleanupError: string | null = null;
+    try {
+      await removeDockerSandboxRuntimeStrict(targetRuntime.sandboxId, targetVolume);
+    } catch (cleanup) {
+      cleanupError = copyErrorMessage(cleanup);
+    }
+    const message = cleanupError
+      ? `${copyError} Cleanup of the partial target volume also failed: ${cleanupError}`.slice(0, 4000)
+      : copyError;
+    const cleanupSucceeded = cleanupError === null;
+    await Promise.all([
+      db.deployment.updateMany({
+        where: { id: targetDeployment.id, workspaceId, source: 'sandbox' },
+        data: { status: cleanupSucceeded ? 'stopped' : 'copy_failed' },
+      }).catch(() => undefined),
+      db.agentRuntime.updateMany({
+        where: { id: targetRuntime.id, workspaceId, agentId: targetAgentId },
+        data: cleanupSucceeded
+          ? {
+              status: targetRuntimeStatus,
+              configHash: null,
+              lastSyncedAt: null,
+              lastStartedAt: null,
+              lastError: message,
+            }
+          : { status: 'error', lastError: message },
+      }).catch(() => undefined),
+    ]);
+    result = { status: 'error', error: message };
+  }
+
+  if (!sourceQuiesceAttempted) return result;
+  if (!sourceWasLive) {
+    const sourceRuntimeStatus = sourceRuntime.status === 'setup_required' || sourceRuntime.status === 'error'
+      ? sourceRuntime.status
+      : 'stopped';
+    await Promise.all([
+      db.deployment.updateMany({
+        where: { id: sourceDeployment.id, workspaceId, source: 'sandbox' },
+        data: { status: sourceDeployment.status === 'error' ? 'error' : 'stopped' },
+      }).catch(() => undefined),
+      updateRuntimeState(workspaceId, sourceRuntime.id, { status: sourceRuntimeStatus }).catch(() => undefined),
+    ]);
+    return result;
+  }
+  try {
+    await startProcess(sourceDeployment.id, resolveSpawnSpec(sourceDeployment), {
+      awaitReady: false,
+      workspaceId,
+    });
+    await updateRuntimeState(workspaceId, sourceRuntime.id, {
+      status: 'provisioning',
+      lastError: null,
+    }).catch(() => undefined);
+  } catch (error) {
+    const restartError = copyErrorMessage(error);
+    const message = `The source Hermes runtime could not be restarted after a volume copy: ${restartError}`
+      .slice(0, 4000);
+    await Promise.all([
+      db.deployment.updateMany({
+        where: { id: sourceDeployment.id, workspaceId, source: 'sandbox' },
+        data: { status: 'error' },
+      }).catch(() => undefined),
+      updateRuntimeState(workspaceId, sourceRuntime.id, {
+        status: 'error',
+        lastError: message,
+      }).catch(() => undefined),
+    ]);
+    if (result.status === 'copied') return { ...result, sourceRestartError: message };
+    return { status: 'error', error: `${result.error} ${message}`.slice(0, 4000) };
+  }
+  return result;
+}
+
 export async function syncHermesRuntime(
   workspaceId: string,
   agentId: string,
@@ -570,12 +1116,14 @@ async function waitForHermesDashboard(deploymentId: string): Promise<number | nu
 export async function ensureHermesRuntimeReady(
   workspaceId: string,
   agentId: string,
+  options: { writeLease?: HermesRuntimeWriteLease } = {},
 ): Promise<{ port?: number; error?: string }> {
   return enqueueHermesOperation(
     workspaceId,
     agentId,
     { error: SANDBOX_LIFECYCLE_ERROR },
     () => ensureHermesRuntimeReadyUnlocked(workspaceId, agentId),
+    { writeLease: options.writeLease },
   );
 }
 

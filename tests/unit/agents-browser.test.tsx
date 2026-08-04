@@ -189,16 +189,71 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    const cloneButton = screen.getByRole('button', { name: 'Clone agent' });
-    const cloneForm = cloneButton.closest('form');
+    await user.click(screen.getByRole('button', { name: 'Clone agent' }));
+    const cloneDialog = screen.getByRole('dialog', { name: 'Clone agent' });
+    const cloneForm = within(cloneDialog).getByRole('button', { name: 'Clone agent' }).closest('form');
     expect(cloneForm).not.toBeNull();
     expect(cloneForm?.querySelector<HTMLInputElement>('input[name="workspace"]')).toHaveValue('acme');
     expect(cloneForm?.querySelector<HTMLInputElement>('input[name="agentId"]')).toHaveValue('agent-1');
     expect(cloneForm?.querySelector<HTMLInputElement>('input[name="cloneName"]')).toHaveValue('Researcher copy');
+    expect(cloneForm?.querySelector<HTMLInputElement>('input[name="cloneOptions"]')).toHaveValue('1');
+    expect(within(cloneDialog).getByRole('checkbox', { name: /^MCP bindings/ })).toBeChecked();
+    expect(within(cloneDialog).getByRole('checkbox', { name: /^Conversations and messages/ })).not.toBeChecked();
+
+    await user.click(within(cloneDialog).getByRole('button', { name: 'Select complete clone' }));
+    expect(within(cloneDialog).getByRole('checkbox', { name: /^Conversations and messages/ })).toBeChecked();
+    await user.click(within(cloneDialog).getByRole('button', { name: 'Close' }));
 
     await user.click(screen.getByRole('button', { name: 'Delete agent' }));
     expect(screen.getByText('Delete this agent and all its conversations?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toHaveAttribute('type', 'submit');
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toHaveFocus();
+  });
+
+  it('offers Hermes state options and includes them in a complete clone', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[
+          {
+            id: 'agent-hermes',
+            name: 'Hermes researcher',
+            providerName: null,
+            providerNames: ['OpenAI'],
+            model: null,
+            toolCount: 0,
+            subAgentCount: 0,
+            conversationCount: 2,
+            runtimeKind: 'hermes',
+            runtimeStatus: 'stopped',
+          },
+        ]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Clone agent' }));
+    const cloneDialog = screen.getByRole('dialog', { name: 'Clone agent' });
+    const environment = within(cloneDialog).getByRole('checkbox', { name: /^Hermes environment variables/ });
+    const volume = within(cloneDialog).getByRole('checkbox', { name: /^Hermes persistent volume/ });
+    const conversations = within(cloneDialog).getByRole('checkbox', { name: /^Conversations and messages/ });
+
+    expect(environment).not.toBeChecked();
+    expect(volume).not.toBeChecked();
+    expect(conversations).not.toBeChecked();
+    await user.click(volume);
+    expect(conversations).toBeChecked();
+    expect(screen.getByText('Conversations are included to preserve attachment and Hermes session references.')).toBeInTheDocument();
+    await user.click(within(cloneDialog).getByRole('button', { name: 'Select complete clone' }));
+    expect(environment).toBeChecked();
+    expect(volume).toBeChecked();
+
+    await user.click(within(cloneDialog).getByRole('button', { name: 'Clone agent' }));
+    await waitFor(() => expect(actions.cloneAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.cloneAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.get('copyConversations')).toBe('on');
+    expect(formData.get('copyHermesEnvironment')).toBe('on');
+    expect(formData.get('copyHermesVolume')).toBe('on');
   });
 });

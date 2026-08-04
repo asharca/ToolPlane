@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   resolveRequestUser: vi.fn(),
   getAgentForRequest: vi.fn(),
+  acquireHermesRuntimeWriteLease: vi.fn(),
+  releaseHermesRuntimeWriteLease: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
   systemSettingFindUnique: vi.fn(),
   conversationFindFirst: vi.fn(),
@@ -17,7 +19,10 @@ vi.mock('@/lib/agents/queries', () => ({
   getAgentForRequest: mocks.getAgentForRequest,
 }));
 vi.mock('@/lib/agents/hermes/runtime', () => ({
+  acquireHermesRuntimeWriteLease: mocks.acquireHermesRuntimeWriteLease,
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
+  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR:
+    'The Hermes runtime is temporarily unavailable while a clone is in progress.',
 }));
 vi.mock('@/lib/db', () => ({
   db: {
@@ -53,6 +58,9 @@ describe('Agent attachment upload route', () => {
     });
     mocks.conversationFindFirst.mockResolvedValue({ id: 'conv-1' });
     mocks.systemSettingFindUnique.mockResolvedValue(null);
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({
+      release: mocks.releaseHermesRuntimeWriteLease,
+    });
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
     mocks.attachmentCreate.mockImplementation(async ({ data }) => ({
       id: 'attachment-1',
@@ -102,6 +110,19 @@ describe('Agent attachment upload route', () => {
 
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({ error: 'Attachment exceeds the 100 bytes limit.' });
+    expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
+    expect(mocks.releaseHermesRuntimeWriteLease).toHaveBeenCalledOnce();
+  });
+
+  it('rejects uploads while a full clone holds the Hermes runtime', async () => {
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue(null);
+
+    const response = await POST(uploadRequest(), context);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: 'The Hermes runtime is temporarily unavailable while a clone is in progress.',
+    });
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });
 
