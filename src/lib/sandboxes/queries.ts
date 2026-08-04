@@ -27,6 +27,7 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
           id: true,
           name: true,
           slug: true,
+          config: true,
           deploymentId: true,
           deployment: { select: { status: true } },
         },

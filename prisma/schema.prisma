@@ -78,6 +78,12 @@ model ApiToken {
   @@index([toolkitId])
 }
 
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model Client {
   id          String     @id @default(cuid())
   slug        String     @unique

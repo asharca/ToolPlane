@@ -40,8 +40,6 @@ import {
 } from '@/lib/agents/hermes/message-segments';
 
 const MAX_ATTACHMENTS = 5;
-const MAX_ATTACHMENT_BYTES = 10_000_000;
-const MAX_INLINE_IMAGE_BYTES = 5_000_000;
 const ATTACHMENT_ERROR_PART = 'data-toolplane-attachment-error';
 const SOFT_BREAK_REMARK_PLUGINS = [
   ...Object.values(defaultRemarkPlugins),
@@ -56,15 +54,6 @@ type DraftSnapshot = {
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.readAsDataURL(file);
-  });
 }
 
 function displayUserText(text: string) {
@@ -342,6 +331,7 @@ function AgentThread({
   error,
   onClearAttachmentError,
   ready,
+  supportsAttachments,
   submitError,
   uploadingAttachments,
 }: {
@@ -351,6 +341,7 @@ function AgentThread({
   error?: Error;
   onClearAttachmentError: () => void;
   ready: boolean;
+  supportsAttachments: boolean;
   submitError: string | null;
   uploadingAttachments: boolean;
 }) {
@@ -420,7 +411,7 @@ function AgentThread({
           <div className="flex items-center justify-between gap-3 border-t border-border/70 px-2 pt-2">
             <div className="flex min-w-0 items-center gap-2">
               <AttachmentPickerButton
-                disabled={!ready || creatingConversation || uploadingAttachments}
+                disabled={!ready || !supportsAttachments || creatingConversation || uploadingAttachments}
                 onClearError={onClearAttachmentError}
               />
               <div className="min-w-0 truncate text-xs text-muted-foreground">
@@ -489,8 +480,8 @@ function useAgentAttachmentAdapter({
   return useMemo<AttachmentAdapter>(() => ({
     accept: '*',
     async add({ file }) {
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        const message = t('attachmentTooLarge', { name: file.name });
+      if (!isHermes) {
+        const message = t('attachmentRuntimeRequired');
         onError(message);
         throw new Error(message);
       }
@@ -531,47 +522,38 @@ function useAgentAttachmentAdapter({
       try {
         const conversationId = sendConversationIdRef.current ?? await ensureConversation();
         sendConversationIdRef.current = conversationId;
-        const content: AttachmentContentPart[] = [];
-        if (isHermes) {
-          const body = new FormData();
-          body.set('conversationId', conversationId);
-          body.set('file', attachment.file);
-          const response = await fetch(`/api/v1/agents/${agentId}/attachments`, {
-            method: 'POST',
-            body,
-          });
-          const result = await response.json().catch(() => ({})) as {
-            name?: string;
-            runtimePath?: string;
-            error?: string;
-          };
-          if (!response.ok || !result.runtimePath) {
-            throw new Error(result.error || t('attachmentUploadFailed'));
-          }
-          const name = result.name || attachment.name;
-          content.push({
-            type: 'text',
-            text: `Uploaded attachment in the Hermes workspace:\n- ${name}: ${result.runtimePath}`,
-          });
-          if (
-            attachment.file.type.startsWith('image/')
-            && attachment.file.size <= MAX_INLINE_IMAGE_BYTES
-          ) {
-            content.push({
-              type: 'file',
-              data: await fileToDataUrl(attachment.file),
-              mimeType: attachment.contentType || 'application/octet-stream',
-              filename: attachment.name,
-            });
-          }
-        } else {
-          content.push({
-            type: 'file',
-            data: await fileToDataUrl(attachment.file),
-            mimeType: attachment.contentType || 'application/octet-stream',
-            filename: attachment.name,
-          });
+        if (!isHermes) throw new Error(t('attachmentRuntimeRequired'));
+        const query = new URLSearchParams({
+          conversationId,
+          filename: attachment.file.name,
+        });
+        const response = await fetch(`/api/v1/agents/${agentId}/attachments?${query}`, {
+          method: 'POST',
+          headers: {
+            'content-type': attachment.contentType || 'application/octet-stream',
+          },
+          body: attachment.file,
+        });
+        const result = await response.json().catch(() => ({})) as {
+          name?: string;
+          runtimePath?: string;
+          size?: number;
+          error?: string;
+        };
+        if (!response.ok || !result.runtimePath) {
+          throw new Error(result.error || t('attachmentUploadFailed'));
         }
+        const name = result.name || attachment.name;
+        const content: AttachmentContentPart[] = [{
+          type: 'text',
+          text: [
+            'Attachment stored in the Hermes workspace (the file content is not included in the conversation):',
+            `- name: ${name}`,
+            `- path: ${result.runtimePath}`,
+            `- size: ${result.size ?? attachment.file.size} bytes`,
+            `- media type: ${attachment.contentType || 'application/octet-stream'}`,
+          ].join('\n'),
+        }];
 
         return {
           ...attachment,
@@ -734,6 +716,7 @@ export function AgentConversation({
         error={chat.error}
         onClearAttachmentError={clearSubmitError}
         ready={ready}
+        supportsAttachments={runtimeKind === 'hermes'}
         submitError={submitError}
         uploadingAttachments={uploadingAttachments}
       />

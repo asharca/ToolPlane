@@ -33,6 +33,30 @@ Agent
 
 没有选择 provider 时，runtime 保持 `setup_required`，但 Agent、Sandbox 和配置卷已经创建。选择至少一个 provider 并保存后，ToolPlane 同步 provider inventory 并启动 gateway。
 
+### 导入已有 `.hermes` 主目录
+
+在 **Sandboxes → New sandbox → Import .hermes archive** 中可以上传已有 Hermes
+主目录的 ZIP 备份。ZIP 可以以单个 `.hermes/` 目录为根，也可以直接以该目录
+的内容为根。压缩包大小由 **管理后台 → 系统设置** 配置，默认 48 MiB，
+可在 1–60 MiB 之间调整。60 MiB 是当前 64 MiB Server Action 请求上限下的
+固定安全上限；如需更大的归档，需要改用流式上传入口并同步调整部署代理限制。
+
+导入不会创建一个脱离 Agent 的通用 Sandbox；它会创建同样的
+`Agent → AgentRuntime → Sandbox(kind=hermes) → Deployment → named volume`
+链路，并把解包后的内容写入该 Agent 私有的 `/opt/data` volume。这样已有的
+sessions、memories、workspace、本地 skills 和 Hermes 原生设置都可继续由
+Hermes runtime 生命周期管理。
+
+归档会在写入 Docker volume 前检查 ZIP 路径、重复/Unicode 冲突、链接/特殊文件、
+加密条目、权限、文件数、大小、压缩比和解压时间；归档内容不会进入数据库或错误
+响应。ToolPlane 会丢弃自身受管的 `.toolplane-env-keys.json`、
+`skills/toolplane-agent/` 和 `skill-bundles/toolplane-agent.yaml`，随后由首次
+同步重新生成。
+
+导入后的 runtime 默认保持停止且没有自动选择 provider。只有在新 Agent 设置中
+确认模型配置并显式启动后，导入的 plugin、hook、MCP 或其他 Hermes 配置才可能运行。
+因此只能上传自己信任的归档；归档中可能包含凭据、会话和可执行配置。
+
 ## 3. 配置投影
 
 ToolPlane 根据 Agent 当前授权关系生成 Hermes 的 `/opt/data` 内容：
@@ -225,10 +249,12 @@ POST /api/v1/agents/:agentId/attachments
 
 - 必须通过用户/session token 授权，并验证 Agent workspace。
 - `conversationId` 必须属于 URL 中的 Agent。
-- 单文件最大 10 MB。
+- 文件以流式方式写入运行时，不经过 Base64/JSON，也不把文件内容放入模型上下文。
+- 单文件默认最大 1 GB；管理员可在 `/admin/settings` 修改，数据库覆盖值优先于 `TOOLPLANE_MAX_ATTACHMENT_BYTES`，服务端始终保留上限以防止磁盘耗尽。
 - 文件写入 `/opt/data/workspace/attachments/<conversation>/...`。
 - `AgentAttachment` 保存 workspace、Agent、conversation、runtime、MIME、大小和 storage path。
-- 图片不超过 5 MB 时也以内联视觉 part 发送；其他文件通过 runtime path 交给 Hermes 的文件/terminal 工具读取。
+- 对话只发送文件名、大小、MIME 和 runtime path；图片和普通文件都不会作为 inline part 直接发送给模型。
+- 若部署在 Nginx 等反向代理后，代理的请求体上限需不小于此值，并应关闭请求缓冲，才能保持端到端流式上传。
 
 ## 6. 生命周期
 

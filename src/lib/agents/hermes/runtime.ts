@@ -640,6 +640,40 @@ async function installProjection(params: {
   }
 }
 
+// Importing an existing Hermes home must go through `docker cp`, not a bind
+// mount: production uses a remote Docker socket proxy, so app-container paths
+// are not paths on the Docker daemon host. The staged directory is already
+// sanitized by the archive importer before it reaches this helper.
+export async function copyHermesArchiveToVolume(params: {
+  directory: string;
+  image: string;
+  sandboxId: string;
+}): Promise<void> {
+  const volume = sandboxVolumeName(params.sandboxId);
+  const initContainer = sandboxSyncContainerName(params.sandboxId);
+  await runDocker(['volume', 'create', volume]);
+  await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+
+  const installCommand = [
+    'set -eu',
+    'mkdir -p /opt/data',
+    'cp -R /tmp/toolplane-import/. /opt/data/',
+    'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data; fi',
+  ].join(' && ');
+  await runDocker([
+    'create', '--name', initContainer, '--network', 'none',
+    '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
+    '--security-opt', 'no-new-privileges',
+    '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
+  ]);
+  try {
+    await runDocker(['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`]);
+    await runDocker(['start', '--attach', initContainer]);
+  } finally {
+    await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+  }
+}
+
 async function updateRuntimeState(
   workspaceId: string,
   runtimeId: string,

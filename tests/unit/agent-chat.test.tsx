@@ -401,10 +401,11 @@ describe('AgentChat', () => {
           headers: { 'content-type': 'application/json' },
         });
       }
-      if (url.endsWith('/attachments')) {
+      if (url.includes('/attachments?')) {
         return new Response(JSON.stringify({
           name: 'uploaded.txt',
           runtimePath: `/workspace/${apiMocks.fetch.mock.calls.length}.txt`,
+          size: 3,
         }), {
           status: 201,
           headers: { 'content-type': 'application/json' },
@@ -419,10 +420,10 @@ describe('AgentChat', () => {
     expect(fileInput).not.toBeNull();
     await userEvent.upload(fileInput!, [
       new File(['one'], 'one.txt', { type: 'text/plain' }),
-      new File(['two'], 'two.txt', { type: 'text/plain' }),
+      new File(['image'], 'two.png', { type: 'image/png' }),
     ]);
     expect(await screen.findByText('one.txt')).toBeInTheDocument();
-    expect(screen.getByText('two.txt')).toBeInTheDocument();
+    expect(screen.getByText('two.png')).toBeInTheDocument();
 
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Review these');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -432,10 +433,11 @@ describe('AgentChat', () => {
       ([input]) => String(input).endsWith('/conversations'),
     );
     const attachmentCalls = apiMocks.fetch.mock.calls.filter(
-      ([input]) => String(input).endsWith('/attachments'),
+      ([input]) => String(input).includes('/attachments?'),
     );
     expect(conversationCalls).toHaveLength(1);
     expect(attachmentCalls).toHaveLength(2);
+    expect(attachmentCalls.every(([, init]) => init?.body instanceof File)).toBe(true);
     expect(chatMocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         role: 'user',
@@ -443,16 +445,18 @@ describe('AgentChat', () => {
           { type: 'text', text: 'Review these' },
           expect.objectContaining({
             type: 'text',
-            text: expect.stringContaining('Uploaded attachment in the Hermes workspace'),
+            text: expect.stringContaining('the file content is not included in the conversation'),
           }),
         ]),
       }),
       expect.objectContaining({ body: { conversationId: 'conv-new' } }),
     );
+    const sentMessage = chatMocks.sendMessage.mock.calls[0]?.[0] as { parts?: Array<{ type?: string }> };
+    expect(sentMessage.parts?.some((part) => part.type === 'file')).toBe(false);
   });
 
   it('limits the assistant-ui composer to five attachments without an unhandled rejection', async () => {
-    renderChat();
+    renderChat({ runtime: hermesRuntime });
 
     await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -466,27 +470,30 @@ describe('AgentChat', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('up to 5 files');
   });
 
-  it('keeps a batch attachment validation error after adding a valid file', async () => {
-    renderChat();
-    const oversized = new File(['large'], 'large.txt', { type: 'text/plain' });
-    Object.defineProperty(oversized, 'size', { value: 10_000_001 });
+  it('accepts files larger than the old 10 MB client limit for streamed upload', async () => {
+    renderChat({ runtime: hermesRuntime });
+    const large = new File(['large'], 'large.txt', { type: 'text/plain' });
+    Object.defineProperty(large, 'size', { value: 200_000_000 });
 
     await userEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
-    await userEvent.upload(fileInput!, [
-      oversized,
-      new File(['valid'], 'valid.txt', { type: 'text/plain' }),
-    ]);
+    await userEvent.upload(fileInput!, large);
 
-    expect(await screen.findByText('valid.txt')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('large.txt exceeds the 10 MB');
+    expect(await screen.findByText('large.txt')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('keeps attachments disabled when no external Hermes workspace exists', () => {
+    renderChat();
+
+    expect(screen.getByRole('button', { name: 'Add attachment' })).toBeDisabled();
   });
 
   it('pins an attachment send to the conversation selected when upload starts', async () => {
     let finishUpload!: (response: Response) => void;
     apiMocks.fetch.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith('/attachments')) {
+      if (url.includes('/attachments?')) {
         return new Promise<Response>((resolve) => {
           finishUpload = resolve;
         });
@@ -501,8 +508,8 @@ describe('AgentChat', () => {
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Use this file');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
-      '/api/v1/agents/agent-1/attachments',
-      expect.objectContaining({ method: 'POST' }),
+      expect.stringContaining('/api/v1/agents/agent-1/attachments?'),
+      expect.objectContaining({ method: 'POST', body: expect.any(File) }),
     ));
 
     view.rerender(

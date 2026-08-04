@@ -8,6 +8,7 @@ import {
   Building2,
   LayoutDashboard,
   Plug,
+  Settings,
   ShieldCheck,
   Tags,
   Users,
@@ -21,6 +22,7 @@ import { Logo } from '@/components/layout/Logo';
 
 type AdminPageLabelKey =
   | 'adminNavOverview'
+  | 'adminNavSettings'
   | 'adminNavUsers'
   | 'adminNavWorkspaces'
   | 'adminNavMcpServers'
@@ -55,6 +57,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: LayoutDashboard,
         exact: true,
       },
+      { labelKey: 'adminNavSettings', href: '/admin/settings', icon: Settings },
     ],
   },
   {

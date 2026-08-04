@@ -1,5 +1,95 @@
 # Changelog
 
+## [0.15.2](https://github.com/asharca/ToolPlane/releases/tag/v0.15.2) (2026-08-03)
+
+### What's Changed
+* feat: separate public site from workspace marketplace by @renhedata in https://github.com/asharca/ToolPlane/pull/61
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.15.1...v0.15.2
+
+## [0.15.1](https://github.com/asharca/ToolPlane/releases/tag/v0.15.1) (2026-08-03)
+
+### What's Changed
+* test: fix release validation regressions by @asharca in https://github.com/asharca/ToolPlane/pull/1
+* Feat/auto release please by @asharca in https://github.com/asharca/ToolPlane/pull/2
+* feat: invite workspace members by @asharca in https://github.com/asharca/ToolPlane/pull/4
+* Improve agent interface by @asharca in https://github.com/asharca/ToolPlane/pull/7
+* Add Hermes toolkit sync support by @asharca in https://github.com/asharca/ToolPlane/pull/6
+* Rename observability UI copy to logs by @asharca in https://github.com/asharca/ToolPlane/pull/5
+* chore(main): release 0.2.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/8
+* Harden Hermes toolkit sync and uninstall cleanup by @asharca in https://github.com/asharca/ToolPlane/pull/9
+* chore(main): release 0.2.1 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/10
+* chore(main): release 0.2.2 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/11
+* feat: add tp-skills registry sync by @asharca in https://github.com/asharca/ToolPlane/pull/12
+* chore(main): release 0.3.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/13
+* chore(main): release 0.3.1 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/15
+* Extend sandbox env and file actions by @asharca in https://github.com/asharca/ToolPlane/pull/16
+* chore(main): release 0.4.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/17
+* Fix agent system prompt chat message placement by @asharca in https://github.com/asharca/ToolPlane/pull/18
+* fix: Add PowerShell connector support by @asharca in https://github.com/asharca/ToolPlane/pull/19
+* fix: publish connector broker port by @asharca in https://github.com/asharca/ToolPlane/pull/20
+* fix: Streamline UI and source links by @asharca in https://github.com/asharca/ToolPlane/pull/21
+* chore(main): release 0.5.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/22
+* feat: add Hermes-backed agent runtime by @asharca in https://github.com/asharca/ToolPlane/pull/24
+* feat: improve frontend usability and performance by @asharca in https://github.com/asharca/ToolPlane/pull/25
+* fix: let Hermes own its system prompt by @asharca in https://github.com/asharca/ToolPlane/pull/26
+* feat: improve GitHub skill imports and resource selection by @asharca in https://github.com/asharca/ToolPlane/pull/27
+* feat: support cross-platform sandbox connectors by @asharca in https://github.com/asharca/ToolPlane/pull/28
+* chore(main): release 0.6.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/29
+* fix: preserve Hermes assistant message boundaries by @asharca in https://github.com/asharca/ToolPlane/pull/30
+* feat: add user timezone preferences by @asharca in https://github.com/asharca/ToolPlane/pull/31
+* chore(main): release 0.7.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/32
+* feat: support OpenAI Responses providers by @asharca in https://github.com/asharca/ToolPlane/pull/33
+* build: reduce runtime artifact size by @asharca in https://github.com/asharca/ToolPlane/pull/34
+* chore(main): release 0.8.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/35
+* fix: sync Hermes runtime and show action feedback by @asharca in https://github.com/asharca/ToolPlane/pull/36
+* feat: add toolkit management actions by @renhedata in https://github.com/asharca/ToolPlane/pull/38
+* feat: add sandbox clone and snapshots by @renhedata in https://github.com/asharca/ToolPlane/pull/39
+* feat: add agent clone and delete actions by @renhedata in https://github.com/asharca/ToolPlane/pull/37
+* chore(main): release 0.9.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/40
+* feat: support MCP JSON configs by @renhedata in https://github.com/asharca/ToolPlane/pull/41
+* chore(main): release 0.10.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/42
+* Improve model provider management by @renhedata in https://github.com/asharca/ToolPlane/pull/43
+* feat: add MCP management and AI tool exposure by @renhedata in https://github.com/asharca/ToolPlane/pull/45
+* fix: polish console controls and flows by @renhedata in https://github.com/asharca/ToolPlane/pull/44
+* chore(main): release 0.11.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/46
+* Use assistant-ui for agent conversations by @asharca in https://github.com/asharca/ToolPlane/pull/47
+* chore(main): release 0.12.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/48
+* feat: redesign admin console by @asharca in https://github.com/asharca/ToolPlane/pull/49
+* chore(main): release 0.13.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/50
+* feat: let Hermes agents use multiple model providers by @renhedata in https://github.com/asharca/ToolPlane/pull/51
+* chore(main): release 0.14.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/52
+* feat: manage Hermes runtime environment by @renhedata in https://github.com/asharca/ToolPlane/pull/54
+* feat: add agent marketplace and portable cloning by @asharca in https://github.com/asharca/ToolPlane/pull/56
+* feat: add MCP clone and rename actions by @renhedata in https://github.com/asharca/ToolPlane/pull/57
+* fix: stream agent attachments outside model context by @renhedata in https://github.com/asharca/ToolPlane/pull/58
+* chore(main): release 0.15.0 by @github-actions[bot] in https://github.com/asharca/ToolPlane/pull/59
+* fix: make system updates proxy-safe by @renhedata in https://github.com/asharca/ToolPlane/pull/60
+
+### New Contributors
+* @asharca made their first contribution in https://github.com/asharca/ToolPlane/pull/1
+* @github-actions[bot] made their first contribution in https://github.com/asharca/ToolPlane/pull/8
+* @renhedata made their first contribution in https://github.com/asharca/ToolPlane/pull/38
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.1.6...v0.15.1
+
+## [0.15.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.14.0...toolplane-v0.15.0) (2026-07-31)
+
+
+### Features
+
+* add agent marketplace and portable cloning ([#56](https://github.com/asharca/ToolPlane/issues/56)) ([1beda23](https://github.com/asharca/ToolPlane/commit/1beda2310b635988400976bdce0423954c28153b))
+* add MCP clone and rename actions ([1e691ee](https://github.com/asharca/ToolPlane/commit/1e691eee0e397456d4d152e523b350c13fa55a6f))
+* add MCP clone and rename actions ([49968ac](https://github.com/asharca/ToolPlane/commit/49968ac825496ac22b78acfffcf74df8d1f04d54))
+* manage Hermes runtime environment ([#54](https://github.com/asharca/ToolPlane/issues/54)) ([8aa964f](https://github.com/asharca/ToolPlane/commit/8aa964f2f0be6a52c54575a5f1a368e403f2fe3e))
+
+
+### Bug Fixes
+
+* stream agent attachments outside model context ([6a97281](https://github.com/asharca/ToolPlane/commit/6a97281c5247851383af859458a2327883fc0435))
+* stream agent attachments outside model context ([#58](https://github.com/asharca/ToolPlane/issues/58)) ([b641eb5](https://github.com/asharca/ToolPlane/commit/b641eb52d79cee5c0856de00b6393e462ee458f8))
+
 ## [0.14.0](https://github.com/asharca/ToolPlane/compare/toolplane-v0.13.0...toolplane-v0.14.0) (2026-07-17)
 
 

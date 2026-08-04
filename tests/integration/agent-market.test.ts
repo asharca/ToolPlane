@@ -684,7 +684,7 @@ describe.sequential('agent marketplace releases and installs', () => {
       listingId: published.listing.id,
       releaseId: published.release.id,
       reviewedById: sourceUserId,
-      reviewNote: 'Approve the Hermes fixture before materializing it.',
+      reviewNote: 'Approved Hermes release for installation test.',
     });
 
     const idempotencyKey = `hermes-market-install-${stamp}`;

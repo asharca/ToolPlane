@@ -8,6 +8,12 @@ describe('deploymentLabel', () => {
     ).toEqual({ name: 'Stripe', source: 'catalog', ref: null });
   });
 
+  it('uses a deployment-specific name after a catalog deployment is renamed', () => {
+    expect(
+      deploymentLabel({ serverId: 's1', server: { name: 'Stripe' }, name: 'Payments', source: null, sourceRef: null }),
+    ).toEqual({ name: 'Payments', source: 'catalog', ref: null });
+  });
+
   it('falls back to name/source/ref for custom deployments', () => {
     expect(
       deploymentLabel({ serverId: null, server: null, name: 'Fetcher', source: 'npm', sourceRef: 'mcp-server-fetch' }),

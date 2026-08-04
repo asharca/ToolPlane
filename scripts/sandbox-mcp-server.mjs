@@ -33,8 +33,12 @@ const MAX_HERMES_BODY = 12_000_000;
 const MAX_HERMES_DASHBOARD_BODY = 32_000_000;
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 2_000_000;
-const MAX_RUNTIME_UPLOAD = 10_000_000;
-const MAX_RUNTIME_UPLOAD_BODY = Math.ceil(MAX_RUNTIME_UPLOAD * 4 / 3) + 16_384;
+const DEFAULT_MAX_RUNTIME_UPLOAD = 1_000_000_000;
+const configuredRuntimeUploadLimit = Number(process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES);
+const MAX_RUNTIME_UPLOAD = Number.isSafeInteger(configuredRuntimeUploadLimit) && configuredRuntimeUploadLimit > 0
+  ? configuredRuntimeUploadLimit
+  : DEFAULT_MAX_RUNTIME_UPLOAD;
+const RUNTIME_UPLOAD_TIMEOUT_MS = 15 * 60_000;
 const MAX_DOWNLOAD = 5_000_000;
 const MAX_DOWNLOAD_BASE64 = Math.ceil(MAX_DOWNLOAD * 4 / 3) + 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -233,7 +237,7 @@ async function run(command, args, opts = {}) {
       clearTimeout(timer);
       resolve({ exitCode, signal, timedOut, stdout, stderr });
     });
-    const maxInput = Math.min(Math.max(Number(opts.maxInput ?? MAX_WRITE), 0), MAX_RUNTIME_UPLOAD_BODY);
+    const maxInput = Math.min(Math.max(Number(opts.maxInput ?? MAX_WRITE), 0), MAX_WRITE);
     const input = Buffer.isBuffer(opts.stdin)
       ? opts.stdin.subarray(0, maxInput)
       : Buffer.from(String(opts.stdin ?? ''), 'utf8').subarray(0, maxInput);
@@ -872,43 +876,132 @@ async function handleRuntimeFiles(req, res) {
     return true;
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(await readBody(req, MAX_RUNTIME_UPLOAD_BODY));
-  } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+  const rel = safeRel(url.searchParams.get('path'));
+  if (!rel) {
+    sendJson(res, 400, { error: 'A safe relative path is required.' });
     return true;
   }
-  const rel = safeRel(payload?.path);
-  const content = typeof payload?.content === 'string' ? payload.content : '';
-  if (!rel || !content) {
-    sendJson(res, 400, { error: 'path and base64 content are required' });
-    return true;
-  }
-  const size = Buffer.byteLength(content, 'base64');
-  if (size > MAX_RUNTIME_UPLOAD) {
-    sendJson(res, 413, { error: `Attachment exceeds ${MAX_RUNTIME_UPLOAD} bytes.` });
+  const requestedLimit = Number(req.headers['x-toolplane-max-upload-bytes']);
+  const uploadLimit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
+    ? requestedLimit
+    : MAX_RUNTIME_UPLOAD;
+  const announcedSize = Number(req.headers['content-length'] ?? 0);
+  if (announcedSize > uploadLimit) {
+    req.resume();
+    sendJson(res, 413, { error: `Attachment exceeds ${uploadLimit} bytes.` });
     return true;
   }
 
   const target = workspacePath(rel);
   const parent = path.posix.dirname(target);
+  const temporary = `${target}.toolplane-upload-${randomUUID()}`;
   const command = [
     `mkdir -p ${shQuote(parent)}`,
-    `base64 -d > ${shQuote(target)}`,
-    `if id hermes >/dev/null 2>&1; then chown "$(id -u hermes):$(id -g hermes)" ${shQuote(parent)} ${shQuote(target)}; fi`,
+    `cat > ${shQuote(temporary)}`,
   ].join(' && ');
-  const result = await run('docker', ['exec', '-i', CONTAINER, 'sh', '-lc', command], {
-    env: dockerEnv(),
-    stdin: content,
-    maxInput: MAX_RUNTIME_UPLOAD_BODY,
-    timeoutMs: 60_000,
+  const result = await new Promise((resolve) => {
+    const child = spawn('docker', ['exec', '-i', CONTAINER, 'sh', '-lc', command], {
+      env: dockerEnv(),
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    let size = 0;
+    let stderr = '';
+    let tooLarge = false;
+    let timedOut = false;
+    let aborted = false;
+    let childClosed = false;
+    let settled = false;
+    const finish = (exitCode, error) => {
+      if (settled) return;
+      settled = true;
+      childClosed = true;
+      clearTimeout(timer);
+      req.resume();
+      resolve({ exitCode, size, stderr: error || stderr, tooLarge, timedOut, aborted });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, RUNTIME_UPLOAD_TIMEOUT_MS);
+
+    child.stderr.on('data', (chunk) => {
+      stderr = truncate(stderr + chunk.toString('utf8'), 8_000);
+    });
+    child.stdin.on('error', () => undefined);
+    child.stdin.on('drain', () => req.resume());
+    child.on('error', (error) => finish(null, error.message));
+    child.on('close', (exitCode) => finish(exitCode, ''));
+    req.on('aborted', () => {
+      aborted = true;
+      child.kill('SIGKILL');
+    });
+    req.on('error', (error) => {
+      aborted = true;
+      stderr = truncate(stderr + error.message, 8_000);
+      child.kill('SIGKILL');
+    });
+    req.on('data', (chunk) => {
+      if (childClosed || tooLarge) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > uploadLimit) {
+        tooLarge = true;
+        child.stdin.destroy();
+        child.kill('SIGKILL');
+        req.resume();
+        return;
+      }
+      if (!child.stdin.write(buffer)) req.pause();
+    });
+    req.on('end', () => {
+      if (!childClosed && !tooLarge && !aborted) child.stdin.end();
+    });
   });
+  const cleanupTemporary = () => run(
+    'docker',
+    ['exec', CONTAINER, 'rm', '-f', '--', temporary],
+    { env: dockerEnv(), timeoutMs: 30_000 },
+  );
+  if (result.aborted) {
+    await cleanupTemporary();
+    if (!res.destroyed) res.destroy();
+    return true;
+  }
+  if (result.tooLarge) {
+    await cleanupTemporary();
+    sendJson(res, 413, { error: `Attachment exceeds ${uploadLimit} bytes.` });
+    return true;
+  }
+  if (result.timedOut) {
+    await cleanupTemporary();
+    sendJson(res, 504, { error: 'Attachment upload timed out.' });
+    return true;
+  }
+  if (result.size <= 0) {
+    await cleanupTemporary();
+    sendJson(res, 400, { error: 'A non-empty attachment is required.' });
+    return true;
+  }
   if (result.exitCode !== 0) {
+    await cleanupTemporary();
     sendJson(res, 500, { error: result.stderr || 'Could not write attachment.' });
     return true;
   }
-  sendJson(res, 201, { path: target, relativePath: rel, size });
+  const finalizeCommand = [
+    `test -f ${shQuote(temporary)}`,
+    `if id hermes >/dev/null 2>&1; then chown "$(id -u hermes):$(id -g hermes)" ${shQuote(parent)} ${shQuote(temporary)}; fi`,
+    `mv -f ${shQuote(temporary)} ${shQuote(target)}`,
+  ].join(' && ');
+  const finalized = await run('docker', ['exec', CONTAINER, 'sh', '-lc', finalizeCommand], {
+    env: dockerEnv(),
+    timeoutMs: 30_000,
+  });
+  if (finalized.exitCode !== 0) {
+    await cleanupTemporary();
+    sendJson(res, 500, { error: finalized.stderr || 'Could not finalize attachment.' });
+    return true;
+  }
+  sendJson(res, 201, { path: target, relativePath: rel, size: result.size });
   return true;
 }
 

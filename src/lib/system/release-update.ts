@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { access, cp, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +11,8 @@ const DEFAULT_UPDATE_ARTIFACT = 'toolplane-runtime-linux-amd64.tar.gz';
 const UPDATE_DIR = '.toolplane-update';
 const VERSION_FILE = '.toolplane-version';
 const MAX_DOWNLOAD_BYTES = 1_500_000_000;
+const RELEASE_LOOKUP_TIMEOUT_MS = 30_000;
+const RELEASE_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 const TRUSTED_DOWNLOAD_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
 
 export const RUNTIME_UPDATE_ENTRIES = [
@@ -46,6 +48,7 @@ type GitHubReleaseAsset = {
 export type SystemUpdateStatus = {
   enabled: boolean;
   canUpdate: boolean;
+  runtimeId: string;
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean | null;
@@ -56,14 +59,25 @@ export type SystemUpdateStatus = {
 };
 
 export type LocalSystemUpdateStatus = {
+  runtimeId: string;
   currentVersion: string;
   artifactName: string;
+  updateJob: SystemUpdateJobStatus;
+};
+
+export type SystemUpdateJobStatus = {
+  status: 'idle' | 'downloading' | 'applying' | 'restarting' | 'failed';
+  targetVersion: string | null;
+  message: string | null;
+  startedAt: string | null;
+  updatedAt: string;
 };
 
 export type SystemUpdateResult =
   | {
       ok: true;
-      status: 'up_to_date' | 'restarting';
+      status: 'up_to_date' | 'updating' | 'restarting';
+      runtimeId: string;
       currentVersion: string;
       latestVersion: string | null;
       artifactName: string;
@@ -72,6 +86,7 @@ export type SystemUpdateResult =
   | {
       ok: false;
       status: 'disabled' | 'unavailable' | 'failed';
+      runtimeId: string;
       currentVersion: string;
       latestVersion: string | null;
       artifactName: string;
@@ -83,6 +98,46 @@ type ReplacementRecord = {
   backupPath: string;
   hadExisting: boolean;
 };
+
+type UpdateGlobals = typeof globalThis & {
+  __toolplaneRuntimeId?: string;
+  __toolplaneSystemUpdateJob?: SystemUpdateJobStatus;
+};
+
+const updateGlobals = globalThis as UpdateGlobals;
+const runtimeId = updateGlobals.__toolplaneRuntimeId ?? randomUUID();
+updateGlobals.__toolplaneRuntimeId = runtimeId;
+
+function idleUpdateJob(): SystemUpdateJobStatus {
+  return {
+    status: 'idle',
+    targetVersion: null,
+    message: null,
+    startedAt: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function currentUpdateJob(): SystemUpdateJobStatus {
+  const job = updateGlobals.__toolplaneSystemUpdateJob ?? idleUpdateJob();
+  updateGlobals.__toolplaneSystemUpdateJob = job;
+  return job;
+}
+
+function setUpdateJob(
+  status: SystemUpdateJobStatus['status'],
+  input: Pick<SystemUpdateJobStatus, 'targetVersion' | 'message' | 'startedAt'>,
+): void {
+  updateGlobals.__toolplaneSystemUpdateJob = {
+    status,
+    ...input,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function activeUpdateJob(job: SystemUpdateJobStatus): boolean {
+  return job.status === 'downloading' || job.status === 'applying' || job.status === 'restarting';
+}
 
 function updateEnabled(): boolean {
   return process.env.TOOLPLANE_UPDATE_ENABLED !== 'false';
@@ -155,6 +210,7 @@ async function fetchLatestRelease(): Promise<GitHubRelease> {
   const response = await fetch(endpoint, {
     headers: githubHeaders(),
     cache: 'no-store',
+    signal: AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
@@ -195,6 +251,7 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
       return {
         enabled: true,
         canUpdate: false,
+        runtimeId,
         currentVersion,
         latestVersion,
         updateAvailable: null,
@@ -208,6 +265,7 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
     return {
       enabled: true,
       canUpdate: true,
+      runtimeId,
       currentVersion,
       latestVersion,
       updateAvailable: latestVersion ? !sameVersion(currentVersion, latestVersion) : null,
@@ -223,8 +281,10 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
 
 export async function getLocalSystemUpdateStatus(): Promise<LocalSystemUpdateStatus> {
   return {
+    runtimeId,
     currentVersion: await readCurrentVersion(),
     artifactName: updateArtifactName(),
+    updateJob: { ...currentUpdateJob() },
   };
 }
 
@@ -232,6 +292,7 @@ function disabledStatus(currentVersion: string, artifactName: string, reason: st
   return {
     enabled: updateEnabled(),
     canUpdate: false,
+    runtimeId,
     currentVersion,
     latestVersion: null,
     updateAvailable: null,
@@ -246,14 +307,28 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
   const artifactName = updateArtifactName();
   const currentVersion = await readCurrentVersion();
   const root = runtimeRoot();
+  const existingJob = currentUpdateJob();
+
+  if (activeUpdateJob(existingJob)) {
+    return {
+      ok: true,
+      status: existingJob.status === 'restarting' ? 'restarting' : 'updating',
+      runtimeId,
+      currentVersion,
+      latestVersion: existingJob.targetVersion,
+      artifactName,
+      message: existingJob.message ?? 'An update is already in progress.',
+    };
+  }
 
   if (!updateEnabled()) {
-    return { ok: false, status: 'disabled', currentVersion, latestVersion: null, artifactName, message: 'Updates are disabled.' };
+    return { ok: false, status: 'disabled', runtimeId, currentVersion, latestVersion: null, artifactName, message: 'Updates are disabled.' };
   }
   if (!root) {
     return {
       ok: false,
       status: 'unavailable',
+      runtimeId,
       currentVersion,
       latestVersion: null,
       artifactName,
@@ -264,6 +339,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
     return {
       ok: false,
       status: 'unavailable',
+      runtimeId,
       currentVersion,
       latestVersion: null,
       artifactName,
@@ -275,7 +351,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
     const release = await fetchLatestRelease();
     const latestVersion = release.tag_name || null;
     if (sameVersion(currentVersion, latestVersion)) {
-      return { ok: true, status: 'up_to_date', currentVersion, latestVersion, artifactName };
+      return { ok: true, status: 'up_to_date', runtimeId, currentVersion, latestVersion, artifactName };
     }
 
     const artifact = findReleaseAsset(release, artifactName);
@@ -283,6 +359,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       return {
         ok: false,
         status: 'unavailable',
+        runtimeId,
         currentVersion,
         latestVersion,
         artifactName,
@@ -295,6 +372,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       return {
         ok: false,
         status: 'unavailable',
+        runtimeId,
         currentVersion,
         latestVersion,
         artifactName,
@@ -302,19 +380,73 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       };
     }
 
-    await downloadAndApplyRelease(root, artifact, checksumAsset);
-    scheduleRestart();
+    // A second request may have passed the first active-job check while both
+    // callers were waiting on GitHub. Only one of them is allowed to start the
+    // file replacement job.
+    const concurrentJob = currentUpdateJob();
+    if (activeUpdateJob(concurrentJob)) {
+      return {
+        ok: true,
+        status: concurrentJob.status === 'restarting' ? 'restarting' : 'updating',
+        runtimeId,
+        currentVersion,
+        latestVersion: concurrentJob.targetVersion,
+        artifactName,
+        message: concurrentJob.message ?? 'An update is already in progress.',
+      };
+    }
+
+    const startedAt = new Date().toISOString();
+    setUpdateJob('downloading', {
+      targetVersion: latestVersion,
+      message: 'Downloading and verifying the release.',
+      startedAt,
+    });
+    setImmediate(() => {
+      void runSystemUpdateJob(root, artifact, checksumAsset, latestVersion, startedAt);
+    });
 
     return {
       ok: true,
-      status: 'restarting',
+      status: 'updating',
+      runtimeId,
       currentVersion,
       latestVersion,
       artifactName,
-      message: 'Release files updated. ToolPlane is restarting.',
+      message: 'Update started. ToolPlane will restart when the release is ready.',
     };
   } catch (error) {
-    return { ok: false, status: 'failed', currentVersion, latestVersion: null, artifactName, message: displayError(error) };
+    return { ok: false, status: 'failed', runtimeId, currentVersion, latestVersion: null, artifactName, message: displayError(error) };
+  }
+}
+
+async function runSystemUpdateJob(
+  root: string,
+  artifact: GitHubReleaseAsset,
+  checksumAsset: GitHubReleaseAsset,
+  targetVersion: string | null,
+  startedAt: string,
+): Promise<void> {
+  try {
+    await downloadAndApplyRelease(root, artifact, checksumAsset, () => {
+      setUpdateJob('applying', {
+        targetVersion,
+        message: 'Release verified. Applying runtime files.',
+        startedAt,
+      });
+    });
+    setUpdateJob('restarting', {
+      targetVersion,
+      message: 'Release files updated. ToolPlane is restarting.',
+      startedAt,
+    });
+    scheduleRestart();
+  } catch (error) {
+    setUpdateJob('failed', {
+      targetVersion,
+      message: displayError(error),
+      startedAt,
+    });
   }
 }
 
@@ -322,6 +454,7 @@ async function downloadAndApplyRelease(
   root: string,
   artifact: GitHubReleaseAsset,
   checksumAsset: GitHubReleaseAsset,
+  onVerified: () => void,
 ): Promise<void> {
   const updateRoot = path.join(/* turbopackIgnore: true */ root, UPDATE_DIR);
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -342,6 +475,7 @@ async function downloadAndApplyRelease(
     const appRoot = path.join(/* turbopackIgnore: true */ stagingRoot, 'app');
     const payloadRoot = (await pathExists(appRoot)) ? appRoot : stagingRoot;
     await assertPayload(payloadRoot);
+    onVerified();
     await replaceRuntimeEntries(root, payloadRoot, backupRoot);
     await rm(backupRoot, { recursive: true, force: true }).catch(() => undefined);
   } finally {
@@ -354,6 +488,7 @@ async function downloadFile(url: string, dest: string, maxBytes = MAX_DOWNLOAD_B
   const response = await fetch(url, {
     headers: githubHeaders(),
     redirect: 'follow',
+    signal: AbortSignal.timeout(RELEASE_DOWNLOAD_TIMEOUT_MS),
   });
   if (!response.ok || !response.body) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`);

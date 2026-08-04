@@ -6,9 +6,12 @@ vi.mock('next/navigation', () => ({
 
 import { getAdminPageLabelKey } from '@/components/admin/AdminSidebar';
 
-describe('admin agent directory navigation', () => {
+describe('admin navigation', () => {
   it('maps the agent list and nested editor routes to the Agent directory label', () => {
     expect(getAdminPageLabelKey('/admin/agents')).toBe('adminNavAgents');
     expect(getAdminPageLabelKey('/admin/agents/listing-1/edit')).toBe('adminNavAgents');
+  });
+  it('maps the system settings route to the Settings label', () => {
+    expect(getAdminPageLabelKey('/admin/settings')).toBe('adminNavSettings');
   });
 });

@@ -22,9 +22,13 @@ export async function GET(request: Request) {
   if (denied) return denied;
   const url = new URL(request.url);
   if (url.searchParams.get('local') === '1') {
-    return NextResponse.json(await getLocalSystemUpdateStatus());
+    return NextResponse.json(await getLocalSystemUpdateStatus(), {
+      headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+    });
   }
-  return NextResponse.json(await getSystemUpdateStatus());
+  return NextResponse.json(await getSystemUpdateStatus(), {
+    headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
+  });
 }
 
 export async function POST() {
@@ -33,7 +37,7 @@ export async function POST() {
 
   const result = await applySystemUpdate();
   const status = result.ok
-    ? result.status === 'restarting'
+    ? result.status === 'restarting' || result.status === 'updating'
       ? 202
       : 200
     : result.status === 'disabled'

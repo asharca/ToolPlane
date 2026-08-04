@@ -129,6 +129,22 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain("chown \"$(id -u hermes):$(id -g hermes)\"");
   });
 
+  it('streams Hermes attachments into an atomic temporary file without base64 buffering', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+    const supervisor = readFileSync(path.join(process.cwd(), 'src/lib/process/supervisor.ts'), 'utf8');
+
+    expect(script).toContain('DEFAULT_MAX_RUNTIME_UPLOAD = 1_000_000_000');
+    expect(script).toContain("process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
+    expect(script).toContain("req.headers['x-toolplane-max-upload-bytes']");
+    expect(script).toContain('size > uploadLimit');
+    expect(supervisor).toContain("TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
+    expect(script).toContain("req.on('data'");
+    expect(script).toContain('cat > ${shQuote(temporary)}');
+    expect(script).toContain('mv -f ${shQuote(temporary)} ${shQuote(target)}');
+    expect(script).toContain("['exec', CONTAINER, 'rm', '-f', '--', temporary]");
+    expect(script).not.toContain('base64 -d >');
+  });
+
   it('does not self-terminate when the request worker parent changes in production', () => {
     for (const file of ['scripts/mcp-server.mjs', 'scripts/mcp-stdio-bridge.mjs', 'scripts/sandbox-mcp-server.mjs']) {
       const script = readFileSync(path.join(process.cwd(), file), 'utf8');
