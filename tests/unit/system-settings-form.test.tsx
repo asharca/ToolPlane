@@ -5,7 +5,7 @@ import {
   MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
 } from '@/lib/agents/hermes/archive-limits';
 
-vi.mock('@/lib/admin/settings-actions', () => ({ updateSystemSettingsAction: vi.fn() }));
+vi.mock('@/lib/admin/settings-actions', () => ({ updateHermesArchiveUploadLimitAction: vi.fn() }));
 vi.mock('@/components/dashboard/SubmitButton', () => ({
   SubmitButton: ({ children }: { children: React.ReactNode }) => <button type="submit">{children}</button>,
 }));

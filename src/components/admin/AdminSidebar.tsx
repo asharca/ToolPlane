@@ -8,8 +8,8 @@ import {
   Building2,
   LayoutDashboard,
   Plug,
+  Settings,
   ShieldCheck,
-  SlidersHorizontal,
   Tags,
   Users,
   X,
@@ -57,11 +57,7 @@ const NAV_SECTIONS: NavSection[] = [
         icon: LayoutDashboard,
         exact: true,
       },
-      {
-        labelKey: 'adminNavSettings',
-        href: '/admin/settings',
-        icon: SlidersHorizontal,
-      },
+      { labelKey: 'adminNavSettings', href: '/admin/settings', icon: Settings },
     ],
   },
   {

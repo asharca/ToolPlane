@@ -4,7 +4,7 @@ import { useActionState } from 'react';
 import { Save, Upload } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { updateSystemSettingsAction } from '@/lib/admin/settings-actions';
+import { updateHermesArchiveUploadLimitAction } from '@/lib/admin/settings-actions';
 import {
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
@@ -15,7 +15,7 @@ export function SystemSettingsForm({
 }: {
   hermesArchiveMaxUploadMiB: number;
 }) {
-  const [state, formAction] = useActionState(updateSystemSettingsAction, {});
+  const [state, formAction] = useActionState(updateHermesArchiveUploadLimitAction, {});
   const t = useTranslations('admin');
 
   return (

@@ -78,6 +78,12 @@ model ApiToken {
   @@index([toolkitId])
 }
 
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model Client {
   id          String     @id @default(cuid())
   slug        String     @unique
@@ -139,13 +145,6 @@ model ScrapeCheckpoint {
   lastSlug  String?
   doneCount Int      @default(0)
   updatedAt DateTime @updatedAt
-}
-
-model SystemSetting {
-  id                        String   @id
-  hermesArchiveMaxUploadMiB Int      @default(48)
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
 }
 
 model Workspace {

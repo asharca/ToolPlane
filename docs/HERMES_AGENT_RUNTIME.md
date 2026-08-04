@@ -249,10 +249,12 @@ POST /api/v1/agents/:agentId/attachments
 
 - 必须通过用户/session token 授权，并验证 Agent workspace。
 - `conversationId` 必须属于 URL 中的 Agent。
-- 单文件最大 10 MB。
+- 文件以流式方式写入运行时，不经过 Base64/JSON，也不把文件内容放入模型上下文。
+- 单文件默认最大 1 GB；管理员可在 `/admin/settings` 修改，数据库覆盖值优先于 `TOOLPLANE_MAX_ATTACHMENT_BYTES`，服务端始终保留上限以防止磁盘耗尽。
 - 文件写入 `/opt/data/workspace/attachments/<conversation>/...`。
 - `AgentAttachment` 保存 workspace、Agent、conversation、runtime、MIME、大小和 storage path。
-- 图片不超过 5 MB 时也以内联视觉 part 发送；其他文件通过 runtime path 交给 Hermes 的文件/terminal 工具读取。
+- 对话只发送文件名、大小、MIME 和 runtime path；图片和普通文件都不会作为 inline part 直接发送给模型。
+- 若部署在 Nginx 等反向代理后，代理的请求体上限需不小于此值，并应关闭请求缓冲，才能保持端到端流式上传。
 
 ## 6. 生命周期
 

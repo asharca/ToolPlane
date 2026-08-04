@@ -38,7 +38,7 @@ import {
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
-import { getSystemSettings } from '@/lib/admin/settings';
+import { getHermesArchiveSettings } from '@/lib/admin/settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -136,7 +136,7 @@ export default async function SandboxesPage({
   const [sandboxes, rawManagedRuntimes, systemSettings] = await Promise.all([
     listSandboxes(ws.id),
     listManagedAgentRuntimes(ws.id),
-    getSystemSettings(),
+    getHermesArchiveSettings(),
   ]);
   const managedRuntimes = rawManagedRuntimes.map((runtime) => ({
     ...runtime,

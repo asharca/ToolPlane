@@ -20,9 +20,9 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import {
-  getSystemSettings,
-  SYSTEM_SETTINGS_ID,
-  updateSystemSettings,
+  getHermesArchiveSettings,
+  HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
+  updateHermesArchiveSettings,
 } from '@/lib/admin/settings';
 
 describe('system settings storage', () => {
@@ -30,34 +30,39 @@ describe('system settings storage', () => {
     vi.clearAllMocks();
   });
 
-  it('uses the safe archive default until the singleton row exists', async () => {
+  it('uses the safe archive default until the generic setting row exists', async () => {
     mocks.findUnique.mockResolvedValue(null);
 
-    await expect(getSystemSettings()).resolves.toEqual({
+    await expect(getHermesArchiveSettings()).resolves.toEqual({
       hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
     expect(mocks.findUnique).toHaveBeenCalledWith({
-      where: { id: SYSTEM_SETTINGS_ID },
-      select: { hermesArchiveMaxUploadMiB: true },
+      where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
+      select: { value: true },
     });
   });
 
-  it('writes a singleton setting and never expands a stale value past the hard cap', async () => {
-    mocks.upsert.mockResolvedValue({
-      hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
-    });
+  it('writes a key/value setting and never expands a stale value past the hard cap', async () => {
+    mocks.upsert.mockResolvedValue(undefined);
 
-    await expect(updateSystemSettings(999)).resolves.toEqual({
+    await expect(updateHermesArchiveSettings(999)).resolves.toEqual({
       hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
     expect(mocks.upsert).toHaveBeenCalledWith({
-      where: { id: SYSTEM_SETTINGS_ID },
+      where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
       create: {
-        id: SYSTEM_SETTINGS_ID,
-        hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
+        key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
+        value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB),
       },
-      update: { hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB },
-      select: { hermesArchiveMaxUploadMiB: true },
+      update: { value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB) },
+    });
+  });
+
+  it('falls back to the safe default while the shared settings table is unavailable', async () => {
+    mocks.findUnique.mockRejectedValue(new Error('relation does not exist'));
+
+    await expect(getHermesArchiveSettings()).resolves.toEqual({
+      hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
   });
 });
