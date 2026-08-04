@@ -15,6 +15,9 @@ vi.mock('@/lib/agents/attachment-limits', () => ({
   setAgentAttachmentLimitBytes: mocks.setLimit,
   resetAgentAttachmentLimit: mocks.resetLimit,
 }));
+vi.mock('@/lib/admin/settings', () => ({
+  updateHermesArchiveSettings: vi.fn(),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next-intl/server', () => ({
   getTranslations: vi.fn(async () => (

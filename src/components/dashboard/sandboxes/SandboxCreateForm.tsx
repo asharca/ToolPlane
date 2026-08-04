@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useActionState, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useFormStatus } from 'react-dom';
@@ -12,11 +12,14 @@ import {
   Network,
   Plus,
   Server,
+  ShieldCheck,
   Sparkles,
+  Upload,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
+import { importHermesArchiveAction } from '@/lib/agents/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
@@ -24,8 +27,9 @@ import {
   SANDBOX_IMAGE_OPTIONS,
   type SandboxImageOption,
 } from '@/lib/sandboxes/images';
+import { DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB } from '@/lib/agents/hermes/archive-limits';
 
-type Mode = 'docker' | 'connector';
+type Mode = 'docker' | 'connector' | 'hermes-import';
 
 const inputClass = 'ui-input h-9 w-full';
 const recommendedImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'recommended');
@@ -181,9 +185,24 @@ function ImageGroup({
   );
 }
 
-function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
+function CreateSandboxFooter({ mode }: { mode: Mode }) {
   const t = useTranslations('console.sandboxes');
   const { pending } = useFormStatus();
+  const isDocker = mode === 'docker';
+  const isHermesImport = mode === 'hermes-import';
+
+  const pendingTitle = isHermesImport
+    ? t('importingHermesArchive')
+    : isDocker ? t('creatingSandboxRuntime') : t('creatingConnectorSandbox');
+  const pendingDescription = isHermesImport
+    ? t('importingHermesArchiveDescription')
+    : isDocker ? t('creatingSandboxRuntimeDescription') : t('creatingConnectorSandboxDescription');
+  const pendingLabel = isHermesImport
+    ? t('importingHermesArchive')
+    : isDocker ? t('creatingContainer') : t('creatingConnector');
+  const submitLabel = isHermesImport
+    ? t('importAndCreateHermesSandbox')
+    : isDocker ? t('createContainer') : t('createConnector');
 
   return (
     <div className="sticky bottom-0 -mx-5 mt-5 border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
@@ -191,12 +210,10 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
         <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Loader2 className="size-4 animate-spin" />
-            {isDocker ? t('creatingSandboxRuntime') : t('creatingConnectorSandbox')}
+            {pendingTitle}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {isDocker
-              ? t('creatingSandboxRuntimeDescription')
-              : t('creatingConnectorSandboxDescription')}
+            {pendingDescription}
           </p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
             <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
@@ -206,11 +223,11 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
       <div className="flex justify-end">
         <SubmitButton
           flash={false}
-          pendingLabel={isDocker ? t('creatingContainer') : t('creatingConnector')}
+          pendingLabel={pendingLabel}
           className="ui-button-primary h-9 w-full sm:w-auto"
         >
-          <Plus className="size-4" />
-          {isDocker ? t('createContainer') : t('createConnector')}
+          {isHermesImport ? <Upload className="size-4" /> : <Plus className="size-4" />}
+          {submitLabel}
         </SubmitButton>
       </div>
     </div>
@@ -219,15 +236,19 @@ function CreateSandboxFooter({ isDocker }: { isDocker: boolean }) {
 
 export function SandboxCreateForm({
   workspace,
+  hermesArchiveMaxUploadMiB = DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
 }: {
   workspace: string;
+  hermesArchiveMaxUploadMiB?: number;
 }) {
   const [mode, setMode] = useState<Mode>('docker');
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
   const [customImage, setCustomImage] = useState('');
   const [open, setOpen] = useState(false);
+  const [importState, importAction] = useActionState(importHermesArchiveAction, {});
   const t = useTranslations('console.sandboxes');
   const isDocker = mode === 'docker';
+  const isHermesImport = mode === 'hermes-import';
   const customSelected = selectedImage === 'custom';
 
   return (
@@ -253,7 +274,7 @@ export function SandboxCreateForm({
               <div>
                 <h2 className="text-base font-semibold text-foreground">{t('newSandbox')}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {t('chooseADevContainerImageOrConnectAUserMachine')}
+                  {t('chooseASandboxSource')}
                 </p>
               </div>
               <button
@@ -266,7 +287,10 @@ export function SandboxCreateForm({
               </button>
             </div>
 
-            <form action={createSandboxAction} className="min-h-0 overflow-y-auto p-5">
+            <form
+              action={isHermesImport ? importAction : createSandboxAction}
+              className="min-h-0 overflow-y-auto p-5"
+            >
               <input type="hidden" name="workspace" value={workspace} />
               <input type="hidden" name="kind" value={mode} />
 
@@ -281,17 +305,28 @@ export function SandboxCreateForm({
                       onClick={() => setMode('docker')}
                     />
                     <ModeButton
-                      active={!isDocker}
+                      active={mode === 'connector'}
                       icon={Cable}
                       title={t('userConnector')}
                       description={t('aUserRunsOneNpxCommandAndConnectsALocalMachineOverWebsocket')}
                       onClick={() => setMode('connector')}
                     />
+                    <ModeButton
+                      active={isHermesImport}
+                      icon={Upload}
+                      title={t('importHermesArchive')}
+                      description={t('importHermesArchiveModeDescription')}
+                      onClick={() => setMode('hermes-import')}
+                    />
                   </div>
 
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
                     <Field label={t('name')}>
-                      <input name="name" placeholder={isDocker ? t('researchContainer') : t('myLaptop')} className={inputClass} />
+                      <input
+                        name="name"
+                        placeholder={isHermesImport ? t('importedHermes') : isDocker ? t('researchContainer') : t('myLaptop')}
+                        className={inputClass}
+                      />
                     </Field>
 
                     {isDocker ? (
@@ -306,31 +341,81 @@ export function SandboxCreateForm({
                       </Field>
                     ) : null}
 
-                    <Field label={t('environment')} className="mt-3" hint={t('environmentVariablesHint')}>
-                      <textarea
-                        name="env"
-                        rows={5}
-                        spellCheck={false}
-                        placeholder={t('envPlaceholder')}
-                        className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
-                      />
-                    </Field>
+                    {isHermesImport ? (
+                      <>
+                        <Field
+                          label={t('hermesArchive')}
+                          className="mt-3"
+                          hint={t('hermesArchiveHint', { max: hermesArchiveMaxUploadMiB })}
+                        >
+                          <input
+                            name="hermesArchive"
+                            type="file"
+                            accept=".zip,application/zip"
+                            required={isHermesImport}
+                            aria-label={t('hermesArchive')}
+                            className="ui-input h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
+                          />
+                        </Field>
+                        <label className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-xs leading-5 text-foreground">
+                          <input name="trustArchive" type="checkbox" required className="mt-0.5 size-3.5 shrink-0 accent-brand" />
+                          <span>{t('trustHermesArchive')}</span>
+                        </label>
+                        {importState.error ? (
+                          <p className="mt-3 text-xs leading-5 text-red-700 dark:text-red-300" role="alert">{importState.error}</p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <Field label={t('environment')} className="mt-3" hint={t('environmentVariablesHint')}>
+                          <textarea
+                            name="env"
+                            rows={5}
+                            spellCheck={false}
+                            placeholder={t('envPlaceholder')}
+                            className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                          />
+                        </Field>
 
-                    <div className="mt-4 rounded-md border border-border bg-background px-3 py-2">
-                      <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-                        <Sparkles className="size-3.5 text-muted-foreground" />
-                        {t('recommendedChoices')}
-                      </div>
-                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                        <li>{t('frontendJavascriptNodeOrTypescriptNode')}</li>
-                        <li>{t('lightweightDebianBaseThenInstallOnlyWhatYouNeed')}</li>
-                        <li>{t('everythingUniversalLargerButBroad')}</li>
-                      </ul>
-                    </div>
+                        <div className="mt-4 rounded-md border border-border bg-background px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                            <Sparkles className="size-3.5 text-muted-foreground" />
+                            {t('recommendedChoices')}
+                          </div>
+                          <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                            <li>{t('frontendJavascriptNodeOrTypescriptNode')}</li>
+                            <li>{t('lightweightDebianBaseThenInstallOnlyWhatYouNeed')}</li>
+                            <li>{t('everythingUniversalLargerButBroad')}</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {isDocker ? (
+                {isHermesImport ? (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-4 py-4">
+                      <div className="flex items-start gap-3">
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-amber-500/25 bg-background text-amber-700 dark:text-amber-300">
+                          <ShieldCheck className="size-4" />
+                        </span>
+                        <div>
+                          <h2 className="text-sm font-semibold text-foreground">{t('importHermesArchive')}</h2>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('importHermesArchiveDetails')}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border bg-background px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">{t('whatGetsImported')}</h3>
+                      <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                        <li>{t('hermesArchiveConfig')}</li>
+                        <li>{t('hermesArchiveData')}</li>
+                        <li>{t('hermesArchiveManagedPaths')}</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : isDocker ? (
                   <div className="space-y-5">
             <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -417,7 +502,7 @@ export function SandboxCreateForm({
                   </div>
                 )}
               </div>
-              <CreateSandboxFooter isDocker={isDocker} />
+              <CreateSandboxFooter mode={mode} />
             </form>
           </div>
         </div>
