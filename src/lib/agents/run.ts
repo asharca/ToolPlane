@@ -16,6 +16,10 @@ import { buildToolSet } from './tools';
 import { buildSkillToolSet } from './skill-tools';
 import { getAgentForRun } from './queries';
 import { runHermesText } from './hermes/client';
+import {
+  acquireHermesRuntimeWriteLease,
+  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
+} from './hermes/runtime';
 
 export type AgentRunContext = {
   workspaceId: string;
@@ -123,6 +127,8 @@ export async function runAgentTurn(
   }
 
   if (isHermes) {
+    const writeLease = acquireHermesRuntimeWriteLease(ctx.workspaceId, agentId);
+    if (!writeLease) return `Hermes sub-agent unavailable: ${HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR}`;
     const sessionId = randomUUID();
     try {
       return await runHermesText({
@@ -135,9 +141,12 @@ export async function runAgentTurn(
         messages: [{ id: randomUUID(), role: 'user', parts: [{ type: 'text', text: prompt }] }],
         sessionId,
         sessionKey: `agent:${agentId}:subagent:${sessionId}`,
+        writeLease,
       });
     } catch (error) {
       return `Hermes sub-agent failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      writeLease.release();
     }
   }
 

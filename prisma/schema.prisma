@@ -605,13 +605,18 @@ model AgentSandbox {
 }
 
 model Conversation {
-  id          String            @id @default(cuid())
-  agentId     String
-  agent       Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  title       String?
-  createdAt   DateTime          @default(now())
-  messages    Message[]
-  attachments AgentAttachment[]
+  id                String            @id @default(cuid())
+  agentId           String
+  agent             Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title             String?
+  // Hermes keeps its own state in the runtime volume. These aliases let a
+  // cloned ToolPlane conversation retain the source runtime's session identity
+  // even though its database primary key must be new.
+  runtimeSessionId  String?
+  runtimeSessionKey String?
+  createdAt         DateTime          @default(now())
+  messages          Message[]
+  attachments       AgentAttachment[]
 }
 
 model Message {

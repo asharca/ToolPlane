@@ -1,9 +1,9 @@
 import 'server-only';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
-import { sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
+import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
 
 const UNAVAILABLE_SANDBOX_STATUSES = [
   'copying',
@@ -31,6 +31,42 @@ export type CreateAgentOptions = {
   runtime?: 'native' | 'hermes';
   hermesImage?: string;
 };
+
+export type AgentCloneOptions = {
+  copyMcp?: boolean;
+  copySkills?: boolean;
+  copyToolkits?: boolean;
+  copySandboxes?: boolean;
+  copySubAgents?: boolean;
+  copyConversations?: boolean;
+  copyHermesEnvironment?: boolean;
+  copyHermesVolume?: boolean;
+};
+
+export const DEFAULT_AGENT_CLONE_OPTIONS: Required<AgentCloneOptions> = {
+  copyMcp: true,
+  copySkills: true,
+  copyToolkits: true,
+  copySandboxes: true,
+  copySubAgents: true,
+  copyConversations: false,
+  copyHermesEnvironment: false,
+  copyHermesVolume: false,
+};
+
+function normalizeCloneOptions(options: AgentCloneOptions | undefined): Required<AgentCloneOptions> {
+  return {
+    copyMcp: options?.copyMcp ?? DEFAULT_AGENT_CLONE_OPTIONS.copyMcp,
+    copySkills: options?.copySkills ?? DEFAULT_AGENT_CLONE_OPTIONS.copySkills,
+    copyToolkits: options?.copyToolkits ?? DEFAULT_AGENT_CLONE_OPTIONS.copyToolkits,
+    copySandboxes: options?.copySandboxes ?? DEFAULT_AGENT_CLONE_OPTIONS.copySandboxes,
+    copySubAgents: options?.copySubAgents ?? DEFAULT_AGENT_CLONE_OPTIONS.copySubAgents,
+    copyConversations: options?.copyConversations ?? DEFAULT_AGENT_CLONE_OPTIONS.copyConversations,
+    copyHermesEnvironment: options?.copyHermesEnvironment
+      ?? DEFAULT_AGENT_CLONE_OPTIONS.copyHermesEnvironment,
+    copyHermesVolume: options?.copyHermesVolume ?? DEFAULT_AGENT_CLONE_OPTIONS.copyHermesVolume,
+  };
+}
 
 async function uniqueSandboxSlug(workspaceId: string, baseSlug: string): Promise<string> {
   let slug = `${baseSlug}-runtime`;
@@ -121,7 +157,9 @@ export async function cloneAgent(
   workspaceId: string,
   sourceAgentId: string,
   requestedName?: string,
+  options?: AgentCloneOptions,
 ) {
+  const cloneOptions = normalizeCloneOptions(options);
   const source = await db.agent.findFirst({
     where: { id: sourceAgentId, workspaceId },
     select: {
@@ -134,7 +172,14 @@ export async function cloneAgent(
         select: { providerId: true },
       },
       maxSteps: true,
-      runtime: { select: { workspaceId: true, kind: true, image: true } },
+      runtime: {
+        select: {
+          workspaceId: true,
+          kind: true,
+          image: true,
+          sandbox: { select: { workspaceId: true, config: true } },
+        },
+      },
       servers: {
         where: { deployment: { workspaceId } },
         select: { deploymentId: true },
@@ -171,8 +216,15 @@ export async function cloneAgent(
   const slug = await uniqueAgentSlug(workspaceId, slugify(cleanName));
   const runtime: CreateAgentOptions & { runtime: 'native' | 'hermes' } = source.runtime?.workspaceId === workspaceId
     && source.runtime.kind === HERMES_RUNTIME_KIND
+    && source.runtime.sandbox.workspaceId === workspaceId
     ? { runtime: 'hermes', hermesImage: source.runtime.image }
     : { runtime: 'native' };
+  // A Hermes volume contains the files referenced by conversations and their
+  // runtime session state. Keep those database records together with a volume
+  // clone, even if a stale/non-UI caller omitted the dependent checkbox.
+  const effectiveCloneOptions = runtime.runtime === HERMES_RUNTIME_KIND && cloneOptions.copyHermesVolume
+    ? { ...cloneOptions, copyConversations: true }
+    : cloneOptions;
   const sandboxSlug = runtime.runtime === HERMES_RUNTIME_KIND
     ? await uniqueSandboxSlug(workspaceId, slug)
     : undefined;
@@ -210,33 +262,70 @@ export async function cloneAgent(
         maxSteps: source.maxSteps,
       },
     });
+    if (
+      runtime.runtime === HERMES_RUNTIME_KIND
+      && effectiveCloneOptions.copyHermesEnvironment
+      && source.runtime?.sandbox
+    ) {
+      const env = readSandboxEnv(source.runtime.sandbox.config);
+      const targetRuntime = await tx.agentRuntime.findUniqueOrThrow({
+        where: { agentId: cloned.id },
+        select: {
+          id: true,
+          sandboxId: true,
+          image: true,
+          sandbox: { select: { deploymentId: true, config: true } },
+        },
+      });
+      await Promise.all([
+        tx.sandbox.update({
+          where: { id: targetRuntime.sandboxId },
+          data: { config: sandboxConfigWithEnv(targetRuntime.sandbox.config, env) ?? {} },
+        }),
+        tx.deployment.update({
+          where: { id: targetRuntime.sandbox.deploymentId },
+          data: {
+            installCfg: {
+              sandboxId: targetRuntime.sandboxId,
+              kind: HERMES_RUNTIME_KIND,
+              image: targetRuntime.image,
+              network: 'isolated',
+              volumeName: sandboxVolumeName(targetRuntime.sandboxId),
+              runtimeId: targetRuntime.id,
+              runtimeModelName: slug,
+              env,
+            },
+          },
+        }),
+      ]);
+    }
     await Promise.all([
       tx.agentServer.createMany({
-        data: source.servers.map((server) => ({
+        data: (effectiveCloneOptions.copyMcp ? source.servers : []).map((server) => ({
           agentId: cloned.id,
           deploymentId: server.deploymentId,
         })),
       }),
       tx.agentSkill.createMany({
-        data: source.skills.map((skill) => ({
+        data: (effectiveCloneOptions.copySkills ? source.skills : []).map((skill) => ({
           agentId: cloned.id,
           installedSkillId: skill.installedSkillId,
         })),
       }),
       tx.agentToolkit.createMany({
-        data: source.toolkits.map((toolkit) => ({
+        data: (effectiveCloneOptions.copyToolkits ? source.toolkits : []).map((toolkit) => ({
           agentId: cloned.id,
           toolkitId: toolkit.toolkitId,
         })),
       }),
       tx.agentSandbox.createMany({
-        data: source.sandboxes.map((sandbox) => ({
+        data: (effectiveCloneOptions.copySandboxes ? source.sandboxes : []).map((sandbox) => ({
           agentId: cloned.id,
           sandboxId: sandbox.sandboxId,
         })),
       }),
       tx.agentSubAgent.createMany({
-        data: source.subAgents.map((subAgent) => ({
+        data: (effectiveCloneOptions.copySubAgents ? source.subAgents : []).map((subAgent) => ({
           parentId: cloned.id,
           childId: subAgent.childId,
         })),
@@ -248,8 +337,245 @@ export async function cloneAgent(
         })),
       }),
     ]);
-    return { ...cloned, runtimeKind: runtime.runtime };
-  });
+    const conversationsDeferred = runtime.runtime === HERMES_RUNTIME_KIND
+      && effectiveCloneOptions.copyHermesVolume
+      && effectiveCloneOptions.copyConversations;
+    const conversationIds = effectiveCloneOptions.copyConversations && !conversationsDeferred
+      ? await cloneAgentConversationsInTransaction(
+          tx,
+          workspaceId,
+          sourceAgentId,
+          cloned.id,
+          runtime.runtime === HERMES_RUNTIME_KIND,
+        )
+      : [];
+    return { ...cloned, runtimeKind: runtime.runtime, conversationIds, conversationsDeferred };
+  }, { maxWait: 10_000, timeout: 30_000 });
+}
+
+export type AgentCloneConversationId = { sourceId: string; targetId: string };
+
+type SourceConversationForClone = {
+  id: string;
+  title: string | null;
+  runtimeSessionId: string | null;
+  runtimeSessionKey: string | null;
+  createdAt: Date;
+  messages: Array<{
+    role: string;
+    parts: Prisma.JsonValue;
+    createdAt: Date;
+  }>;
+};
+
+function copiedMessageParts(parts: Prisma.JsonValue) {
+  // Prisma distinguishes JSON null from SQL NULL for required Json fields.
+  // A historic message can legitimately contain the former.
+  return parts === null ? Prisma.JsonNull : parts as Prisma.InputJsonValue;
+}
+
+async function copyConversationsInTransaction(
+  tx: Prisma.TransactionClient,
+  sourceAgentId: string,
+  targetAgentId: string,
+  sourceConversations: ReadonlyArray<SourceConversationForClone>,
+  preserveHermesSession: boolean,
+): Promise<AgentCloneConversationId[]> {
+  const conversationIds: AgentCloneConversationId[] = [];
+  for (const conversation of sourceConversations) {
+    // Before runtime aliases existed, external-message conversations used the
+    // deterministic session key as their title. Recover that identity so a
+    // copied Hermes volume can continue those legacy channel sessions too.
+    const legacyMessagingSessionKey = conversation.title?.startsWith('msg:')
+      ? conversation.title
+      : undefined;
+    const runtimeSession = preserveHermesSession
+      ? defaultConversationRuntimeSession(sourceAgentId, conversation.id, {
+          runtimeSessionId: conversation.runtimeSessionId ?? undefined,
+          runtimeSessionKey: conversation.runtimeSessionKey ?? legacyMessagingSessionKey,
+        })
+      : undefined;
+    const copiedConversation = await tx.conversation.create({
+      data: {
+        agentId: targetAgentId,
+        title: conversation.title,
+        createdAt: conversation.createdAt,
+        ...(runtimeSession ?? {}),
+      },
+    });
+    conversationIds.push({ sourceId: conversation.id, targetId: copiedConversation.id });
+    if (conversation.messages.length > 0) {
+      await tx.message.createMany({
+        data: conversation.messages.map((message) => ({
+          conversationId: copiedConversation.id,
+          role: message.role,
+          parts: copiedMessageParts(message.parts),
+          createdAt: message.createdAt,
+        })),
+      });
+    }
+  }
+  return conversationIds;
+}
+
+async function cloneAgentConversationsInTransaction(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+  preserveHermesSession: boolean,
+): Promise<AgentCloneConversationId[]> {
+  const [source, target] = await Promise.all([
+    tx.agent.findFirst({
+      where: { id: sourceAgentId, workspaceId },
+      select: {
+        conversations: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            title: true,
+            runtimeSessionId: true,
+            runtimeSessionKey: true,
+            createdAt: true,
+            messages: {
+              orderBy: { createdAt: 'asc' },
+              select: { role: true, parts: true, createdAt: true },
+            },
+          },
+        },
+      },
+    }),
+    tx.agent.findFirst({
+      where: { id: targetAgentId, workspaceId },
+      select: { id: true },
+    }),
+  ]);
+  if (!source || !target) throw new Error('The source or target agent is no longer available.');
+  return copyConversationsInTransaction(
+    tx,
+    sourceAgentId,
+    target.id,
+    source.conversations,
+    preserveHermesSession,
+  );
+}
+
+export type HermesVolumeCloneData = {
+  conversationIds: AgentCloneConversationId[];
+  attachmentCount: number;
+};
+
+/**
+ * Copies the database records that point into a Hermes volume. This runs only
+ * after the physical volume is quiesced and copied, so the files, attachment
+ * records, conversation history, and Hermes session aliases share one point
+ * in time. The transaction also prevents orphaned attachment mappings.
+ */
+export async function cloneHermesVolumeData(
+  workspaceId: string,
+  sourceAgentId: string,
+  targetAgentId: string,
+): Promise<HermesVolumeCloneData> {
+  return db.$transaction(async (tx) => {
+    const [source, target] = await Promise.all([
+      tx.agent.findFirst({
+        where: { id: sourceAgentId, workspaceId },
+        select: {
+          runtime: {
+            select: {
+              kind: true,
+              workspaceId: true,
+              sandbox: { select: { workspaceId: true } },
+            },
+          },
+          conversations: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              id: true,
+              title: true,
+              runtimeSessionId: true,
+              runtimeSessionKey: true,
+              createdAt: true,
+              messages: {
+                orderBy: { createdAt: 'asc' },
+                select: { role: true, parts: true, createdAt: true },
+              },
+            },
+          },
+          attachments: {
+            where: { storage: 'hermes-volume' },
+            select: {
+              conversationId: true,
+              name: true,
+              mimeType: true,
+              size: true,
+              storage: true,
+              storagePath: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+      tx.agent.findFirst({
+        where: { id: targetAgentId, workspaceId },
+        select: {
+          id: true,
+          runtime: {
+            select: {
+              id: true,
+              kind: true,
+              workspaceId: true,
+              sandbox: { select: { workspaceId: true } },
+            },
+          },
+        },
+      }),
+    ]);
+    const sourceHermesRuntime = source?.runtime;
+    const targetHermesRuntime = target?.runtime;
+    if (
+      !source
+      || !target
+      || sourceHermesRuntime?.kind !== HERMES_RUNTIME_KIND
+      || targetHermesRuntime?.kind !== HERMES_RUNTIME_KIND
+      || sourceHermesRuntime.workspaceId !== workspaceId
+      || targetHermesRuntime.workspaceId !== workspaceId
+      || sourceHermesRuntime.sandbox.workspaceId !== workspaceId
+      || targetHermesRuntime.sandbox.workspaceId !== workspaceId
+    ) {
+      throw new Error('Source and target must be workspace-owned Hermes agents.');
+    }
+
+    const conversationIds = await copyConversationsInTransaction(
+      tx,
+      sourceAgentId,
+      target.id,
+      source.conversations,
+      true,
+    );
+    if (source.attachments.length === 0) return { conversationIds, attachmentCount: 0 };
+
+    const targetConversationBySource = new Map(
+      conversationIds.map(({ sourceId, targetId }) => [sourceId, targetId]),
+    );
+    const copiedAttachments = await tx.agentAttachment.createMany({
+      data: source.attachments.map((attachment) => ({
+        workspaceId,
+        agentId: target.id,
+        conversationId: attachment.conversationId
+          ? targetConversationBySource.get(attachment.conversationId) ?? null
+          : null,
+        runtimeId: targetHermesRuntime.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        storage: attachment.storage,
+        storagePath: attachment.storagePath,
+        createdAt: attachment.createdAt,
+      })),
+    });
+    return { conversationIds, attachmentCount: copiedAttachments.count };
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 export type AgentConfig = {
@@ -437,10 +763,91 @@ export async function setProviderModels(workspaceId: string, providerId: string,
   });
 }
 
-export async function createConversation(workspaceId: string, agentId: string, title?: string) {
-  const agent = await db.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
-  if (!agent) return null;
-  return db.conversation.create({ data: { agentId, title: title ?? null } });
+export type ConversationRuntimeSession = {
+  runtimeSessionId: string;
+  runtimeSessionKey: string;
+};
+
+function nonEmptyString(value: string | undefined | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed || null;
+}
+
+export function defaultConversationRuntimeSession(
+  agentId: string,
+  conversationId: string,
+  overrides: Partial<ConversationRuntimeSession> = {},
+): ConversationRuntimeSession {
+  const runtimeSessionId = nonEmptyString(overrides.runtimeSessionId) || conversationId;
+  return {
+    runtimeSessionId,
+    runtimeSessionKey: nonEmptyString(overrides.runtimeSessionKey)
+      || `agent:${agentId}:console:${runtimeSessionId}`,
+  };
+}
+
+export async function createConversation(
+  workspaceId: string,
+  agentId: string,
+  title?: string,
+  runtimeSession?: Partial<ConversationRuntimeSession>,
+) {
+  return db.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
+    if (!agent) return null;
+    const conversation = await tx.conversation.create({ data: { agentId, title: title ?? null } });
+    return tx.conversation.update({
+      where: { id: conversation.id },
+      data: defaultConversationRuntimeSession(agent.id, conversation.id, runtimeSession),
+    });
+  });
+}
+
+// Conversations created before runtime session aliases existed are initialized
+// lazily on their first Hermes request. The nullable-only updates ensure a
+// concurrent request never overwrites an alias already chosen by another one.
+export async function ensureConversationRuntimeSession(
+  workspaceId: string,
+  agentId: string,
+  conversationId: string,
+  fallback: Partial<ConversationRuntimeSession> = {},
+): Promise<ConversationRuntimeSession | null> {
+  return db.$transaction(async (tx) => {
+    const conversation = await tx.conversation.findFirst({
+      where: { id: conversationId, agentId, agent: { workspaceId } },
+      select: { id: true, runtimeSessionId: true, runtimeSessionKey: true },
+    });
+    if (!conversation) return null;
+
+    const desired = defaultConversationRuntimeSession(
+      agentId,
+      nonEmptyString(conversation.runtimeSessionId)
+        || nonEmptyString(fallback.runtimeSessionId)
+        || conversation.id,
+      { runtimeSessionKey: conversation.runtimeSessionKey ?? fallback.runtimeSessionKey },
+    );
+    if (conversation.runtimeSessionId === null) {
+      await tx.conversation.updateMany({
+        where: { id: conversation.id, agentId, runtimeSessionId: null },
+        data: { runtimeSessionId: desired.runtimeSessionId },
+      });
+    }
+    if (conversation.runtimeSessionKey === null) {
+      await tx.conversation.updateMany({
+        where: { id: conversation.id, agentId, runtimeSessionKey: null },
+        data: { runtimeSessionKey: desired.runtimeSessionKey },
+      });
+    }
+    const resolved = await tx.conversation.findUnique({
+      where: { id: conversation.id },
+      select: { runtimeSessionId: true, runtimeSessionKey: true },
+    });
+    return defaultConversationRuntimeSession(
+      agentId,
+      nonEmptyString(resolved?.runtimeSessionId) || desired.runtimeSessionId,
+      { runtimeSessionKey: resolved?.runtimeSessionKey ?? desired.runtimeSessionKey },
+    );
+  });
 }
 
 export async function appendMessage(

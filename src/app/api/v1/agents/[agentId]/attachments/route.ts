@@ -3,7 +3,11 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
-import { ensureHermesRuntimeReady } from '@/lib/agents/hermes/runtime';
+import {
+  acquireHermesRuntimeWriteLease,
+  ensureHermesRuntimeReady,
+  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
+} from '@/lib/agents/hermes/runtime';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -31,7 +35,12 @@ export async function POST(
   if (!agent.runtime || agent.runtime.kind !== 'hermes') {
     return NextResponse.json({ error: 'Attachment storage requires a Hermes runtime.' }, { status: 400 });
   }
+  const writeLease = acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id);
+  if (!writeLease) {
+    return NextResponse.json({ error: HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR }, { status: 503 });
+  }
 
+  try {
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -57,7 +66,7 @@ export async function POST(
     return NextResponse.json({ error: 'Conversation not found.' }, { status: 404 });
   }
 
-  const ready = await ensureHermesRuntimeReady(agent.workspaceId, agent.id);
+  const ready = await ensureHermesRuntimeReady(agent.workspaceId, agent.id, { writeLease });
   if (!ready.port) {
     return NextResponse.json({ error: ready.error || 'Hermes runtime is unavailable.' }, { status: 503 });
   }
@@ -101,4 +110,7 @@ export async function POST(
     size: attachment.size,
     runtimePath: attachment.storagePath,
   }, { status: 201 });
+  } finally {
+    writeLease.release();
+  }
 }

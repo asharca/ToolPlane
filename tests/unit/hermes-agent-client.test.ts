@@ -103,4 +103,48 @@ describe('Hermes chat projection', () => {
       },
     });
   });
+
+  it('uses a cloned conversation runtime-session alias for Hermes requests', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('data: [DONE]\n\n', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await writeHermesChatStream({
+      agent: {
+        id: 'target-agent',
+        slug: 'hermes',
+        workspaceId: 'workspace-1',
+        runtime: { id: 'runtime-1', kind: 'hermes' },
+      },
+      messages: [{
+        id: 'user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'Continue the copied session.' }],
+      }],
+      conversationId: 'target-conversation',
+      runtimeSessionId: 'source-conversation',
+      sessionKey: 'agent:source-agent:console:source-conversation',
+      writer: { write: vi.fn() } as unknown as UIMessageStreamWriter<HermesUIMessage>,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:4312/hermes/v1/chat/completions',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-hermes-session-id': 'source-conversation',
+          'x-hermes-session-key': 'agent:source-agent:console:source-conversation',
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:4312/hermes/api/sessions/source-conversation/messages',
+      expect.objectContaining({ cache: 'no-store' }),
+    );
+  });
 });

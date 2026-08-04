@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { convertToModelMessages, generateText, stepCountIs, type UIMessage } from 'ai';
 import { db } from '@/lib/db';
 import { getAgent, getAgentForRequest } from '@/lib/agents/queries';
-import { appendMessage, createConversation } from '@/lib/agents/mutations';
+import {
+  appendMessage,
+  createConversation,
+  ensureConversationRuntimeSession,
+} from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
 import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
@@ -13,6 +17,10 @@ import { parseAgentMessageBody, type AgentMessageBody } from '@/lib/agents/chat-
 import { isSilentAgentReply, normalizeAgentMessageEvent } from '@/lib/agents/messaging';
 import { touchAgentChannelEvent } from '@/lib/agents/channel-connections';
 import { runHermesText } from '@/lib/agents/hermes/client';
+import {
+  acquireHermesRuntimeWriteLease,
+  HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
+} from '@/lib/agents/hermes/runtime';
 
 type LoadedMessageAgent = NonNullable<Awaited<ReturnType<typeof getAgentForRequest>>>;
 
@@ -85,6 +93,14 @@ async function runLoadedAgentMessage(params: {
     };
   }
 
+  const hermesWriteLease = isHermes
+    ? acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id)
+    : null;
+  if (isHermes && !hermesWriteLease) {
+    return { status: 503, body: { error: HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR } };
+  }
+
+  try {
   const body = parseAgentMessageBody({ ...params.defaults, ...(params.rawBody as object) });
   if (!body) return { status: 400, body: { error: 'Bad request' } };
 
@@ -101,9 +117,23 @@ async function runLoadedAgentMessage(params: {
   }
   const createdConversation = loadedConversation
     ? null
-    : await createConversation(agent.workspaceId, agent.id, event.conversationTitle);
+    : await createConversation(agent.workspaceId, agent.id, event.conversationTitle, {
+        runtimeSessionKey: event.sessionKey,
+      });
   const conversation = loadedConversation ?? createdConversation;
   if (!conversation) return { status: 404, body: { error: 'Conversation not found' } };
+
+  const runtimeSession = isHermes
+    ? await ensureConversationRuntimeSession(
+        agent.workspaceId,
+        agent.id,
+        conversation.id,
+        { runtimeSessionKey: event.sessionKey },
+      )
+    : null;
+  if (isHermes && !runtimeSession) {
+    return { status: 404, body: { error: 'Conversation not found' } };
+  }
 
   const priorMessages: UIMessage[] = (loadedConversation?.messages ?? []).map((m) => ({
     id: m.id,
@@ -122,8 +152,9 @@ async function runLoadedAgentMessage(params: {
       text = await runHermesText({
         agent,
         messages: [...priorMessages, userMessage],
-        sessionId: conversation.id,
-        sessionKey: event.sessionKey,
+        sessionId: runtimeSession!.runtimeSessionId,
+        sessionKey: runtimeSession!.runtimeSessionKey,
+        writeLease: hermesWriteLease ?? undefined,
       });
     } catch (error) {
       return {
@@ -177,4 +208,7 @@ async function runLoadedAgentMessage(params: {
       channelId: event.source.chatId ?? null,
     },
   };
+  } finally {
+    hermesWriteLease?.release();
+  }
 }

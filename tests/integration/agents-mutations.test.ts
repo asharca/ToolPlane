@@ -1,8 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import {
   cloneAgent,
+  cloneHermesVolumeData,
   createAgent,
   deleteAgent,
   deleteProvider,
@@ -13,8 +15,10 @@ import {
   updateProvider,
   appendMessage,
   createConversation,
+  ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
 import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
+import { readSandboxEnv } from '@/lib/sandboxes/env';
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -201,6 +205,154 @@ describe('agents mutations', () => {
 
     expect(reread.providerId).toBeNull();
     expect(reread.model).toBeNull();
+  });
+
+  it('uses clone scope to copy conversation data without unwanted bindings', async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const source = await createAgent(workspaceId, 'Scoped clone source');
+    const skill = await db.installedSkill.create({
+      data: { workspaceId, name: 'Scoped skill', slug: `scoped-skill-${suffix}`, content: '# scoped' },
+    });
+    await setAgentTools(workspaceId, source.id, {
+      deploymentIds: [deploymentId],
+      installedSkillIds: [skill.id],
+      toolkitIds: [],
+    });
+    const conversation = await createConversation(workspaceId, source.id, 'Keep this history');
+    await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Copied question' }]);
+    await appendMessage(conversation!.id, 'assistant', [{ type: 'text', text: 'Copied answer' }]);
+    await db.message.create({
+      data: { conversationId: conversation!.id, role: 'assistant', parts: Prisma.JsonNull },
+    });
+
+    const cloned = await cloneAgent(workspaceId, source.id, 'Scoped clone target', {
+      copyMcp: false,
+      copySkills: false,
+      copyToolkits: false,
+      copySandboxes: false,
+      copySubAgents: false,
+      copyConversations: true,
+    });
+    const reread = await db.agent.findUniqueOrThrow({
+      where: { id: cloned!.id },
+      include: {
+        servers: true,
+        skills: true,
+        toolkits: true,
+        sandboxes: true,
+        subAgents: true,
+        conversations: { include: { messages: { orderBy: { createdAt: 'asc' } } } },
+      },
+    });
+
+    expect(reread.servers).toHaveLength(0);
+    expect(reread.skills).toHaveLength(0);
+    expect(reread.toolkits).toHaveLength(0);
+    expect(reread.sandboxes).toHaveLength(0);
+    expect(reread.subAgents).toHaveLength(0);
+    expect(reread.conversations).toHaveLength(1);
+    expect(reread.conversations[0]).toMatchObject({ title: 'Keep this history' });
+    expect(reread.conversations[0].id).not.toBe(conversation!.id);
+    expect(reread.conversations[0].messages.map((message) => message.parts)).toEqual([
+      [{ type: 'text', text: 'Copied question' }],
+      [{ type: 'text', text: 'Copied answer' }],
+      null,
+    ]);
+  });
+
+  it('copies Hermes environment and session aliases for a complete data clone', async () => {
+    const source = await createAgent(workspaceId, 'Hermes clone data source', { runtime: 'hermes' });
+    await setHermesRuntimeEnv(workspaceId, source.id, { PRIVATE_TOKEN: 'source-secret', REGION: 'cn' });
+    const conversation = await createConversation(workspaceId, source.id, 'Hermes state');
+    await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Remember this' }]);
+
+    const cloned = await cloneAgent(workspaceId, source.id, 'Hermes clone data target', {
+      copyConversations: true,
+      copyHermesEnvironment: true,
+    });
+    const [sourceConversation, targetRuntime, targetConversation] = await Promise.all([
+      db.conversation.findUniqueOrThrow({ where: { id: conversation!.id } }),
+      db.agentRuntime.findUniqueOrThrow({
+        where: { agentId: cloned!.id },
+        include: { sandbox: { include: { deployment: true } } },
+      }),
+      db.conversation.findFirstOrThrow({ where: { agentId: cloned!.id } }),
+    ]);
+
+    expect(readSandboxEnv(targetRuntime.sandbox.config)).toEqual({
+      PRIVATE_TOKEN: 'source-secret',
+      REGION: 'cn',
+    });
+    expect(targetRuntime.sandbox.deployment.installCfg).toMatchObject({
+      env: { PRIVATE_TOKEN: 'source-secret', REGION: 'cn' },
+    });
+    expect(targetConversation.id).not.toBe(sourceConversation.id);
+    expect(targetConversation).toMatchObject({
+      runtimeSessionId: sourceConversation.runtimeSessionId,
+      runtimeSessionKey: sourceConversation.runtimeSessionKey,
+    });
+    expect(cloned?.conversationIds).toEqual([{ sourceId: conversation!.id, targetId: targetConversation.id }]);
+  });
+
+  it('clones Hermes attachment records only onto the copied runtime', async () => {
+    const source = await createAgent(workspaceId, 'Hermes attachment source', { runtime: 'hermes' });
+    const conversation = await createConversation(workspaceId, source.id, 'Attachment conversation');
+    const sourceRuntime = await db.agentRuntime.findUniqueOrThrow({ where: { agentId: source.id } });
+    await db.agentAttachment.create({
+      data: {
+        workspaceId,
+        agentId: source.id,
+        conversationId: conversation!.id,
+        runtimeId: sourceRuntime.id,
+        name: 'research.pdf',
+        mimeType: 'application/pdf',
+        size: 42,
+        storage: 'hermes-volume',
+        storagePath: `attachments/${conversation!.id}/research.pdf`,
+      },
+    });
+    const cloned = await cloneAgent(workspaceId, source.id, 'Hermes attachment target', {
+      copyHermesVolume: true,
+    });
+    expect(cloned?.conversationsDeferred).toBe(true);
+    const copied = await cloneHermesVolumeData(
+      workspaceId,
+      source.id,
+      cloned!.id,
+    );
+    const [targetRuntime, targetAttachment, targetConversation] = await Promise.all([
+      db.agentRuntime.findUniqueOrThrow({ where: { agentId: cloned!.id } }),
+      db.agentAttachment.findFirstOrThrow({ where: { agentId: cloned!.id } }),
+      db.conversation.findFirstOrThrow({ where: { agentId: cloned!.id } }),
+    ]);
+
+    expect(copied.attachmentCount).toBe(1);
+    expect(targetAttachment).toMatchObject({
+      runtimeId: targetRuntime.id,
+      conversationId: targetConversation.id,
+      name: 'research.pdf',
+      storagePath: `attachments/${conversation!.id}/research.pdf`,
+    });
+  });
+
+  it('recovers a legacy messaging session key while cloning Hermes volume data', async () => {
+    const source = await createAgent(workspaceId, 'Hermes legacy message source', { runtime: 'hermes' });
+    const legacy = await db.conversation.create({
+      data: { agentId: source.id, title: 'msg:slack:dm:U123' },
+    });
+    const cloned = await cloneAgent(workspaceId, source.id, 'Hermes legacy message target', {
+      copyHermesVolume: true,
+    });
+
+    await cloneHermesVolumeData(workspaceId, source.id, cloned!.id);
+    const copiedConversation = await db.conversation.findFirstOrThrow({
+      where: { agentId: cloned!.id },
+    });
+
+    expect(copiedConversation).toMatchObject({
+      runtimeSessionId: legacy.id,
+      runtimeSessionKey: 'msg:slack:dm:U123',
+    });
   });
 
   it('clones a Hermes agent into a distinct managed runtime', async () => {
@@ -535,6 +687,42 @@ describe('agents mutations', () => {
     const msgs = await db.message.findMany({ where: { conversationId: conv!.id } });
     expect(msgs).toHaveLength(1);
     expect(msgs[0].role).toBe('user');
+    expect(conv).toMatchObject({
+      runtimeSessionId: conv!.id,
+      runtimeSessionKey: `agent:${a.id}:console:${conv!.id}`,
+    });
+
+    const messagingConversation = await createConversation(workspaceId, a.id, 'msg:slack:dm:U123', {
+      runtimeSessionKey: 'msg:slack:dm:U123',
+    });
+    expect(messagingConversation).toMatchObject({
+      runtimeSessionId: messagingConversation!.id,
+      runtimeSessionKey: 'msg:slack:dm:U123',
+    });
+  });
+
+  it('initializes legacy runtime session aliases once without replacing them', async () => {
+    const agent = await createAgent(workspaceId, 'Legacy Hermes chat');
+    const legacy = await db.conversation.create({ data: { agentId: agent.id } });
+
+    const initialized = await ensureConversationRuntimeSession(
+      workspaceId,
+      agent.id,
+      legacy.id,
+      { runtimeSessionKey: 'msg:slack:dm:U123' },
+    );
+    expect(initialized).toEqual({
+      runtimeSessionId: legacy.id,
+      runtimeSessionKey: 'msg:slack:dm:U123',
+    });
+
+    const retained = await ensureConversationRuntimeSession(
+      workspaceId,
+      agent.id,
+      legacy.id,
+      { runtimeSessionId: 'different-session', runtimeSessionKey: 'different-key' },
+    );
+    expect(retained).toEqual(initialized);
   });
 
   it('drops cross-workspace tool ids in setAgentTools', async () => {
