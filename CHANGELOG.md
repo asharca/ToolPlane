@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.16.0](https://github.com/asharca/ToolPlane/releases/tag/v0.16.0) (2026-08-04)
+
+### What's Changed
+* feat: import .hermes archives as managed sandboxes by @renhedata in https://github.com/asharca/ToolPlane/pull/62
+* feat: support full-fidelity agent cloning by @renhedata in https://github.com/asharca/ToolPlane/pull/63
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.15.2...v0.16.0
+
 ## [0.15.2](https://github.com/asharca/ToolPlane/releases/tag/v0.15.2) (2026-08-03)
 
 ### What's Changed
