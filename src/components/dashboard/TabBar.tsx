@@ -9,10 +9,12 @@ export function TabBar({
   tabs,
   current,
   basePath,
+  query,
 }: {
   tabs: Tab[];
   current: string;
   basePath: string;
+  query?: Record<string, string | undefined>;
 }) {
   const activeRef = useRef<HTMLAnchorElement>(null);
 
@@ -25,8 +27,12 @@ export function TabBar({
       <div className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
         {tabs.map((tab) => {
           const active = tab.key === current;
-          const href =
-            tab.key === tabs[0]?.key ? basePath : `${basePath}?tab=${tab.key}`;
+          const params = new URLSearchParams();
+          for (const [key, value] of Object.entries(query ?? {})) {
+            if (value) params.set(key, value);
+          }
+          if (tab.key !== tabs[0]?.key) params.set('tab', tab.key);
+          const href = params.toString() ? `${basePath}?${params}` : basePath;
           return (
             <Link
               key={tab.key}

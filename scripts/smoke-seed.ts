@@ -523,6 +523,107 @@ async function main(): Promise<void> {
     select: { id: true },
   });
 
+  // Keep the smoke workspace useful for visually checking the Logs page. The
+  // rows are intentionally spread across the last 24 hours so the hourly
+  // chart, per-server rollup, status colors, and expandable payloads all have
+  // something to show immediately after seeding.
+  const seededNow = Date.now();
+  await db.requestLog.createMany({
+    data: [
+      ...Array.from({ length: 48 }, (_, index) => {
+        const deployment = deployments[index % deployments.length];
+        const toolName = ['echo', 'add', 'get_current_time', 'search'][index % 4];
+        const statusCode = index % 13 === 0
+          ? 503
+          : index % 9 === 0
+            ? 500
+            : index % 7 === 0
+              ? 400
+              : 200;
+        const request = {
+          jsonrpc: '2.0',
+          id: index + 1,
+          method: 'tools/call',
+          params: { name: toolName, arguments: { query: `seed-${index}` } },
+        };
+        const response = statusCode >= 400
+          ? { error: statusCode === 503 ? 'deployment not running' : 'seeded request error' }
+          : { result: { content: [{ type: 'text', text: `seed response ${index}` }] } };
+        return {
+          workspaceId: ws.id,
+          deploymentId: deployment.id,
+          method: 'POST',
+          path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
+          statusCode,
+          durationMs: 28 + ((index * 37) % 520),
+          requestBody: JSON.stringify(request),
+          responseBody: JSON.stringify(response),
+          createdAt: new Date(seededNow - index * 28 * 60 * 1000),
+        };
+      }),
+      ...Array.from({ length: 4 }, (_, index) => ({
+        workspaceId: ws.id,
+        method: 'GET',
+        path: index % 2 === 0 ? `/workspaces/${ws.slug}/manifest` : '/skills/code-review/skill.md',
+        statusCode: index === 3 ? 404 : 200,
+        durationMs: 18 + index * 11,
+        requestBody: null,
+        responseBody: JSON.stringify(index === 3 ? { error: 'seeded not found' } : { ok: true }),
+        createdAt: new Date(seededNow - (index * 5 + 2) * 60 * 60 * 1000),
+      })),
+    ],
+  });
+  await db.skillInvocation.createMany({
+    data: Array.from({ length: 12 }, (_, index) => ({
+      workspaceId: ws.id,
+      toolkitId: toolkit.id,
+      skillSlug: skillSeeds[index % skillSeeds.length].slug,
+      source: index % 3 === 0 ? 'agent' : 'user',
+      outcome: index % 5 === 0 ? 'error' : 'success',
+      errorClass: index % 5 === 0 ? (index % 2 === 0 ? 'timeout' : 'runtime_error') : null,
+      client: index % 2 === 0 ? 'toolplane-smoke' : 'claude-code',
+      createdAt: new Date(seededNow - index * 95 * 60 * 1000),
+    })),
+  });
+  await db.syncEvent.createMany({
+    data: [
+      {
+        workspaceId: ws.id,
+        toolkitId: toolkit.id,
+        outcome: 'applied',
+        added: 4,
+        removed: 0,
+        updated: 1,
+        total: skillSeeds.length,
+        client: 'toolplane-smoke',
+        createdAt: new Date(seededNow - 45 * 60 * 1000),
+      },
+      {
+        workspaceId: ws.id,
+        toolkitId: toolkit.id,
+        outcome: 'failure',
+        added: 0,
+        removed: 0,
+        updated: 0,
+        total: skillSeeds.length,
+        reason: 'timeout',
+        client: 'claude-code',
+        createdAt: new Date(seededNow - 7 * 60 * 60 * 1000),
+      },
+      {
+        workspaceId: ws.id,
+        toolkitId: toolkit.id,
+        outcome: 'applied',
+        added: 1,
+        removed: 1,
+        updated: 2,
+        total: skillSeeds.length,
+        client: 'toolplane-smoke',
+        createdAt: new Date(seededNow - 18 * 60 * 60 * 1000),
+      },
+    ],
+  });
+
   const nativeAgent = await db.agent.create({
     data: {
       workspaceId: ws.id,
@@ -686,7 +787,8 @@ async function main(): Promise<void> {
   console.log(`TOKEN=${token}`);
   console.log(
     `Seeded ${deployments.length} MCPs, ${installedSkills.length} skills, 2 agents, `
-      + '2 published agent listings, Debug Starter Kit, and Market Starter Kit.',
+      + '2 published agent listings, Debug Starter Kit, Market Starter Kit, '
+      + 'and observability test data.',
   );
   await db.$disconnect();
 }

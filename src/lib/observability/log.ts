@@ -1,6 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { formatInTimeZone } from '@/lib/timezone';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 
 export async function logRequest(entry: {
   workspaceId: string;
@@ -39,20 +40,84 @@ export async function getDeploymentLogs(deploymentId: string, limit = 100) {
 
 export type HourBucket = { hour: string; total: number; errors: number };
 
-export async function getObservability(workspaceId: string, timeZone: string, hours = 24) {
-  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-  const logs = await db.requestLog.findMany({
-    where: { workspaceId, createdAt: { gte: since } },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      method: true,
-      path: true,
-      statusCode: true,
-      durationMs: true,
-      createdAt: true,
-    },
-  });
+export type ObservabilityLog = {
+  id: string;
+  deploymentId: string | null;
+  deploymentName: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+  requestBody: string | null;
+  responseBody: string | null;
+  createdAt: Date;
+};
+
+export type DeploymentUsage = {
+  id: string | null;
+  name: string;
+  total: number;
+  errors: number;
+  avgMs: number;
+};
+
+const HOUR_MS = 60 * 60 * 1000;
+const RECENT_LOG_LIMIT = 50;
+
+export async function getObservability(
+  workspaceId: string,
+  timeZone: string,
+  hours = 24,
+  deploymentId?: string,
+) {
+  const now = new Date();
+  const since = new Date(now.getTime() - hours * HOUR_MS);
+  const [logs, deploymentRows] = await Promise.all([
+    db.requestLog.findMany({
+      where: {
+        workspaceId,
+        createdAt: { gte: since },
+        ...(deploymentId ? { deploymentId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        deploymentId: true,
+        method: true,
+        path: true,
+        statusCode: true,
+        durationMs: true,
+        createdAt: true,
+      },
+    }),
+    db.deployment.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        serverId: true,
+        name: true,
+        source: true,
+        sourceRef: true,
+        server: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const recentIds = logs.slice(0, RECENT_LOG_LIMIT).map((log) => log.id);
+  const recentDetails = recentIds.length
+    ? await db.requestLog.findMany({
+        where: { id: { in: recentIds } },
+        select: { id: true, requestBody: true, responseBody: true },
+      })
+    : [];
+  const detailById = new Map(recentDetails.map((log) => [log.id, log]));
+  const deploymentNames = new Map(
+    deploymentRows.map((deployment) => [
+      deployment.id,
+      deploymentLabel(deployment).name,
+    ]),
+  );
 
   const total = logs.length;
   const errors = logs.filter((l) => l.statusCode >= 400).length;
@@ -62,18 +127,16 @@ export async function getObservability(workspaceId: string, timeZone: string, ho
       : Math.round(logs.reduce((a, l) => a + l.durationMs, 0) / total);
 
   const buckets = new Map<number, { total: number; errors: number }>();
-  for (let i = hours - 1; i >= 0; i -= 1) {
-    const d = new Date(Date.now() - i * 60 * 60 * 1000);
-    d.setMinutes(0, 0, 0);
-    buckets.set(d.getTime(), { total: 0, errors: 0 });
+  const lastBucket = Math.floor(now.getTime() / HOUR_MS) * HOUR_MS;
+  const firstBucket = lastBucket - Math.max(0, hours - 1) * HOUR_MS;
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += HOUR_MS) {
+    buckets.set(bucket, { total: 0, errors: 0 });
   }
   for (const l of logs) {
-    const d = new Date(l.createdAt);
-    d.setMinutes(0, 0, 0);
-    const b = buckets.get(d.getTime());
-    if (b) {
-      b.total += 1;
-      if (l.statusCode >= 400) b.errors += 1;
+    const bucket = buckets.get(Math.floor(l.createdAt.getTime() / HOUR_MS) * HOUR_MS);
+    if (bucket) {
+      bucket.total += 1;
+      if (l.statusCode >= 400) bucket.errors += 1;
     }
   }
   const series: HourBucket[] = [...buckets.entries()].map(([t, v]) => ({
@@ -86,5 +149,63 @@ export async function getObservability(workspaceId: string, timeZone: string, ho
   const p95Ms =
     total === 0 ? 0 : sortedMs[Math.min(total - 1, Math.ceil(total * 0.95) - 1)];
 
-  return { total, errors, avgMs, p95Ms, series, recent: logs.slice(0, 12) };
+  const usage = new Map<string | null, { total: number; errors: number; durationMs: number }>();
+  for (const log of logs) {
+    const current = usage.get(log.deploymentId) ?? { total: 0, errors: 0, durationMs: 0 };
+    current.total += 1;
+    current.durationMs += log.durationMs;
+    if (log.statusCode >= 400) current.errors += 1;
+    usage.set(log.deploymentId, current);
+  }
+  const deploymentUsage: DeploymentUsage[] = deploymentRows
+    .filter((deployment) => !deploymentId || deployment.id === deploymentId)
+    .map((deployment) => {
+      const value = usage.get(deployment.id) ?? { total: 0, errors: 0, durationMs: 0 };
+      return {
+        id: deployment.id,
+        name: deploymentNames.get(deployment.id) ?? 'Untitled server',
+        total: value.total,
+        errors: value.errors,
+        avgMs: value.total ? Math.round(value.durationMs / value.total) : 0,
+      };
+    });
+  const workspaceApiUsage = usage.get(null);
+  if (workspaceApiUsage) {
+    deploymentUsage.push({
+      id: null,
+      name: 'Workspace API',
+      total: workspaceApiUsage.total,
+      errors: workspaceApiUsage.errors,
+      avgMs: Math.round(workspaceApiUsage.durationMs / workspaceApiUsage.total),
+    });
+  }
+
+  const recent: ObservabilityLog[] = logs.slice(0, RECENT_LOG_LIMIT).map((log) => {
+    const details = detailById.get(log.id);
+    return {
+      ...log,
+      deploymentName: log.deploymentId
+        ? deploymentNames.get(log.deploymentId) ?? 'Unknown deployment'
+        : 'Workspace API',
+      requestBody: details?.requestBody ?? null,
+      responseBody: details?.responseBody ?? null,
+    };
+  });
+
+  return {
+    total,
+    errors,
+    avgMs,
+    p95Ms,
+    series,
+    recent,
+    deployments: deploymentRows.map((deployment) => ({
+      id: deployment.id,
+      name: deploymentNames.get(deployment.id) ?? 'Untitled server',
+    })),
+    deploymentUsage,
+    selectedDeployment: deploymentId
+      ? deploymentNames.get(deploymentId) ?? 'Unknown deployment'
+      : null,
+  };
 }

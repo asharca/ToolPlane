@@ -280,6 +280,7 @@ model RequestLog {
   createdAt    DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
+  @@index([workspaceId, deploymentId, createdAt])
 }
 
 model Toolkit {
