@@ -23,4 +23,23 @@ describe('TabBar', () => {
     expect(screen.getByRole('link', { name: 'Tools' })).toHaveAttribute('aria-current', 'page');
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'center' });
   });
+
+  it('preserves query filters while switching tabs', () => {
+    render(
+      <TabBar
+        tabs={[
+          { key: 'usage', label: 'Usage' },
+          { key: 'audit', label: 'Audit' },
+        ]}
+        current="usage"
+        basePath="/app/acme/observability"
+        query={{ deploymentId: 'dep-123' }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Audit' })).toHaveAttribute(
+      'href',
+      '/app/acme/observability?deploymentId=dep-123&tab=audit',
+    );
+  });
 });
