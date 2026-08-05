@@ -45,7 +45,7 @@ describe('system settings storage', () => {
   it('writes a key/value setting and never expands a stale value past the hard cap', async () => {
     mocks.upsert.mockResolvedValue(undefined);
 
-    await expect(updateHermesArchiveSettings(999)).resolves.toEqual({
+    await expect(updateHermesArchiveSettings(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB + 1)).resolves.toEqual({
       hermesArchiveMaxUploadMiB: MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
     expect(mocks.upsert).toHaveBeenCalledWith({

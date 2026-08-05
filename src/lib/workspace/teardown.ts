@@ -5,6 +5,7 @@ import {
   removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict,
 } from '@/lib/sandboxes/runtime';
+import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from '@/lib/agents/hermes/archive-limits';
 import { disconnectConnector } from '@/lib/sandboxes/connector-broker';
 import { closeWorkspaceOperations } from './operation-gate';
 
@@ -60,11 +61,21 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   }
   for (const sandbox of sandboxes) {
     for (const snapshot of sandbox.snapshots) {
-      await removeDockerVolumeStrict(snapshot.volumeName);
+      if (sandbox.kind === 'hermes') {
+        await removeDockerVolumeStrict(snapshot.volumeName, HERMES_ARCHIVE_IMPORT_TIMEOUT_MS);
+      } else {
+        await removeDockerVolumeStrict(snapshot.volumeName);
+      }
     }
     if (sandbox.kind === 'docker' || sandbox.kind === 'hermes') {
       const cfg = (sandbox.deployment.installCfg ?? {}) as { volumeName?: string };
-      await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName);
+      if (sandbox.kind === 'hermes') {
+        await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName, {
+          timeoutMs: HERMES_ARCHIVE_IMPORT_TIMEOUT_MS,
+        });
+      } else {
+        await removeDockerSandboxRuntimeStrict(sandbox.id, cfg.volumeName);
+      }
     }
   }
 }

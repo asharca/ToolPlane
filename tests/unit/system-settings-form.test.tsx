@@ -20,6 +20,6 @@ describe('SystemSettingsForm', () => {
     expect(input).toHaveValue(24);
     expect(input).toHaveAttribute('min', String(MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB));
     expect(input).toHaveAttribute('max', String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB));
-    expect(screen.getByText(/whole number from 1 to 60 MiB/)).toBeInTheDocument();
+    expect(screen.getByText(/whole number from 1 to 10240 MiB/)).toBeInTheDocument();
   });
 });

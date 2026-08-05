@@ -29,6 +29,7 @@ import {
   stopDockerSandboxContainer,
 } from '@/lib/sandboxes/runtime';
 import { HERMES_RUNTIME_KIND } from './constants';
+import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from './archive-limits';
 import {
   renderHermesConfig,
   renderHermesEnvPayload,
@@ -41,6 +42,13 @@ import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 import { readSandboxEnv } from '@/lib/sandboxes/env';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
+const HERMES_ARCHIVE_COPY_TIMEOUT_MS = HERMES_ARCHIVE_IMPORT_TIMEOUT_MS;
+const HERMES_SYNC_CONTAINER_RESOURCE_LIMITS = [
+  '--memory', '1g',
+  '--memory-swap', '1g',
+  '--pids-limit', '256',
+  '--cpus', '2',
+];
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
 const HERMES_CONFIG_VERSION = 6;
 const DASHBOARD_READY_CACHE_MS = 15_000;
@@ -471,12 +479,12 @@ function dockerEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runDocker(args: string[], input?: string): Promise<DockerResult> {
+function runDocker(args: string[], input?: string, timeoutMs = DOCKER_TIMEOUT_MS): Promise<DockerResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, { env: dockerEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), DOCKER_TIMEOUT_MS);
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.stdout.on('data', (chunk) => {
       stdout = `${stdout}${chunk}`.slice(-32_000);
     });
@@ -630,6 +638,7 @@ async function installProjection(params: {
     'create', '--name', initContainer, '--network', 'none',
     '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
     '--security-opt', 'no-new-privileges',
+    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
     '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
   ]);
   try {
@@ -652,7 +661,11 @@ export async function copyHermesArchiveToVolume(params: {
   const volume = sandboxVolumeName(params.sandboxId);
   const initContainer = sandboxSyncContainerName(params.sandboxId);
   await runDocker(['volume', 'create', volume]);
-  await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+  await runDocker(
+    ['rm', '-f', initContainer],
+    undefined,
+    HERMES_ARCHIVE_COPY_TIMEOUT_MS,
+  ).catch(() => undefined);
 
   const installCommand = [
     'set -eu',
@@ -662,15 +675,25 @@ export async function copyHermesArchiveToVolume(params: {
   ].join(' && ');
   await runDocker([
     'create', '--name', initContainer, '--network', 'none',
+    '--label', 'toolplane.hermes-archive-import=true',
     '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
     '--security-opt', 'no-new-privileges',
+    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
     '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
   ]);
   try {
-    await runDocker(['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`]);
-    await runDocker(['start', '--attach', initContainer]);
+    await runDocker(
+      ['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane-import`],
+      undefined,
+      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
+    );
+    await runDocker(['start', '--attach', initContainer], undefined, HERMES_ARCHIVE_COPY_TIMEOUT_MS);
   } finally {
-    await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+    await runDocker(
+      ['rm', '-f', initContainer],
+      undefined,
+      HERMES_ARCHIVE_COPY_TIMEOUT_MS,
+    ).catch(() => undefined);
   }
 }
 
@@ -1260,6 +1283,7 @@ export async function cleanupHermesRuntime(
     await removeDockerSandboxRuntimeStrict(
       agent.runtime.sandboxId,
       sandboxVolumeName(agent.runtime.sandboxId),
+      { timeoutMs: HERMES_ARCHIVE_IMPORT_TIMEOUT_MS },
     );
     return true;
   });

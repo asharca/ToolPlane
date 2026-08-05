@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   removeStaleDockerVolumeCopyHelpers: vi.fn(),
+  removeStaleHermesArchiveImportHelpers: vi.fn(),
   deploymentUpdateMany: vi.fn(),
   sandboxSnapshotUpdateMany: vi.fn(),
 }));
 
 vi.mock('@/lib/sandboxes/runtime', () => ({
   removeStaleDockerVolumeCopyHelpers: mocks.removeStaleDockerVolumeCopyHelpers,
+  removeStaleHermesArchiveImportHelpers: mocks.removeStaleHermesArchiveImportHelpers,
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -31,6 +33,7 @@ describe('reconcileSandboxVolumeCopies', () => {
   it('removes stale copy helpers before marking interrupted clones', async () => {
     const interruptedBefore = new Date('2026-07-14T03:00:00.000Z');
     mocks.removeStaleDockerVolumeCopyHelpers.mockResolvedValue(2);
+    mocks.removeStaleHermesArchiveImportHelpers.mockResolvedValue(1);
     mocks.deploymentUpdateMany
       .mockResolvedValueOnce({ count: 3 })
       .mockResolvedValueOnce({ count: 1 });
@@ -38,6 +41,7 @@ describe('reconcileSandboxVolumeCopies', () => {
 
     await expect(reconcileSandboxVolumeCopies({ helpersCreatedBefore: interruptedBefore })).resolves.toEqual({
       helpersRemoved: 2,
+      hermesArchiveHelpersRemoved: 1,
       copiesInterrupted: 3,
       restoresInterrupted: 1,
       snapshotsInterrupted: 2,
@@ -67,6 +71,10 @@ describe('reconcileSandboxVolumeCopies', () => {
       mocks.deploymentUpdateMany.mock.invocationCallOrder[0],
     );
     expect(mocks.removeStaleDockerVolumeCopyHelpers).toHaveBeenCalledWith(interruptedBefore);
+    expect(mocks.removeStaleHermesArchiveImportHelpers).toHaveBeenCalledWith(
+      interruptedBefore,
+      4 * 60 * 60 * 1000,
+    );
   });
 
   it('does not mark copies when helper cleanup cannot be confirmed', async () => {

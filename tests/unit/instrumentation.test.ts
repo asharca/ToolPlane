@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
   ensureSandboxNetwork: vi.fn(),
+  cleanupHermesArchiveStaging: vi.fn(),
   reconcileSandboxVolumeCopies: vi.fn(),
   reconcileDeployments: vi.fn(),
 }));
@@ -12,6 +13,9 @@ vi.mock('@/lib/sandboxes/connector-broker', () => ({
 }));
 vi.mock('@/lib/process/supervisor', () => ({
   ensureSandboxNetwork: mocks.ensureSandboxNetwork,
+}));
+vi.mock('@/lib/agents/hermes/archive', () => ({
+  cleanupHermesArchiveStaging: mocks.cleanupHermesArchiveStaging,
 }));
 vi.mock('@/lib/sandboxes/reconcile', () => ({
   reconcileSandboxVolumeCopies: mocks.reconcileSandboxVolumeCopies,
@@ -35,6 +39,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     delete process.env.NEXT_PHASE;
     mocks.ensureConnectorBroker.mockResolvedValue(undefined);
     mocks.ensureSandboxNetwork.mockResolvedValue(undefined);
+    mocks.cleanupHermesArchiveStaging.mockResolvedValue(undefined);
     mocks.reconcileDeployments.mockResolvedValue(0);
   });
 
@@ -52,6 +57,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
       .mockRejectedValueOnce(new Error('docker unavailable'))
       .mockResolvedValueOnce({
         helpersRemoved: 1,
+        hermesArchiveHelpersRemoved: 1,
         copiesInterrupted: 1,
         restoresInterrupted: 1,
         snapshotsInterrupted: 1,
@@ -60,6 +66,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     await register();
 
     expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
+    expect(mocks.cleanupHermesArchiveStaging).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileSandboxVolumeCopies).toHaveBeenCalledTimes(1);
     const firstCutoff = mocks.reconcileSandboxVolumeCopies.mock.calls[0][0].helpersCreatedBefore;
     expect(firstCutoff).toBeInstanceOf(Date);

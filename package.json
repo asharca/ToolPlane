@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "runtime:assemble": "node scripts/assemble-runtime.mjs",
-    "start": "next start",
+    "start": "node scripts/start-server.cjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",

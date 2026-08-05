@@ -14,7 +14,8 @@ export async function registerNode() {
       const copies = await reconcileSandboxVolumeCopies({ helpersCreatedBefore });
       if (Object.values(copies).some((count) => count > 0)) {
         console.warn(
-          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s); `
+          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and `
+          + `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); `
           + `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), `
           + `and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
         );
@@ -35,6 +36,8 @@ export async function registerNode() {
     await ensureConnectorBroker();
     const { ensureSandboxNetwork } = await import('@/lib/process/supervisor');
     await ensureSandboxNetwork();
+    const { cleanupHermesArchiveStaging } = await import('@/lib/agents/hermes/archive');
+    await cleanupHermesArchiveStaging();
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import('@/lib/process/reconcile');
     const n = await reconcileDeployments();

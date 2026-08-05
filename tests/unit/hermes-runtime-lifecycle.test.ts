@@ -187,6 +187,7 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith(
       'sandbox-1',
       'volume-sandbox-1',
+      { timeoutMs: 4 * 60 * 60 * 1000 },
     );
   });
 

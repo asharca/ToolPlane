@@ -116,7 +116,8 @@ COPY --from=build --chown=node:node /app/dist/release/app/ ./
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-    && chown node:node /app
+    && mkdir -p /var/lib/toolplane/imports \
+    && chown -R node:node /app /var/lib/toolplane
 
 # Non-root: the app reaches Docker over TCP via the proxy, so it needs no socket
 # group membership.

@@ -106,43 +106,6 @@ async function pruneNodePty(output) {
 async function writeLegacyEntrypointShims(output) {
   const binRoot = path.join(output, 'node_modules', '.bin');
   const embeddedRuntimeRoot = path.join(output, 'node_modules', '.toolplane-runtime');
-  const serverLauncher = [
-    "'use strict';",
-    '',
-    "const fs = require('node:fs');",
-    "const path = require('node:path');",
-    '',
-    "const appRoot = path.resolve(__dirname, '../..');",
-    "process.env.NODE_ENV = 'production';",
-    'process.chdir(appRoot);',
-    '',
-    "const requiredFiles = JSON.parse(fs.readFileSync(path.join(appRoot, '.next', 'required-server-files.json'), 'utf8'));",
-    'const nextConfig = requiredFiles.config;',
-    'process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(nextConfig);',
-    '',
-    "require('next');",
-    "const { startServer } = require('next/dist/server/lib/start-server');",
-    "const port = Number.parseInt(process.env.PORT || '', 10) || 3000;",
-    "const hostname = process.env.HOSTNAME || '0.0.0.0';",
-    "const parsedKeepAliveTimeout = Number.parseInt(process.env.KEEP_ALIVE_TIMEOUT || '', 10);",
-    'const keepAliveTimeout = Number.isFinite(parsedKeepAliveTimeout) && parsedKeepAliveTimeout >= 0',
-    '  ? parsedKeepAliveTimeout',
-    '  : undefined;',
-    '',
-    'startServer({',
-    '  dir: appRoot,',
-    '  isDev: false,',
-    '  config: nextConfig,',
-    '  hostname,',
-    '  port,',
-    '  allowRetry: false,',
-    '  keepAliveTimeout,',
-    '}).catch((error) => {',
-    '  console.error(error);',
-    '  process.exit(1);',
-    '});',
-    '',
-  ].join('\n');
   const shims = {
     prisma: `#!/bin/sh
 set -e
@@ -165,7 +128,10 @@ exec env HOSTNAME="0.0.0.0" node "$APP_ROOT/node_modules/.toolplane-runtime/serv
   };
 
   await mkdir(embeddedRuntimeRoot, { recursive: true });
-  await writeFile(path.join(embeddedRuntimeRoot, 'server.cjs'), serverLauncher, 'utf8');
+  await cp(
+    path.join(root, 'scripts', 'start-server.cjs'),
+    path.join(embeddedRuntimeRoot, 'server.cjs'),
+  );
   await mkdir(binRoot, { recursive: true });
   for (const [name, contents] of Object.entries(shims)) {
     const target = path.join(binRoot, name);

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   copyHermesArchiveToVolume: vi.fn(),
   syncHermesRuntime: vi.fn(),
   stageHermesArchive: vi.fn(),
+  acquireHermesArchiveImportLock: vi.fn(),
   resolveHermesImage: vi.fn(),
   beginWorkspaceOperation: vi.fn(),
   getHermesArchiveSettings: vi.fn(),
@@ -38,18 +39,27 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
 }));
 vi.mock('@/lib/agents/hermes/archive', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/agents/hermes/archive')>();
-  return { ...actual, stageHermesArchive: mocks.stageHermesArchive };
+  return {
+    ...actual,
+    stageHermesArchive: mocks.stageHermesArchive,
+    acquireHermesArchiveImportLock: mocks.acquireHermesArchiveImportLock,
+  };
 });
 vi.mock('@/lib/workspace/operation-gate', () => ({ beginWorkspaceOperation: mocks.beginWorkspaceOperation }));
 vi.mock('@/lib/admin/settings', () => ({ getHermesArchiveSettings: mocks.getHermesArchiveSettings }));
 
-import { importHermesArchive } from '@/lib/agents/hermes/import';
+import { importHermesArchive, importStagedHermesArchive } from '@/lib/agents/hermes/import';
 
 describe('importHermesArchive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveHermesImage.mockReturnValue('nousresearch/hermes-agent:test');
     mocks.getHermesArchiveSettings.mockResolvedValue({ hermesArchiveMaxUploadMiB: 17 });
+    mocks.acquireHermesArchiveImportLock.mockResolvedValue({
+      stagingToken: 'staging-token-0001',
+      assertHeld: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn().mockResolvedValue(undefined),
+    });
     mocks.stageHermesArchive.mockResolvedValue({
       directory: '/tmp/staged-hermes-home',
       cleanup: vi.fn().mockResolvedValue(undefined),
@@ -71,7 +81,11 @@ describe('importHermesArchive', () => {
       archive: {
         name: 'hermes.zip',
         size: 10,
-        arrayBuffer: async () => new ArrayBuffer(0),
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
       },
     })).resolves.toEqual({ agentId: 'agent-1', sandboxId: 'sandbox-1' });
 
@@ -81,6 +95,7 @@ describe('importHermesArchive', () => {
     });
     expect(mocks.stageHermesArchive).toHaveBeenCalledWith(expect.any(Object), {
       maxUploadMiB: 17,
+      stagingToken: 'staging-token-0001',
     });
     expect(mocks.deploymentUpdateMany).toHaveBeenNthCalledWith(1, {
       where: {
@@ -110,5 +125,75 @@ describe('importHermesArchive', () => {
       data: { status: 'setup_required', lastError: null },
     });
     expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('workspace-1', 'agent-1', { start: false });
+  });
+
+  it('cleans a staged archive if its import lease is lost before ownership transfers', async () => {
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    mocks.stageHermesArchive.mockResolvedValue({
+      directory: '/tmp/staged-hermes-home',
+      cleanup,
+    });
+    mocks.acquireHermesArchiveImportLock.mockResolvedValue({
+      assertHeld: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('lost lease')),
+      release: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await expect(importHermesArchive({
+      workspaceId: 'workspace-1',
+      name: 'Recovered assistant',
+      archive: {
+        name: 'hermes.zip',
+        size: 10,
+        body: new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }),
+      },
+    })).rejects.toThrow('lost lease');
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(mocks.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('records an idempotency key only after the Hermes volume is copied and synced', async () => {
+    mocks.agentRuntimeFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ sandboxId: 'sandbox-1' });
+    const staged = {
+      directory: '/tmp/staged-hermes-home',
+      fileCount: 1,
+      unpackedBytes: 1,
+      cleanup: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(importStagedHermesArchive({
+      workspaceId: 'workspace-1',
+      name: 'Recovered assistant',
+      importId: 'import-request-0001',
+      staged,
+    })).resolves.toEqual({ agentId: 'agent-1', sandboxId: 'sandbox-1' });
+
+    expect(mocks.sandboxUpdateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: {
+        config: {
+          managedBy: 'agent-runtime',
+          importSource: 'hermes-archive',
+          hermesArchiveImportRequestId: 'import-request-0001',
+        },
+      },
+    }));
+    expect(mocks.sandboxUpdateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      data: {
+        config: {
+          managedBy: 'agent-runtime',
+          importSource: 'hermes-archive',
+          hermesArchiveImportRequestId: 'import-request-0001',
+          hermesArchiveImportCompletedId: 'import-request-0001',
+        },
+      },
+    }));
+    expect(mocks.sandboxUpdateMany.mock.invocationCallOrder[1]).toBeGreaterThan(
+      mocks.syncHermesRuntime.mock.invocationCallOrder[0],
+    );
   });
 });

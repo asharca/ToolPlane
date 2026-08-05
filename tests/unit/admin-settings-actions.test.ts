@@ -43,7 +43,7 @@ describe('updateHermesArchiveUploadLimitAction', () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 
-  it.each(['', '12.5', '0', '61', '999999999999999999999'])('rejects invalid setting %j without writing', async (value) => {
+  it.each(['', '12.5', '0', '10241', '999999999999999999999'])('rejects invalid setting %j without writing', async (value) => {
     await expect(updateHermesArchiveUploadLimitAction({}, settingsForm(value))).resolves.toEqual({
       error: 'errorHermesArchiveMaxUploadMiB',
     });

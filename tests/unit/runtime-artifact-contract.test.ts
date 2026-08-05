@@ -16,9 +16,11 @@ describe('minimal runtime artifact contract', () => {
     const ciWorkflow = readRepoFile('.github/workflows/ci.yml');
     const dockerfile = readRepoFile('Dockerfile');
     const runtimeAssembler = readRepoFile('scripts/assemble-runtime.mjs');
+    const serverLauncher = readRepoFile('scripts/start-server.cjs');
 
     expect(nextConfig).toContain("output: 'standalone'");
     expect(packageJson.scripts?.['runtime:assemble']).toBe('node scripts/assemble-runtime.mjs');
+    expect(packageJson.scripts?.start).toBe('node scripts/start-server.cjs');
     expect(releaseWorkflow).toContain('target: runtime-artifact');
     expect(releaseWorkflow.match(/platforms: linux\/amd64/g)).toHaveLength(2);
     expect(releaseWorkflow.indexOf('Export runtime release artifact')).toBeLessThan(
@@ -38,6 +40,9 @@ describe('minimal runtime artifact contract', () => {
     );
     expect(runtimeAssembler).toContain('exec env HOSTNAME="0.0.0.0"');
     expect(runtimeAssembler).toContain('rm -rf "$APP_ROOT/.toolplane-update"/backup-*');
+    expect(runtimeAssembler).toContain("path.join(root, 'scripts', 'start-server.cjs')");
+    expect(serverLauncher).toContain('TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS');
+    expect(serverLauncher).toContain('server.requestTimeout = requestTimeout;');
   });
 
   it('starts the assembled server and its isolated migration tool', () => {
