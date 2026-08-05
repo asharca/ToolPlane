@@ -1,9 +1,13 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HermesArchiveError,
+  MAX_HERMES_ARCHIVE_RUNTIME_CONFIG_BYTES,
+  acquireHermesArchiveImportLock,
   stageHermesArchive,
+  stageHermesArchiveStream,
   type HermesArchiveUpload,
 } from '@/lib/agents/hermes/archive';
 
@@ -84,31 +88,81 @@ function upload(name: string, content: Buffer): HermesArchiveUpload {
   return {
     name,
     size: content.byteLength,
-    arrayBuffer: async () => content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(content);
+        controller.close();
+      },
+    }),
+  };
+}
+
+function streamUpload(name: string, content: Buffer) {
+  return {
+    name,
+    size: content.byteLength,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        const midpoint = Math.max(1, Math.floor(content.byteLength / 2));
+        controller.enqueue(content.subarray(0, midpoint));
+        controller.enqueue(content.subarray(midpoint));
+        controller.close();
+      },
+    }),
   };
 }
 
 describe('Hermes archive staging', () => {
   it('enforces a configured upload limit before reading the file body', async () => {
-    const arrayBuffer = vi.fn();
+    const body = vi.fn(() => new ReadableStream<Uint8Array>());
     await expect(stageHermesArchive({
       name: 'too-large.zip',
       size: 2 * 1024 * 1024,
-      arrayBuffer,
+      get body() {
+        return body();
+      },
     }, { maxUploadMiB: 1 })).rejects.toBeInstanceOf(HermesArchiveError);
 
-    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(body).not.toHaveBeenCalled();
   });
 
   it('rechecks the actual file body against the configured upload limit', async () => {
-    const body = new Uint8Array(1024 * 1024 + 1).buffer;
+    const body = new Uint8Array(1024 * 1024 + 1);
     await expect(stageHermesArchive({
       name: 'mismatched-size.zip',
       size: 1,
-      arrayBuffer: async () => body,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(body);
+          controller.close();
+        },
+      }),
+    }, { maxUploadMiB: 1 })).rejects.toBeInstanceOf(HermesArchiveError);
+  });
+
+  it('streams an archive to disk before ZIP inspection without materializing a File arrayBuffer', async () => {
+    const staged = await stageHermesArchiveStream(streamUpload('streamed.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      { name: '.hermes/workspace/notes.txt', content: 'hello' },
+    ])));
+    try {
+      await expect(readFile(path.join(staged.directory, 'workspace/notes.txt'), 'utf8')).resolves.toBe('hello');
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  it('enforces the configured limit while consuming a stream with an untrusted content length', async () => {
+    const body = new Uint8Array(1024 * 1024 + 1);
+    await expect(stageHermesArchiveStream({
+      name: 'too-large-stream.zip',
+      size: 1,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(body);
+          controller.close();
+        },
+      }),
     }, { maxUploadMiB: 1 })).rejects.toBeInstanceOf(HermesArchiveError);
   });
 
@@ -184,6 +238,92 @@ describe('Hermes archive staging', () => {
       { name: '.hermes/config.yaml', content: 'model: imported' },
       ...metadata,
     ])))).rejects.toBeInstanceOf(HermesArchiveError);
+  });
+
+  it('keeps configuration files small even when the archive limit is raised', async () => {
+    await expect(stageHermesArchive(upload('large-config.zip', zip([
+      { name: '.hermes/config.yaml', content: 'a'.repeat(MAX_HERMES_ARCHIVE_RUNTIME_CONFIG_BYTES + 1) },
+    ])), { maxUploadMiB: 10_240 })).rejects.toBeInstanceOf(HermesArchiveError);
+  });
+
+  it('serializes imports that share a staging volume', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), '.tmp-hermes-lock-'));
+    const previousRoot = process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+    process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = root;
+    try {
+      const first = await acquireHermesArchiveImportLock();
+      expect(first).not.toBeNull();
+      await expect(acquireHermesArchiveImportLock()).resolves.toBeNull();
+      await first?.assertHeld();
+      await first?.release();
+
+      const second = await acquireHermesArchiveImportLock();
+      expect(second).not.toBeNull();
+      await second?.release();
+    } finally {
+      if (previousRoot === undefined) delete process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+      else process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = previousRoot;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reclaims a stale lease from a recreated container and its matching staging tree', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), '.tmp-hermes-stale-lock-'));
+    const previousRoot = process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+    process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = root;
+    const token = 'stale-import-token-0001';
+    const staleLock = path.join(root, '.toolplane-hermes-import.lock');
+    const staleDirectory = path.join(root, `toolplane-hermes-import-${token}-orphan`);
+    try {
+      await mkdir(staleDirectory);
+      await writeFile(path.join(staleDirectory, 'upload.zip'), 'partial');
+      await writeFile(staleLock, JSON.stringify({
+        token,
+        hostname: `recreated-${os.hostname()}`,
+        pid: 1,
+        processIdentity: 'previous-container',
+      }));
+      const expired = new Date(Date.now() - 31 * 60_000);
+      await utimes(staleLock, expired, expired);
+
+      const lock = await acquireHermesArchiveImportLock();
+
+      expect(lock).not.toBeNull();
+      await expect(access(staleDirectory)).rejects.toThrow();
+      await lock?.release();
+    } finally {
+      if (previousRoot === undefined) delete process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+      else process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = previousRoot;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('immediately reclaims a fresh lock when stable host process identity proves its owner died', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), '.tmp-hermes-dead-lock-'));
+    const previousRoot = process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+    process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = root;
+    const token = 'dead-import-token-0001';
+    const staleLock = path.join(root, '.toolplane-hermes-import.lock');
+    const staleDirectory = path.join(root, `toolplane-hermes-import-${token}-orphan`);
+    try {
+      await mkdir(staleDirectory);
+      await writeFile(staleLock, JSON.stringify({
+        token,
+        hostname: os.hostname(),
+        pid: process.pid,
+        processIdentity: 'previous-process-instance',
+      }));
+
+      const lock = await acquireHermesArchiveImportLock();
+
+      expect(lock).not.toBeNull();
+      await expect(access(staleDirectory)).rejects.toThrow();
+      await lock?.release();
+    } finally {
+      if (previousRoot === undefined) delete process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR;
+      else process.env.TOOLPLANE_HERMES_ARCHIVE_TMP_DIR = previousRoot;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it.each<[string, ZipEntry[]]>([

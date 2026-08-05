@@ -84,3 +84,12 @@ export function originFromHeaders(headers: HeaderReader): string {
 export function originFromRequest(req: Request): string {
   return resolveOrigin(requestOriginFromHeaders(req.headers) ?? normalizedHttpOrigin(req.url));
 }
+
+// Cookie-authenticated JSON and raw-body mutations need an explicit CSRF
+// boundary because Route Handlers do not receive the Server Action origin
+// protection automatically. API routes that intentionally support cross-origin
+// Bearer-token clients should not use this helper.
+export function isSameOriginRequest(req: Request): boolean {
+  const suppliedOrigin = normalizedHttpOrigin(req.headers.get('origin'));
+  return suppliedOrigin !== null && suppliedOrigin === originFromRequest(req);
+}

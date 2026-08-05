@@ -38,8 +38,34 @@ Agent
 在 **Sandboxes → New sandbox → Import .hermes archive** 中可以上传已有 Hermes
 主目录的 ZIP 备份。ZIP 可以以单个 `.hermes/` 目录为根，也可以直接以该目录
 的内容为根。压缩包大小由 **管理后台 → 系统设置** 配置，默认 48 MiB，
-可在 1–60 MiB 之间调整。60 MiB 是当前 64 MiB Server Action 请求上限下的
-固定安全上限；如需更大的归档，需要改用流式上传入口并同步调整部署代理限制。
+可在 1–10,240 MiB（10 GiB）之间调整。浏览器会把 ZIP 作为原始请求体直接
+流式写入专用暂存存储，不经 Server Action、multipart 解析或 `arrayBuffer()`，
+因此不会把归档完整放入 Node.js 内存。
+
+Docker Compose 默认挂载 `toolplane_imports` 到
+`/var/lib/toolplane/imports` 作为暂存卷。10 GiB 导入在 ZIP、解压目录、Docker
+初始化容器副本和最终 volume 的峰值期间可能需要约 40 GiB 可用空间；部署者应
+为该卷单独规划容量。可通过 Compose 的
+`TOOLPLANE_HERMES_ARCHIVE_VOLUME=/srv/toolplane/imports` 将其改为宿主机大盘的
+bind mount（该目录须允许容器内 `node` 用户写入）。为避免并发耗尽该卷，实例
+同一时间只执行一个 Hermes 归档导入；暂存空间会按 ZIP 加解压的最坏情况预检，
+崩溃遗留目录会在启动时及定期清理，且过期导入租约回收时会立即清理对应的
+ZIP/解包树。该租约用于单个 ToolPlane app 进程的崩溃恢复，不能把同一暂存卷
+同时挂载给多个运行中的 ToolPlane 实例作为分布式锁使用。压缩包、单文件和解压后总大小会一起受限：
+默认解压上限为 256 MiB，管理员把压缩包上限调高后该上限会随之增加，最高
+10 GiB。文件数量、压缩比、路径/权限检查和最长检查时间仍会强制执行；会被
+运行时解析的 `config.yaml` 与 `.env` 仍限制为 4 MiB。
+
+生产环境如在 Nginx、Caddy、Traefik 或 Coolify 等反向代理后运行，还必须为
+`POST /api/v1/workspaces/:slug/sandboxes/hermes-import` 放宽请求体大小与上传/读取
+超时，并关闭该路径的请求缓冲。ToolPlane 镜像把 Node 请求超时默认设为四小时，
+可通过 `TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS` 调整（不低于一分钟）。四小时仅覆盖
+原始请求体接收；该 Route Handler 为 ZIP 检查、两阶段 Docker 拷贝和首次同步预留
+最多十四小时，因此此路径的代理响应/读取/发送超时也应相应放宽。这是 Node
+进程级请求体超时；生产代理仍应为其他路径保持较短的 body/connection 超时并实施
+连接、速率限制。Compose 和 `pnpm start` 使用该生产启动器；`pnpm dev` 不适合验证
+完整的 10 GiB 上传。该上传是单请求流，不支持断点续传；页面会复用同一个导入 ID，
+因此响应丢失后的重试会返回已完成结果，未完成的旧导入则明确要求先检查或清理。
 
 导入不会创建一个脱离 Agent 的通用 Sandbox；它会创建同样的
 `Agent → AgentRuntime → Sandbox(kind=hermes) → Deployment → named volume`

@@ -25,7 +25,7 @@ describe('Hermes hosted runner image contract', () => {
     expect(dockerfile).toContain('ARG TOOLPLANE_VERSION=dev');
     expect(dockerfile).toContain('/app/dist/release/app/');
     expect(runtimeAssembler).toContain("path.join(outputRoot, '.toolplane-version')");
-    expect(dockerfile).toContain('chown node:node /app');
+    expect(dockerfile).toContain('chown -R node:node /app /var/lib/toolplane');
   });
 
   it('runs the prebuilt app image and wires bundled Hermes runtime through Docker Compose', () => {
@@ -34,6 +34,7 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).not.toContain('build:\n      context: .');
     expect(compose).toContain('image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}');
     expect(compose).not.toContain('container_name: toolplane-app');
+    expect(compose).toContain('hostname: toolplane-app');
     expect(compose).toContain('VOLUMES: 1');
     expect(compose).toContain('EXEC: 1');
     expect(compose).toContain("expose:");
@@ -51,5 +52,15 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).toContain('HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_HERMES_ROOT: /opt/hermes-agent');
     expect(compose).toContain('TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python');
+    expect(compose).toContain('${TOOLPLANE_HERMES_ARCHIVE_VOLUME:-toolplane_imports}:/var/lib/toolplane/imports');
+    expect(compose).toContain('TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports');
+    expect(compose).toContain('TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}');
+  });
+
+  it('labels and gives long cleanup time to the temporary container used for an archive import', () => {
+    const runtime = readRepoFile('src/lib/agents/hermes/runtime.ts');
+
+    expect(runtime).toContain("'--label', 'toolplane.hermes-archive-import=true'");
+    expect(runtime).toContain('HERMES_ARCHIVE_COPY_TIMEOUT_MS,\n  ).catch(() => undefined);');
   });
 });

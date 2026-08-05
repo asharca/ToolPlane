@@ -1,7 +1,7 @@
 'use client';
 
-import { useActionState, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useFormStatus } from 'react-dom';
 import {
@@ -19,7 +19,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
-import { importHermesArchiveAction } from '@/lib/agents/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
@@ -31,9 +30,30 @@ import { DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB } from '@/lib/agents/hermes/archi
 
 type Mode = 'docker' | 'connector' | 'hermes-import';
 
+type HermesImportState = {
+  pending: boolean;
+  phase?: 'uploading' | 'importing';
+  uploadedBytes?: number;
+  totalBytes?: number;
+  error?: string;
+};
+
 const inputClass = 'ui-input h-9 w-full';
 const recommendedImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'recommended');
 const generalImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'general');
+
+function hermesArchiveLimitLabel(maxUploadMiB: number): string {
+  return maxUploadMiB >= 1024 && maxUploadMiB % 1024 === 0
+    ? `${maxUploadMiB / 1024} GiB (${maxUploadMiB} MiB)`
+    : `${maxUploadMiB} MiB`;
+}
+
+function newHermesImportId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `import-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -185,20 +205,31 @@ function ImageGroup({
   );
 }
 
-function CreateSandboxFooter({ mode }: { mode: Mode }) {
+function CreateSandboxFooter({
+  mode,
+  hermesImport,
+}: {
+  mode: Mode;
+  hermesImport: HermesImportState;
+}) {
   const t = useTranslations('console.sandboxes');
-  const { pending } = useFormStatus();
+  const { pending: actionPending } = useFormStatus();
   const isDocker = mode === 'docker';
   const isHermesImport = mode === 'hermes-import';
+  const pending = isHermesImport ? hermesImport.pending : actionPending;
+  const uploading = isHermesImport && hermesImport.phase === 'uploading';
+  const percent = uploading && hermesImport.totalBytes
+    ? Math.min(100, Math.round((hermesImport.uploadedBytes ?? 0) / hermesImport.totalBytes * 100))
+    : null;
 
   const pendingTitle = isHermesImport
-    ? t('importingHermesArchive')
+    ? uploading ? t('uploadingHermesArchive') : t('importingHermesArchive')
     : isDocker ? t('creatingSandboxRuntime') : t('creatingConnectorSandbox');
   const pendingDescription = isHermesImport
-    ? t('importingHermesArchiveDescription')
+    ? uploading ? t('uploadingHermesArchiveDescription') : t('importingHermesArchiveDescription')
     : isDocker ? t('creatingSandboxRuntimeDescription') : t('creatingConnectorSandboxDescription');
   const pendingLabel = isHermesImport
-    ? t('importingHermesArchive')
+    ? pendingTitle
     : isDocker ? t('creatingContainer') : t('creatingConnector');
   const submitLabel = isHermesImport
     ? t('importAndCreateHermesSandbox')
@@ -207,28 +238,43 @@ function CreateSandboxFooter({ mode }: { mode: Mode }) {
   return (
     <div className="sticky bottom-0 -mx-5 mt-5 border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
       {pending ? (
-        <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3">
+        <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3" aria-live="polite">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Loader2 className="size-4 animate-spin" />
-            {pendingTitle}
+            {pendingTitle}{percent !== null ? ` ${percent}%` : ''}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {pendingDescription}
           </p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
-            <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+            <div
+              className={cx('h-full rounded-full bg-brand', percent === null && 'w-1/3 animate-pulse')}
+              style={percent === null ? undefined : { width: `${Math.max(2, percent)}%` }}
+            />
           </div>
         </div>
       ) : null}
       <div className="flex justify-end">
-        <SubmitButton
-          flash={false}
-          pendingLabel={pendingLabel}
-          className="ui-button-primary h-9 w-full sm:w-auto"
-        >
-          {isHermesImport ? <Upload className="size-4" /> : <Plus className="size-4" />}
-          {submitLabel}
-        </SubmitButton>
+        {isHermesImport ? (
+          <button
+            type="submit"
+            disabled={pending}
+            aria-busy={pending}
+            className="ui-button-primary h-9 w-full disabled:cursor-wait disabled:opacity-70 sm:w-auto"
+          >
+            {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-4" />}
+            {pending ? pendingLabel : submitLabel}
+          </button>
+        ) : (
+          <SubmitButton
+            flash={false}
+            pendingLabel={pendingLabel}
+            className="ui-button-primary h-9 w-full sm:w-auto"
+          >
+            <Plus className="size-4" />
+            {submitLabel}
+          </SubmitButton>
+        )}
       </div>
     </div>
   );
@@ -245,11 +291,117 @@ export function SandboxCreateForm({
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
   const [customImage, setCustomImage] = useState('');
   const [open, setOpen] = useState(false);
-  const [importState, importAction] = useActionState(importHermesArchiveAction, {});
+  const [importState, setImportState] = useState<HermesImportState>({ pending: false });
+  const hermesImportId = useRef<string | null>(null);
+  const router = useRouter();
   const t = useTranslations('console.sandboxes');
   const isDocker = mode === 'docker';
   const isHermesImport = mode === 'hermes-import';
   const customSelected = selectedImage === 'custom';
+
+  const submitHermesArchive = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (importState.pending) return;
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const archiveInput = form.elements.namedItem('hermesArchive');
+    const archive = archiveInput instanceof HTMLInputElement ? archiveInput.files?.[0] : undefined;
+    if (!archive || archive.size <= 0) {
+      setImportState({ pending: false, error: 'Choose a non-empty .zip archive to import.' });
+      return;
+    }
+    const trustInput = form.elements.namedItem('trustArchive');
+    if (!(trustInput instanceof HTMLInputElement) || !trustInput.checked) {
+      setImportState({ pending: false, error: 'Confirm that you trust this archive before importing it.' });
+      return;
+    }
+
+    const maxBytes = hermesArchiveMaxUploadMiB * 1024 * 1024;
+    if (archive.size > maxBytes) {
+      setImportState({
+        pending: false,
+        error: `The archive must be ${hermesArchiveMaxUploadMiB} MiB or smaller.`,
+      });
+      return;
+    }
+    const importId = hermesImportId.current ??= newHermesImportId();
+
+    setImportState({
+      pending: true,
+      phase: 'uploading',
+      uploadedBytes: 0,
+      totalBytes: archive.size,
+    });
+
+    try {
+      const imported = await new Promise<{ agentId: string }>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open(
+          'POST',
+          `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/hermes-import`,
+        );
+        request.withCredentials = true;
+        request.setRequestHeader('content-type', 'application/zip');
+        request.setRequestHeader('x-toolplane-hermes-archive-trusted', '1');
+        request.setRequestHeader('x-toolplane-hermes-archive-name', encodeURIComponent(archive.name));
+        request.setRequestHeader('x-toolplane-hermes-import-id', importId);
+        request.setRequestHeader(
+          'x-toolplane-hermes-import-name',
+          encodeURIComponent(String(formData.get('name') ?? '').trim()),
+        );
+        request.upload.addEventListener('progress', (progress) => {
+          setImportState({
+            pending: true,
+            phase: 'uploading',
+            uploadedBytes: progress.loaded,
+            totalBytes: progress.lengthComputable ? progress.total : archive.size,
+          });
+        });
+        request.upload.addEventListener('load', () => {
+          setImportState({
+            pending: true,
+            phase: 'importing',
+            uploadedBytes: archive.size,
+            totalBytes: archive.size,
+          });
+        });
+        request.addEventListener('load', () => {
+          let result: { agentId?: unknown; error?: unknown } = {};
+          try {
+            result = JSON.parse(request.responseText || '{}') as typeof result;
+          } catch {
+            // The generic status error below is safer than exposing an HTML proxy response.
+          }
+          if (
+            request.status >= 200
+            && request.status < 300
+            && typeof result.agentId === 'string'
+          ) {
+            resolve({ agentId: result.agentId });
+            return;
+          }
+          reject(new Error(
+            typeof result.error === 'string' ? result.error : 'Could not import the Hermes archive.',
+          ));
+        });
+        request.addEventListener('error', () => {
+          reject(new Error('The archive upload was interrupted. Check the connection and try again.'));
+        });
+        request.addEventListener('abort', () => {
+          reject(new Error('The archive upload was cancelled.'));
+        });
+        request.send(archive);
+      });
+      router.push(`/app/${encodeURIComponent(workspace)}/agents/${imported.agentId}?settings=agent&imported=hermes`);
+      router.refresh();
+    } catch (error) {
+      setImportState({
+        pending: false,
+        error: error instanceof Error ? error.message : 'Could not import the Hermes archive.',
+      });
+    }
+  };
 
   return (
     <>
@@ -261,7 +413,9 @@ export function SandboxCreateForm({
       {open ? (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-[4vh]"
-          onMouseDown={() => setOpen(false)}
+          onMouseDown={() => {
+            if (!importState.pending) setOpen(false);
+          }}
         >
           <div
             role="dialog"
@@ -280,15 +434,17 @@ export function SandboxCreateForm({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
+                disabled={importState.pending}
                 aria-label={t('close')}
-                className="ui-button-ghost ui-icon-button shrink-0"
+                className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
               >
                 <X className="size-4" />
               </button>
             </div>
 
             <form
-              action={isHermesImport ? importAction : createSandboxAction}
+              action={isHermesImport ? undefined : createSandboxAction}
+              onSubmit={isHermesImport ? submitHermesArchive : undefined}
               className="min-h-0 overflow-y-auto p-5"
             >
               <input type="hidden" name="workspace" value={workspace} />
@@ -302,21 +458,27 @@ export function SandboxCreateForm({
                       icon={Container}
                       title={t('dockerContainer')}
                       description={t('managedLinuxWorkspaceWithPersistentFilesAndPackageInstalls')}
-                      onClick={() => setMode('docker')}
+                      onClick={() => {
+                        if (!importState.pending) setMode('docker');
+                      }}
                     />
                     <ModeButton
                       active={mode === 'connector'}
                       icon={Cable}
                       title={t('userConnector')}
                       description={t('aUserRunsOneNpxCommandAndConnectsALocalMachineOverWebsocket')}
-                      onClick={() => setMode('connector')}
+                      onClick={() => {
+                        if (!importState.pending) setMode('connector');
+                      }}
                     />
                     <ModeButton
                       active={isHermesImport}
                       icon={Upload}
                       title={t('importHermesArchive')}
                       description={t('importHermesArchiveModeDescription')}
-                      onClick={() => setMode('hermes-import')}
+                      onClick={() => {
+                        if (!importState.pending) setMode('hermes-import');
+                      }}
                     />
                   </div>
 
@@ -346,7 +508,7 @@ export function SandboxCreateForm({
                         <Field
                           label={t('hermesArchive')}
                           className="mt-3"
-                          hint={t('hermesArchiveHint', { max: hermesArchiveMaxUploadMiB })}
+                          hint={t('hermesArchiveHint', { max: hermesArchiveLimitLabel(hermesArchiveMaxUploadMiB) })}
                         >
                           <input
                             name="hermesArchive"
@@ -354,6 +516,9 @@ export function SandboxCreateForm({
                             accept=".zip,application/zip"
                             required={isHermesImport}
                             aria-label={t('hermesArchive')}
+                            onChange={() => {
+                              hermesImportId.current = null;
+                            }}
                             className="ui-input h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
                           />
                         </Field>
@@ -502,7 +667,7 @@ export function SandboxCreateForm({
                   </div>
                 )}
               </div>
-              <CreateSandboxFooter mode={mode} />
+              <CreateSandboxFooter mode={mode} hermesImport={importState} />
             </form>
           </div>
         </div>

@@ -86,9 +86,13 @@ async function dockerBestEffort(args: string[]): Promise<void> {
   await runDocker(args).catch(() => undefined);
 }
 
-async function runDockerIdempotent(args: string[], missingPattern: RegExp): Promise<void> {
+async function runDockerIdempotent(
+  args: string[],
+  missingPattern: RegExp,
+  timeoutMs?: number,
+): Promise<void> {
   try {
-    await runDocker(args);
+    await runDocker(args, timeoutMs);
   } catch (error) {
     if (error instanceof Error && missingPattern.test(error.message)) return;
     throw error;
@@ -192,21 +196,23 @@ export async function removeDockerVolumeCopyHelper(helperName: string): Promise<
   await runDockerIdempotent(['rm', '-f', helperName], /no such container/i);
 }
 
-export async function removeStaleDockerVolumeCopyHelpers(
-  createdBefore = new Date(),
+async function removeStaleDockerHelpers(
+  label: string,
+  createdBefore: Date,
+  timeoutMs?: number,
 ): Promise<number> {
   const output = await runDocker([
     'ps',
     '-aq',
     '--filter',
-    'label=toolplane.volume-copy=true',
-  ]);
+    label,
+  ], timeoutMs);
   const containerIds = output.split(/\s+/).filter(Boolean);
   let removed = 0;
   for (const containerId of containerIds) {
     let created: string;
     try {
-      created = (await runDocker(['inspect', '--format', '{{.Created}}', containerId])).trim();
+      created = (await runDocker(['inspect', '--format', '{{.Created}}', containerId], timeoutMs)).trim();
     } catch (error) {
       if (error instanceof Error && /no such (object|container)/i.test(error.message)) continue;
       throw error;
@@ -216,10 +222,30 @@ export async function removeStaleDockerVolumeCopyHelpers(
       throw new Error(`Docker returned an invalid creation time for copy helper ${containerId}.`);
     }
     if (createdAt >= createdBefore.getTime()) continue;
-    await runDockerIdempotent(['rm', '-f', containerId], /no such container/i);
+    await runDockerIdempotent(['rm', '-f', containerId], /no such container/i, timeoutMs);
     removed += 1;
   }
   return removed;
+}
+
+export async function removeStaleDockerVolumeCopyHelpers(
+  createdBefore = new Date(),
+): Promise<number> {
+  return removeStaleDockerHelpers('label=toolplane.volume-copy=true', createdBefore);
+}
+
+// Archive imports use a named, stopped init container rather than `docker run
+// --rm`. If the app dies during a 10 GiB copy, recover that labelled helper at
+// startup before the deployment is marked copy_failed.
+export async function removeStaleHermesArchiveImportHelpers(
+  createdBefore = new Date(),
+  timeoutMs?: number,
+): Promise<number> {
+  return removeStaleDockerHelpers(
+    'label=toolplane.hermes-archive-import=true',
+    createdBefore,
+    timeoutMs,
+  );
 }
 
 export async function removeDockerVolume(volumeName: string): Promise<void> {
@@ -227,9 +253,9 @@ export async function removeDockerVolume(volumeName: string): Promise<void> {
   await dockerBestEffort(['volume', 'rm', '-f', volumeName]);
 }
 
-export async function removeDockerVolumeStrict(volumeName: string): Promise<void> {
+export async function removeDockerVolumeStrict(volumeName: string, timeoutMs?: number): Promise<void> {
   if (!validVolumeName(volumeName)) throw new Error('Invalid Docker volume name.');
-  await runDockerIdempotent(['volume', 'rm', '-f', volumeName], /no such volume/i);
+  await runDockerIdempotent(['volume', 'rm', '-f', volumeName], /no such volume/i, timeoutMs);
 }
 
 export async function removeDockerSandboxRuntime(sandboxId: string, volumeName?: string | null): Promise<void> {
@@ -245,13 +271,19 @@ export async function removeDockerSandboxContainer(sandboxId: string): Promise<v
 export async function removeDockerSandboxRuntimeStrict(
   sandboxId: string,
   volumeName?: string | null,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   await runDockerIdempotent(
     ['rm', '-f', sandboxSyncContainerName(sandboxId)],
     /no such container/i,
+    options.timeoutMs,
   );
-  await runDockerIdempotent(['rm', '-f', sandboxContainerName(sandboxId)], /no such container/i);
-  await removeDockerVolumeStrict(volumeName || sandboxVolumeName(sandboxId));
+  await runDockerIdempotent(
+    ['rm', '-f', sandboxContainerName(sandboxId)],
+    /no such container/i,
+    options.timeoutMs,
+  );
+  await removeDockerVolumeStrict(volumeName || sandboxVolumeName(sandboxId), options.timeoutMs);
 }
 
 export async function stopDockerSandboxContainer(sandboxId: string): Promise<void> {
