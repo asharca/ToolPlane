@@ -4,11 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
+  deploymentContainerName,
   effectiveStatus,
   effectiveStatuses,
   livePort,
   liveStatus,
+  sandboxContainerName,
 } from '@/lib/process/supervisor';
+
+describe('managed container names', () => {
+  it('derives stable, Docker-safe names from deployment identities', () => {
+    expect(deploymentContainerName('dep/with spaces')).toBe('toolplane-mcp-dep_with_spaces');
+    expect(sandboxContainerName('sandbox/one')).toBe('toolplane-sandbox-sandbox_one');
+  });
+});
 
 // With no live process in the (empty) supervisor table, an active DB status is
 // stale and must downgrade to 'stopped'; terminal states pass through.

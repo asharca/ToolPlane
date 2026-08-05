@@ -7,7 +7,12 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
 import { originFromHeaders } from '@/lib/http/origin';
-import { effectiveStatus } from '@/lib/process/supervisor';
+import {
+  deploymentContainerName,
+  effectiveStatus,
+  getDeploymentContainerLogs,
+  sandboxContainerName,
+} from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
@@ -30,6 +35,7 @@ import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
+import { ContainerLogs } from '@/components/dashboard/ContainerLogs';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { McpJsonConfigEditor } from '@/components/dashboard/McpJsonConfigEditor';
@@ -109,7 +115,11 @@ export default async function DeploymentInspectorPage({
 
   const label = deploymentLabel(dep);
   const defaultCloneName = `${label.name.slice(0, 75).trimEnd()} Copy`;
-  const envCfg = (dep.installCfg ?? {}) as { env?: Record<string, string>; network?: string };
+  const envCfg = (dep.installCfg ?? {}) as {
+    env?: Record<string, string>;
+    network?: string;
+    sandboxId?: string;
+  };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
   const serializedConfig = editableConfiguration ? serializeMcpDeploymentConfig(dep) : '';
   const maskedConfig = editableConfiguration
@@ -120,6 +130,14 @@ export default async function DeploymentInspectorPage({
   const running = status === 'running';
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
   const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];
+  const containerName = dep.source === 'sandbox' && envCfg.sandboxId
+    ? sandboxContainerName(envCfg.sandboxId)
+    : dep.source && dep.source !== 'sandbox'
+      ? deploymentContainerName(deploymentId)
+      : null;
+  const containerLogs = current === 'logs' && containerName
+    ? await getDeploymentContainerLogs(deploymentId, { containerName })
+    : null;
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
@@ -424,29 +442,46 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'logs' ? (
-          logs.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
-              </p>
-            </div>
-          ) : (
-            <DeploymentLogs
-              logs={logs.map((l) => {
-                const call = parseCall(l.path);
-                return {
-                  id: l.id,
-                  time: fmtTime(l.createdAt, timeZone),
-                  method: call.method,
-                  tool: call.tool,
-                  statusCode: l.statusCode,
-                  durationMs: l.durationMs,
-                  request: l.requestBody,
-                  response: l.responseBody,
-                };
-              })}
-            />
-          )
+          <div className="space-y-8">
+            {containerLogs ? (
+              <ContainerLogs
+                logs={containerLogs}
+                title={t('containerLogs')}
+                refreshLabel={t('refreshLogs')}
+                dockerSourceLabel={t('liveDockerLogs')}
+                capturedSourceLabel={t('capturedRuntimeLogs')}
+                emptyLabel={t('noContainerLogsYet')}
+                fallbackLabel={t('containerLogsFallbackNotice')}
+              />
+            ) : null}
+
+            <section className="space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>
+              {logs.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                    {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
+                  </p>
+                </div>
+              ) : (
+                <DeploymentLogs
+                  logs={logs.map((l) => {
+                    const call = parseCall(l.path);
+                    return {
+                      id: l.id,
+                      time: fmtTime(l.createdAt, timeZone),
+                      method: call.method,
+                      tool: call.tool,
+                      statusCode: l.statusCode,
+                      durationMs: l.durationMs,
+                      request: l.requestBody,
+                      response: l.responseBody,
+                    };
+                  })}
+                />
+              )}
+            </section>
+          </div>
         ) : null}
       </div>
     </>

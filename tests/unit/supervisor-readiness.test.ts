@@ -488,4 +488,48 @@ describe('supervisor readiness races', () => {
     await errorPersisted;
     expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('error');
   });
+
+  it('injects a stable container name into managed Docker bridge launches', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'named-bridge',
+      {
+        kind: 'bridge',
+        name: 'Named bridge',
+        command: 'docker',
+        args: ['run', '--rm', 'example/mcp'],
+        env: {},
+      },
+      { awaitReady: false },
+    );
+
+    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
+    expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
+  });
+
+  it('reads live Docker output for the deployment container', async () => {
+    const dockerLogs = createChild();
+    mocks.spawn.mockReturnValue(dockerLogs);
+
+    const reading = supervisor.getDeploymentContainerLogs('live-logs', {
+      containerName: 'toolplane-mcp-live-logs',
+      limit: 25,
+    });
+    dockerLogs.stdout.emit('data', Buffer.from('2026-08-05T09:00:00Z MCP started\n'));
+    dockerLogs.emit('close', 0);
+
+    await expect(reading).resolves.toMatchObject({
+      containerName: 'toolplane-mcp-live-logs',
+      source: 'docker',
+      text: '2026-08-05T09:00:00Z MCP started\n',
+    });
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'docker',
+      ['logs', '--timestamps', '--tail', '25', 'toolplane-mcp-live-logs'],
+      expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'] }),
+    );
+  });
 });
