@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.1](https://github.com/asharca/ToolPlane/releases/tag/v0.16.1) (2026-08-05)
+
+### What's Changed
+* feat: expose deployed MCP container logs by @renhedata in https://github.com/asharca/ToolPlane/pull/64
+* feat: stream large Hermes archive imports by @renhedata in https://github.com/asharca/ToolPlane/pull/65
+* feat: improve observability logs by @renhedata in https://github.com/asharca/ToolPlane/pull/66
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.16.0...v0.16.1
+
 ## [0.16.0](https://github.com/asharca/ToolPlane/releases/tag/v0.16.0) (2026-08-04)
 
 ### What's Changed
