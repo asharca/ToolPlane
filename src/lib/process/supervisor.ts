@@ -115,6 +115,8 @@ const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir
 const READY_TIMEOUT_MS = 90000;
 const STOP_GRACE_MS = 5000;
 const KILL_GRACE_MS = 1000;
+const RUNTIME_LOG_MAX_BYTES = 512 * 1024;
+const DOCKER_LOG_TIMEOUT_MS = 5000;
 
 async function persist(deploymentId: string, status: string) {
   const queues = persistQueues();
@@ -137,12 +139,128 @@ function safeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
+export function deploymentContainerName(deploymentId: string): string {
+  return `toolplane-mcp-${safeId(deploymentId)}`;
+}
+
+export function sandboxContainerName(sandboxId: string): string {
+  return `toolplane-sandbox-${safeId(sandboxId)}`;
+}
+
 function registryPath(deploymentId: string): string {
   return path.join(REGISTRY_DIR, `${safeId(deploymentId)}.json`);
 }
 
+function runtimeLogPath(deploymentId: string): string {
+  return path.join(REGISTRY_DIR, `${safeId(deploymentId)}.log`);
+}
+
 function ensureRegistryDir() {
   mkdirSync(REGISTRY_DIR, { recursive: true });
+}
+
+function appendRuntimeLog(deploymentId: string, stream: 'stdout' | 'stderr', value: string): void {
+  if (!value) return;
+  try {
+    ensureRegistryDir();
+    const prefix = `[${new Date().toISOString()}] [${stream}] `;
+    const content = value
+      .split(/(?<=\n)/)
+      .map((line) => (line ? `${prefix}${line}` : line))
+      .join('');
+    const previous = existsSync(runtimeLogPath(deploymentId))
+      ? readFileSync(runtimeLogPath(deploymentId))
+      : Buffer.alloc(0);
+    const next = Buffer.concat([previous, Buffer.from(content)]);
+    const kept = next.byteLength > RUNTIME_LOG_MAX_BYTES
+      ? Buffer.concat([
+          Buffer.from('[runtime log truncated; showing the newest entries]\n'),
+          next.subarray(next.byteLength - RUNTIME_LOG_MAX_BYTES),
+        ])
+      : next;
+    writeFileSync(runtimeLogPath(deploymentId), kept, { mode: 0o600 });
+  } catch {
+    // Runtime logging must never affect the deployment lifecycle.
+  }
+}
+
+function readRuntimeLog(deploymentId: string): string {
+  try {
+    return existsSync(runtimeLogPath(deploymentId))
+      ? readFileSync(runtimeLogPath(deploymentId), 'utf8')
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function dockerCliEnv(): NodeJS.ProcessEnv {
+  const env = {} as NodeJS.ProcessEnv;
+  for (const key of ['PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY', 'LANG', 'LC_ALL']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
+}
+
+type DockerLogsResult = { code: number | null; text: string; error: string | null };
+
+function readDockerLogs(containerName: string, limit: number): Promise<DockerLogsResult> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const child = spawn(
+      'docker',
+      ['logs', '--timestamps', '--tail', String(limit), containerName],
+      { env: dockerCliEnv(), stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    const finish = (code: number | null, error: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, text: stdout, error: error || stderr.trim() || null });
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      try { child.kill('SIGTERM'); } catch { /* process may have exited */ }
+      finish(null, 'docker logs timed out');
+    }, DOCKER_LOG_TIMEOUT_MS);
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.once('error', (error) => finish(null, error.message));
+    child.once('close', (code) => finish(code, code === 0 ? null : null));
+  });
+}
+
+export type DeploymentContainerLogs = {
+  containerName: string;
+  text: string;
+  source: 'docker' | 'captured' | 'none';
+  error: string | null;
+};
+
+export async function getDeploymentContainerLogs(
+  deploymentId: string,
+  options: { containerName?: string; limit?: number } = {},
+): Promise<DeploymentContainerLogs> {
+  const containerName = options.containerName || deploymentContainerName(deploymentId);
+  const limit = Math.min(1000, Math.max(1, Math.floor(options.limit ?? 500)));
+  const docker = await readDockerLogs(containerName, limit);
+  if (docker.code === 0) {
+    return { containerName, text: docker.text, source: 'docker', error: null };
+  }
+
+  const captured = readRuntimeLog(deploymentId);
+  return {
+    containerName,
+    text: captured,
+    source: captured ? 'captured' : 'none',
+    error: docker.error,
+  };
 }
 
 function pidAlive(pid: number): boolean {
@@ -379,24 +497,33 @@ async function launchProcess(
     return { ready: null };
   }
 
-  const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
+  const managedSpec: SpawnSpec = spec.kind === 'bridge'
+    && spec.command === 'docker'
+    && spec.args[0] === 'run'
+    ? {
+        ...spec,
+        args: ['run', '--name', deploymentContainerName(deploymentId), ...spec.args.slice(1)],
+      }
+    : spec;
+
+  const connectorBroker = managedSpec.kind === 'sandbox' && managedSpec.sandboxKind === 'connector'
     ? await ensureConnectorBroker()
     : null;
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
-  const script = spec.kind === 'bridge' ? BRIDGE : spec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
+  const script = managedSpec.kind === 'bridge' ? BRIDGE : managedSpec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
   // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
   // down to an allowlist before spawning the docker CLI. The MCP's own env is
   // already baked into spec.args as `-e` flags, so it is NOT injected here.
   const env =
-    spec.kind === 'bridge'
+    managedSpec.kind === 'bridge'
       ? {
           ...process.env,
           MCP_PORT: '0',
-          MCP_NAME: spec.name,
-          MCP_COMMAND: spec.command,
-          MCP_ARGS: JSON.stringify(spec.args),
+          MCP_NAME: managedSpec.name,
+          MCP_COMMAND: managedSpec.command,
+          MCP_ARGS: JSON.stringify(managedSpec.args),
         }
-      : spec.kind === 'sandbox'
+      : managedSpec.kind === 'sandbox'
         ? {
             PATH: process.env.PATH ?? '',
             NODE_ENV: process.env.NODE_ENV ?? 'production',
@@ -407,24 +534,24 @@ async function launchProcess(
             LANG: process.env.LANG ?? '',
             LC_ALL: process.env.LC_ALL ?? '',
             MCP_PORT: '0',
-            MCP_NAME: spec.name,
-            SANDBOX_ID: spec.sandboxId,
-            SANDBOX_KIND: spec.sandboxKind,
-            SANDBOX_IMAGE: spec.image ?? '',
-            SANDBOX_VOLUME: spec.volumeName ?? '',
-            SANDBOX_NETWORK: spec.network,
-            SANDBOX_ENV_JSON: JSON.stringify(spec.env ?? {}),
+            MCP_NAME: managedSpec.name,
+            SANDBOX_ID: managedSpec.sandboxId,
+            SANDBOX_KIND: managedSpec.sandboxKind,
+            SANDBOX_IMAGE: managedSpec.image ?? '',
+            SANDBOX_VOLUME: managedSpec.volumeName ?? '',
+            SANDBOX_NETWORK: managedSpec.network,
+            SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
             SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
             SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
-            SANDBOX_CONNECTOR_REMOTE_ROOT: spec.connector?.remoteRoot ?? '',
-            HERMES_RUNTIME_ID: spec.runtimeId ?? '',
-            HERMES_RUNTIME_API_KEY: spec.runtimeId
-              ? deriveHermesRuntimeToken(spec.runtimeId, 'hermes-api')
+            SANDBOX_CONNECTOR_REMOTE_ROOT: managedSpec.connector?.remoteRoot ?? '',
+            HERMES_RUNTIME_ID: managedSpec.runtimeId ?? '',
+            HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
+              ? deriveHermesRuntimeToken(managedSpec.runtimeId, 'hermes-api')
               : '',
-            HERMES_RUNTIME_MODEL_NAME: spec.runtimeModelName ?? 'hermes-agent',
+            HERMES_RUNTIME_MODEL_NAME: managedSpec.runtimeModelName ?? 'hermes-agent',
             TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? '',
           }
-        : { ...process.env, MCP_PORT: '0', MCP_NAME: spec.name };
+        : { ...process.env, MCP_PORT: '0', MCP_NAME: managedSpec.name };
 
   const child = spawn(process.execPath, [script], {
     env,
@@ -436,14 +563,14 @@ async function launchProcess(
     port: null,
     status: 'provisioning',
     pid: child.pid,
-    name: spec.name,
-    stopGraceMs: spec.kind === 'sandbox' && spec.sandboxKind === 'hermes' ? 35_000 : undefined,
+    name: managedSpec.name,
+    stopGraceMs: managedSpec.kind === 'sandbox' && managedSpec.sandboxKind === 'hermes' ? 35_000 : undefined,
   };
   s.set(deploymentId, entry);
   if (child.pid) {
     writeRegistry({
       deploymentId,
-      name: spec.name,
+      name: managedSpec.name,
       pid: child.pid,
       port: null,
       status: 'provisioning',
@@ -467,7 +594,7 @@ async function launchProcess(
         if (child.pid) {
           writeRegistry({
             deploymentId,
-            name: spec.name,
+            name: managedSpec.name,
             pid: child.pid,
             port: entry.port,
             status: 'running',
@@ -479,7 +606,9 @@ async function launchProcess(
       }
     });
     child.stderr?.on('data', (buf: Buffer) => {
-      console.error(`[mcp-supervisor:${deploymentId}] ${buf.toString().trimEnd()}`);
+      const text = buf.toString();
+      appendRuntimeLog(deploymentId, 'stderr', text);
+      console.error(`[mcp-supervisor:${deploymentId}] ${text.trimEnd()}`);
     });
     child.once('exit', () => resolve());
     child.once('error', () => resolve());
