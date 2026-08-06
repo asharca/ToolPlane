@@ -93,6 +93,9 @@ services:
       TOOLPLANE_UPDATE_ENABLED: ${TOOLPLANE_UPDATE_ENABLED:-true}
       TOOLPLANE_UPDATE_REPO: ${TOOLPLANE_UPDATE_REPO:-asharca/ToolPlane}
       TOOLPLANE_UPDATE_ARTIFACT: ${TOOLPLANE_UPDATE_ARTIFACT:-toolplane-runtime-linux-amd64.tar.gz}
+      # Instance default for new/imported Hermes agent runtimes. Individual
+      # agents may still choose a pinned image in the dashboard.
+      TOOLPLANE_HERMES_IMAGE: ${TOOLPLANE_HERMES_IMAGE:-}
       TOOLPLANE_MAX_ATTACHMENT_BYTES: ${TOOLPLANE_MAX_ATTACHMENT_BYTES:-1000000000}
       TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports
       TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}

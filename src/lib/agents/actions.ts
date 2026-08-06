@@ -42,6 +42,7 @@ import {
   cleanupHermesRuntime,
   stopHermesRuntime,
   syncHermesRuntime,
+  upgradeHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
 import { parseSandboxEnvText } from '@/lib/sandboxes/env';
 import {
@@ -480,6 +481,28 @@ export async function syncAgentRuntimeAction(
     return { savedAt: Date.now() };
   } catch {
     return { error: 'Could not sync the Hermes runtime.' };
+  }
+}
+
+export async function upgradeHermesRuntimeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const image = String(formData.get('hermesImage') ?? '').trim();
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  if (!image) return { error: 'Choose a Hermes image version.' };
+
+  try {
+    const result = await upgradeHermesRuntime(ctx.ws.id, agentId, image);
+    revalidatePath(`/app/${slug}/agents`);
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    if (result.error) return { error: result.error };
+    return { savedAt: Date.now() };
+  } catch {
+    return { error: 'Could not upgrade the Hermes runtime.' };
   }
 }
 

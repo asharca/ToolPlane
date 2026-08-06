@@ -124,6 +124,7 @@ export default async function SandboxDetailPage({
     'restoring',
     'restore_failed',
     'restore_cleanup_required',
+    'upgrading',
     'deleting',
   ]
     .includes(status);
@@ -235,6 +236,7 @@ export default async function SandboxDetailPage({
           || status === 'copying'
           || status === 'restoring'
           || status === 'restore_cleanup_required'
+          || status === 'upgrading'
           || connectorWaiting}
       />
       <DashboardHeader
@@ -358,7 +360,8 @@ export default async function SandboxDetailPage({
                       disabled={status === 'provisioning'
                         || status === 'copying'
                         || status === 'restoring'
-                        || status === 'restore_cleanup_required'}
+                        || status === 'restore_cleanup_required'
+                        || status === 'upgrading'}
                       disabledLabel={status === 'restore_cleanup_required'
                         ? t('statusCleanupPending')
                         : undefined}

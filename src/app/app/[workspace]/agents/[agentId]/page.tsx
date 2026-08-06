@@ -20,6 +20,7 @@ import { listAgentChannelConnections } from '@/lib/agents/channel-connections';
 import { toAgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
+import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
@@ -55,6 +56,7 @@ export default async function AgentDetailPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
@@ -157,6 +159,7 @@ export default async function AgentDetailPage({
                 'restoring',
                 'restore_failed',
                 'restore_cleanup_required',
+                'upgrading',
                 'deleting',
               ]
                 .includes(effectiveStatus(s.deploymentId, s.deployment.status));
@@ -174,6 +177,7 @@ export default async function AgentDetailPage({
               label: a.name,
               checked: selectedSubAgents.has(a.id),
             })),
+          hermesImages,
           runtime: agent.runtime ? (() => {
             return {
               kind: agent.runtime.kind,

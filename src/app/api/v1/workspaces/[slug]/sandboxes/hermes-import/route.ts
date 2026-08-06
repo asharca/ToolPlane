@@ -13,6 +13,7 @@ import {
   findHermesArchiveImport,
   importStagedHermesArchive,
 } from '@/lib/agents/hermes/import';
+import { isValidHermesImage } from '@/lib/agents/hermes/constants';
 import { isSameOriginRequest } from '@/lib/http/origin';
 
 export const runtime = 'nodejs';
@@ -97,8 +98,18 @@ export async function POST(
     const archiveName = decodedHeader(req, 'x-toolplane-hermes-archive-name', 255);
     const importName = optionalDecodedHeader(req, 'x-toolplane-hermes-import-name', 160);
     const importId = decodedHeader(req, 'x-toolplane-hermes-import-id', 128);
+    const requestedImageHeader = req.headers.get('x-toolplane-hermes-image');
+    const requestedImage = requestedImageHeader === null
+      ? undefined
+      : decodedHeader(req, 'x-toolplane-hermes-image', 255);
     const announcedSize = contentLength(req);
-    if (!archiveName || importName === null || announcedSize === null || !isImportId(importId)) {
+    if (
+      !archiveName
+      || importName === null
+      || announcedSize === null
+      || !isImportId(importId)
+      || (requestedImageHeader !== null && (!requestedImage || !isValidHermesImage(requestedImage)))
+    ) {
       return response({ error: 'The archive upload metadata is invalid.' }, 400);
     }
 
@@ -153,6 +164,7 @@ export async function POST(
       name: importName,
       staged: stagedForImport,
       importId,
+      ...(requestedImage ? { image: requestedImage } : {}),
     });
     return response(imported, 201);
   } catch (error) {

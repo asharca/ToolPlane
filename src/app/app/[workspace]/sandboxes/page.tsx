@@ -39,6 +39,7 @@ import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { getHermesArchiveSettings } from '@/lib/admin/settings';
+import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,6 +133,7 @@ export default async function SandboxesPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
   const [sandboxes, rawManagedRuntimes, systemSettings] = await Promise.all([
     listSandboxes(ws.id),
@@ -152,7 +154,8 @@ export default async function SandboxesPage({
     return status === 'provisioning'
       || status === 'copying'
       || status === 'restoring'
-      || status === 'restore_cleanup_required';
+      || status === 'restore_cleanup_required'
+      || status === 'upgrading';
   })
     || managedRuntimes.some((runtime) => managedStatus(runtime) === 'provisioning');
   const dockerCount = sandboxes.filter((s) => s.kind === 'docker').length;
@@ -176,6 +179,7 @@ export default async function SandboxesPage({
             <SandboxCreateForm
               workspace={slug}
               hermesArchiveMaxUploadMiB={systemSettings.hermesArchiveMaxUploadMiB}
+              hermesImages={hermesImages}
             />
           }
         >
@@ -381,6 +385,7 @@ export default async function SandboxesPage({
                   'restoring',
                   'restore_failed',
                   'restore_cleanup_required',
+                  'upgrading',
                   'deleting',
                 ]
                   .includes(status);

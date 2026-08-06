@@ -11,6 +11,7 @@ const UNAVAILABLE_SANDBOX_STATUSES = [
   'restoring',
   'restore_failed',
   'restore_cleanup_required',
+  'upgrading',
   'deleting',
 ];
 

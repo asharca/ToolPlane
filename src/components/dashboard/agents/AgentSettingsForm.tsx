@@ -23,6 +23,7 @@ import {
 import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
+  upgradeHermesRuntimeAction,
   updateHermesRuntimeEnvAction,
   updateAgentAction,
   type ActionState,
@@ -33,6 +34,7 @@ import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
+import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 
@@ -59,6 +61,7 @@ export function AgentSettingsForm({
   sandboxes,
   subAgents,
   runtime = null,
+  hermesImages,
   className = 'max-w-2xl space-y-5 px-8 py-6',
 }: {
   slug: string;
@@ -84,6 +87,7 @@ export function AgentSettingsForm({
     sandboxId: string;
     environment?: string;
   } | null;
+  hermesImages?: string[];
   className?: string;
 }) {
   const t = useTranslations('console.agents');
@@ -99,6 +103,10 @@ export function AgentSettingsForm({
   );
   const [stopState, stopFormAction, isStopPending] = useActionState<ActionState, FormData>(
     stopAgentRuntimeAction,
+    {},
+  );
+  const [upgradeState, upgradeFormAction, isUpgradePending] = useActionState<ActionState, FormData>(
+    upgradeHermesRuntimeAction,
     {},
   );
   const [envState, envFormAction, isEnvPending] = useActionState<ActionState, FormData>(
@@ -117,7 +125,7 @@ export function AgentSettingsForm({
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => checkedIds(sandboxes));
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
-  const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | null>(null);
+  const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | 'upgrade' | null>(null);
   const models = useMemo(
     () => providers.find((p) => p.id === selectedProvider)?.models ?? [],
     [providers, selectedProvider],
@@ -140,10 +148,10 @@ export function AgentSettingsForm({
   }, [router, state.savedAt]);
 
   useEffect(() => {
-    if (!syncState.savedAt && !stopState.savedAt && !envState.savedAt) return;
+    if (!syncState.savedAt && !stopState.savedAt && !upgradeState.savedAt && !envState.savedAt) return;
 
     router.refresh();
-  }, [envState.savedAt, router, stopState.savedAt, syncState.savedAt]);
+  }, [envState.savedAt, router, stopState.savedAt, syncState.savedAt, upgradeState.savedAt]);
 
   useEffect(() => () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -177,19 +185,36 @@ export function AgentSettingsForm({
         : state.savedAt
           ? t('saved')
           : t('autoSaveOn');
-  const activeRuntimeState = lastRuntimeAction === 'sync' ? syncState : stopState;
-  const runtimeActionPending = lastRuntimeAction === 'sync' ? isSyncPending : isStopPending;
+  const activeRuntimeState = lastRuntimeAction === 'sync'
+    ? syncState
+    : lastRuntimeAction === 'stop'
+      ? stopState
+      : upgradeState;
+  const runtimeActionPending = lastRuntimeAction === 'sync'
+    ? isSyncPending
+    : lastRuntimeAction === 'stop'
+      ? isStopPending
+      : isUpgradePending;
   const runtimeActionMessage = runtimeActionPending
-    ? lastRuntimeAction === 'sync' ? t('syncingRuntime') : t('stoppingRuntime')
+    ? lastRuntimeAction === 'sync'
+      ? t('syncingRuntime')
+      : lastRuntimeAction === 'stop'
+        ? t('stoppingRuntime')
+        : t('upgradingHermesRuntime')
     : activeRuntimeState.error
       ? activeRuntimeState.error
       : activeRuntimeState.savedAt
-        ? lastRuntimeAction === 'sync' ? t('runtimeSynced') : t('runtimeStopped')
+        ? lastRuntimeAction === 'sync'
+          ? t('runtimeSynced')
+          : lastRuntimeAction === 'stop'
+            ? t('runtimeStopped')
+            : t('hermesRuntimeUpgraded')
         : null;
   const runtimeControlsDisabled = isPending
     || saveStatus === 'dirty'
     || isSyncPending
     || isStopPending
+    || isUpgradePending
     || isEnvPending;
   const envMessage = isEnvPending
     ? t('savingAndSyncingEnvironment')
@@ -336,6 +361,46 @@ export function AgentSettingsForm({
                 {runtimeActionMessage}
               </p>
             ) : null}
+          </div>
+          <div className="space-y-3 border-t border-border px-4 py-4">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">{t('hermesVersion')}</h4>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t('hermesRuntimeUpgradeHelp')}</p>
+            </div>
+            <HermesImageSelector
+              key={runtime.image}
+              id="settings-hermes-version"
+              images={hermesImages}
+              value={runtime.image}
+              disabled={runtimeControlsDisabled}
+            />
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="submit"
+                formAction={upgradeFormAction}
+                formNoValidate
+                disabled={runtimeControlsDisabled}
+                aria-busy={isUpgradePending}
+                onClick={() => {
+                  clearAutoSaveTimer();
+                  setLastRuntimeAction('upgrade');
+                }}
+                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
+              >
+                {isUpgradePending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : lastRuntimeAction === 'upgrade' && upgradeState.savedAt ? (
+                  <Check className="size-4 text-emerald-600" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                {isUpgradePending
+                  ? t('upgradingHermesRuntime')
+                  : lastRuntimeAction === 'upgrade' && upgradeState.savedAt
+                    ? t('hermesRuntimeUpgraded')
+                    : t('upgradeHermesRuntime')}
+              </button>
+            </div>
           </div>
           <div className="space-y-3 border-t border-border px-4 py-4">
             <div>

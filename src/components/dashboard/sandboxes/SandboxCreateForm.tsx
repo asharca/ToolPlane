@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   DEFAULT_SANDBOX_IMAGE,
@@ -283,9 +284,11 @@ function CreateSandboxFooter({
 export function SandboxCreateForm({
   workspace,
   hermesArchiveMaxUploadMiB = DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
+  hermesImages,
 }: {
   workspace: string;
   hermesArchiveMaxUploadMiB?: number;
+  hermesImages?: string[];
 }) {
   const [mode, setMode] = useState<Mode>('docker');
   const [selectedImage, setSelectedImage] = useState(DEFAULT_SANDBOX_IMAGE);
@@ -316,6 +319,7 @@ export function SandboxCreateForm({
       setImportState({ pending: false, error: 'Confirm that you trust this archive before importing it.' });
       return;
     }
+    const hermesImage = String(formData.get('hermesImage') ?? '').trim();
 
     const maxBytes = hermesArchiveMaxUploadMiB * 1024 * 1024;
     if (archive.size > maxBytes) {
@@ -350,6 +354,12 @@ export function SandboxCreateForm({
           'x-toolplane-hermes-import-name',
           encodeURIComponent(String(formData.get('name') ?? '').trim()),
         );
+        // The endpoint deliberately receives a raw ZIP body, so keep the
+        // selected image in a separately encoded header. The server validates
+        // it before using it as a Docker image reference.
+        if (hermesImage) {
+          request.setRequestHeader('x-toolplane-hermes-image', encodeURIComponent(hermesImage));
+        }
         request.upload.addEventListener('progress', (progress) => {
           setImportState({
             pending: true,
@@ -505,6 +515,9 @@ export function SandboxCreateForm({
 
                     {isHermesImport ? (
                       <>
+                        <div className="mt-3">
+                          <HermesImageSelector id="hermes-import-version" images={hermesImages} />
+                        </div>
                         <Field
                           label={t('hermesArchive')}
                           className="mt-3"

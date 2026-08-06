@@ -33,6 +33,25 @@ Agent
 
 没有选择 provider 时，runtime 保持 `setup_required`，但 Agent、Sandbox 和配置卷已经创建。选择至少一个 provider 并保存后，ToolPlane 同步 provider inventory 并启动 gateway。
 
+### 选择和升级 Hermes 版本
+
+创建 Hermes Agent 时可以从 ToolPlane 提供的官方 Hermes 镜像版本中选择，也可以输入完整的
+Docker 镜像引用。生产环境建议选择固定的 `v...` 标签，以便部署可复现；`latest` 是可变标签，
+适合希望随上游更新的运行时。
+
+已创建的 Hermes Agent 可在 **Settings → Hermes** 中选择另一个版本并点击 **Upgrade & restart**。
+ToolPlane 会先拉取目标镜像；拉取失败时不会停止当前运行时。拉取成功后，它会停止并重建容器、
+重新投影 ToolPlane 管理的配置，然后使用新镜像启动。即使仍选择同一个 `:latest` 标签，升级操作
+也会重新拉取并重建容器。Agent 的 `/opt/data` named volume 不会被删除，因此会话、记忆、工作区、
+本地 Skills 和附件会保留；升级期间正在进行的请求会短暂中断。
+
+镜像选择会同步写入 `AgentRuntime`、其受管 `Sandbox` 以及关联 `Deployment`，避免后续同步或重启
+意外回到旧镜像。`TOOLPLANE_HERMES_IMAGE` 可设置未显式选择版本时的实例默认镜像；使用
+Docker Compose 时将它写入同目录 `.env` 后重新创建 `app` 容器即可生效。
+
+这里的运行时镜像与 Dockerfile 中的 `HERMES_REF` 不同：后者只决定 ToolPlane 自己打包的 Python
+消息频道适配器，升级 Agent 的 Hermes 镜像不会更新该内置适配器。
+
 ### 导入已有 `.hermes` 主目录
 
 在 **Sandboxes → New sandbox → Import .hermes archive** 中可以上传已有 Hermes

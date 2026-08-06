@@ -23,12 +23,13 @@ import {
   copyDockerVolume,
   removeDockerSandboxContainer,
   removeDockerSandboxRuntimeStrict,
+  pullDockerImage,
   sandboxContainerName,
   sandboxSyncContainerName,
   sandboxVolumeName,
   stopDockerSandboxContainer,
 } from '@/lib/sandboxes/runtime';
-import { HERMES_RUNTIME_KIND } from './constants';
+import { HERMES_RUNTIME_KIND, isValidHermesImage } from './constants';
 import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from './archive-limits';
 import {
   renderHermesConfig,
@@ -58,6 +59,7 @@ const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'restoring',
   'restore_failed',
   'restore_cleanup_required',
+  'upgrading',
   'deleting',
 ]);
 const SANDBOX_LIFECYCLE_ERROR = 'The Hermes sandbox has a pending lifecycle operation.';
@@ -208,8 +210,12 @@ type HermesRuntimeWriteLeaseInfo = {
 
 const runtimeWriteLeaseInfo = new WeakMap<HermesRuntimeWriteLease, HermesRuntimeWriteLeaseInfo>();
 
-export const HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR =
-  'The Hermes runtime is temporarily unavailable while a clone is in progress.';
+export const HERMES_RUNTIME_MAINTENANCE_IN_PROGRESS_ERROR =
+  'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.';
+
+// Retain the original export for existing API callers while broadening its
+// message now that the same write gate also protects image upgrades.
+export const HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR = HERMES_RUNTIME_MAINTENANCE_IN_PROGRESS_ERROR;
 
 const globalRuntime = globalThis as unknown as {
   __hermesDashboardReady?: Map<string, DashboardReadyEntry>;
@@ -409,6 +415,23 @@ async function acquireHermesRuntimePairCopyLeases(
     released = true;
     for (const release of releases.reverse()) release();
   };
+}
+
+// An image upgrade has the same safety requirements as a volume clone for a
+// single runtime: wait for already-admitted writes to drain, then reject new
+// writes until the container has been rebuilt. Keep the underlying access
+// state shared with clone operations so they cannot overlap.
+async function acquireHermesRuntimeUpgradeLease(
+  workspaceId: string,
+  agentId: string,
+): Promise<() => void> {
+  const state = reserveHermesRuntimeCopyLease(workspaceId, agentId);
+  try {
+    return await activateHermesRuntimeCopyLease(workspaceId, agentId, state);
+  } catch (error) {
+    cancelHermesRuntimeCopyReservation(workspaceId, agentId, state);
+    throw error;
+  }
 }
 
 type HermesOperationAccess = {
@@ -705,6 +728,98 @@ async function updateRuntimeState(
   await db.agentRuntime.updateMany({ where: { id: runtimeId, workspaceId }, data });
 }
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hermesInstallConfigWithImage(params: {
+  installCfg: unknown;
+  image: string;
+  sandboxId: string;
+  runtimeId: string;
+  runtimeModelName: string;
+  env: Record<string, string>;
+}): Prisma.InputJsonObject {
+  // Preserve any forward-compatible sandbox fields while restoring every
+  // ToolPlane-owned Hermes field. This protects an older/incomplete runtime
+  // row from starting with an old image after an upgrade.
+  const existing = (isJsonRecord(params.installCfg) ? params.installCfg : {}) as Prisma.InputJsonObject;
+  return {
+    ...existing,
+    sandboxId: params.sandboxId,
+    kind: HERMES_RUNTIME_KIND,
+    image: params.image,
+    network: 'isolated',
+    volumeName: sandboxVolumeName(params.sandboxId),
+    runtimeId: params.runtimeId,
+    runtimeModelName: params.runtimeModelName,
+    env: params.env,
+  };
+}
+
+async function setHermesRuntimeUpgradePending(
+  workspaceId: string,
+  agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
+  image: string,
+): Promise<void> {
+  const runtime = agent.runtime;
+  if (!runtime || runtime.kind !== HERMES_RUNTIME_KIND) {
+    throw new Error('Hermes runtime is not configured.');
+  }
+
+  const installCfg = hermesInstallConfigWithImage({
+    installCfg: runtime.sandbox.deployment.installCfg,
+    image,
+    sandboxId: runtime.sandboxId,
+    runtimeId: runtime.id,
+    runtimeModelName: agent.slug,
+    env: readSandboxEnv(runtime.sandbox.config),
+  });
+
+  await db.$transaction(async (tx) => {
+    const [runtimeUpdate, sandboxUpdate, deploymentUpdate] = await Promise.all([
+      tx.agentRuntime.updateMany({
+        where: {
+          id: runtime.id,
+          workspaceId,
+          agentId: agent.id,
+          sandboxId: runtime.sandboxId,
+          kind: HERMES_RUNTIME_KIND,
+        },
+        data: {
+          image,
+          status: 'upgrading',
+          configHash: null,
+          lastError: null,
+        },
+      }),
+      tx.sandbox.updateMany({
+        where: {
+          id: runtime.sandboxId,
+          workspaceId,
+          kind: HERMES_RUNTIME_KIND,
+        },
+        data: { image },
+      }),
+      tx.deployment.updateMany({
+        where: {
+          id: runtime.sandbox.deploymentId,
+          workspaceId,
+          source: 'sandbox',
+        },
+        data: {
+          sourceRef: image,
+          installCfg,
+          status: 'upgrading',
+        },
+      }),
+    ]);
+    if (runtimeUpdate.count !== 1 || sandboxUpdate.count !== 1 || deploymentUpdate.count !== 1) {
+      throw new Error('The Hermes runtime changed before its image could be upgraded.');
+    }
+  });
+}
+
 export type HermesRuntimeVolumeCopyResult<T = undefined> =
   | {
       status: 'copied';
@@ -994,6 +1109,116 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
   return result;
 }
 
+export type HermesRuntimeUpgradeResult = {
+  status: string;
+  image?: string;
+  error?: string;
+};
+
+/**
+ * Switch a managed runtime to an image (including refreshing the same mutable
+ * tag). Pull happens before the runtime is stopped, so a failed registry
+ * download leaves the currently running container and its persisted image
+ * reference untouched.
+ */
+export async function upgradeHermesRuntime(
+  workspaceId: string,
+  agentId: string,
+  rawImage: unknown,
+): Promise<HermesRuntimeUpgradeResult> {
+  const image = String(rawImage ?? '').trim();
+  if (!isValidHermesImage(image)) {
+    return { status: 'error', error: 'Enter a valid Docker image reference.' };
+  }
+
+  const current = await getAgent(workspaceId, agentId);
+  if (!current?.runtime || current.runtime.kind !== HERMES_RUNTIME_KIND) {
+    return { status: 'error', error: 'Hermes runtime not found.' };
+  }
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(current.runtime.sandbox.deployment.status)) {
+    return { status: current.runtime.sandbox.deployment.status, error: SANDBOX_LIFECYCLE_ERROR };
+  }
+
+  try {
+    // Pull even if the literal image reference did not change: `:latest` and
+    // other mutable tags otherwise keep Docker's cached digest indefinitely.
+    await pullDockerImage(image, DOCKER_TIMEOUT_MS);
+  } catch (error) {
+    return {
+      status: 'error',
+      error: `Could not pull Hermes image: ${copyErrorMessage(error)}`,
+    };
+  }
+
+  const releaseUpgradeLease = await acquireHermesRuntimeUpgradeLease(workspaceId, agentId);
+  try {
+    return await enqueueHermesOperation(
+      workspaceId,
+      agentId,
+      { status: 'error', error: SANDBOX_LIFECYCLE_ERROR },
+      () => upgradeHermesRuntimeUnlocked(workspaceId, agentId, image),
+      { bypassRuntimeAccessGate: true },
+    );
+  } finally {
+    releaseUpgradeLease();
+  }
+}
+
+async function upgradeHermesRuntimeUnlocked(
+  workspaceId: string,
+  agentId: string,
+  image: string,
+): Promise<HermesRuntimeUpgradeResult> {
+  const agent = await getAgent(workspaceId, agentId);
+  if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
+    return { status: 'error', error: 'Hermes runtime not found.' };
+  }
+  const runtime = agent.runtime;
+  const deployment = runtime.sandbox.deployment;
+  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deployment.status)) {
+    return { status: deployment.status, error: SANDBOX_LIFECYCLE_ERROR };
+  }
+
+  let upgradePending = false;
+  try {
+    // A cached healthy dashboard port is tied to the old child/container.
+    dashboardReadyCache().delete(deployment.id);
+    await setHermesRuntimeUpgradePending(workspaceId, agent, image);
+    upgradePending = true;
+
+    // Forcefully tear down the old supervisor child and its container after
+    // all image references point at the new image. The named data volume is
+    // intentionally retained, then `sync` projects managed files into it.
+    await killProcess(deployment.id, { finalStatus: 'upgrading' });
+    await removeDockerSandboxContainer(runtime.sandboxId);
+
+    const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
+      allowUpgrading: true,
+    });
+    return synced.error ? synced : { ...synced, image };
+  } catch (error) {
+    const message = copyErrorMessage(error);
+    if (upgradePending) {
+      await Promise.all([
+        updateRuntimeState(workspaceId, runtime.id, { status: 'error', lastError: message })
+          .catch(() => undefined),
+        db.deployment.updateMany({
+          where: { id: deployment.id, workspaceId, source: 'sandbox' },
+          data: { status: 'error' },
+        }).catch(() => undefined),
+      ]);
+    }
+    return { status: 'error', error: message };
+  }
+}
+
+type HermesRuntimeSyncOptions = {
+  start?: boolean;
+  // Only the image-upgrade operation may continue from its durable
+  // `upgrading` marker; public sync callers must keep respecting it.
+  allowUpgrading?: boolean;
+};
+
 export async function syncHermesRuntime(
   workspaceId: string,
   agentId: string,
@@ -1010,7 +1235,7 @@ export async function syncHermesRuntime(
 async function syncHermesRuntimeUnlocked(
   workspaceId: string,
   agentId: string,
-  options: { start?: boolean } = {},
+  options: HermesRuntimeSyncOptions = {},
 ): Promise<{ status: string; error?: string }> {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
@@ -1019,7 +1244,10 @@ async function syncHermesRuntimeUnlocked(
   const runtime = agent.runtime;
   const deploymentId = runtime.sandbox.deploymentId;
   const deploymentStatus = runtime.sandbox.deployment.status;
-  if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus)) {
+  if (
+    BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus)
+    && !(options.allowUpgrading && deploymentStatus === 'upgrading')
+  ) {
     return { status: deploymentStatus, error: SANDBOX_LIFECYCLE_ERROR };
   }
   let projection: Awaited<ReturnType<typeof buildProjection>> | null = null;
@@ -1051,7 +1279,16 @@ async function syncHermesRuntimeUnlocked(
       return { status: runtime.status };
     }
 
-    await killProcess(deploymentId);
+    // Keep the durable upgrade marker through the projection. Otherwise this
+    // second stop (the first one happens before entering sync) would briefly
+    // persist `stopped`, allowing unrelated sandbox lifecycle work to enter
+    // while the new image is installing.
+    await killProcess(
+      deploymentId,
+      options.allowUpgrading && deploymentStatus === 'upgrading'
+        ? { finalStatus: 'upgrading' }
+        : undefined,
+    );
     await removeDockerSandboxContainer(runtime.sandboxId);
     await installProjection({
       directory: projection.directory,

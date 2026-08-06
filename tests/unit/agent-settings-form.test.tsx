@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
 
+type FormActionMock = (_prev: unknown, formData: FormData) => Promise<{ savedAt: number }>;
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -10,7 +12,8 @@ vi.mock('next/navigation', () => ({
 const actions = vi.hoisted(() => ({
   stopAgentRuntimeAction: vi.fn(),
   syncAgentRuntimeAction: vi.fn(),
-  updateHermesRuntimeEnvAction: vi.fn(async () => ({ savedAt: Date.now() })),
+  upgradeHermesRuntimeAction: vi.fn<FormActionMock>(async () => ({ savedAt: Date.now() })),
+  updateHermesRuntimeEnvAction: vi.fn<FormActionMock>(async () => ({ savedAt: Date.now() })),
   updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
 }));
 
@@ -136,6 +139,44 @@ describe('AgentSettingsForm', () => {
     expect(formData.get('workspace')).toBe('acme');
     expect(formData.get('agentId')).toBe('agent-1');
     expect(formData.get('hermesEnv')).toBe('API_KEY=secret');
+  });
+
+  it('upgrades Hermes with the selected image through its dedicated action', async () => {
+    actions.upgradeHermesRuntimeAction.mockClear();
+    actions.updateAgentAction.mockClear();
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        hermesImages={[
+          'nousresearch/hermes-agent:latest',
+          'nousresearch/hermes-agent:v2026.7.20',
+        ]}
+        runtime={{
+          kind: 'hermes',
+          image: 'nousresearch/hermes-agent:latest',
+          status: 'running',
+          lastError: null,
+          lastSyncedAt: null,
+          sandboxId: 'sandbox-1',
+        }}
+      />,
+    );
+
+    await userEvent.selectOptions(
+      screen.getByLabelText('Hermes version'),
+      'nousresearch/hermes-agent:v2026.7.20',
+    );
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
+    expect(actions.updateAgentAction).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Upgrade & restart' }));
+    await waitFor(() => expect(actions.upgradeHermesRuntimeAction).toHaveBeenCalled());
+    const formData = actions.upgradeHermesRuntimeAction.mock.calls.at(-1)?.[1];
+    expect(formData).toBeInstanceOf(FormData);
+    if (!formData) throw new Error('Hermes upgrade form was not submitted.');
+    expect(formData.get('workspace')).toBe('acme');
+    expect(formData.get('agentId')).toBe('agent-1');
+    expect(formData.get('hermesImage')).toBe('nousresearch/hermes-agent:v2026.7.20');
   });
 
   it('shows pending and completed feedback for Hermes sync and stop actions', async () => {

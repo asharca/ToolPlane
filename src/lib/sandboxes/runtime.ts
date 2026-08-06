@@ -7,6 +7,7 @@ export { DEFAULT_SANDBOX_IMAGE } from './images';
 const VOLUME_COPY_TIMEOUT_MS = 15 * 60_000;
 const MAX_DOCKER_ERROR_BYTES = 64 * 1024;
 const VOLUME_HELPER_IMAGE = process.env.SANDBOX_VOLUME_HELPER_IMAGE?.trim() || 'alpine:3.20';
+const DOCKER_IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$/;
 
 export class DockerVolumeCopyCleanupError extends AggregateError {
   readonly helperName?: string;
@@ -44,6 +45,19 @@ function dockerEnv(): NodeJS.ProcessEnv {
 
 function validVolumeName(volumeName: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(volumeName);
+}
+
+/**
+ * Pull an image before a managed runtime switches to it. Unlike `docker run`,
+ * this refreshes mutable tags such as `:latest` even when a local image with
+ * the same tag already exists.
+ */
+export async function pullDockerImage(
+  image: string,
+  timeoutMs = VOLUME_COPY_TIMEOUT_MS,
+): Promise<void> {
+  if (!DOCKER_IMAGE_REFERENCE.test(image)) throw new Error('Invalid Docker image reference.');
+  await runDocker(['pull', image], timeoutMs);
 }
 
 function runDocker(args: string[], timeoutMs = 30_000): Promise<string> {

@@ -142,6 +142,7 @@ const DATA_OPERATION_BLOCKED_STATES = new Set([
   'restoring',
   'restore_failed',
   'restore_cleanup_required',
+  'upgrading',
   'deleting',
 ]);
 const RESTORE_BLOCKED_STATES = new Set([
@@ -150,6 +151,7 @@ const RESTORE_BLOCKED_STATES = new Set([
   'copy_failed',
   'restoring',
   'restore_cleanup_required',
+  'upgrading',
   'deleting',
 ]);
 
@@ -166,6 +168,7 @@ function sandboxLifecycleBlocked(sandbox: AuthorizedSandbox): boolean {
     'restoring',
     'restore_failed',
     'restore_cleanup_required',
+    'upgrading',
     'deleting',
   ]
     .includes(sandbox.deployment.status);

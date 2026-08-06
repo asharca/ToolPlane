@@ -11,6 +11,7 @@ const STYLES: Record<string, { dot: string; labelKey: string }> = {
   restoring: { dot: 'bg-amber-500', labelKey: 'statusRestoring' },
   restore_failed: { dot: 'bg-red-500', labelKey: 'statusRecoveryRequired' },
   restore_cleanup_required: { dot: 'bg-red-500', labelKey: 'statusCleanupPending' },
+  upgrading: { dot: 'bg-amber-500', labelKey: 'statusUpgrading' },
   deleting: { dot: 'bg-amber-500', labelKey: 'statusDeleting' },
   setup_required: { dot: 'bg-amber-500', labelKey: 'statusSetupRequired' },
   stopped: { dot: 'bg-zinc-400', labelKey: 'statusStopped' },

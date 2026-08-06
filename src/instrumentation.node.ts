@@ -17,7 +17,7 @@ export async function registerNode() {
           `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and `
           + `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); `
           + `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), `
-          + `and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
+          + `${copies.upgradesInterrupted} image upgrade(s), and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
         );
       }
     } catch (error) {
