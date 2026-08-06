@@ -9,7 +9,17 @@ import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxe
 
 export type SpawnSpec =
   | { kind: 'builtin'; name: string }
-  | { kind: 'bridge'; name: string; command: string; args: string[]; env: Record<string, string> }
+  | {
+      kind: 'bridge';
+      name: string;
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      // Kept separately from the docker argv so the supervisor can expose the
+      // image lifecycle without ever recording a command line that may contain
+      // `-e KEY=value` secrets.
+      image?: string;
+    }
   | {
       kind: 'sandbox';
       name: string;
@@ -33,6 +43,12 @@ export type DeploymentForSpawn = {
   installCfg: unknown;
 };
 
+export type DockerSpawnSpec = {
+  command: string;
+  args: string[];
+  image: string;
+};
+
 function splitArgs(s: string | undefined): string[] {
   return s ? s.split(/\s+/).filter(Boolean) : [];
 }
@@ -53,7 +69,7 @@ export function buildSpawnSpec(
   env: Record<string, string> = {},
   rebuild = false,
   network: McpNetwork = 'isolated',
-): { command: string; args: string[] } {
+): DockerSpawnSpec {
   const run = ['run', ...sandboxFlags(network)];
 
   switch (source) {
@@ -63,6 +79,7 @@ export function buildSpawnSpec(
       return {
         command: 'docker',
         args: [...run, ...envFlags(CACHE_ENV.npm), ...envFlags(env), WRAP_IMAGE.npm, ...inner],
+        image: WRAP_IMAGE.npm,
       };
     }
     case 'pypi': {
@@ -70,6 +87,7 @@ export function buildSpawnSpec(
       return {
         command: 'docker',
         args: [...run, ...envFlags(CACHE_ENV.pypi), ...envFlags(env), WRAP_IMAGE.pypi, ...inner],
+        image: WRAP_IMAGE.pypi,
       };
     }
     case 'docker': {
@@ -77,6 +95,7 @@ export function buildSpawnSpec(
       return {
         command: 'docker',
         args: [...run, ...pull, ...envFlags(env), ref, ...splitArgs(startCommand)],
+        image: ref,
       };
     }
     default:
@@ -90,7 +109,7 @@ export function buildStdioConfigSpawnSpec(
   env: Record<string, string> = {},
   rebuild = false,
   network: McpNetwork = 'isolated',
-): { command: string; args: string[] } {
+): DockerSpawnSpec {
   const run = ['run', ...sandboxFlags(network)];
   if (command === 'npx') {
     const refresh = rebuild ? ['--prefer-online'] : [];
@@ -105,6 +124,7 @@ export function buildStdioConfigSpawnSpec(
         ...refresh,
         ...commandArgs,
       ],
+      image: WRAP_IMAGE.npm,
     };
   }
   if (command === 'uvx') {
@@ -120,6 +140,7 @@ export function buildStdioConfigSpawnSpec(
         ...refresh,
         ...commandArgs,
       ],
+      image: WRAP_IMAGE.pypi,
     };
   }
   throw new Error(`Unsupported stdio MCP command: ${command || '(none)'}`);
@@ -226,6 +247,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       command: configSpec.command,
       args: configSpec.args,
       env,
+      image: configSpec.image,
     };
   }
   const packageSpec = buildSpawnSpec(
@@ -242,5 +264,6 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
     command: packageSpec.command,
     args: packageSpec.args,
     env,
+    image: packageSpec.image,
   };
 }
