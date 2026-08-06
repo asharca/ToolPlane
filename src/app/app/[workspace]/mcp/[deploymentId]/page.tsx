@@ -8,10 +8,8 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
 import { originFromHeaders } from '@/lib/http/origin';
 import {
-  deploymentContainerName,
   effectiveStatus,
-  getDeploymentContainerLogs,
-  sandboxContainerName,
+  getDeploymentRuntimeSnapshot,
 } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -130,22 +128,22 @@ export default async function DeploymentInspectorPage({
   const running = status === 'running';
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
   const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];
-  const containerName = dep.source === 'sandbox' && envCfg.sandboxId
-    ? sandboxContainerName(envCfg.sandboxId)
-    : dep.source && dep.source !== 'sandbox'
-      ? deploymentContainerName(deploymentId)
-      : null;
-  const containerLogs = current === 'logs' && containerName
-    ? await getDeploymentContainerLogs(deploymentId, { containerName })
+  const runtimeSnapshot = current === 'logs'
+    ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
   const provisioning = status === 'provisioning';
+  const runtimePolling = provisioning || running;
 
   return (
     <>
-      <ProvisioningRefresher active={provisioning} />
+      <ProvisioningRefresher
+        active={runtimePolling}
+        deploymentId={deploymentId}
+        initialStatus={status}
+      />
       <DashboardHeader
         breadcrumb={[
           { label: 'MCP', href: `/app/${slug}/mcp` },
@@ -443,17 +441,22 @@ export default async function DeploymentInspectorPage({
 
         {current === 'logs' ? (
           <div className="space-y-8">
-            {containerLogs ? (
-              <ContainerLogs
-                logs={containerLogs}
-                title={t('containerLogs')}
-                refreshLabel={t('refreshLogs')}
-                dockerSourceLabel={t('liveDockerLogs')}
-                capturedSourceLabel={t('capturedRuntimeLogs')}
-                emptyLabel={t('noContainerLogsYet')}
-                fallbackLabel={t('containerLogsFallbackNotice')}
-              />
-            ) : null}
+            <ContainerLogs
+              key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
+              deploymentId={deploymentId}
+              initialSnapshot={runtimeSnapshot}
+              initialStatus={status}
+              title={t('runtimeLogs')}
+              refreshLabel={t('refreshLogs')}
+              emptyLabel={t('noRuntimeLogsYet')}
+              unavailableLabel={t('runtimeUnavailable')}
+              statusLabel={t('runtimeStatus')}
+              phaseLabel={t('runtimePhase')}
+              imageStateLabel={t('runtimeImageState')}
+              containerStateLabel={t('runtimeContainerState')}
+              syncErrorLabel={t('runtimeLogSyncFailed')}
+              truncatedLabel={t('runtimeLogTruncated')}
+            />
 
             <section className="space-y-3">
               <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>

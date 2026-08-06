@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,12 +85,14 @@ function resetSupervisorGlobals() {
     __mcpSupervisorLifecycleQueues?: unknown;
     __mcpSupervisorTombstones?: unknown;
     __mcpSupervisorWorkspaceTombstones?: unknown;
+    __mcpSupervisorRuntime?: unknown;
   };
   delete globals.__mcpSupervisor;
   delete globals.__mcpSupervisorPersistQueues;
   delete globals.__mcpSupervisorLifecycleQueues;
   delete globals.__mcpSupervisorTombstones;
   delete globals.__mcpSupervisorWorkspaceTombstones;
+  delete globals.__mcpSupervisorRuntime;
 }
 
 beforeAll(async () => {
@@ -286,6 +288,97 @@ describe('supervisor readiness races', () => {
     releaseRunning?.();
     await killing;
     expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('stopped');
+  });
+
+  it('does not duplicate a provisioning process owned by another worker', async () => {
+    const deploymentId = 'adopted-provisioning';
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.json`),
+      JSON.stringify({
+        deploymentId,
+        name: 'Already provisioning',
+        pid: process.pid,
+        port: null,
+        status: 'provisioning',
+        generation: 'other-worker-generation',
+        phase: 'pulling-image',
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    await supervisor.startProcess(
+      deploymentId,
+      { kind: 'builtin', name: 'Should not spawn' },
+      { awaitReady: false },
+    );
+    await Promise.resolve();
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.updateDeployment).toHaveBeenCalledWith({
+      where: { id: deploymentId },
+      data: { status: 'provisioning' },
+    });
+  });
+
+  it('does not delete an unreadable cross-worker registry while it may be atomically replaced', () => {
+    const deploymentId = 'temporarily-unreadable-registry';
+    const file = path.join(registryDir, `${deploymentId}.json`);
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(file, '{"deploymentId":');
+
+    expect(supervisor.effectiveStatus(deploymentId, 'running')).toBe('stopped');
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('does not duplicate a launch while another worker holds the pre-registry launch lock', async () => {
+    const deploymentId = 'launch-lock-held';
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.launch.lock`),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: new Date().toISOString(),
+        nonce: 'other-worker-lock',
+      }),
+    );
+
+    await supervisor.startProcess(
+      deploymentId,
+      { kind: 'builtin', name: 'Locked launch' },
+      { awaitReady: false },
+    );
+    await Promise.resolve();
+
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.updateDeployment).toHaveBeenCalledWith({
+      where: { id: deploymentId },
+      data: { status: 'provisioning' },
+    });
+  });
+
+  it('recovers an expired launch lock before spawning a replacement', async () => {
+    const deploymentId = 'launch-lock-expired';
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.launch.lock`),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: '2000-01-01T00:00:00.000Z',
+        nonce: 'expired-worker-lock',
+      }),
+    );
+
+    await supervisor.startProcess(
+      deploymentId,
+      { kind: 'builtin', name: 'Recovered launch' },
+      { awaitReady: false },
+    );
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(existsSync(path.join(registryDir, `${deploymentId}.launch.lock`))).toBe(false);
   });
 
   it('serializes concurrent restarts without orphaning an intermediate child', async () => {
@@ -508,6 +601,280 @@ describe('supervisor readiness races', () => {
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
     expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
+  });
+
+  it('publishes bridge phases and a redacted stderr-only runtime log generation', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await supervisor.startProcess(
+      'runtime-progress',
+      {
+        kind: 'bridge',
+        name: 'Runtime progress',
+        command: 'docker',
+        args: [
+          'run', '--rm', 'node:24-bookworm-slim',
+          '--password', 'argv-password',
+          'ssh://git:url-password@example.test/repo',
+        ],
+        env: { MCP_TOKEN: 'super-secret-value' },
+        image: 'node:24-bookworm-slim',
+      },
+      { awaitReady: false },
+    );
+
+    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    expect(options.env).toMatchObject({
+      MCP_CONTAINER_NAME: 'toolplane-mcp-runtime-progress',
+      MCP_IMAGE: 'node:24-bookworm-slim',
+      MCP_STARTUP_IDLE_TIMEOUT_MS: expect.any(String),
+      MCP_STARTUP_MAX_TIMEOUT_MS: expect.any(String),
+      MCP_RUNTIME_EVENT_TOKEN: expect.any(String),
+    });
+    const eventToken = options.env?.MCP_RUNTIME_EVENT_TOKEN;
+    expect(eventToken).toEqual(expect.any(String));
+    const starting = supervisor.getDeploymentRuntimeSnapshot('runtime-progress');
+    expect(starting).toMatchObject({
+      status: 'provisioning',
+      phase: 'preparing-image',
+      containerName: 'toolplane-mcp-runtime-progress',
+    });
+    expect(starting?.generation).toEqual(expect.any(String));
+
+    // An MCP can write arbitrary stderr, so a phase-looking line without the
+    // bridge's launch-private token must never alter runtime metadata.
+    child.stderr.emit('data', Buffer.from(
+      '[toolplane-runtime] {"type":"phase","phase":"forged-running","imageState":"forged"}\n',
+    ));
+    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
+      status: 'provisioning',
+      phase: 'preparing-image',
+    });
+
+    child.stderr.emit('data', Buffer.from(
+      '[toolplane-runtime] {"type":"phase","token":"' + eventToken
+      + '","phase":"pulling-image","imageState":"pulling","containerState":"created"}\n'
+      + 'MCP_TOKEN=super-sec',
+    ));
+
+    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
+      status: 'provisioning',
+      phase: 'pulling-image',
+      imageState: 'pulling',
+      containerState: 'created',
+    });
+    // The configured secret is split across stderr chunks and has no newline
+    // yet, so neither its prefix nor the event nonce may have reached logs.
+    const incomplete = supervisor.getDeploymentRuntimeLogChunk('runtime-progress', { limit: 64 * 1024 });
+    expect(incomplete.text).not.toContain('super-sec');
+    expect(incomplete.text).not.toContain(eventToken!);
+
+    child.stderr.emit('data', Buffer.from(
+      'ret-value Authorization: Bearer another-secret argv-password url-password\n',
+    ));
+    const log = supervisor.getDeploymentRuntimeLogChunk('runtime-progress', { limit: 64 * 1024 });
+    expect(log.generation).toBe(starting?.generation);
+    expect(log.text).toContain('[REDACTED]');
+    expect(log.text).not.toContain('super-secret-value');
+    expect(log.text).not.toContain('super-sec');
+    expect(log.text).not.toContain('ret-value');
+    expect(log.text).not.toContain('another-secret');
+    expect(log.text).not.toContain('argv-password');
+    expect(log.text).not.toContain('url-password');
+    expect(log.text).not.toContain(eventToken!);
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain(eventToken!);
+
+    child.stdout.emit('data', Buffer.from('LISTENING 4580\n'));
+    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
+      status: 'running',
+      phase: 'ready',
+    });
+  });
+
+  it('flushes a terminal unterminated stderr line only after redacting its configured secret', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'runtime-terminal-tail',
+      {
+        kind: 'bridge',
+        name: 'Terminal tail',
+        command: 'docker',
+        args: ['run', '--rm', 'node:24-bookworm-slim'],
+        env: { MCP_TOKEN: 'terminal-known-secret' },
+        image: 'node:24-bookworm-slim',
+      },
+      { awaitReady: false },
+    );
+
+    child.stderr.emit('data', Buffer.from('MCP_TOKEN=terminal-known-'));
+    child.stderr.emit('data', Buffer.from('secret'));
+    const beforeEnd = supervisor.getDeploymentRuntimeLogChunk('runtime-terminal-tail', { limit: 64 * 1024 });
+    expect(beforeEnd.text).toBe('');
+
+    // ChildProcess emits the stderr stream end/close after its exit; the
+    // supervisor must flush that final line through the same redactor.
+    child.stderr.emit('end');
+    const afterEnd = supervisor.getDeploymentRuntimeLogChunk('runtime-terminal-tail', { limit: 64 * 1024 });
+    expect(afterEnd.text).toContain('[REDACTED]');
+    expect(afterEnd.text).not.toContain('terminal-known-secret');
+    expect(afterEnd.text).not.toContain('terminal-known-');
+  });
+
+  it('omits an overlong unterminated stderr line instead of leaking a partial generic credential', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'runtime-overlong-line',
+      { kind: 'builtin', name: 'Overlong line' },
+      { awaitReady: false },
+    );
+    child.stderr.emit('data', Buffer.from(
+      'Authorization: Bearer generic-split-token-' + 'x'.repeat(300 * 1024),
+    ));
+    const omitted = supervisor.getDeploymentRuntimeLogChunk('runtime-overlong-line', { limit: 64 * 1024 });
+    expect(omitted.text).toContain('omitted overlong stderr line');
+    expect(omitted.text).not.toContain('generic-split-token');
+
+    // Discard only until the next line break; later useful diagnostics remain.
+    child.stderr.emit('data', Buffer.from('\nnormal diagnostic after omission\n'));
+    const resumed = supervisor.getDeploymentRuntimeLogChunk('runtime-overlong-line', {
+      cursor: omitted.nextCursor,
+      limit: 64 * 1024,
+    });
+    expect(resumed.text).toContain('normal diagnostic after omission');
+  });
+
+  it('resets runtime log cursors for a new launch generation and retains terminal error logs', async () => {
+    const first = createChild();
+    const second = createChild();
+    mocks.spawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
+
+    await supervisor.startProcess(
+      'runtime-generation',
+      { kind: 'builtin', name: 'First run' },
+      { awaitReady: false },
+    );
+    first.stderr.emit('data', Buffer.from('first run failed TOKEN=visible-secret\n'));
+    const firstSnapshot = supervisor.getDeploymentRuntimeSnapshot('runtime-generation');
+    const firstLog = supervisor.getDeploymentRuntimeLogChunk('runtime-generation', { limit: 64 * 1024 });
+    expect(firstLog.text).toContain('first run failed');
+    expect(firstLog.text).not.toContain('visible-secret');
+
+    Object.assign(first, { exitCode: 1 });
+    first.emit('exit', 1, null);
+    expect(supervisor.getDeploymentRuntimeSnapshot('runtime-generation')).toMatchObject({
+      status: 'error',
+      phase: 'error',
+      generation: firstSnapshot?.generation,
+    });
+
+    await supervisor.startProcess(
+      'runtime-generation',
+      { kind: 'builtin', name: 'Second run' },
+      { awaitReady: false },
+    );
+    const secondSnapshot = supervisor.getDeploymentRuntimeSnapshot('runtime-generation');
+    expect(secondSnapshot?.generation).not.toBe(firstSnapshot?.generation);
+    const reset = supervisor.getDeploymentRuntimeLogChunk('runtime-generation', {
+      generation: firstSnapshot?.generation,
+      cursor: firstLog.nextCursor,
+    });
+    expect(reset).toMatchObject({
+      generation: secondSnapshot?.generation,
+      cursor: 0,
+      nextCursor: 0,
+      reset: true,
+      text: '',
+    });
+  });
+
+  it('does not report a stale active runtime snapshot after its process is gone', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    await supervisor.startProcess(
+      'stale-runtime',
+      { kind: 'builtin', name: 'Stale runtime' },
+      { awaitReady: false },
+    );
+
+    const globals = globalThis as typeof globalThis & {
+      __mcpSupervisor?: unknown;
+      __mcpSupervisorRuntime?: unknown;
+    };
+    delete globals.__mcpSupervisor;
+    delete globals.__mcpSupervisorRuntime;
+    vi.mocked(process.kill).mockImplementation(((pid: number, signal?: number | NodeJS.Signals) => {
+      if (pid === child.pid && signal === 0) {
+        const error = new Error('missing') as NodeJS.ErrnoException;
+        error.code = 'ESRCH';
+        throw error;
+      }
+      return true;
+    }) as typeof process.kill);
+
+    expect(supervisor.getDeploymentRuntimeSnapshot('stale-runtime')).toMatchObject({
+      status: 'stopped',
+      phase: 'stopped',
+    });
+  });
+
+  it('prefers a newer cross-worker registry generation over a cached runtime record', () => {
+    const deploymentId = 'cross-worker-runtime';
+    const logText = 'new worker is starting\n';
+    const now = new Date().toISOString();
+    mkdirSync(registryDir, { recursive: true });
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.runtime.json`),
+      JSON.stringify({
+        deploymentId,
+        pid: process.pid,
+        status: 'error',
+        phase: 'error',
+        generation: 'old-generation',
+        startedAt: now,
+        updatedAt: now,
+        logStartCursor: 0,
+        logEndCursor: 0,
+      }),
+    );
+    writeFileSync(path.join(registryDir, `${deploymentId}.log`), logText);
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.json`),
+      JSON.stringify({
+        deploymentId,
+        name: 'New worker',
+        pid: process.pid,
+        port: null,
+        status: 'provisioning',
+        generation: 'new-generation',
+        phase: 'pulling-image',
+        imageState: 'pulling',
+        logStartCursor: 0,
+        logEndCursor: Buffer.byteLength(logText),
+        updatedAt: now,
+      }),
+    );
+    // Simulate a worker that previously cached the terminal record, then has
+    // no local child after another worker launched the replacement.
+    resetSupervisorGlobals();
+
+    expect(supervisor.getDeploymentRuntimeSnapshot(deploymentId)).toMatchObject({
+      status: 'provisioning',
+      phase: 'pulling-image',
+      generation: 'new-generation',
+      imageState: 'pulling',
+    });
+    expect(supervisor.getDeploymentRuntimeLogChunk(deploymentId, { limit: 64 * 1024 })).toMatchObject({
+      generation: 'new-generation',
+      text: logText,
+    });
+    expect(supervisor.effectiveStatuses([{ id: deploymentId, status: 'error' }]).get(deploymentId))
+      .toBe('provisioning');
   });
 
   it('reads live Docker output for the deployment container', async () => {

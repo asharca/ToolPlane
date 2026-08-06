@@ -7,6 +7,7 @@ import {
   deploymentContainerName,
   effectiveStatus,
   effectiveStatuses,
+  getDeploymentRuntimeSnapshot,
   livePort,
   liveStatus,
   sandboxContainerName,
@@ -53,6 +54,11 @@ describe('effectiveStatus (no live process)', () => {
       expect(liveStatus(deploymentId)).toBe('running');
       expect(livePort(deploymentId)).toBe(45678);
       expect(effectiveStatus(deploymentId, 'stopped')).toBe('running');
+      expect(getDeploymentRuntimeSnapshot(deploymentId)).toMatchObject({
+        status: 'running',
+        phase: 'ready',
+        generation: `legacy-${process.pid}`,
+      });
     } finally {
       rmSync(file, { force: true });
     }
