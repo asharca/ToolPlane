@@ -15,10 +15,18 @@ import {
   normalizeHermesArchiveMaxUploadMiB,
 } from './archive-limits';
 
-export const MAX_HERMES_ARCHIVE_FILES = 2_000;
+// A normal long-lived Hermes home can include browser profiles, package
+// managers, and caches. Keep a hard cap for central-directory / filesystem
+// exhaustion, but make it large enough for a legitimate 10 GiB backup.
+export const MAX_HERMES_ARCHIVE_FILES = 200_000;
 export const MAX_HERMES_ARCHIVE_FILE_BYTES = HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
 export const MAX_HERMES_ARCHIVE_UNPACKED_BYTES = HERMES_ARCHIVE_ABSOLUTE_MAX_UNPACKED_BYTES;
 export const MAX_HERMES_ARCHIVE_RUNTIME_CONFIG_BYTES = 4 * 1024 * 1024;
+// A highly-compressible small cache page is normal. Large entries still use
+// the ratio check to stop a ZIP bomb before it can consume staging storage.
+export const MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_HERMES_ARCHIVE_SYMLINK_TARGET_BYTES = 4 * 1024;
+export const MAX_HERMES_ARCHIVE_SYMLINKS = 1_024;
 
 const ARCHIVE_TIMEOUT_MS = 45 * 60_000;
 const ARCHIVE_CPU_LIMIT_SECONDS = 30 * 60;
@@ -108,11 +116,14 @@ try:
 except ImportError:
     resource = None
 
-source, destination, max_files_raw, max_file_bytes_raw, max_total_bytes_raw, max_ratio_raw, cpu_limit_raw, max_runtime_config_bytes_raw = sys.argv[1:]
+source, destination, max_files_raw, max_file_bytes_raw, max_total_bytes_raw, max_ratio_raw, max_high_compression_file_bytes_raw, max_symlink_target_bytes_raw, max_symlinks_raw, cpu_limit_raw, max_runtime_config_bytes_raw = sys.argv[1:]
 MAX_FILES = int(max_files_raw)
 MAX_FILE_BYTES = int(max_file_bytes_raw)
 MAX_TOTAL_BYTES = int(max_total_bytes_raw)
 MAX_RATIO = int(max_ratio_raw)
+MAX_HIGH_COMPRESSION_FILE_BYTES = int(max_high_compression_file_bytes_raw)
+MAX_SYMLINK_TARGET_BYTES = int(max_symlink_target_bytes_raw)
+MAX_SYMLINKS = int(max_symlinks_raw)
 CPU_LIMIT_SECONDS = int(cpu_limit_raw)
 MAX_RUNTIME_CONFIG_BYTES = int(max_runtime_config_bytes_raw)
 MANAGED_EXACT = {".toolplane-env-keys.json", "skill-bundles/toolplane-agent.yaml"}
@@ -155,6 +166,33 @@ def is_metadata(parts):
     return parts[0] == "__MACOSX" or parts[-1].startswith("._")
 
 
+def safe_relative_symlink_target(link_parts, target):
+    # Absolute targets refer to the source machine (for example a virtualenv
+    # interpreter under /Users). They are not portable into the managed Linux
+    # sandbox, so skip them rather than recreating an external host reference.
+    normalized = target.replace("\\", "/")
+    if not normalized or "\x00" in normalized:
+        fail("unsafe archive symlink")
+    if normalized.startswith("/"):
+        return None
+    target_parts = normalized.split("/")
+    if target_parts[0].endswith(":"):
+        return None
+    resolved = list(link_parts[:-1])
+    for part in target_parts:
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if not resolved:
+                fail("archive symlink escapes Hermes home")
+            resolved.pop()
+            continue
+        if len(part) > 180 or any(ord(char) < 32 for char in part):
+            fail("unsafe archive symlink")
+        resolved.append(part)
+    return normalized
+
+
 def strip_managed(parts):
     folded = tuple(unicodedata.normalize("NFC", part).casefold() for part in parts)
     joined = "/".join(folded)
@@ -179,18 +217,28 @@ def assert_zip_entry_is_safe(info):
         fail("archive file exceeds limit")
     if info.file_size and not info.compress_size:
         fail("invalid compressed size")
-    if info.compress_size and info.file_size > info.compress_size * MAX_RATIO:
+    if (
+        info.compress_size
+        and info.file_size > info.compress_size * MAX_RATIO
+        and info.file_size > MAX_HIGH_COMPRESSION_FILE_BYTES
+    ):
         fail("archive compression ratio exceeds limit")
     mode = (info.external_attr >> 16) & 0xffff
     file_type = stat.S_IFMT(mode)
     if mode & (stat.S_ISUID | stat.S_ISGID):
         fail("unsafe archive permissions")
-    if file_type and file_type not in (stat.S_IFREG, stat.S_IFDIR):
+    if file_type and file_type not in (stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK):
         fail("archive links and special files are unsupported")
+    if file_type == stat.S_IFLNK and info.file_size > MAX_SYMLINK_TARGET_BYTES:
+        fail("archive symlink target is too large")
+    return file_type == stat.S_IFLNK
 
 
 def choose_root(entries):
-    file_parts = [entry["parts"] for entry in entries if not entry["directory"]]
+    file_parts = [
+        entry["parts"] for entry in entries
+        if not entry["directory"] and not entry["symlink"]
+    ]
     # A root config is an unambiguous direct Hermes home. This also prevents a
     # nested workspace/.hermes directory from hijacking a ZIP rooted at /opt/data.
     if any(len(parts) == 1 and parts[0] == "config.yaml" for parts in file_parts):
@@ -247,6 +295,22 @@ def copy_entry(reader, target, expected_size, counters):
     os.chmod(target, 0o600)
 
 
+def read_symlink_target(archive, entry):
+    try:
+        raw_target = archive.read(entry["info"])
+        if len(raw_target) != entry["info"].file_size:
+            fail("archive symlink target is invalid")
+        target = raw_target.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("archive symlink target is invalid")
+    return safe_relative_symlink_target(entry["relative"], target)
+
+
+def copy_symlink(target, link_target):
+    os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+    os.symlink(link_target, target)
+
+
 try:
     with zipfile.ZipFile(source) as archive:
         infos = archive.infolist()
@@ -254,16 +318,26 @@ try:
             fail("archive file count is invalid")
         raw_entries = []
         declared_total = 0
+        declared_symlinks = 0
         for info in infos:
-            assert_zip_entry_is_safe(info)
+            symlink = assert_zip_entry_is_safe(info)
             parts = normalized_parts(info.filename)
             if is_metadata(parts):
                 continue
+            if symlink:
+                declared_symlinks += 1
+                if declared_symlinks > MAX_SYMLINKS:
+                    fail("archive contains too many symbolic links")
             declared_total += info.file_size
             if declared_total > MAX_TOTAL_BYTES:
                 fail("archive exceeds unpacked size limit")
-            directory = info.is_dir() or info.filename.endswith(("/", "\\"))
-            raw_entries.append({"info": info, "parts": parts, "directory": directory})
+            directory = not symlink and (info.is_dir() or info.filename.endswith(("/", "\\")))
+            raw_entries.append({
+                "info": info,
+                "parts": parts,
+                "directory": directory,
+                "symlink": symlink,
+            })
         if not raw_entries:
             fail("archive file count is invalid")
 
@@ -279,6 +353,8 @@ try:
         seen = set()
         file_paths = set()
         directory_paths = set()
+        symlink_paths = set()
+        discarded_symlink_paths = set()
         for entry in raw_entries:
             parts = entry["parts"]
             if root:
@@ -295,31 +371,86 @@ try:
                 continue
             if (
                 not entry["directory"]
+                and not entry["symlink"]
                 and len(relative) == 1
                 and relative[0] in {"config.yaml", ".env"}
                 and entry["info"].file_size > MAX_RUNTIME_CONFIG_BYTES
             ):
                 fail("Hermes configuration file exceeds limit")
+            if (
+                entry["symlink"]
+                and len(relative) == 1
+                and relative[0] in {"config.yaml", ".env"}
+            ):
+                fail("Hermes configuration files cannot be symbolic links")
             key = path_key(relative)
             if key in seen:
                 fail("archive contains duplicate paths")
             seen.add(key)
             parent_keys = [path_key(relative[:index]) for index in range(1, len(relative))]
             if entry["directory"]:
-                if key in file_paths:
+                if key in file_paths or key in symlink_paths:
+                    fail("archive contains conflicting paths")
+                if any(
+                    parent in file_paths
+                    or parent in symlink_paths
+                    or parent in discarded_symlink_paths
+                    for parent in parent_keys
+                ):
                     fail("archive contains conflicting paths")
                 directory_paths.add(key)
+                targets.append({**entry, "relative": relative})
+            elif entry["symlink"]:
+                if key in file_paths or key in directory_paths:
+                    fail("archive contains conflicting paths")
+                if any(
+                    parent in file_paths
+                    or parent in symlink_paths
+                    or parent in discarded_symlink_paths
+                    for parent in parent_keys
+                ):
+                    fail("archive contains conflicting paths")
+                link_target = read_symlink_target(archive, {**entry, "relative": relative})
+                if link_target is None:
+                    discarded_symlink_paths.add(key)
+                    continue
+                symlink_paths.add(key)
+                targets.append({**entry, "relative": relative, "link_target": link_target})
             else:
-                if key in directory_paths or any(parent in file_paths for parent in parent_keys):
+                if (
+                    key in directory_paths
+                    or key in symlink_paths
+                    or any(
+                        parent in file_paths
+                        or parent in symlink_paths
+                        or parent in discarded_symlink_paths
+                        for parent in parent_keys
+                    )
+                ):
                     fail("archive contains conflicting paths")
                 file_paths.add(key)
-            targets.append({**entry, "relative": relative})
+                targets.append({**entry, "relative": relative})
+
+        # ZIP entry count limits central-directory work, while inode preflight
+        # prevents many otherwise-small entries from exhausting the staging
+        # filesystem during extraction. Include implicit parent directories and
+        # the extraction root itself because os.makedirs creates both.
+        output_paths = set()
+        for entry in targets:
+            relative = entry["relative"]
+            for index in range(1, len(relative) + 1):
+                output_paths.add(relative[:index])
+        required_inodes = len(output_paths) + 1
+        if statvfs.f_favail < required_inodes:
+            fail("not enough staging inodes")
 
         files = [entry for entry in targets if not entry["directory"]]
         if not files:
             fail("Hermes home is empty")
         counters = {"bytes": 0}
         for entry in targets:
+            if entry["symlink"]:
+                continue
             if entry["directory"]:
                 target = ensure_destination(destination, entry["relative"])
                 os.makedirs(target, mode=0o700, exist_ok=True)
@@ -328,8 +459,16 @@ try:
             target = ensure_destination(destination, entry["relative"])
             with archive.open(entry["info"], "r") as reader:
                 copy_entry(reader, target, entry["info"].file_size, counters)
+        for entry in targets:
+            if not entry["symlink"]:
+                continue
+            target = ensure_destination(destination, entry["relative"])
+            copy_symlink(target, entry["link_target"])
         print(json.dumps({"files": len(files), "bytes": counters["bytes"]}))
-except (ArchiveError, zipfile.BadZipFile, OSError, RuntimeError, ValueError):
+except ArchiveError as error:
+    print(json.dumps({"error": str(error)}))
+    sys.exit(2)
+except (zipfile.BadZipFile, OSError, RuntimeError, ValueError):
     sys.exit(2)
 `;
 
@@ -340,6 +479,32 @@ function preferredPython(): string {
 function boundedAppend(current: string, chunk: Buffer): string {
   if (current.length >= MAX_ARCHIVE_PROCESS_OUTPUT) return current;
   return `${current}${chunk.toString('utf8')}`.slice(0, MAX_ARCHIVE_PROCESS_OUTPUT);
+}
+
+function archiveInspectionFailure(output: string): HermesArchiveError {
+  try {
+    const parsed = JSON.parse(output) as { error?: unknown };
+    const message = typeof parsed.error === 'string' ? parsed.error : '';
+    const messages: Record<string, string> = {
+      'archive file count is invalid': `The archive contains too many ZIP entries. It may contain at most ${MAX_HERMES_ARCHIVE_FILES.toLocaleString()}.`,
+      'archive compression ratio exceeds limit': 'The archive contains a large file that expands too much when extracted.',
+      'archive symlink target is too large': 'The archive contains a symbolic link with an invalid target.',
+      'archive symlink target is invalid': 'The archive contains a symbolic link with an invalid target.',
+      'archive symlink escapes Hermes home': 'The archive contains a symbolic link that escapes the Hermes home.',
+      'unsafe archive symlink': 'The archive contains a symbolic link with an invalid target.',
+      'archive contains too many symbolic links': `The archive contains too many symbolic links. It may contain at most ${MAX_HERMES_ARCHIVE_SYMLINKS.toLocaleString()}.`,
+      'Hermes configuration files cannot be symbolic links': 'The archive configuration files must be regular files.',
+      '.hermes folder not found': 'The archive must contain a .hermes folder or its contents at the ZIP root.',
+      'archive contains files outside .hermes': 'The archive contains files outside the selected .hermes folder.',
+      'archive contains multiple Hermes homes': 'The archive contains more than one .hermes folder.',
+      'not enough staging inodes': 'The server does not have enough temporary filesystem entries for this archive.',
+    };
+    if (message in messages) return new HermesArchiveError(messages[message]);
+  } catch {
+    // An invalid or truncated child-process response intentionally falls back
+    // to the generic safe error below.
+  }
+  return new HermesArchiveError();
 }
 
 async function extractZipArchive(
@@ -366,6 +531,9 @@ async function extractZipArchive(
         String(limits.maxFileBytes),
         String(limits.maxUnpackedBytes),
         String(MAX_ARCHIVE_COMPRESSION_RATIO),
+        String(MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES),
+        String(MAX_HERMES_ARCHIVE_SYMLINK_TARGET_BYTES),
+        String(MAX_HERMES_ARCHIVE_SYMLINKS),
         String(ARCHIVE_CPU_LIMIT_SECONDS),
         String(limits.maxRuntimeConfigBytes),
       ],
@@ -394,7 +562,7 @@ async function extractZipArchive(
     });
     child.once('close', (code) => {
       if (code !== 0) {
-        finish(new HermesArchiveError());
+        finish(archiveInspectionFailure(stdout));
         return;
       }
       try {
