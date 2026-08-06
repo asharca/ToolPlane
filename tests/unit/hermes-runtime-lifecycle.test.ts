@@ -575,12 +575,35 @@ describe('Hermes sandbox lifecycle isolation', () => {
       return { count: 1 };
     });
 
+    const targetImage = 'nousresearch/hermes-agent:latest';
+    let markPullStarted!: () => void;
+    let finishPull!: () => void;
+    const pullStarted = new Promise<void>((resolve) => {
+      markPullStarted = resolve;
+    });
+    const pullCanFinish = new Promise<void>((resolve) => {
+      finishPull = resolve;
+    });
+    mocks.pullDockerImage.mockImplementationOnce(async () => {
+      markPullStarted();
+      await pullCanFinish;
+    });
+
     const activeWrite = acquireHermesRuntimeWriteLease('workspace-1', agent.id);
     expect(activeWrite).not.toBeNull();
-    const targetImage = 'nousresearch/hermes-agent:latest';
     const upgrade = upgradeHermesRuntime('workspace-1', agent.id, `  ${targetImage}  `);
 
-    await vi.waitFor(() => expect(mocks.pullDockerImage).toHaveBeenCalledWith(targetImage, 15 * 60_000));
+    await pullStarted;
+    expect(mocks.pullDockerImage).toHaveBeenCalledWith(targetImage, 15 * 60_000);
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    finishPull();
+
+    // Let the completed pull schedule the upgrade's maintenance lease, then
+    // verify it blocks new writes until the pre-existing write has drained.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const blockedWrite = acquireHermesRuntimeWriteLease('workspace-1', agent.id);
+    blockedWrite?.release();
+    expect(blockedWrite).toBeNull();
     expect(mocks.killProcess).not.toHaveBeenCalled();
     activeWrite?.release();
 
