@@ -1,10 +1,14 @@
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readFile, readlink, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HermesArchiveError,
+  MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES,
   MAX_HERMES_ARCHIVE_RUNTIME_CONFIG_BYTES,
+  MAX_HERMES_ARCHIVE_SYMLINKS,
+  MAX_HERMES_ARCHIVE_SYMLINK_TARGET_BYTES,
   acquireHermesArchiveImportLock,
   stageHermesArchive,
   stageHermesArchiveStream,
@@ -15,6 +19,7 @@ type ZipEntry = {
   name: string;
   content?: string;
   mode?: number;
+  compression?: 'deflate';
 };
 
 function crc32(content: Buffer): number {
@@ -36,21 +41,23 @@ function zip(entries: ZipEntry[]): Buffer {
   for (const entry of entries) {
     const name = Buffer.from(entry.name, 'utf8');
     const content = Buffer.from(entry.content ?? '', 'utf8');
+    const compressed = entry.compression === 'deflate' ? deflateRawSync(content) : content;
+    const compressionMethod = entry.compression === 'deflate' ? 8 : 0;
     const directory = entry.name.endsWith('/');
     const mode = entry.mode ?? (directory ? 0o40755 : 0o100600);
     const checksum = crc32(content);
-    const local = Buffer.alloc(30 + name.length + content.length);
+    const local = Buffer.alloc(30 + name.length + compressed.length);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(0, 6);
-    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(compressionMethod, 8);
     local.writeUInt32LE(checksum, 14);
-    local.writeUInt32LE(content.length, 18);
+    local.writeUInt32LE(compressed.length, 18);
     local.writeUInt32LE(content.length, 22);
     local.writeUInt16LE(name.length, 26);
     local.writeUInt16LE(0, 28);
     name.copy(local, 30);
-    content.copy(local, 30 + name.length);
+    compressed.copy(local, 30 + name.length);
     locals.push(local);
 
     const central = Buffer.alloc(46 + name.length);
@@ -58,9 +65,9 @@ function zip(entries: ZipEntry[]): Buffer {
     central.writeUInt16LE((3 << 8) | 20, 4);
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(0, 8);
-    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(compressionMethod, 10);
     central.writeUInt32LE(checksum, 16);
-    central.writeUInt32LE(content.length, 20);
+    central.writeUInt32LE(compressed.length, 20);
     central.writeUInt32LE(content.length, 24);
     central.writeUInt16LE(name.length, 28);
     central.writeUInt16LE(0, 30);
@@ -201,6 +208,19 @@ describe('Hermes archive staging', () => {
     }
   });
 
+  it('preserves explicit empty directories', async () => {
+    const staged = await stageHermesArchive(upload('empty-directory.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      { name: '.hermes/workspace/empty/' },
+    ])));
+    try {
+      const directory = await lstat(path.join(staged.directory, 'workspace/empty'));
+      expect(directory.isDirectory()).toBe(true);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
   it('normalizes Windows separators and reserves managed path variants', async () => {
     const staged = await stageHermesArchive(upload('windows.zip', zip([
       { name: '.hermes\\' },
@@ -230,14 +250,125 @@ describe('Hermes archive staging', () => {
     }
   });
 
-  it('counts metadata entries toward the archive entry limit', async () => {
+  it('accepts macOS metadata and more than the legacy two-thousand entry limit', async () => {
     const metadata = Array.from({ length: 2_000 }, (_value, index) => ({
       name: `__MACOSX/._${index}`,
     }));
-    await expect(stageHermesArchive(upload('metadata-bomb.zip', zip([
+    const staged = await stageHermesArchive(upload('finder-backup.zip', zip([
       { name: '.hermes/config.yaml', content: 'model: imported' },
       ...metadata,
+    ])));
+    try {
+      expect(staged.fileCount).toBe(1);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  it('preserves internal symlinks and skips host-specific absolute symlinks', async () => {
+    const staged = await stageHermesArchive(upload('portable-links.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      { name: '.hermes/target.txt', content: 'hello' },
+      { name: '.hermes/links/internal', content: '../target.txt', mode: 0o120777 },
+      { name: '.hermes/links/trailing-slash/', content: '../target.txt', mode: 0o120777 },
+      { name: '.hermes/links/source-machine', content: '/Users/example/.venv/bin/python', mode: 0o120777 },
+      { name: '.hermes/links/windows-machine', content: 'C:\\Users\\example\\python.exe', mode: 0o120777 },
+      { name: '.hermes/links/network-machine', content: '\\\\server\\share\\python.exe', mode: 0o120777 },
+    ])));
+    try {
+      const internal = path.join(staged.directory, 'links/internal');
+      expect((await lstat(internal)).isSymbolicLink()).toBe(true);
+      await expect(readlink(internal)).resolves.toBe('../target.txt');
+      await expect(readFile(internal, 'utf8')).resolves.toBe('hello');
+      const trailing = path.join(staged.directory, 'links/trailing-slash');
+      expect((await lstat(trailing)).isSymbolicLink()).toBe(true);
+      await expect(readlink(trailing)).resolves.toBe('../target.txt');
+      await expect(access(path.join(staged.directory, 'links/source-machine'))).rejects.toThrow();
+      await expect(access(path.join(staged.directory, 'links/windows-machine'))).rejects.toThrow();
+      await expect(access(path.join(staged.directory, 'links/network-machine'))).rejects.toThrow();
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  it('rejects a symlink that escapes the Hermes home', async () => {
+    await expect(stageHermesArchive(upload('escaping-link.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      { name: '.hermes/escape', content: '../outside', mode: 0o120777 },
+    ])))).rejects.toMatchObject({
+      message: 'The archive contains a symbolic link that escapes the Hermes home.',
+    });
+  });
+
+  it('rejects entries nested below a symbolic link', async () => {
+    await expect(stageHermesArchive(upload('link-parent.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      { name: '.hermes/link', content: 'target', mode: 0o120777 },
+      { name: '.hermes/link/child.txt', content: 'must not follow link' },
     ])))).rejects.toBeInstanceOf(HermesArchiveError);
+  });
+
+  it('requires regular configuration files and small symlink targets', async () => {
+    await expect(stageHermesArchive(upload('linked-config.zip', zip([
+      { name: '.hermes/config.yaml', content: 'other.yaml', mode: 0o120777 },
+      { name: '.hermes/other.yaml', content: 'model: imported' },
+    ])))).rejects.toMatchObject({
+      message: 'The archive configuration files must be regular files.',
+    });
+    await expect(stageHermesArchive(upload('oversized-link-target.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      {
+        name: '.hermes/link',
+        content: 'x'.repeat(MAX_HERMES_ARCHIVE_SYMLINK_TARGET_BYTES + 1),
+        mode: 0o120777,
+      },
+    ])))).rejects.toMatchObject({
+      message: 'The archive contains a symbolic link with an invalid target.',
+    });
+  });
+
+  it('caps symbolic links even when host-specific targets are discarded', async () => {
+    const links = Array.from({ length: MAX_HERMES_ARCHIVE_SYMLINKS + 1 }, (_value, index) => ({
+      name: `.hermes/links/source-${index}`,
+      content: `/Users/source/.hermes/link-${index}`,
+      mode: 0o120777,
+    }));
+    await expect(stageHermesArchive(upload('too-many-links.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      ...links,
+    ])))).rejects.toMatchObject({
+      message: `The archive contains too many symbolic links. It may contain at most ${MAX_HERMES_ARCHIVE_SYMLINKS.toLocaleString()}.`,
+    });
+  });
+
+  it('allows highly-compressible cache files up to the small-file allowance', async () => {
+    const staged = await stageHermesArchive(upload('compressed-cache.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      {
+        name: '.hermes/cache/repetitive.bin',
+        content: '0'.repeat(MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES),
+        compression: 'deflate',
+      },
+    ])));
+    try {
+      await expect(readFile(path.join(staged.directory, 'cache/repetitive.bin'), 'utf8'))
+        .resolves.toHaveLength(MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  it('continues to reject a large high-compression entry', async () => {
+    await expect(stageHermesArchive(upload('compressed-bomb.zip', zip([
+      { name: '.hermes/config.yaml', content: 'model: imported' },
+      {
+        name: '.hermes/cache/repetitive.bin',
+        content: '0'.repeat(MAX_HERMES_ARCHIVE_HIGH_COMPRESSION_FILE_BYTES + 1),
+        compression: 'deflate',
+      },
+    ])))).rejects.toMatchObject({
+      message: 'The archive contains a large file that expands too much when extracted.',
+    });
   });
 
   it('keeps configuration files small even when the archive limit is raised', async () => {
@@ -329,7 +460,7 @@ describe('Hermes archive staging', () => {
   it.each<[string, ZipEntry[]]>([
     ['path traversal', [{ name: '.hermes/config.yaml', content: 'ok' }, { name: '.hermes/../escape.txt', content: 'no' }]],
     ['Windows path traversal', [{ name: '.hermes\\config.yaml', content: 'ok' }, { name: '.hermes\\..\\escape.txt', content: 'no' }]],
-    ['symbolic link', [{ name: '.hermes/config.yaml', content: 'ok' }, { name: '.hermes/link', content: 'target', mode: 0o120777 }]],
+    ['special file', [{ name: '.hermes/config.yaml', content: 'ok' }, { name: '.hermes/fifo', content: 'target', mode: 0o010600 }]],
     ['multiple homes', [{ name: 'a/.hermes/config.yaml', content: 'one' }, { name: 'b/.hermes/config.yaml', content: 'two' }]],
   ])('rejects %s', async (_name, entries) => {
     await expect(stageHermesArchive(upload('unsafe.zip', zip(entries)))).rejects.toBeInstanceOf(HermesArchiveError);

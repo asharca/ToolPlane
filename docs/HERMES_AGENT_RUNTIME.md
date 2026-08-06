@@ -72,8 +72,10 @@ bind mount（该目录须允许容器内 `node` 用户写入）。为避免并�
 ZIP/解包树。该租约用于单个 ToolPlane app 进程的崩溃恢复，不能把同一暂存卷
 同时挂载给多个运行中的 ToolPlane 实例作为分布式锁使用。压缩包、单文件和解压后总大小会一起受限：
 默认解压上限为 256 MiB，管理员把压缩包上限调高后该上限会随之增加，最高
-10 GiB。文件数量、压缩比、路径/权限检查和最长检查时间仍会强制执行；会被
-运行时解析的 `config.yaml` 与 `.env` 仍限制为 4 MiB。
+10 GiB。归档最多可含 200,000 个 ZIP 条目和 1,024 个链接；解压前还会预检可用
+字节和 inode。大文件的压缩比、路径/权限检查和最长检查时间仍会强制执行（4 MiB
+以内的高度可压缩缓存文件例外）。会被运行时解析的 `config.yaml` 与 `.env` 仍
+限制为 4 MiB。
 
 生产环境如在 Nginx、Caddy、Traefik 或 Coolify 等反向代理后运行，还必须为
 `POST /api/v1/workspaces/:slug/sandboxes/hermes-import` 放宽请求体大小与上传/读取
@@ -93,8 +95,9 @@ sessions、memories、workspace、本地 skills 和 Hermes 原生设置都可继
 Hermes runtime 生命周期管理。
 
 归档会在写入 Docker volume 前检查 ZIP 路径、重复/Unicode 冲突、链接/特殊文件、
-加密条目、权限、文件数、大小、压缩比和解压时间；归档内容不会进入数据库或错误
-响应。ToolPlane 会丢弃自身受管的 `.toolplane-env-keys.json`、
+加密条目、权限、文件数、大小、压缩比和解压时间；相对且不会逃出 `.hermes` 根目录
+的链接会被保留，指向原主机绝对路径的链接会被丢弃，其余不安全链接会被拒绝。归档
+内容不会进入数据库或错误响应。ToolPlane 会丢弃自身受管的 `.toolplane-env-keys.json`、
 `skills/toolplane-agent/` 和 `skill-bundles/toolplane-agent.yaml`，随后由首次
 同步重新生成。
 
