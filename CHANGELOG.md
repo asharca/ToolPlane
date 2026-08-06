@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1](https://github.com/asharca/ToolPlane/releases/tag/v0.17.1) (2026-08-06)
+
+### What's Changed
+* fix: accept portable Hermes archive backups by @renhedata in https://github.com/asharca/ToolPlane/pull/69
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.17.0...v0.17.1
+
 ## [0.17.0](https://github.com/asharca/ToolPlane/releases/tag/v0.17.0) (2026-08-06)
 
 ### What's Changed
