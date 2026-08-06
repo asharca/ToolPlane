@@ -60,6 +60,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
         hermesArchiveHelpersRemoved: 1,
         copiesInterrupted: 1,
         restoresInterrupted: 1,
+        upgradesInterrupted: 1,
         snapshotsInterrupted: 1,
       });
 

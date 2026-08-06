@@ -25,6 +25,15 @@ describe('Hermes agent runtime contract', () => {
     expect(resolveHermesImage('image name')).toBe(DEFAULT_HERMES_IMAGE);
   });
 
+  it('uses the configured instance image when a deployment does not select one', () => {
+    vi.stubEnv('TOOLPLANE_HERMES_IMAGE', 'registry.example/hermes-agent:stable');
+
+    expect(resolveHermesImage(undefined)).toBe('registry.example/hermes-agent:stable');
+    expect(resolveHermesImage('--not-an-image')).toBe('registry.example/hermes-agent:stable');
+
+    vi.unstubAllEnvs();
+  });
+
   it('derives scoped runtime tokens without storing plaintext secrets', () => {
     vi.stubEnv('AUTH_SECRET', 'runtime-test-secret');
     const api = deriveHermesRuntimeToken('runtime-1', 'hermes-api');

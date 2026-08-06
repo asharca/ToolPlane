@@ -75,6 +75,7 @@ type SettingsData = {
   toolkits: AgentResourceOption[];
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
+  hermesImages?: string[];
   runtime?: {
     kind: string;
     image: string;
@@ -616,6 +617,7 @@ export function AgentChat({
                   toolkits={settings.toolkits}
                   sandboxes={settings.sandboxes}
                   subAgents={settings.subAgents}
+                  hermesImages={settings.hermesImages}
                   runtime={settings.runtime}
                   className="mx-auto w-full max-w-5xl space-y-4 px-4 py-5 sm:px-6"
                 />

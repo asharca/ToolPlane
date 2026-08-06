@@ -20,7 +20,6 @@ import {
   X,
 } from 'lucide-react';
 import { createAgentAction } from '@/lib/agents/actions';
-import { DEFAULT_HERMES_IMAGE } from '@/lib/agents/hermes/constants';
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -29,6 +28,7 @@ import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
+import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
@@ -86,10 +86,12 @@ export function AgentsBrowser({
   slug,
   agents,
   createOptions,
+  hermesImages,
 }: {
   slug: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
+  hermesImages?: string[];
 }) {
   const t = useTranslations('console.agents');
   const [creating, setCreating] = useState(false);
@@ -199,14 +201,10 @@ export function AgentsBrowser({
           </div>
 
           {runtime === 'hermes' ? (
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('dockerImage')}</span>
-              <input
-                name="hermesImage"
-                defaultValue={DEFAULT_HERMES_IMAGE}
-                className="ui-input h-10 w-full font-mono text-sm"
-              />
-            </label>
+            <HermesImageSelector
+              id="create-hermes-version"
+              images={hermesImages}
+            />
           ) : null}
 
           {runtime === 'hermes' ? (

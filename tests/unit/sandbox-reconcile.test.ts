@@ -36,7 +36,8 @@ describe('reconcileSandboxVolumeCopies', () => {
     mocks.removeStaleHermesArchiveImportHelpers.mockResolvedValue(1);
     mocks.deploymentUpdateMany
       .mockResolvedValueOnce({ count: 3 })
-      .mockResolvedValueOnce({ count: 1 });
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 2 });
     mocks.sandboxSnapshotUpdateMany.mockResolvedValue({ count: 2 });
 
     await expect(reconcileSandboxVolumeCopies({ helpersCreatedBefore: interruptedBefore })).resolves.toEqual({
@@ -44,6 +45,7 @@ describe('reconcileSandboxVolumeCopies', () => {
       hermesArchiveHelpersRemoved: 1,
       copiesInterrupted: 3,
       restoresInterrupted: 1,
+      upgradesInterrupted: 2,
       snapshotsInterrupted: 2,
     });
 
@@ -62,6 +64,14 @@ describe('reconcileSandboxVolumeCopies', () => {
         updatedAt: { lte: interruptedBefore },
       },
       data: { status: 'restore_failed' },
+    });
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
+      where: {
+        source: 'sandbox',
+        status: 'upgrading',
+        updatedAt: { lte: interruptedBefore },
+      },
+      data: { status: 'error' },
     });
     expect(mocks.sandboxSnapshotUpdateMany).toHaveBeenCalledWith({
       where: { status: 'creating', updatedAt: { lte: interruptedBefore } },

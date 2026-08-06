@@ -109,6 +109,74 @@ describe('AgentsBrowser', () => {
     expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
   });
 
+  it('lets a Hermes deployment choose an official version or a custom image', async () => {
+    const user = userEvent.setup();
+    actions.createAgentAction.mockClear();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        hermesImages={[
+          'nousresearch/hermes-agent:latest',
+          'nousresearch/hermes-agent:v2026.7.20',
+        ]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.click(screen.getByText('Hermes'));
+    const version = screen.getByLabelText('Hermes version');
+    expect(version).toHaveValue('nousresearch/hermes-agent:latest');
+    expect(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' })).toBeInTheDocument();
+
+    await user.selectOptions(version, 'nousresearch/hermes-agent:v2026.7.20');
+    expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
+      'nousresearch/hermes-agent:v2026.7.20',
+    );
+
+    await user.selectOptions(version, '__custom__');
+    const customImage = screen.getByLabelText('Custom image / version');
+    await user.type(customImage, 'registry.example/hermes:v2026.8.1');
+    expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
+      'registry.example/hermes:v2026.8.1',
+    );
+    await user.type(screen.getByLabelText('Name'), 'Custom Hermes');
+    await user.click(screen.getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.get('hermesImage')).toBe('registry.example/hermes:v2026.8.1');
+  });
+
+  it('submits the selected pinned Hermes version when creating an agent', async () => {
+    const user = userEvent.setup();
+    actions.createAgentAction.mockClear();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        hermesImages={[
+          'nousresearch/hermes-agent:latest',
+          'nousresearch/hermes-agent:v2026.7.20',
+        ]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.click(screen.getByText('Hermes'));
+    await user.type(screen.getByLabelText('Name'), 'Pinned Hermes');
+    await user.selectOptions(
+      screen.getByLabelText('Hermes version'),
+      'nousresearch/hermes-agent:v2026.7.20',
+    );
+    await user.click(screen.getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.get('hermesImage')).toBe('nousresearch/hermes-agent:v2026.7.20');
+  });
+
   it('requires both a provider and model before marking an agent ready', () => {
     render(
       <AgentsBrowser

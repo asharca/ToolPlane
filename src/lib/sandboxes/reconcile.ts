@@ -13,6 +13,7 @@ export async function reconcileSandboxVolumeCopies(
   hermesArchiveHelpersRemoved: number;
   copiesInterrupted: number;
   restoresInterrupted: number;
+  upgradesInterrupted: number;
   snapshotsInterrupted: number;
 }> {
   const interruptedBefore = options.helpersCreatedBefore ?? new Date();
@@ -39,6 +40,19 @@ export async function reconcileSandboxVolumeCopies(
     },
     data: { status: 'restore_failed' },
   });
+  // Image upgrades intentionally use a durable maintenance status while the
+  // old container is removed and the new image is projected. A process crash
+  // in that window must not leave the runtime permanently blocked: a later
+  // Sync / upgrade can safely rebuild it because the named volume survives
+  // and the upgrade invalidates its config hash.
+  const upgrades = await db.deployment.updateMany({
+    where: {
+      source: 'sandbox',
+      status: 'upgrading',
+      updatedAt: { lte: interruptedBefore },
+    },
+    data: { status: 'error' },
+  });
   const snapshots = await db.sandboxSnapshot.updateMany({
     where: { status: 'creating', updatedAt: { lte: interruptedBefore } },
     data: { status: 'error', error: 'Snapshot creation was interrupted.' },
@@ -48,6 +62,7 @@ export async function reconcileSandboxVolumeCopies(
     hermesArchiveHelpersRemoved,
     copiesInterrupted: copies.count,
     restoresInterrupted: restores.count,
+    upgradesInterrupted: upgrades.count,
     snapshotsInterrupted: snapshots.count,
   };
 }

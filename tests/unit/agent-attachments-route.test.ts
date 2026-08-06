@@ -22,7 +22,7 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
   acquireHermesRuntimeWriteLease: mocks.acquireHermesRuntimeWriteLease,
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR:
-    'The Hermes runtime is temporarily unavailable while a clone is in progress.',
+    'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.',
 }));
 vi.mock('@/lib/db', () => ({
   db: {
@@ -121,7 +121,7 @@ describe('Agent attachment upload route', () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      error: 'The Hermes runtime is temporarily unavailable while a clone is in progress.',
+      error: 'The Hermes runtime is temporarily unavailable while a clone or image upgrade is in progress.',
     });
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });

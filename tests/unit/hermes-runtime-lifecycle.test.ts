@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -11,10 +13,14 @@ const mocks = vi.hoisted(() => ({
   copyDockerVolume: vi.fn(),
   removeDockerSandboxContainer: vi.fn(),
   removeDockerSandboxRuntimeStrict: vi.fn(),
+  pullDockerImage: vi.fn(),
   stopDockerSandboxContainer: vi.fn(),
   resolveSpawnSpec: vi.fn(),
   agentRuntimeUpdateMany: vi.fn(),
+  sandboxUpdateMany: vi.fn(),
   deploymentUpdateMany: vi.fn(),
+  transaction: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock('@/lib/agents/queries', () => ({ getAgent: mocks.getAgent }));
@@ -31,6 +37,7 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
   copyDockerVolume: mocks.copyDockerVolume,
   removeDockerSandboxContainer: mocks.removeDockerSandboxContainer,
   removeDockerSandboxRuntimeStrict: mocks.removeDockerSandboxRuntimeStrict,
+  pullDockerImage: mocks.pullDockerImage,
   sandboxContainerName: (id: string) => `sandbox-${id}`,
   sandboxSyncContainerName: (id: string) => `sandbox-${id}-sync`,
   sandboxVolumeName: (id: string) => `volume-${id}`,
@@ -39,8 +46,14 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
 vi.mock('@/lib/db', () => ({
   db: {
     agentRuntime: { updateMany: mocks.agentRuntimeUpdateMany },
+    sandbox: { updateMany: mocks.sandboxUpdateMany },
     deployment: { updateMany: mocks.deploymentUpdateMany },
+    $transaction: mocks.transaction,
   },
+}));
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: mocks.spawn,
 }));
 
 import {
@@ -51,11 +64,13 @@ import {
   ensureHermesRuntimeReady,
   stopHermesRuntime,
   syncHermesRuntime,
+  upgradeHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
 
 function deletingAgent() {
   return {
     id: 'agent-1',
+    slug: 'agent-1',
     provider: { format: 'openai', baseUrl: 'https://example.test', apiKey: 'secret' },
     model: 'model-1',
     modelProviders: [{
@@ -68,6 +83,11 @@ function deletingAgent() {
         models: ['model-1'],
       },
     }],
+    servers: [],
+    skills: [],
+    toolkits: [],
+    sandboxes: [],
+    subAgents: [],
     maxSteps: 8,
     runtime: {
       id: 'runtime-1',
@@ -78,11 +98,37 @@ function deletingAgent() {
       configVersion: 1,
       sandboxId: 'sandbox-1',
       sandbox: {
+        id: 'sandbox-1',
+        workspaceId: 'workspace-1',
+        image: 'hermes:test',
+        config: { env: { EXISTING: 'value' } },
         deploymentId: 'deployment-1',
-        deployment: { id: 'deployment-1', status: 'deleting', installCfg: {} },
+        deployment: {
+          id: 'deployment-1',
+          workspaceId: 'workspace-1',
+          source: 'sandbox',
+          sourceRef: 'hermes:test',
+          status: 'deleting',
+          installCfg: {},
+        },
       },
     },
   };
+}
+
+function successfulDockerChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: PassThrough;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  child.kill = vi.fn();
+  queueMicrotask(() => child.emit('close', 0));
+  return child;
 }
 
 function volumeCopyAgent({
@@ -143,10 +189,18 @@ describe('Hermes sandbox lifecycle isolation', () => {
     mocks.copyDockerVolume.mockResolvedValue(undefined);
     mocks.removeDockerSandboxRuntimeStrict.mockResolvedValue(undefined);
     mocks.stopDockerSandboxContainer.mockResolvedValue(undefined);
+    mocks.pullDockerImage.mockResolvedValue(undefined);
     mocks.startProcess.mockResolvedValue(undefined);
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
     mocks.agentRuntimeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.sandboxUpdateMany.mockResolvedValue({ count: 1 });
     mocks.deploymentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation(async (operation: (tx: unknown) => unknown) => operation({
+      agentRuntime: { updateMany: mocks.agentRuntimeUpdateMany },
+      sandbox: { updateMany: mocks.sandboxUpdateMany },
+      deployment: { updateMany: mocks.deploymentUpdateMany },
+    }));
+    mocks.spawn.mockImplementation(successfulDockerChild);
   });
 
   it('does not sync, start, restart, or stop a runtime retained for deletion', async () => {
@@ -501,5 +555,101 @@ describe('Hermes sandbox lifecycle isolation', () => {
     const nextWrite = acquireHermesRuntimeWriteLease('workspace-1', source.id);
     expect(nextWrite).not.toBeNull();
     nextWrite?.release();
+  });
+
+  it('pulls, replaces every persisted image reference, and rebuilds the same mutable tag safely', async () => {
+    const agent = deletingAgent();
+    agent.runtime.status = 'running';
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.agentRuntimeUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime, data);
+      return { count: 1 };
+    });
+    mocks.sandboxUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime.sandbox, data);
+      return { count: 1 };
+    });
+    mocks.deploymentUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime.sandbox.deployment, data);
+      return { count: 1 };
+    });
+
+    const activeWrite = acquireHermesRuntimeWriteLease('workspace-1', agent.id);
+    expect(activeWrite).not.toBeNull();
+    const targetImage = 'nousresearch/hermes-agent:latest';
+    const upgrade = upgradeHermesRuntime('workspace-1', agent.id, `  ${targetImage}  `);
+
+    await vi.waitFor(() => expect(mocks.pullDockerImage).toHaveBeenCalledWith(targetImage, 15 * 60_000));
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    activeWrite?.release();
+
+    await expect(upgrade).resolves.toEqual({ status: 'provisioning', image: targetImage });
+
+    expect(mocks.killProcess).toHaveBeenNthCalledWith(1, 'deployment-1', {
+      finalStatus: 'upgrading',
+    });
+    expect(mocks.killProcess).toHaveBeenNthCalledWith(2, 'deployment-1', {
+      finalStatus: 'upgrading',
+    });
+    expect(mocks.removeDockerSandboxContainer).toHaveBeenCalledWith('sandbox-1');
+    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ image: targetImage, status: 'upgrading', configHash: null }),
+    }));
+    expect(mocks.sandboxUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { image: targetImage },
+    }));
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        sourceRef: targetImage,
+        status: 'upgrading',
+        installCfg: expect.objectContaining({
+          image: targetImage,
+          sandboxId: 'sandbox-1',
+          runtimeId: 'runtime-1',
+          env: { EXISTING: 'value' },
+        }),
+      }),
+    }));
+    expect(agent.runtime.image).toBe(targetImage);
+    expect(agent.runtime.sandbox.image).toBe(targetImage);
+    expect(agent.runtime.sandbox.deployment.sourceRef).toBe(targetImage);
+    expect(agent.runtime.sandbox.deployment.installCfg).toMatchObject({ image: targetImage });
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRef: targetImage,
+      installCfg: expect.objectContaining({ image: targetImage }),
+    }));
+  });
+
+  it('keeps the old runtime untouched when pulling an upgrade image fails', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.pullDockerImage.mockRejectedValueOnce(new Error('registry unavailable'));
+
+    await expect(upgradeHermesRuntime(
+      'workspace-1',
+      agent.id,
+      'nousresearch/hermes-agent:v2026.8.3',
+    )).resolves.toEqual({
+      status: 'error',
+      error: 'Could not pull Hermes image: registry unavailable',
+    });
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
+    expect(agent.runtime.image).toBe('hermes:test');
+    expect(agent.runtime.sandbox.deployment.sourceRef).toBe('hermes:test');
+  });
+
+  it('rejects an argument-shaped upgrade image before contacting Docker', async () => {
+    await expect(upgradeHermesRuntime('workspace-1', 'agent-1', '--privileged')).resolves.toEqual({
+      status: 'error',
+      error: 'Enter a valid Docker image reference.',
+    });
+
+    expect(mocks.getAgent).not.toHaveBeenCalled();
+    expect(mocks.pullDockerImage).not.toHaveBeenCalled();
   });
 });

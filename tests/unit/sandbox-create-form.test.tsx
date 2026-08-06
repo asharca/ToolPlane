@@ -47,6 +47,9 @@ describe('SandboxCreateForm', () => {
     expect(archive).toHaveAttribute('accept', '.zip,application/zip');
     expect(screen.getByText(/up to 17 MiB/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox')).toBeRequired();
+    expect(screen.getByRole('combobox', { name: 'Hermes version' })).toHaveValue(
+      'nousresearch/hermes-agent:latest',
+    );
     expect(screen.getByText('What gets imported')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Import and create Hermes sandbox' })).toBeInTheDocument();
     expect(document.querySelector('input[name="workspace"]')).toHaveValue('acme');
@@ -61,6 +64,25 @@ describe('SandboxCreateForm', () => {
     expect(screen.getByText(/up to 10 GiB \(10240 MiB\)/)).toBeInTheDocument();
   });
 
+  it('uses the instance-configured Hermes image as the archive import default', async () => {
+    render(
+      <SandboxCreateForm
+        workspace="acme"
+        hermesImages={[
+          'registry.example/hermes-agent:stable',
+          'nousresearch/hermes-agent:latest',
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'New sandbox' }));
+    await userEvent.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
+
+    expect(screen.getByRole('combobox', { name: 'Hermes version' })).toHaveValue(
+      'registry.example/hermes-agent:stable',
+    );
+  });
+
   it('sends a stable client import ID with the raw Hermes archive request', async () => {
     vi.stubGlobal('XMLHttpRequest', MockXmlHttpRequest);
     vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'import-request-0001') });
@@ -69,6 +91,10 @@ describe('SandboxCreateForm', () => {
 
     await user.click(screen.getByRole('button', { name: 'New sandbox' }));
     await user.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Hermes version' }),
+      'nousresearch/hermes-agent:v2026.8.3',
+    );
     const archive = new File(['zip'], 'backup.zip', { type: 'application/zip' });
     await user.upload(screen.getByLabelText('Hermes archive'), archive);
     await user.click(screen.getByRole('checkbox'));
@@ -79,6 +105,10 @@ describe('SandboxCreateForm', () => {
     expect(request.setRequestHeader).toHaveBeenCalledWith(
       'x-toolplane-hermes-import-id',
       'import-request-0001',
+    );
+    expect(request.setRequestHeader).toHaveBeenCalledWith(
+      'x-toolplane-hermes-image',
+      encodeURIComponent('nousresearch/hermes-agent:v2026.8.3'),
     );
     expect(request.send).toHaveBeenCalledWith(archive);
   });

@@ -14,6 +14,7 @@ import { AgentsBrowser } from '@/components/dashboard/agents/AgentsBrowser';
 import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 import { listToolkits } from '@/lib/toolkits/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
+import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,7 @@ export default async function AgentsPage({
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
   const [agents, providers, deployments, skills, toolkits] = await Promise.all([
     current === 'agents' ? listAgents(ws.id) : Promise.resolve([]),
@@ -92,6 +94,7 @@ export default async function AgentsPage({
                 : effectiveStatus(a.runtime.sandbox.deploymentId, a.runtime.sandbox.deployment.status)
               : null,
           }))}
+          hermesImages={hermesImages}
           createOptions={{
             providers: providers.map((provider) => ({
               id: provider.id,

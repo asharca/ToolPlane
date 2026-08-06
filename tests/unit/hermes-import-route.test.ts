@@ -47,6 +47,7 @@ function archiveRequest(options: {
   contentLength?: string;
   trusted?: boolean;
   contentType?: string;
+  image?: string;
 } = {}) {
   return new Request('http://toolplane.test/api/v1/workspaces/acme/sandboxes/hermes-import', {
     method: 'POST',
@@ -58,6 +59,9 @@ function archiveRequest(options: {
       'x-toolplane-hermes-import-name': encodeURIComponent('Recovered assistant'),
       'x-toolplane-hermes-import-id': 'import-request-0001',
       ...(options.trusted === false ? {} : { 'x-toolplane-hermes-archive-trusted': '1' }),
+      ...(options.image === undefined
+        ? {}
+        : { 'x-toolplane-hermes-image': encodeURIComponent(options.image) }),
     },
     body: 'zip',
   });
@@ -84,7 +88,7 @@ describe('Hermes archive streaming import route', () => {
     expect(maxDuration).toBe(HERMES_ARCHIVE_IMPORT_MAX_DURATION_SECONDS);
   });
 
-  it('streams a raw ZIP only after authentication, workspace scoping, and trust confirmation', async () => {
+  it('keeps the default Hermes image for compatible requests without an image header', async () => {
     const result = await POST(archiveRequest(), { params: Promise.resolve({ slug: 'acme' }) });
 
     expect(result.status).toBe(201);
@@ -101,6 +105,32 @@ describe('Hermes archive streaming import route', () => {
       importId: 'import-request-0001',
     });
     expect(mocks.getWorkspaceForUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('strictly validates and forwards a selected Hermes image', async () => {
+    const image = 'nousresearch/hermes-agent:v2026.8.3';
+
+    const result = await POST(archiveRequest({ image }), { params: Promise.resolve({ slug: 'acme' }) });
+
+    expect(result.status).toBe(201);
+    expect(mocks.importStagedHermesArchive).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      name: 'Recovered assistant',
+      staged: expect.any(Object),
+      importId: 'import-request-0001',
+      image,
+    });
+  });
+
+  it('rejects an invalid Hermes image header before staging the archive', async () => {
+    const result = await POST(archiveRequest({ image: '--privileged' }), {
+      params: Promise.resolve({ slug: 'acme' }),
+    });
+
+    expect(result.status).toBe(400);
+    expect(mocks.acquireHermesArchiveImportLock).not.toHaveBeenCalled();
+    expect(mocks.stageHermesArchiveStream).not.toHaveBeenCalled();
+    expect(mocks.importStagedHermesArchive).not.toHaveBeenCalled();
   });
 
   it('rejects a pre-announced archive above the configured limit before staging it', async () => {
