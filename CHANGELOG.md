@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.17.0](https://github.com/asharca/ToolPlane/releases/tag/v0.17.0) (2026-08-06)
+
+### What's Changed
+* feat: support Hermes image upgrades and version selection by @renhedata in https://github.com/asharca/ToolPlane/pull/67
+* feat: stream MCP runtime lifecycle and logs by @renhedata in https://github.com/asharca/ToolPlane/pull/68
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.16.1...v0.17.0
+
 ## [0.16.1](https://github.com/asharca/ToolPlane/releases/tag/v0.16.1) (2026-08-05)
 
 ### What's Changed
