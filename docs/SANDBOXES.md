@@ -48,8 +48,8 @@ limits, and can use either the dedicated `mcp-sandbox` network or `none`.
 
 #### Workspace Data Lifecycle
 
-These data-management operations apply only to Docker Linux sandboxes. Each
-Docker sandbox owns a named volume mounted at `/workspace`:
+The detailed lifecycle below applies to Docker Linux sandboxes. Each Docker
+sandbox owns a named volume mounted at `/workspace`:
 
 - Creating a sandbox creates its dedicated workspace volume.
 - Cloning creates a new sandbox and copies the source's current workspace volume
@@ -108,10 +108,25 @@ included. For example, files written outside `/workspace` or packages installed
 only into the running container's writable layer are not copied to a clone and
 are neither captured nor rolled back by snapshot restore.
 
-User Connector and Hermes runtime sandboxes do not support these clone or
-snapshot operations. Connector data stays on the user's machine and ToolPlane
-does not copy or delete it. Hermes storage is owned by the Agent runtime
-lifecycle and is not managed with the Docker Linux sandbox data controls.
+User Connector sandboxes do not support clone or snapshot operations. Connector
+data stays on the user's machine and ToolPlane does not copy or delete it.
+
+Hermes runtime sandboxes expose rename, environment-variable, snapshot,
+restore, and snapshot-deletion controls from their managed-runtime panel. A
+Hermes snapshot copies its persistent `/opt/data` volume, which includes the
+workspace as well as Hermes sessions, memories, attachments, and native
+configuration. It does not include image-layer changes or ToolPlane database
+records such as `Conversation` and `AgentAttachment`; it is a volume snapshot,
+not a full logical Agent checkpoint. Hermes does not support direct sandbox
+cloning because a runtime is permanently bound to one Agent; use the Agent
+clone workflow when a second Hermes runtime is required.
+
+Hermes snapshot and restore operations acquire the runtime maintenance gate so
+chat and attachment writes cannot race the volume copy. After a restore,
+ToolPlane reprojects the current Agent-owned provider, MCP, skill, and
+environment configuration before restarting a runtime that was previously
+running. This keeps its control-plane configuration aligned even when the
+restored volume originated from an older runtime state.
 
 ### User Connector
 

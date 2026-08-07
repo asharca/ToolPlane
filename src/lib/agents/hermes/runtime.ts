@@ -842,6 +842,284 @@ function isMissingDockerVolume(error: unknown): boolean {
   return /no such volume/i.test(copyErrorMessage(error));
 }
 
+export type HermesRuntimeMaintenanceOptions = {
+  /**
+   * A snapshot or restore needs a stopped volume. Snapshot deletion only needs
+   * the lease/queue so it cannot race a restore or clone.
+   */
+  quiesce?: boolean;
+  /** Persisted while the volume is unavailable, including across app workers. */
+  operationStatus?: 'copying' | 'restoring';
+  /**
+   * A restored volume may contain an old ToolPlane MCP token, provider
+   * projection, skill bundle, or .env. Reproject those managed files before
+   * exposing the runtime again.
+   */
+  reprojectAfter?: boolean;
+  /** Recovery snapshots and their deletion stay available after a failed restore. */
+  allowRestoreFailed?: boolean;
+};
+
+export type HermesRuntimeMaintenanceContext = {
+  agentId: string;
+  runtimeId: string;
+  sandboxId: string;
+  deploymentId: string;
+  volumeName: string;
+  wasActive: boolean;
+  /** Keep an unsafe restore stopped; the caller persists its recovery state. */
+  preventResume: () => void;
+};
+
+export type HermesRuntimeMaintenanceResult<T> =
+  | { status: 'completed'; data: T }
+  | { status: 'error'; error: string };
+
+function isWorkspaceOwnedHermesRuntime(
+  agent: NonNullable<Awaited<ReturnType<typeof getAgent>>> | null,
+  workspaceId: string,
+  agentId: string,
+  sandboxId: string,
+): agent is NonNullable<Awaited<ReturnType<typeof getAgent>>> & {
+  runtime: NonNullable<NonNullable<Awaited<ReturnType<typeof getAgent>>>['runtime']>;
+} {
+  const runtime = agent?.runtime;
+  return Boolean(
+    agent
+    && runtime
+    && agent.id === agentId
+    && agent.workspaceId === workspaceId
+    && runtime.id
+    && runtime.kind === HERMES_RUNTIME_KIND
+    && runtime.workspaceId === workspaceId
+    && runtime.sandboxId === sandboxId
+    && runtime.sandbox.id === sandboxId
+    && runtime.sandbox.workspaceId === workspaceId
+    && runtime.sandbox.deployment.workspaceId === workspaceId
+    && runtime.sandbox.deployment.source === 'sandbox',
+  );
+}
+
+/**
+ * Run a volume operation for one managed Hermes runtime.
+ *
+ * This deliberately shares the clone/upgrade maintenance lease: it first
+ * drains admitted chat/attachment writes, rejects new writes, and then enters
+ * the per-agent lifecycle queue. Callers own their snapshot database rows and
+ * may use `preventResume` when rollback cannot establish a safe volume.
+ */
+export async function runHermesRuntimeMaintenance<T>(
+  workspaceId: string,
+  agentId: string,
+  sandboxId: string,
+  options: HermesRuntimeMaintenanceOptions,
+  operation: (context: HermesRuntimeMaintenanceContext) => Promise<T>,
+): Promise<HermesRuntimeMaintenanceResult<T>> {
+  let releaseMaintenanceLease: (() => void) | undefined;
+  try {
+    releaseMaintenanceLease = await acquireHermesRuntimeUpgradeLease(workspaceId, agentId);
+  } catch (error) {
+    return { status: 'error', error: copyErrorMessage(error) };
+  }
+
+  const rejected: HermesRuntimeMaintenanceResult<T> = {
+    status: 'error',
+    error: SANDBOX_LIFECYCLE_ERROR,
+  };
+  try {
+    return await enqueueHermesOperation(
+      workspaceId,
+      agentId,
+      rejected,
+      () => runHermesRuntimeMaintenanceUnlocked(
+        workspaceId,
+        agentId,
+        sandboxId,
+        options,
+        operation,
+      ),
+      { bypassRuntimeAccessGate: true },
+    );
+  } finally {
+    releaseMaintenanceLease();
+  }
+}
+
+async function runHermesRuntimeMaintenanceUnlocked<T>(
+  workspaceId: string,
+  agentId: string,
+  sandboxId: string,
+  options: HermesRuntimeMaintenanceOptions,
+  operation: (context: HermesRuntimeMaintenanceContext) => Promise<T>,
+): Promise<HermesRuntimeMaintenanceResult<T>> {
+  const agent = await getAgent(workspaceId, agentId);
+  if (!isWorkspaceOwnedHermesRuntime(agent, workspaceId, agentId, sandboxId)) {
+    return { status: 'error', error: 'Hermes runtime not found.' };
+  }
+
+  const runtime = agent.runtime;
+  const deployment = runtime.sandbox.deployment;
+  const effective = effectiveStatus(deployment.id, deployment.status);
+  const allowsRestoreRecovery = options.allowRestoreFailed ?? false;
+  if (
+    (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deployment.status)
+      && !(allowsRestoreRecovery && deployment.status === 'restore_failed'))
+    || (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(effective)
+      && !(allowsRestoreRecovery && effective === 'restore_failed'))
+  ) {
+    return { status: 'error', error: SANDBOX_LIFECYCLE_ERROR };
+  }
+
+  const quiesce = options.quiesce ?? false;
+  const operationStatus = options.operationStatus ?? 'copying';
+  const wasActive = effective === 'running' || effective === 'provisioning';
+  const originalDeploymentStatus = deployment.status;
+  const originalRuntimeStatus = runtime.status;
+  let resumeAllowed = true;
+  const context: HermesRuntimeMaintenanceContext = {
+    agentId,
+    runtimeId: runtime.id,
+    sandboxId: runtime.sandboxId,
+    deploymentId: deployment.id,
+    volumeName: sandboxVolumeName(runtime.sandboxId),
+    wasActive,
+    preventResume: () => { resumeAllowed = false; },
+  };
+  let maintenancePrepared = false;
+  let quiesceAttempted = false;
+  let reprojected = false;
+  let completed = false;
+  let result: HermesRuntimeMaintenanceResult<T>;
+
+  try {
+    if (quiesce) {
+      const [deploymentUpdate, runtimeUpdate] = await Promise.all([
+        db.deployment.updateMany({
+          where: {
+            id: deployment.id,
+            workspaceId,
+            source: 'sandbox',
+            status: originalDeploymentStatus,
+          },
+          data: { status: operationStatus },
+        }),
+        db.agentRuntime.updateMany({
+          where: {
+            id: runtime.id,
+            workspaceId,
+            agentId,
+            sandboxId: runtime.sandboxId,
+            kind: HERMES_RUNTIME_KIND,
+          },
+          data: { status: operationStatus, lastError: null },
+        }),
+      ]);
+      if (deploymentUpdate.count !== 1 || runtimeUpdate.count !== 1) {
+        throw new Error('The Hermes runtime changed before its volume operation could begin.');
+      }
+      maintenancePrepared = true;
+      dashboardReadyCache().delete(deployment.id);
+      quiesceAttempted = true;
+      await killProcess(deployment.id, { finalStatus: operationStatus });
+      await stopDockerSandboxContainer(runtime.sandboxId);
+    }
+
+    const data = await operation(context);
+
+    if (options.reprojectAfter) {
+      // Volume restoration also restores prior ToolPlane-managed files. Force
+      // the projection path even when the database still has the same hash.
+      const invalidated = await db.agentRuntime.updateMany({
+        where: {
+          id: runtime.id,
+          workspaceId,
+          agentId,
+          sandboxId: runtime.sandboxId,
+          kind: HERMES_RUNTIME_KIND,
+        },
+        data: { configHash: null, configVersion: 0, lastError: null },
+      });
+      if (invalidated.count !== 1) {
+        throw new Error('The Hermes runtime changed before its restored volume could be projected.');
+      }
+      // A failed projection has already persisted a safe error state. Do not
+      // blindly launch the restored container from the finally block.
+      resumeAllowed = false;
+      const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
+        start: wasActive,
+        allowRestoring: operationStatus === 'restoring',
+        preserveStoppedWhenNotStarting: true,
+      });
+      if (synced.error) throw new Error(synced.error);
+      reprojected = true;
+    }
+
+    completed = true;
+    result = { status: 'completed', data };
+  } catch (error) {
+    result = { status: 'error', error: copyErrorMessage(error) };
+  } finally {
+    if (quiesce && !reprojected && resumeAllowed) {
+      if (wasActive && quiesceAttempted) {
+        try {
+          await startProcess(deployment.id, resolveSpawnSpec(deployment), {
+            awaitReady: false,
+            workspaceId,
+          });
+          await updateRuntimeState(workspaceId, runtime.id, {
+            status: 'provisioning',
+            lastError: null,
+          });
+        } catch (error) {
+          const message = `The Hermes runtime could not be restarted after a volume operation: ${copyErrorMessage(error)}`
+            .slice(0, 4000);
+          await Promise.all([
+            db.deployment.updateMany({
+              where: { id: deployment.id, workspaceId, source: 'sandbox' },
+              data: { status: 'error' },
+            }).catch(() => undefined),
+            updateRuntimeState(workspaceId, runtime.id, {
+              status: 'error',
+              lastError: message,
+            }).catch(() => undefined),
+          ]);
+          result = { status: 'error', error: message };
+        }
+      } else if (!wasActive) {
+        // On success a deliberately stopped runtime stays stopped. On a safe
+        // failed restore/snapshot, return to the state that preceded the
+        // maintenance marker. Callers that could not restore a safe volume use
+        // preventResume() and persist restore_failed/cleanup_required instead.
+        const deploymentStatus = completed ? 'stopped' : originalDeploymentStatus;
+        const runtimeStatus = completed
+          ? agent.modelProviders.length > 0 ? 'stopped' : 'setup_required'
+          : originalRuntimeStatus;
+        await Promise.all([
+          db.deployment.updateMany({
+            where: { id: deployment.id, workspaceId, source: 'sandbox' },
+            data: { status: deploymentStatus },
+          }).catch(() => undefined),
+          updateRuntimeState(workspaceId, runtime.id, {
+            status: runtimeStatus,
+            lastError: completed ? null : runtime.lastError,
+          }).catch(() => undefined),
+        ]);
+      } else if (!quiesceAttempted && maintenancePrepared) {
+        await Promise.all([
+          db.deployment.updateMany({
+            where: { id: deployment.id, workspaceId, source: 'sandbox' },
+            data: { status: originalDeploymentStatus },
+          }).catch(() => undefined),
+          updateRuntimeState(workspaceId, runtime.id, {
+            status: originalRuntimeStatus,
+          }).catch(() => undefined),
+        ]);
+      }
+    }
+  }
+  return result!;
+}
+
 /**
  * Copies the persistent data volume between two workspace-owned Hermes
  * runtimes. `afterCopy` runs while the source is quiesced, after its volume
@@ -1217,6 +1495,14 @@ type HermesRuntimeSyncOptions = {
   // Only the image-upgrade operation may continue from its durable
   // `upgrading` marker; public sync callers must keep respecting it.
   allowUpgrading?: boolean;
+  // A snapshot restore keeps this durable marker while it rebuilds managed
+  // runtime files, so another app worker cannot start the half-restored
+  // volume between copy and projection.
+  allowRestoring?: boolean;
+  // Internal restore callers preserve an intentionally stopped configured
+  // runtime. Existing public `{ start: false }` callers retain their current
+  // setup_required behaviour.
+  preserveStoppedWhenNotStarting?: boolean;
 };
 
 export async function syncHermesRuntime(
@@ -1247,6 +1533,7 @@ async function syncHermesRuntimeUnlocked(
   if (
     BLOCKED_SANDBOX_LIFECYCLE_STATES.has(deploymentStatus)
     && !(options.allowUpgrading && deploymentStatus === 'upgrading')
+    && !(options.allowRestoring && deploymentStatus === 'restoring')
   ) {
     return { status: deploymentStatus, error: SANDBOX_LIFECYCLE_ERROR };
   }
@@ -1279,14 +1566,18 @@ async function syncHermesRuntimeUnlocked(
       return { status: runtime.status };
     }
 
-    // Keep the durable upgrade marker through the projection. Otherwise this
-    // second stop (the first one happens before entering sync) would briefly
-    // persist `stopped`, allowing unrelated sandbox lifecycle work to enter
-    // while the new image is installing.
+    // Keep the durable maintenance marker through the projection. Otherwise
+    // this second stop would briefly persist `stopped`, allowing unrelated
+    // sandbox lifecycle work to enter while managed files are being replaced.
+    const preservedLifecycleStatus = options.allowUpgrading && deploymentStatus === 'upgrading'
+      ? 'upgrading'
+      : options.allowRestoring && deploymentStatus === 'restoring'
+        ? 'restoring'
+        : undefined;
     await killProcess(
       deploymentId,
-      options.allowUpgrading && deploymentStatus === 'upgrading'
-        ? { finalStatus: 'upgrading' }
+      preservedLifecycleStatus
+        ? { finalStatus: preservedLifecycleStatus }
         : undefined,
     );
     await removeDockerSandboxContainer(runtime.sandboxId);
@@ -1296,7 +1587,9 @@ async function syncHermesRuntimeUnlocked(
       sandboxId: runtime.sandboxId,
     });
 
-    const nextStatus = configured && options.start !== false ? 'provisioning' : 'setup_required';
+    const nextStatus = configured
+      ? options.start !== false ? 'provisioning' : options.preserveStoppedWhenNotStarting ? 'stopped' : 'setup_required'
+      : 'setup_required';
     await Promise.all([
       updateRuntimeState(workspaceId, runtime.id, {
         status: nextStatus,

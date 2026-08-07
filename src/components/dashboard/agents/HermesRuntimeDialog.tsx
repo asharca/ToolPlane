@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Container, Monitor, Terminal, X } from 'lucide-react';
+import { Container, Monitor, Settings, Terminal, X } from 'lucide-react';
 import {
   HermesRuntimePanel,
   type HermesRuntimeView,
 } from '@/components/dashboard/agents/HermesRuntimePanel';
+import {
+  HermesRuntimeManagement,
+  type HermesRuntimeManagementData,
+} from '@/components/dashboard/agents/HermesRuntimeManagement';
 import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 
 const FOCUSABLE_ELEMENTS = [
@@ -28,7 +32,10 @@ export type HermesRuntimeDialogData = {
   agentId: string;
   deploymentId: string;
   dashboardUrl: string;
+  management?: HermesRuntimeManagementData;
 };
+
+type HermesRuntimeDialogView = HermesRuntimeView | 'settings';
 
 export function HermesRuntimeDialogLauncher({
   runtime,
@@ -42,11 +49,12 @@ export function HermesRuntimeDialogLauncher({
   const tAgents = useTranslations('console.agents');
   const tSandboxes = useTranslations('console.sandboxes');
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<HermesRuntimeView>('web');
+  const [view, setView] = useState<HermesRuntimeDialogView>('web');
   const titleId = useId();
   const panelId = useId();
   const webTabId = useId();
   const terminalTabId = useId();
+  const settingsTabId = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -108,7 +116,7 @@ export function HermesRuntimeDialogLauncher({
     };
   }, [close, open]);
 
-  function openView(nextView: HermesRuntimeView, trigger: HTMLButtonElement) {
+  function openView(nextView: HermesRuntimeDialogView, trigger: HTMLButtonElement) {
     triggerRef.current = trigger;
     setView(nextView);
     setOpen(true);
@@ -123,7 +131,9 @@ export function HermesRuntimeDialogLauncher({
     <>
       <div
         className={cx(
-          compact ? 'flex items-center justify-end gap-2' : 'grid grid-cols-2 gap-2',
+          compact
+            ? 'flex items-center justify-end gap-2'
+            : `grid ${runtime.management ? 'grid-cols-3' : 'grid-cols-2'} gap-2`,
           className,
         )}
       >
@@ -147,6 +157,18 @@ export function HermesRuntimeDialogLauncher({
           <Terminal className="size-3.5" />
           <span className={triggerLabelClass}>{tSandboxes('terminal')}</span>
         </button>
+        {runtime.management ? (
+          <button
+            type="button"
+            onClick={(event) => openView('settings', event.currentTarget)}
+            aria-label={tSandboxes('settings')}
+            title={tSandboxes('settings')}
+            className={triggerClass}
+          >
+            <Settings className="size-3.5" />
+            <span className={triggerLabelClass}>{tSandboxes('settings')}</span>
+          </button>
+        ) : null}
       </div>
 
       {open ? (
@@ -185,7 +207,11 @@ export function HermesRuntimeDialogLauncher({
               </button>
             </header>
 
-            <div role="tablist" aria-label={tAgents('hermesRuntimeDialogTitle')} className="grid shrink-0 grid-cols-2 gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:px-5">
+            <div
+              role="tablist"
+              aria-label={tAgents('hermesRuntimeDialogTitle')}
+              className={`grid shrink-0 ${runtime.management ? 'grid-cols-3' : 'grid-cols-2'} gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:px-5`}
+            >
               <button
                 type="button"
                 role="tab"
@@ -220,21 +246,44 @@ export function HermesRuntimeDialogLauncher({
                 <Terminal className="size-4 shrink-0" />
                 {tAgents('terminalSettingsTab')}
               </button>
+              {runtime.management ? (
+                <button
+                  type="button"
+                  role="tab"
+                  id={settingsTabId}
+                  aria-selected={view === 'settings'}
+                  aria-controls={panelId}
+                  onClick={() => setView('settings')}
+                  className={cx(
+                    'inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md px-3.5 text-sm font-medium transition-colors',
+                    view === 'settings'
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                  )}
+                >
+                  <Settings className="size-4 shrink-0" />
+                  {tSandboxes('settings')}
+                </button>
+              ) : null}
             </div>
 
             <div
               id={panelId}
               role="tabpanel"
-              aria-labelledby={view === 'web' ? webTabId : terminalTabId}
-              className="min-h-0 flex-1 overflow-hidden"
+              aria-labelledby={view === 'web' ? webTabId : view === 'terminal' ? terminalTabId : settingsTabId}
+              className={view === 'settings' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-hidden'}
             >
-              <HermesRuntimePanel
-                view={view}
-                agentId={runtime.agentId}
-                deploymentId={runtime.deploymentId}
-                dashboardUrl={runtime.dashboardUrl}
-                iframeRef={iframeRef}
-              />
+              {view === 'settings' && runtime.management ? (
+                <HermesRuntimeManagement {...runtime.management} />
+              ) : (
+                <HermesRuntimePanel
+                  view={view as HermesRuntimeView}
+                  agentId={runtime.agentId}
+                  deploymentId={runtime.deploymentId}
+                  dashboardUrl={runtime.dashboardUrl}
+                  iframeRef={iframeRef}
+                />
+              )}
             </div>
           </section>
         </div>

@@ -40,6 +40,11 @@ import {
 import { disconnectConnector } from './connector-broker';
 import { setConnectorSetupTokenCookie } from './connector-setup-token';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
+import {
+  runHermesRuntimeMaintenance,
+  syncHermesRuntime,
+} from '@/lib/agents/hermes/runtime';
+import { setHermesRuntimeEnv } from '@/lib/agents/mutations';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -78,6 +83,10 @@ type AuthorizedSandbox = NonNullable<Awaited<ReturnType<typeof sandboxInWorkspac
 
 type QuiescedOperationControl = {
   preventResume: () => void;
+};
+
+type QuiescedVolumeOperationControl = QuiescedOperationControl & {
+  volumeName: string;
 };
 
 const sandboxOperationGlobal = globalThis as typeof globalThis & {
@@ -202,6 +211,74 @@ async function quiesceDockerSandbox<T>(
       });
     }
   }
+}
+
+async function hermesAgentIdForSandbox(workspaceId: string, sandboxId: string): Promise<string | null> {
+  const runtime = await db.agentRuntime.findFirst({
+    where: { workspaceId, sandboxId, kind: 'hermes' },
+    select: { agentId: true },
+  });
+  return runtime?.agentId ?? null;
+}
+
+async function quiesceSandboxVolume<T>(
+  sandbox: AuthorizedSandbox,
+  workspaceId: string,
+  options: {
+    operationStatus: 'copying' | 'restoring';
+    reprojectAfter?: boolean;
+    allowRestoreFailed?: boolean;
+    quiescedStatus?: string;
+  },
+  operation: (control: QuiescedVolumeOperationControl) => Promise<T>,
+): Promise<T> {
+  if (sandbox.kind === 'docker') {
+    return quiesceDockerSandbox(
+      sandbox,
+      (control) => operation({ ...control, volumeName: sandboxDataVolume(sandbox) }),
+      options.quiescedStatus ? { quiescedStatus: options.quiescedStatus } : undefined,
+    );
+  }
+  if (sandbox.kind !== 'hermes') throw new Error('Sandbox volume snapshots require a Docker-backed sandbox.');
+
+  const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
+  if (!agentId) throw new Error('Hermes runtime not found.');
+  const result = await runHermesRuntimeMaintenance(
+    workspaceId,
+    agentId,
+    sandbox.id,
+    {
+      quiesce: true,
+      operationStatus: options.operationStatus,
+      reprojectAfter: options.reprojectAfter,
+      allowRestoreFailed: options.allowRestoreFailed,
+    },
+    (control) => operation({
+      preventResume: control.preventResume,
+      volumeName: control.volumeName,
+    }),
+  );
+  if (result.status === 'error') throw new Error(result.error);
+  return result.data;
+}
+
+async function runHermesSnapshotMaintenance<T>(
+  sandbox: AuthorizedSandbox,
+  workspaceId: string,
+  options: { allowRestoreFailed?: boolean } = {},
+  operation: () => Promise<T>,
+): Promise<T> {
+  const agentId = await hermesAgentIdForSandbox(workspaceId, sandbox.id);
+  if (!agentId) throw new Error('Hermes runtime not found.');
+  const result = await runHermesRuntimeMaintenance(
+    workspaceId,
+    agentId,
+    sandbox.id,
+    { quiesce: false, allowRestoreFailed: options.allowRestoreFailed },
+    async () => operation(),
+  );
+  if (result.status === 'error') throw new Error(result.error);
+  return result.data;
 }
 
 function installCfgForSandbox(sandbox: {
@@ -425,7 +502,11 @@ export async function createSandboxSnapshotAction(formData: FormData) {
   const name = cleanName(formData.get('name')) || cleanName(formData.get('defaultName')) || 'Snapshot';
   const snapshot = await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind !== 'docker' || sandboxDataOperationBlocked(sandbox)) return null;
+    if (
+      !sandbox
+      || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')
+      || sandboxDataOperationBlocked(sandbox)
+    ) return null;
     const snapshotId = randomUUID();
     const created = await db.sandboxSnapshot.create({
       data: {
@@ -438,12 +519,10 @@ export async function createSandboxSnapshotAction(formData: FormData) {
     });
 
     try {
-      await quiesceDockerSandbox(sandbox, async () => {
-        try {
-          await copyDockerVolume(sandboxDataVolume(sandbox), created.volumeName);
-        } catch (error) {
-          throw error;
-        }
+      await quiesceSandboxVolume(sandbox, ctx.ws.id, {
+        operationStatus: 'copying',
+      }, async (control) => {
+        await copyDockerVolume(control.volumeName, created.volumeName);
       });
       await db.sandboxSnapshot.update({
         where: { id: created.id },
@@ -474,7 +553,7 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
 
   const restored = await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind !== 'docker') return false;
+    if (!sandbox || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')) return false;
     const initialStatus = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
     if (RESTORE_BLOCKED_STATES.has(initialStatus)) return false;
     const restoringPreviousFailure = initialStatus === 'restore_failed';
@@ -484,7 +563,6 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
     if (!snapshot) return false;
 
     const ownedSandboxId = sandbox.id;
-    const currentVolume = sandboxDataVolume(sandbox);
     const rollbackSnapshotId = `restore-${randomUUID()}`;
     const rollbackVolume = sandboxSnapshotVolumeName(rollbackSnapshotId);
     const rollbackName = requestedRecoveryName
@@ -515,12 +593,14 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
     }
 
     try {
-      await quiesceDockerSandbox(sandbox, async (control) => {
-        try {
-          await copyDockerVolume(currentVolume, rollbackVolume);
-        } catch (error) {
-          throw error;
-        }
+      await quiesceSandboxVolume(sandbox, ctx.ws.id, {
+        operationStatus: 'restoring',
+        reprojectAfter: sandbox.kind === 'hermes',
+        allowRestoreFailed: restoringPreviousFailure,
+        quiescedStatus: restoringPreviousFailure ? 'restore_failed' : undefined,
+      }, async (control) => {
+        const currentVolume = control.volumeName;
+        await copyDockerVolume(currentVolume, rollbackVolume);
         rollbackReady = true;
         await markRollback('ready', null);
         await db.deployment.updateMany({
@@ -549,32 +629,36 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
               'Snapshot restore and automatic rollback both failed.',
             );
           }
+          if (sandbox.kind !== 'hermes') {
+            try {
+              await db.deployment.updateMany({
+                where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
+                data: { status: restoringPreviousFailure ? 'restore_failed' : 'stopped' },
+              });
+            } catch (statusError) {
+              preserveRollback = true;
+              control.preventResume();
+              throw new AggregateError(
+                [restoreError, statusError],
+                'Snapshot rollback succeeded but its safe deployment state could not be persisted.',
+              );
+            }
+          }
+          throw restoreError;
+        }
+        if (sandbox.kind !== 'hermes') {
           try {
             await db.deployment.updateMany({
               where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-              data: { status: restoringPreviousFailure ? 'restore_failed' : 'stopped' },
+              data: { status: 'stopped' },
             });
           } catch (statusError) {
             preserveRollback = true;
             control.preventResume();
-            throw new AggregateError(
-              [restoreError, statusError],
-              'Snapshot rollback succeeded but its safe deployment state could not be persisted.',
-            );
+            throw statusError;
           }
-          throw restoreError;
         }
-        try {
-          await db.deployment.updateMany({
-            where: { id: sandbox.deploymentId, workspaceId: ctx.ws.id, source: 'sandbox' },
-            data: { status: 'stopped' },
-          });
-        } catch (statusError) {
-          preserveRollback = true;
-          control.preventResume();
-          throw statusError;
-        }
-      }, restoringPreviousFailure ? { quiescedStatus: 'restore_failed' } : undefined);
+      });
       await db.sandboxSnapshot.update({
         where: { id: snapshot.id },
         data: { error: null },
@@ -670,26 +754,35 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
 
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind !== 'docker') return;
+    if (!sandbox || (sandbox.kind !== 'docker' && sandbox.kind !== 'hermes')) return;
     const snapshot = await db.sandboxSnapshot.findFirst({
       where: { id: snapshotId, sandboxId: sandbox.id },
     });
     if (!snapshot) return;
-    await db.sandboxSnapshot.update({
-      where: { id: snapshot.id },
-      data: { status: 'deleting', error: null },
-    });
-    try {
-      await removeDockerVolumeStrict(snapshot.volumeName);
-      await db.sandboxSnapshot.deleteMany({
-        where: { id: snapshot.id, sandboxId: sandbox.id },
+    const removeSnapshot = async () => {
+      await db.sandboxSnapshot.update({
+        where: { id: snapshot.id },
+        data: { status: 'deleting', error: null },
       });
-    } catch (error) {
-      await db.sandboxSnapshot.updateMany({
-        where: { id: snapshot.id, sandboxId: sandbox.id },
-        data: { status: 'error', error: 'Snapshot deletion failed.' },
-      });
-      throw error;
+      try {
+        await removeDockerVolumeStrict(snapshot.volumeName);
+        await db.sandboxSnapshot.deleteMany({
+          where: { id: snapshot.id, sandboxId: sandbox.id },
+        });
+      } catch (error) {
+        await db.sandboxSnapshot.updateMany({
+          where: { id: snapshot.id, sandboxId: sandbox.id },
+          data: { status: 'error', error: 'Snapshot deletion failed.' },
+        });
+        throw error;
+      }
+    };
+    if (sandbox.kind === 'hermes') {
+      await runHermesSnapshotMaintenance(sandbox, ctx.ws.id, {
+        allowRestoreFailed: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'restore_failed',
+      }, removeSnapshot);
+    } else {
+      await removeSnapshot();
     }
   });
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -705,10 +798,25 @@ export async function updateSandboxEnvAction(formData: FormData) {
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
     if (!sandbox) return;
-    if (sandbox.kind === 'hermes') return;
     if (sandboxLifecycleBlocked(sandbox)) return;
 
     const env = parseSandboxEnvText(formData.get('env'));
+    if (sandbox.kind === 'hermes') {
+      // Hermes has two environment projections: the runtime's .env file and
+      // the container launch spec. Rebuilding a generic Sandbox installCfg
+      // would drop runtimeId/runtimeModelName and turn it into Docker, so use
+      // the agent-owned mutation and force its projection/restart instead.
+      const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
+      if (!agentId) return;
+      if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) return;
+      const synced = await syncHermesRuntime(ctx.ws.id, agentId);
+      revalidatePath(`/app/${slug}/agents/${agentId}`);
+      if (synced.error) throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
+      revalidatePath(`/app/${slug}/sandboxes`);
+      revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
+      return;
+    }
+
     const config = sandboxConfigWithEnv(sandbox.config, env);
     const installCfg = installCfgForSandbox({
       ...sandbox,
@@ -758,9 +866,11 @@ export async function renameSandboxAction(formData: FormData) {
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
   if (!sandbox) return;
-  if (sandbox.kind === 'hermes') return;
   if (sandboxLifecycleBlocked(sandbox)) return;
 
+  // The Agent remains the owner of its own display name. A sandbox rename is
+  // intentionally container-only and does not change the agent's identity,
+  // slug, runtime token, or generated configuration.
   await db.$transaction([
     db.sandbox.update({
       where: { id: sandbox.id },

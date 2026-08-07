@@ -11,7 +11,7 @@ import {
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
-type SnapshotItem = {
+export type SandboxSnapshotItem = {
   id: string;
   name: string;
   status: string;
@@ -45,25 +45,32 @@ export function SandboxDataManagement({
   disabled = false,
   disabledLabel,
   creationDisabled = false,
+  mode = 'sandbox',
+  showClone = true,
 }: {
   workspace: string;
   sandboxId: string;
   sandboxName: string;
-  snapshots: SnapshotItem[];
+  snapshots: SandboxSnapshotItem[];
   disabled?: boolean;
   disabledLabel?: string;
   creationDisabled?: boolean;
+  mode?: 'sandbox' | 'hermes';
+  showClone?: boolean;
 }) {
   const t = useTranslations('console.sandboxes');
   const common = useTranslations('common');
+  const isHermes = mode === 'hermes';
 
   return (
     <section className="py-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">{t('workspaceData')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {isHermes ? t('hermesData') : t('workspaceData')}
+          </h3>
           <p className="mt-0.5 max-w-2xl text-xs leading-5 text-muted-foreground">
-            {t('workspaceDataDescription')}
+            {isHermes ? t('hermesDataDescription') : t('workspaceDataDescription')}
           </p>
         </div>
         {disabled ? (
@@ -80,27 +87,29 @@ export function SandboxDataManagement({
       <div className="mt-4 space-y-5">
         <fieldset disabled={disabled || creationDisabled} className="disabled:opacity-60">
           <div className="grid gap-4 lg:grid-cols-2">
-            <form action={cloneSandboxAction} className="space-y-2">
-              <input type="hidden" name="workspace" value={workspace} />
-              <input type="hidden" name="sandboxId" value={sandboxId} />
-              <input type="hidden" name="defaultName" value={t('cloneNameDefault', { name: sandboxName })} />
-              <label className="block text-xs font-medium text-muted-foreground" htmlFor="sandbox-clone-name">
-                {t('cloneName')}
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="sandbox-clone-name"
-                  name="name"
-                  defaultValue={t('cloneNameDefault', { name: sandboxName })}
-                  maxLength={80}
-                  className="ui-input h-9 min-w-0 flex-1 text-sm"
-                />
-                <SubmitButton flash={false} pendingLabel={t('cloning')} className="ui-button-secondary h-9 shrink-0 text-xs">
-                  <Copy className="size-3.5" />
-                  {t('cloneSandbox')}
-                </SubmitButton>
-              </div>
-            </form>
+            {showClone ? (
+              <form action={cloneSandboxAction} className="space-y-2">
+                <input type="hidden" name="workspace" value={workspace} />
+                <input type="hidden" name="sandboxId" value={sandboxId} />
+                <input type="hidden" name="defaultName" value={t('cloneNameDefault', { name: sandboxName })} />
+                <label className="block text-xs font-medium text-muted-foreground" htmlFor="sandbox-clone-name">
+                  {t('cloneName')}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="sandbox-clone-name"
+                    name="name"
+                    defaultValue={t('cloneNameDefault', { name: sandboxName })}
+                    maxLength={80}
+                    className="ui-input h-9 min-w-0 flex-1 text-sm"
+                  />
+                  <SubmitButton flash={false} pendingLabel={t('cloning')} className="ui-button-secondary h-9 shrink-0 text-xs">
+                    <Copy className="size-3.5" />
+                    {t('cloneSandbox')}
+                  </SubmitButton>
+                </div>
+              </form>
+            ) : null}
 
             <form action={createSandboxSnapshotAction} className="space-y-2">
               <input type="hidden" name="workspace" value={workspace} />
@@ -165,7 +174,10 @@ export function SandboxDataManagement({
                             triggerLabel={<><RotateCcw className="size-3.5" />{t('restoreSnapshot')}</>}
                             confirmLabel={common('confirm')}
                             cancelLabel={common('cancel')}
-                            prompt={t('restoreSnapshotPrompt', { name: snapshot.name })}
+                            prompt={t(
+                              isHermes ? 'restoreHermesSnapshotPrompt' : 'restoreSnapshotPrompt',
+                              { name: snapshot.name },
+                            )}
                             pendingLabel={t('restoringSnapshot')}
                             triggerClassName="ui-button-ghost h-8 text-xs"
                             confirmClassName="ui-button-primary h-8 text-xs"
