@@ -192,7 +192,19 @@ Hermes 容器：
 - 启用 `no-new-privileges`、CPU、内存和 PID 限制。
 - `/opt/data` 使用每个 Agent 独立的 Docker named volume。
 - API Server 只绑定容器内 `127.0.0.1:8642`。
-- 托管 runtime Sandbox 不出现在通用 Sandbox 列表，也不能绑定给其他 Agent；启动、停止和删除只能经 Agent runtime 生命周期执行。
+- 托管 runtime Sandbox 不出现在通用 Sandbox 列表，也不能绑定给其他 Agent。其独立的托管运行时面板可管理名称、环境变量和 `/opt/data` 数据卷快照；启动、停止、删除和 Agent 配置仍经 Agent runtime 生命周期执行。
+
+### 运行时数据快照
+
+Hermes 托管运行时支持创建、恢复和删除其 `/opt/data` named volume 的快照。该卷包含
+workspace、sessions、memories、attachments、本地 Skills 和 Hermes 原生配置；镜像可写层不在快照内。
+快照是 volume 级别的恢复点，不回滚 ToolPlane 数据库中的 `Conversation` 或 `AgentAttachment`
+记录，因此恢复较早快照后，数据库元数据可能仍引用在当前 volume 中不存在的旧文件或会话。
+
+创建或恢复快照时，ToolPlane 会先进入 Hermes runtime maintenance gate，等待已进入的聊天和附件
+写入结束并拒绝新的写入，再停止 runtime 后复制 volume。恢复完成后，ToolPlane 会重新投影当前
+Agent 受管的 provider、MCP、Skills 和环境变量；此前正在运行的 runtime 会重新启动。Hermes runtime
+与 Agent 一一绑定，不能通过通用 Sandbox clone 直接克隆；如需副本，应使用 Agent clone 流程。
 
 ToolPlane supervisor 通过 `docker exec curl` 代理 Hermes HTTP。API key 和 MCP token 均由：
 

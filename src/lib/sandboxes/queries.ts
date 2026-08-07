@@ -30,6 +30,16 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
           config: true,
           deploymentId: true,
           deployment: { select: { status: true } },
+          snapshots: {
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              error: true,
+              createdAt: true,
+            },
+          },
         },
       },
     },

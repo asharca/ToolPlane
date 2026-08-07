@@ -63,6 +63,7 @@ import {
   copyHermesRuntimeVolume,
   ensureHermesDashboardReady,
   ensureHermesRuntimeReady,
+  runHermesRuntimeMaintenance,
   stopHermesRuntime,
   syncHermesRuntime,
   upgradeHermesRuntime,
@@ -556,6 +557,127 @@ describe('Hermes sandbox lifecycle isolation', () => {
     const nextWrite = acquireHermesRuntimeWriteLease('workspace-1', source.id);
     expect(nextWrite).not.toBeNull();
     nextWrite?.release();
+  });
+
+  it('serializes a Hermes snapshot behind write leases and resumes the source runtime', async () => {
+    const source = volumeCopyAgent({
+      agentId: 'source-agent',
+      runtimeId: 'source-runtime',
+      sandboxId: 'source-sandbox',
+      deploymentId: 'source-deployment',
+      deploymentStatus: 'running',
+      runtimeStatus: 'running',
+    });
+    mocks.getAgent.mockResolvedValue(source);
+
+    const activeWrite = acquireHermesRuntimeWriteLease('workspace-1', source.id);
+    const maintenance = runHermesRuntimeMaintenance(
+      'workspace-1',
+      source.id,
+      source.runtime.sandboxId,
+      { quiesce: true, operationStatus: 'copying' },
+      async ({ volumeName }) => {
+        await mocks.copyDockerVolume(volumeName, 'snapshot-volume');
+        return 'snapshotted';
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(acquireHermesRuntimeWriteLease('workspace-1', source.id)).toBeNull();
+    });
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+
+    activeWrite?.release();
+
+    await expect(maintenance).resolves.toEqual({ status: 'completed', data: 'snapshotted' });
+    expect(mocks.killProcess).toHaveBeenCalledWith('source-deployment', { finalStatus: 'copying' });
+    expect(mocks.stopDockerSandboxContainer).toHaveBeenCalledWith('source-sandbox');
+    expect(mocks.copyDockerVolume).toHaveBeenCalledWith('volume-source-sandbox', 'snapshot-volume');
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'source-deployment',
+      { kind: 'sandbox' },
+      { awaitReady: false, workspaceId: 'workspace-1' },
+    );
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'source-deployment',
+        workspaceId: 'workspace-1',
+        source: 'sandbox',
+        status: 'running',
+      },
+      data: { status: 'copying' },
+    });
+  });
+
+  it('allows a ready recovery snapshot operation from restore_failed', async () => {
+    const source = volumeCopyAgent({
+      agentId: 'source-agent',
+      runtimeId: 'source-runtime',
+      sandboxId: 'source-sandbox',
+      deploymentId: 'source-deployment',
+      deploymentStatus: 'restore_failed',
+      runtimeStatus: 'error',
+    });
+    mocks.getAgent.mockResolvedValue(source);
+
+    await expect(runHermesRuntimeMaintenance(
+      'workspace-1',
+      source.id,
+      source.runtime.sandboxId,
+      { quiesce: false, allowRestoreFailed: true },
+      async () => 'deleted',
+    )).resolves.toEqual({ status: 'completed', data: 'deleted' });
+  });
+
+  it('reprojects current managed Hermes files after restoring a stopped volume', async () => {
+    const base = deletingAgent();
+    const agent = {
+      ...base,
+      workspaceId: 'workspace-1',
+      runtime: {
+        ...base.runtime,
+        workspaceId: 'workspace-1',
+        status: 'stopped',
+        configHash: 'previous-projection' as string | null,
+        configVersion: 6,
+        sandbox: {
+          ...base.runtime.sandbox,
+          deployment: {
+            ...base.runtime.sandbox.deployment,
+            status: 'stopped',
+          },
+        },
+      },
+    };
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.agentRuntimeUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime, data);
+      return { count: 1 };
+    });
+    mocks.deploymentUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime.sandbox.deployment, data);
+      return { count: 1 };
+    });
+
+    await expect(runHermesRuntimeMaintenance(
+      'workspace-1',
+      agent.id,
+      agent.runtime.sandboxId,
+      { quiesce: true, operationStatus: 'restoring', reprojectAfter: true },
+      async ({ volumeName }) => {
+        await mocks.copyDockerVolume('snapshot-volume', volumeName, { replace: true });
+        return undefined;
+      },
+    )).resolves.toEqual({ status: 'completed', data: undefined });
+
+    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ configHash: null, configVersion: 0 }),
+    }));
+    expect(mocks.killProcess).toHaveBeenCalledWith('deployment-1', { finalStatus: 'restoring' });
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'stopped' }),
+    }));
+    expect(mocks.startProcess).not.toHaveBeenCalled();
   });
 
   it('pulls, replaces every persisted image reference, and rebuilds the same mutable tag safely', async () => {

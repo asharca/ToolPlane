@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Bot, Boxes, Container, Cpu, HardDrive, Laptop, Terminal } from 'lucide-react';
@@ -20,6 +20,7 @@ import {
   findSandboxImageOption,
 } from '@/lib/sandboxes/images';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
+import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -127,6 +128,7 @@ export default async function SandboxesPage({
 }) {
   const t = await getTranslations('console.sandboxes');
   const common = await getTranslations('common');
+  const locale = await getLocale();
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -149,6 +151,35 @@ export default async function SandboxesPage({
       ? runtime.status
       : effectiveStatus(runtime.sandbox.deploymentId, runtime.sandbox.deployment.status)
   );
+  const managedRuntimeDialogData = (
+    runtime: (typeof managedRuntimes)[number],
+    status: string,
+  ) => ({
+    name: runtime.sandbox.name,
+    agentId: runtime.agent.id,
+    deploymentId: runtime.sandbox.deploymentId,
+    dashboardUrl: runtime.dashboardUrl,
+    management: {
+      workspace: slug,
+      sandboxId: runtime.sandbox.id,
+      sandboxName: runtime.sandbox.name,
+      environment: sandboxEnvToText(readSandboxEnv(runtime.sandbox.config)),
+      status,
+      snapshots: runtime.sandbox.snapshots.map((snapshot) => ({
+        id: snapshot.id,
+        name: snapshot.name,
+        status: snapshot.status,
+        error: snapshot.error ? 'error' : null,
+        createdAt: formatInTimeZone(snapshot.createdAt, timeZone, {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }, locale),
+      })),
+    },
+  });
   const anyProvisioning = sandboxes.some((s) => {
     const status = effectiveStatus(s.deploymentId, s.deployment.status);
     return status === 'provisioning'
@@ -157,7 +188,14 @@ export default async function SandboxesPage({
       || status === 'restore_cleanup_required'
       || status === 'upgrading';
   })
-    || managedRuntimes.some((runtime) => managedStatus(runtime) === 'provisioning');
+    || managedRuntimes.some((runtime) => {
+      const status = managedStatus(runtime);
+      return status === 'provisioning'
+        || status === 'copying'
+        || status === 'restoring'
+        || status === 'restore_cleanup_required'
+        || status === 'upgrading';
+    });
   const dockerCount = sandboxes.filter((s) => s.kind === 'docker').length;
   const connectorCount = sandboxes.filter((s) => s.kind === 'connector').length;
   const runningCount = sandboxes.filter((s) => {
@@ -266,12 +304,7 @@ export default async function SandboxesPage({
                     </dl>
 
                     <HermesRuntimeDialogLauncher
-                      runtime={{
-                        name: runtime.sandbox.name,
-                        agentId: runtime.agent.id,
-                        deploymentId: runtime.sandbox.deploymentId,
-                        dashboardUrl: runtime.dashboardUrl,
-                      }}
+                      runtime={managedRuntimeDialogData(runtime, status)}
                       className="mt-4 border-t border-border pt-3"
                     />
                   </article>
@@ -340,12 +373,7 @@ export default async function SandboxesPage({
                     <td className="px-4 py-3">
                       <HermesRuntimeDialogLauncher
                         compact
-                        runtime={{
-                          name: runtime.sandbox.name,
-                          agentId: runtime.agent.id,
-                          deploymentId: runtime.sandbox.deploymentId,
-                          dashboardUrl: runtime.dashboardUrl,
-                        }}
+                        runtime={managedRuntimeDialogData(runtime, status)}
                       />
                     </td>
                   </tr>

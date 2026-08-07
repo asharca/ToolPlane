@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
 
 const sandboxConsoleMocks = vi.hoisted(() => ({ render: vi.fn() }));
+const managementMocks = vi.hoisted(() => ({ render: vi.fn() }));
 
 vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
   SandboxConsole: (props: Record<string, unknown>) => {
@@ -12,11 +13,30 @@ vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
   },
 }));
 
+vi.mock('@/components/dashboard/agents/HermesRuntimeManagement', () => ({
+  HermesRuntimeManagement: (props: Record<string, unknown>) => {
+    managementMocks.render(props);
+    return <div>Hermes management test surface</div>;
+  },
+}));
+
 const runtime = {
   name: 'Research Hermes',
   agentId: 'agent-1',
   deploymentId: 'deployment-1',
   dashboardUrl: '/api/v1/agent-runtimes/runtime-1/dashboard/capability/',
+};
+
+const managedRuntime = {
+  ...runtime,
+  management: {
+    workspace: 'acme',
+    sandboxId: 'sandbox-1',
+    sandboxName: 'Research Hermes',
+    environment: 'EXISTING=value',
+    status: 'stopped',
+    snapshots: [],
+  },
 };
 
 describe('HermesRuntimeDialogLauncher', () => {
@@ -89,5 +109,19 @@ describe('HermesRuntimeDialogLauncher', () => {
     }));
 
     expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument();
+  });
+
+  it('opens the managed runtime settings from its dedicated trigger and tab', async () => {
+    render(<HermesRuntimeDialogLauncher runtime={managedRuntime} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Hermes management test surface')).toBeInTheDocument();
+    expect(managementMocks.render).toHaveBeenLastCalledWith(expect.objectContaining({
+      workspace: 'acme',
+      sandboxId: 'sandbox-1',
+      environment: 'EXISTING=value',
+    }));
   });
 });
