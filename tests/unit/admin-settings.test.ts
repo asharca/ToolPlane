@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
@@ -8,6 +8,7 @@ import {
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  deleteMany: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -15,6 +16,7 @@ vi.mock('@/lib/db', () => ({
     systemSetting: {
       findUnique: mocks.findUnique,
       upsert: mocks.upsert,
+      deleteMany: mocks.deleteMany,
     },
   },
 }));
@@ -22,12 +24,20 @@ vi.mock('@/lib/db', () => ({
 import {
   getHermesArchiveSettings,
   HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
+  MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+  resolveMcpStartupTimeoutSettings,
+  resetMcpStartupTimeoutSettings,
   updateHermesArchiveSettings,
+  updateMcpStartupTimeoutSettings,
 } from '@/lib/admin/settings';
 
 describe('system settings storage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('uses the safe archive default until the generic setting row exists', async () => {
@@ -64,5 +74,70 @@ describe('system settings storage', () => {
     await expect(getHermesArchiveSettings()).resolves.toEqual({
       hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
+  });
+
+  it('uses the Compose environment values until an administrator saves an MCP timeout override', async () => {
+    vi.stubEnv('TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS', '300000');
+    vi.stubEnv('TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS', '900000');
+    mocks.findUnique.mockResolvedValue(null);
+
+    await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
+      idleTimeoutMs: 300_000,
+      maxTimeoutMs: 900_000,
+      source: 'environment',
+    });
+
+    mocks.findUnique.mockResolvedValue({
+      value: JSON.stringify({ idleTimeoutMs: 120_000, maxTimeoutMs: 600_000 }),
+    });
+    await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
+      idleTimeoutMs: 120_000,
+      maxTimeoutMs: 600_000,
+      source: 'database',
+    });
+  });
+
+  it('rejects malformed persisted MCP timeouts and falls back to the compatible environment alias', async () => {
+    vi.stubEnv('MCP_STARTUP_IDLE_TIMEOUT_MS', '180000');
+    vi.stubEnv('MCP_STARTUP_MAX_TIMEOUT_MS', '540000');
+    mocks.findUnique.mockResolvedValue({ value: '{not-json' });
+
+    await expect(resolveMcpStartupTimeoutSettings()).resolves.toEqual({
+      idleTimeoutMs: 180_000,
+      maxTimeoutMs: 540_000,
+      source: 'environment',
+    });
+  });
+
+  it('writes and resets the paired MCP timeout override atomically', async () => {
+    mocks.upsert.mockResolvedValue(undefined);
+    mocks.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(updateMcpStartupTimeoutSettings(300_000, 900_000)).resolves.toEqual({
+      idleTimeoutMs: 300_000,
+      maxTimeoutMs: 900_000,
+      source: 'database',
+    });
+    expect(mocks.upsert).toHaveBeenCalledWith({
+      where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY },
+      create: {
+        key: MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+        value: JSON.stringify({ idleTimeoutMs: 300_000, maxTimeoutMs: 900_000 }),
+      },
+      update: { value: JSON.stringify({ idleTimeoutMs: 300_000, maxTimeoutMs: 900_000 }) },
+    });
+
+    await resetMcpStartupTimeoutSettings();
+    expect(mocks.deleteMany).toHaveBeenCalledWith({
+      where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY },
+    });
+  });
+
+  it('refuses an unsafe MCP timeout pair before writing a setting row', async () => {
+    await expect(updateMcpStartupTimeoutSettings(900_000, 300_000)).rejects.toThrow(
+      'Invalid MCP startup timeouts.',
+    );
+
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });

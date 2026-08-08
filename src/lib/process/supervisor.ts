@@ -21,6 +21,7 @@ import { type SpawnSpec } from './spawn-spec';
 import { MCP_NETWORK } from './sandbox';
 import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
 import { deriveHermesRuntimeToken } from '@/lib/agents/hermes/token';
+import { resolveMcpStartupTimeoutSettings } from '@/lib/admin/settings';
 import {
   DEPLOYMENT_CONFIG_MOUNT_PATH,
   configVolumeName,
@@ -195,14 +196,6 @@ const RUNTIME_LOG_CHUNK_DEFAULT_BYTES = 16 * 1024;
 const STDERR_LINE_BUFFER_MAX_CHARS = 256 * 1024;
 const DOCKER_LOG_TIMEOUT_MS = 5000;
 const LAUNCH_LOCK_MAX_AGE_MS = 10 * 60_000;
-const STARTUP_IDLE_TIMEOUT_MS = runtimeTimeoutFromEnv(
-  process.env.TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS ?? process.env.MCP_STARTUP_IDLE_TIMEOUT_MS,
-  90_000,
-);
-const STARTUP_MAX_TIMEOUT_MS = runtimeTimeoutFromEnv(
-  process.env.TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS ?? process.env.MCP_STARTUP_MAX_TIMEOUT_MS,
-  5 * 60_000,
-);
 
 async function persist(deploymentId: string, status: string) {
   const queues = persistQueues();
@@ -251,14 +244,6 @@ function launchLockPath(deploymentId: string): string {
 
 function ensureRegistryDir() {
   mkdirSync(REGISTRY_DIR, { recursive: true });
-}
-
-function runtimeTimeoutFromEnv(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1_000) return fallback;
-  // A malformed environment value must not accidentally pin an orphaned
-  // deployment forever. Thirty minutes remains ample for a slow image pull.
-  return Math.min(Math.floor(parsed), 30 * 60_000);
 }
 
 function writeAtomic(file: string, content: string | Buffer): void {
@@ -1316,6 +1301,9 @@ async function launchProcess(
     : launchSpec;
   const script = managedSpec.kind === 'bridge' ? BRIDGE : managedSpec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
   const managedBridgeImage = managedSpec.kind === 'bridge' ? bridgeImage(managedSpec) : '';
+  const startupTimeouts = managedSpec.kind === 'bridge'
+    ? await resolveMcpStartupTimeoutSettings()
+    : null;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
   const runtimeEventToken = managedSpec.kind === 'bridge' ? randomUUID() : '';
@@ -1334,8 +1322,8 @@ async function launchProcess(
             ? deploymentContainerName(deploymentId)
             : '',
           MCP_IMAGE: managedBridgeImage,
-          MCP_STARTUP_IDLE_TIMEOUT_MS: String(STARTUP_IDLE_TIMEOUT_MS),
-          MCP_STARTUP_MAX_TIMEOUT_MS: String(STARTUP_MAX_TIMEOUT_MS),
+          MCP_STARTUP_IDLE_TIMEOUT_MS: String(startupTimeouts!.idleTimeoutMs),
+          MCP_STARTUP_MAX_TIMEOUT_MS: String(startupTimeouts!.maxTimeoutMs),
           MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
         }
       : managedSpec.kind === 'sandbox'

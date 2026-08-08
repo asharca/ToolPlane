@@ -99,6 +99,10 @@ services:
       TOOLPLANE_MAX_ATTACHMENT_BYTES: ${TOOLPLANE_MAX_ATTACHMENT_BYTES:-1000000000}
       TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports
       TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}
+      # Git/PyPI/GitHub MCPs may need a quiet first install. Values are in ms;
+      # admins can override them in Settings for subsequent MCP starts.
+      TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS:-300000}
+      TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS:-900000}
       TOOLPLANE_RUNTIME_ROOT: /app
       # These paths are baked into the Docker image. Local `pnpm dev` may still
       # override them through .env when running outside Compose.

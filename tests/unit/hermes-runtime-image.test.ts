@@ -55,6 +55,8 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).toContain('${TOOLPLANE_HERMES_ARCHIVE_VOLUME:-toolplane_imports}:/var/lib/toolplane/imports');
     expect(compose).toContain('TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports');
     expect(compose).toContain('TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}');
+    expect(compose).toContain('TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS:-300000}');
+    expect(compose).toContain('TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS:-900000}');
   });
 
   it('labels and gives long cleanup time to the temporary container used for an archive import', () => {

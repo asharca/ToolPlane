@@ -138,6 +138,18 @@ The app image includes the Docker CLI for Docker-source MCP deployments and for
 Docker-source MCP deployments. It talks to Docker only through the restricted
 socket proxy, so keep that proxy private to the Compose network.
 
+### MCP startup timeouts
+
+Custom MCPs installed from npm, PyPI, or GitHub can be quiet while fetching and
+installing their first dependencies. Compose exposes
+`TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS` (default `300000`, five minutes) and
+`TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS` (default `900000`, fifteen minutes) for
+that startup watchdog. Both values are milliseconds and the maximum must be at
+least the idle value. Change them in `.env` and recreate/redeploy the app, or
+use **Admin → Settings** to save an override that applies to the next MCP start
+or restart. The administrator override takes precedence over the environment
+value; reset it in the same page to return to the Compose setting.
+
 Admins can update a deployed instance from the workspace sidebar, directly
 under the ToolPlane logo. The update action checks the latest GitHub Release,
 downloads `TOOLPLANE_UPDATE_ARTIFACT` (default
