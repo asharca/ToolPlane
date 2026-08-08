@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0](https://github.com/asharca/ToolPlane/releases/tag/v0.19.0) (2026-08-08)
+
+### What's Changed
+* feat: configure MCP startup timeouts by @renhedata in https://github.com/asharca/ToolPlane/pull/74
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.18.2...v0.19.0
+
 ## [0.18.2](https://github.com/asharca/ToolPlane/releases/tag/v0.18.2) (2026-08-08)
 
 ### What's Changed
