@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.0](https://github.com/asharca/ToolPlane/releases/tag/v0.18.0) (2026-08-08)
+
+### What's Changed
+* feat: add managed Hermes sandbox controls by @renhedata in https://github.com/asharca/ToolPlane/pull/70
+* feat(mcp): add JSON runtime files and generic Git launch support by @renhedata in https://github.com/asharca/ToolPlane/pull/71
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.17.1...v0.18.0
+
 ## [0.17.1](https://github.com/asharca/ToolPlane/releases/tag/v0.17.1) (2026-08-06)
 
 ### What's Changed
