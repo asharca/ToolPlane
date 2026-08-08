@@ -75,6 +75,10 @@ export function McpNetworkModeControl({
       <p id={descriptionId} className="mt-1.5 text-xs leading-5 text-muted-foreground">
         {t('networkModeHint')}
       </p>
+      <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+        <span>{t('networkLoopbackProxyHint')}</span>
+      </p>
       {value === 'none' && warnAboutPackageInstall ? (
         <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />

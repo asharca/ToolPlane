@@ -100,14 +100,113 @@ describe('resolveSpawnSpec', () => {
     expect(args.slice(imageIndex + 1)).toEqual(['npx', ...commandArgs]);
   });
 
-  it('runs uvx JSON configs in the Python wrapper and rejects arbitrary commands', () => {
-    const { args } = buildStdioConfigSpawnSpec('uvx', ['mcp-server-fetch']);
-    const imageIndex = args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
-    expect(args.slice(imageIndex + 1)).toEqual(['uvx', 'mcp-server-fetch']);
+  it('runs uvx and uv JSON configs in the Python wrapper and rejects arbitrary commands', () => {
+    const uvx = buildStdioConfigSpawnSpec('uvx', ['mcp-server-fetch']);
+    const uvxImageIndex = uvx.args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
+    expect(uvx.args.slice(uvxImageIndex + 1)).toEqual(['uvx', 'mcp-server-fetch']);
+
+    const uvArgs = ['run', '--with', 'mcp-server-fetch', 'mcp-server-fetch'];
+    const uv = buildStdioConfigSpawnSpec('uv', uvArgs, {}, true);
+    const uvImageIndex = uv.args.findIndex((arg) => arg.startsWith('ghcr.io/astral-sh/uv'));
+    expect(uv.args.slice(uvImageIndex + 1)).toEqual(['uv', ...uvArgs]);
+
     expect(() => buildStdioConfigSpawnSpec('bash', ['-lc', 'whoami'])).toThrow(/Unsupported/);
   });
 
-  it('resolves a stored MCP JSON config to a bridge spec', () => {
+  it('uses Git-capable wrappers for documented Git source forms on any forge', () => {
+    const npxGitSources = [
+      'github:owner/repo#commit-or-tag',
+      'gitlab:group/repository#commit-or-tag',
+      'bitbucket:workspace/repository#commit-or-tag',
+      'gist:11081aaa281#commit-or-tag',
+      'https://git.example.test/group/repository.git#commit-or-tag',
+      'git+https://git.example.test/group/repository.git#commit-or-tag',
+      'git+ssh://git@git.example.test/group/repository.git#commit-or-tag',
+      'ssh://git@git.example.test/group/repository.git#commit-or-tag',
+      'git://git.example.test/group/repository.git#commit-or-tag',
+      'deployer@git.example.test:group/repository.git#commit-or-tag',
+    ];
+
+    for (const source of npxGitSources) {
+      const npxArgs = ['-y', source, '--config-file', 'server.json'];
+      const npx = buildStdioConfigSpawnSpec('npx', npxArgs);
+      expect(npx.image).toBe('node:24-bookworm');
+      expect(npx.args.slice(npx.args.indexOf(npx.image) + 1)).toEqual(['npx', ...npxArgs]);
+    }
+
+    const npxPackageArgForms = [
+      [
+        '-y',
+        '--package=git+https://git.example.test/group/repository.git#commit-or-tag',
+        'server-command',
+      ],
+      [
+        '-y',
+        '--package',
+        'git+https://git.example.test/group/repository.git#commit-or-tag',
+        'server-command',
+      ],
+      [
+        '-y',
+        '-p',
+        'git://git.example.test/group/repository.git#commit-or-tag',
+        'server-command',
+      ],
+    ];
+    for (const args of npxPackageArgForms) {
+      expect(buildStdioConfigSpawnSpec('npx', args).image).toBe('node:24-bookworm');
+    }
+
+    const uvxGitSources = [
+      'git+https://git.example.test/group/repository.git@commit-or-tag',
+      'git+ssh://git@git.example.test/group/repository.git@commit-or-tag',
+      'git+git://git.example.test/group/repository.git@commit-or-tag',
+    ];
+    for (const source of uvxGitSources) {
+      const uvxArgs = ['--from', source, 'server-command', '--config-file', 'server.toml'];
+      const uvx = buildStdioConfigSpawnSpec('uvx', uvxArgs);
+      expect(uvx.image).toBe('ghcr.io/astral-sh/uv:python3.13-bookworm');
+      expect(uvx.args.slice(uvx.args.indexOf(uvx.image) + 1)).toEqual(['uvx', ...uvxArgs]);
+    }
+  });
+
+  it('keeps registry packages and non-Git direct URLs in the slim wrappers', () => {
+    expect(buildStdioConfigSpawnSpec('npx', ['-y', '@modelcontextprotocol/server-fetch']).image)
+      .toBe('node:24-bookworm-slim');
+    expect(buildStdioConfigSpawnSpec('npx', ['-y', 'https://downloads.example.test/mcp.tgz']).image)
+      .toBe('node:24-bookworm-slim');
+    expect(buildStdioConfigSpawnSpec('uvx', ['--from', 'https://downloads.example.test/mcp.whl', 'mcp']).image)
+      .toBe('ghcr.io/astral-sh/uv:python3.13-bookworm-slim');
+  });
+
+  it('runs JSON Docker configs with ToolPlane-controlled argv and exact container args', () => {
+    const image = 'ghcr.io/acme/stdio-mcp:latest';
+    const containerArgs = ['node', 'server.mjs', '--config', '/toolplane/config/server.json'];
+    const { command, args, image: resolvedImage } = buildStdioConfigSpawnSpec(
+      'docker',
+      ['run', '-i', '--rm', image, ...containerArgs],
+      { API_TOKEN: 'secret' },
+      true,
+    );
+
+    expect(command).toBe('docker');
+    expect(resolvedImage).toBe(image);
+    expect(args).toEqual(expect.arrayContaining([
+      '--cap-drop',
+      'ALL',
+      '--read-only',
+      '--pull',
+      'always',
+      '-e',
+      'API_TOKEN=secret',
+    ]));
+    expect(args.filter((arg) => arg === '-i')).toHaveLength(1);
+    expect(args.filter((arg) => arg === '--rm')).toHaveLength(1);
+    const imageIndex = args.indexOf(image);
+    expect(args.slice(imageIndex)).toEqual([image, ...containerArgs]);
+  });
+
+  it('resolves a stored MCP JSON config with a relative runtime file to a bridge spec', () => {
     const spec = resolveSpawnSpec({
       serverId: null,
       server: null,
@@ -116,14 +215,79 @@ describe('resolveSpawnSpec', () => {
       sourceRef: 'npx',
       installCfg: {
         command: 'npx',
-        args: ['-y', '@fangjunjie/ssh-mcp-server', '--port', '22'],
+        args: ['-y', '@fangjunjie/ssh-mcp-server', '--config-file', 'ssh-config.json'],
         env: {},
       },
     });
-    expect(spec).toMatchObject({ kind: 'bridge', name: 'ssh-mcp-server', command: 'docker' });
+    expect(spec).toMatchObject({
+      kind: 'bridge',
+      name: 'ssh-mcp-server',
+      command: 'docker',
+      configWorkingDirectory: true,
+    });
     if (spec.kind === 'bridge') {
-      expect(spec.args.slice(-5)).toEqual(['npx', '-y', '@fangjunjie/ssh-mcp-server', '--port', '22']);
+      expect(spec.args.slice(-5)).toEqual([
+        'npx',
+        '-y',
+        '@fangjunjie/ssh-mcp-server',
+        '--config-file',
+        'ssh-config.json',
+      ]);
     }
+  });
+
+  it('keeps an image-defined working directory for JSON Docker configs', () => {
+    const image = 'ghcr.io/acme/stdio-mcp:latest';
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'Docker JSON MCP',
+      source: 'config',
+      sourceRef: 'docker',
+      installCfg: {
+        command: 'docker',
+        args: ['run', '-i', '--rm', image, 'node', 'server.mjs'],
+        env: {},
+      },
+    });
+
+    expect(spec).toMatchObject({
+      kind: 'bridge',
+      name: 'Docker JSON MCP',
+      image,
+    });
+    expect(spec).not.toHaveProperty('configWorkingDirectory');
+    if (spec.kind === 'bridge') {
+      const imageIndex = spec.args.indexOf(image);
+      expect(spec.args.slice(imageIndex)).toEqual([image, 'node', 'server.mjs']);
+    }
+  });
+
+  it('keeps GitHub-backed uvx configs in the managed config working directory', () => {
+    const spec = resolveSpawnSpec({
+      serverId: null,
+      server: null,
+      name: 'GitHub uvx MCP',
+      source: 'config',
+      sourceRef: 'uvx',
+      installCfg: {
+        command: 'uvx',
+        args: [
+          '--from',
+          'git+https://github.com/owner/repo@commit-or-tag',
+          'server-command',
+          '--config-file',
+          'server.toml',
+        ],
+        env: {},
+      },
+    });
+
+    expect(spec).toMatchObject({
+      kind: 'bridge',
+      image: 'ghcr.io/astral-sh/uv:python3.13-bookworm',
+      configWorkingDirectory: true,
+    });
   });
 
   it('derives the connector server URL from trusted request routing headers', () => {
