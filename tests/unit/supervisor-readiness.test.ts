@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   updateDeployment: vi.fn(),
   ensureConnectorBroker: vi.fn(),
   materializeDeploymentConfigVolume: vi.fn(),
+  removeDeploymentContainer: vi.fn(),
 }));
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -33,6 +34,10 @@ vi.mock('@/lib/process/deployment-config-volume', () => ({
   DEPLOYMENT_CONFIG_MOUNT_PATH: '/toolplane/config',
   configVolumeName: (deploymentId: string) => `toolplane_mcp_config_${deploymentId}`,
   materializeDeploymentConfigVolume: mocks.materializeDeploymentConfigVolume,
+}));
+vi.mock('@/lib/process/deployment-runtime-container', () => ({
+  deploymentContainerName: (deploymentId: string) => `toolplane-mcp-${deploymentId}`,
+  removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
 
 type Supervisor = typeof import('@/lib/process/supervisor');
@@ -123,6 +128,7 @@ beforeEach(() => {
     hasFiles: false,
     redactionValues: [],
   });
+  mocks.removeDeploymentContainer.mockReset().mockResolvedValue(undefined);
   nextPid = 99_000_000;
   vi.spyOn(process, 'kill').mockReturnValue(true);
   resetSupervisorGlobals();
@@ -146,6 +152,19 @@ afterAll(() => {
 });
 
 describe('supervisor readiness races', () => {
+  it('does not require Docker cleanup for a builtin launch', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'builtin-no-docker',
+      { kind: 'builtin', name: 'Builtin no Docker' },
+      { awaitReady: false },
+    );
+
+    expect(mocks.removeDeploymentContainer).not.toHaveBeenCalled();
+  });
+
   it('ignores a buffered LISTENING line after stop begins', async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
@@ -615,6 +634,51 @@ describe('supervisor readiness races', () => {
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
     expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
+  });
+
+  it('removes a stale managed container before materializing and launching its replacement', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'stale-bridge',
+      {
+        kind: 'bridge',
+        name: 'Stale bridge',
+        command: 'docker',
+        args: ['run', '--rm', 'example/mcp'],
+        env: {},
+      },
+      { awaitReady: false },
+    );
+
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('stale-bridge');
+    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith('stale-bridge');
+    expect(mocks.removeDeploymentContainer.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.materializeDeploymentConfigVolume.mock.invocationCallOrder[0],
+    );
+    expect(mocks.materializeDeploymentConfigVolume.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.spawn.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not materialize or spawn a replacement when stale container cleanup fails', async () => {
+    mocks.removeDeploymentContainer.mockRejectedValueOnce(new Error('Docker socket denied cleanup'));
+
+    await expect(supervisor.startProcess(
+      'cleanup-failure',
+      {
+        kind: 'bridge',
+        name: 'Cleanup failure',
+        command: 'docker',
+        args: ['run', '--rm', 'example/mcp'],
+        env: {},
+      },
+      { awaitReady: false },
+    )).rejects.toThrow('Docker socket denied cleanup');
+
+    expect(mocks.materializeDeploymentConfigVolume).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('mounts materialized runtime files read-only, uses their config working directory, and redacts them from stderr', async () => {

@@ -13,6 +13,7 @@ import {
   killProcess,
   liveStatus,
 } from '@/lib/process/supervisor';
+import { removeDeploymentContainer } from '@/lib/process/deployment-runtime-container';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
@@ -558,9 +559,14 @@ export async function removeDeploymentAction(formData: FormData) {
   if (!dep) return;
 
   await killProcess(dep.id, { preventRestart: true });
-  // Clean a stale named volume even if the final file was deleted just before
-  // a failed restart. Builtin deployments have no container volume at all.
-  if (dep.source) await removeDeploymentConfigVolume(dep.id);
+  if (dep.source) {
+    // A failed Docker bridge can leave its named runtime container alive after
+    // its local supervisor exits. Remove it before its read-only config volume.
+    await removeDeploymentContainer(dep.id);
+    // Clean a stale named volume even if the final file was deleted just before
+    // a failed restart. Builtin deployments have no container volume at all.
+    await removeDeploymentConfigVolume(dep.id);
+  }
   await db.deployment.deleteMany({
     where: { id: dep.id, workspaceId: ctx.ws.id },
   });
