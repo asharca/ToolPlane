@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.2](https://github.com/asharca/ToolPlane/releases/tag/v0.18.2) (2026-08-08)
+
+### What's Changed
+* fix: remove failed MCP runtime containers by @renhedata in https://github.com/asharca/ToolPlane/pull/73
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.18.1...v0.18.2
+
 ## [0.18.1](https://github.com/asharca/ToolPlane/releases/tag/v0.18.1) (2026-08-08)
 
 ### What's Changed
