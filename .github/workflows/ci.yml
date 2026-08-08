@@ -47,11 +47,11 @@ jobs:
       - name: Test connector portability
         run: pnpm vitest run tests/unit/connector-cli.test.ts tests/unit/connector-auth.test.ts tests/unit/connector-bootstrap-route.test.ts tests/unit/connector-setup-token.test.ts tests/unit/spawn-spec.test.ts tests/unit/agent-skill-tools.test.ts tests/unit/sandbox.test.ts tests/integration/connector-broker.test.ts
 
-      - name: Test Docker timeout cleanup
+      - name: Test Docker runtime helpers
         if: matrix.os == 'ubuntu-latest'
         env:
           SANDBOX_DOCKER_SMOKE: 1
-        run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts
+        run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts tests/integration/deployment-config-volume.live.test.ts
 
   validate:
     runs-on: ubuntu-latest
