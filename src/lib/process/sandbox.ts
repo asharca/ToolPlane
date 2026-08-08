@@ -20,8 +20,10 @@ export const SANDBOX = {
 // a managed Python). docker-source MCPs use the user's own image.
 export const WRAP_IMAGE = {
   npm: 'node:24-bookworm-slim',
+  npmGit: 'node:24-bookworm',
   github: 'node:24-bookworm-slim',
   pypi: 'ghcr.io/astral-sh/uv:python3.13-bookworm-slim',
+  pypiGit: 'ghcr.io/astral-sh/uv:python3.13-bookworm',
 } as const;
 
 // `--read-only` means npm/uv can't write their default cache dirs, so redirect

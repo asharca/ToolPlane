@@ -97,6 +97,70 @@ describe('parseCustomMcpInput', () => {
     `)).toMatchObject({ name: 'fetcher', installCfg: { command: 'uvx' } });
   });
 
+  it('accepts uv MCP JSON configs', () => {
+    const args = ['run', '--with', 'mcp-server-fetch', 'mcp-server-fetch'];
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        fetcher: { command: 'uv', args },
+      },
+    }))).toMatchObject({
+      source: 'config',
+      ref: 'uv',
+      name: 'fetcher',
+      installCfg: { command: 'uv', args, env: {} },
+    });
+  });
+
+  it('accepts standard Docker MCP JSON configs', () => {
+    const args = [
+      'run',
+      '-i',
+      '--rm',
+      'ghcr.io/example/mcp-server:latest',
+      'mcp-server',
+      '--config-file',
+      '/toolplane/config/ssh-config.json',
+    ];
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        ssh: { command: 'docker', args },
+      },
+    }))).toMatchObject({
+      source: 'config',
+      ref: 'docker',
+      name: 'ssh',
+      installCfg: { command: 'docker', args, env: {} },
+    });
+  });
+
+  it('accepts GitHub repository references for npx and uvx', () => {
+    const npxArgs = ['-y', 'github:owner/repo#commit-or-tag', '--config-file', 'server.json'];
+    const uvxArgs = [
+      '--from',
+      'git+https://github.com/owner/repo@commit-or-tag',
+      'server-command',
+      '--config-file',
+      'server.toml',
+    ];
+
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        'github-npx': { command: 'npx', args: npxArgs },
+      },
+    }))).toMatchObject({
+      name: 'github-npx',
+      installCfg: { command: 'npx', args: npxArgs, env: {} },
+    });
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        'github-uvx': { command: 'uvx', args: uvxArgs },
+      },
+    }))).toMatchObject({
+      name: 'github-uvx',
+      installCfg: { command: 'uvx', args: uvxArgs, env: {} },
+    });
+  });
+
   it('accepts a direct command config and infers its name from the package', () => {
     expect(parseMcpJsonConfig(JSON.stringify({
       command: 'npx',
@@ -176,6 +240,13 @@ describe('parseCustomMcpInput', () => {
     });
   });
 
+  it.each([
+    ['uv', ['run', '--with', 'mcp-server-fetch', 'mcp-server-fetch']],
+    ['docker', ['run', '-i', '--rm', 'ghcr.io/example/mcp-server:latest', 'mcp-server']],
+  ])('preserves the %s command when serializing JSON configs', (command, args) => {
+    expect(JSON.parse(serializeMcpJsonConfig({ command, args }))).toEqual({ command, args });
+  });
+
   it('masks credential URLs in command args', () => {
     const masked = serializeMcpJsonConfig({
       command: 'uvx',
@@ -225,8 +296,26 @@ describe('parseCustomMcpInput', () => {
     }))).toThrow(/exactly one/);
     expect(() => parseMcpJsonConfig(JSON.stringify({
       unsafe: { command: 'bash', args: ['-lc', 'whoami'] },
-    }))).toThrow(/npx or uvx/);
+    }))).toThrow(/npx, uvx, uv, or docker/);
+    expect(() => parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        one: { command: 'npx', args: ['-y', 'one-mcp'] },
+        two: { command: 'uvx', args: ['two-mcp'] },
+      },
+    }))).toThrow(/exactly one/);
   });
+
+  it.each(['--mount', '-v', '--env', '--network', '--privileged'])(
+    'rejects the dangerous Docker run option %s',
+    (option) => {
+      expect(() => parseMcpJsonConfig(JSON.stringify({
+        unsafe: {
+          command: 'docker',
+          args: ['run', option, 'host-value', 'ghcr.io/example/mcp-server:latest'],
+        },
+      }))).toThrow(`unsupported docker run option: ${option}`);
+    },
+  );
 
   it('rejects malformed args, env, and unsupported fields', () => {
     expect(() => parseMcpJsonConfig(JSON.stringify({
@@ -240,7 +329,7 @@ describe('parseCustomMcpInput', () => {
     }))).toThrow(/unsupported field/);
     expect(() => parseMcpJsonConfig(JSON.stringify({
       bad: { command: 'npx', args: [] },
-    }))).toThrow(/include the MCP package/);
+    }))).toThrow(/include an MCP command or Docker image/);
   });
 });
 

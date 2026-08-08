@@ -201,9 +201,25 @@ model Deployment {
   updatedAt       DateTime        @updatedAt
   toolkitLinks    ToolkitServer[]
   agentLinks      AgentServer[]
+  configFiles     DeploymentConfigFile[]
   sandbox         Sandbox?
 
   @@unique([workspaceId, serverId])
+}
+
+model DeploymentConfigFile {
+  id               String     @id @default(cuid())
+  deploymentId     String
+  deployment       Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  path             String
+  pathKey          String
+  encryptedContent Json
+  size             Int
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@unique([deploymentId, pathKey])
+  @@index([deploymentId, updatedAt])
 }
 
 model Sandbox {

@@ -1,12 +1,15 @@
 import { z } from 'zod';
+import {
+  isValidDockerImageRef,
+  parseDockerJsonArgs,
+} from './docker-json-command';
 
 const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/;
-const DOCKER_IMAGE = /^[a-z0-9]+([._/-][a-z0-9]+)*(:[\w.-]+)?$/;
 
 export type McpSource = 'npm' | 'pypi' | 'github' | 'docker';
-export type StdioMcpCommand = 'npx' | 'uvx';
+export type StdioMcpCommand = 'npx' | 'uvx' | 'uv' | 'docker';
 export const EDITABLE_MCP_SOURCES = ['npm', 'pypi', 'github', 'docker', 'config'] as const;
 export type EditableMcpSource = (typeof EDITABLE_MCP_SOURCES)[number];
 
@@ -57,6 +60,8 @@ const OPTIONS_WITH_VALUE: Record<StdioMcpCommand, ReadonlySet<string>> = {
     '--with',
     '--with-editable',
   ]),
+  uv: new Set(),
+  docker: new Set(),
 };
 
 const SENSITIVE_VALUE_ARG = /^(?:-H|--?(?:default-index|extra-index-url|header|headers|index-url|registry))$/i;
@@ -94,7 +99,7 @@ export function isValidMcpRef(source: McpSource, ref: string): boolean {
   return source === 'npm' ? NPM_NAME.test(ref)
     : source === 'pypi' ? PYPI_NAME.test(ref)
     : source === 'github' ? GITHUB_URL.test(ref)
-    : DOCKER_IMAGE.test(ref);
+    : isValidDockerImageRef(ref);
 }
 
 const schema = z
@@ -119,6 +124,10 @@ export type ParsedCustomMcp = {
     | StdioMcpInstallConfig
     | null;
 };
+
+function isSupportedJsonCommand(value: unknown): value is StdioMcpCommand {
+  return value === 'npx' || value === 'uvx' || value === 'uv' || value === 'docker';
+}
 
 function serializedEnv(value: unknown, maskSecrets: boolean): Record<string, string> {
   const env: Record<string, string> = {};
@@ -172,7 +181,7 @@ export function serializeMcpJsonConfig(
     env?: unknown;
     network?: unknown;
   };
-  const command = stored.command === 'uvx' ? 'uvx' : 'npx';
+  const command = isSupportedJsonCommand(stored.command) ? stored.command : 'npx';
   const args = serializedArgs(stored.args, Boolean(options.maskSecrets));
   const env = serializedEnv(stored.env, Boolean(options.maskSecrets));
   return JSON.stringify({
@@ -217,7 +226,7 @@ function configError(message: string): never {
 function parsedArgs(value: unknown, required: boolean): string[] {
   const args = value ?? [];
   if (!Array.isArray(args)) return configError('args must be an array of strings.');
-  if (required && !args.length) return configError('args must include the MCP package.');
+  if (required && !args.length) return configError('args must include an MCP command or Docker image.');
   if (args.length > MAX_ARGS) return configError(`args cannot contain more than ${MAX_ARGS} values.`);
   if (args.some((arg) => typeof arg !== 'string' || arg.includes('\0') || arg.length > MAX_ARG_LENGTH)) {
     return configError(`each arg must be a string no longer than ${MAX_ARG_LENGTH} characters.`);
@@ -272,9 +281,9 @@ function withNetworkMode<T extends Record<string, unknown>>(
 
 function normalizedCommand(command: unknown): StdioMcpCommand {
   if (typeof command !== 'string' || !command.trim()) configError('command is required.');
-  const executable = command.trim().split(/[\\/]/).pop()?.toLowerCase().replace(/\.cmd$/, '');
-  if (executable === 'npx' || executable === 'uvx') return executable;
-  return configError('command must be npx or uvx.');
+  const executable = command.trim().split(/[\\/]/).pop()?.toLowerCase().replace(/\.(?:cmd|exe)$/, '');
+  if (isSupportedJsonCommand(executable)) return executable;
+  return configError('command must be npx, uvx, uv, or docker.');
 }
 
 function packageNameFromArg(command: StdioMcpCommand, arg: string): string | null {
@@ -300,6 +309,12 @@ function packageNameFromArg(command: StdioMcpCommand, arg: string): string | nul
 }
 
 function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
+  if (command === 'docker') {
+    const { image } = parseDockerJsonArgs(args);
+    const name = image.split('/').at(-1)?.split(':')[0] ?? '';
+    return name && /[A-Za-z]/.test(name) ? name.slice(0, 80) : 'mcp-server';
+  }
+  if (command === 'uv') return 'mcp-server';
   let optionsEnded = false;
   let skipNext = false;
   for (const arg of args) {
@@ -373,6 +388,13 @@ export function parseMcpJsonConfig(raw: string, fallbackName?: string): ParsedCu
 
   const command = normalizedCommand(config.command);
   const args = parsedArgs(config.args, true);
+  if (command === 'docker') {
+    try {
+      parseDockerJsonArgs(args);
+    } catch (error) {
+      return configError(error instanceof Error ? error.message : 'invalid docker command.');
+    }
+  }
   const env = parsedEnv(config.env);
   const network = parsedNetwork(config.network);
 

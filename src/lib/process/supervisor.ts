@@ -21,6 +21,11 @@ import { type SpawnSpec } from './spawn-spec';
 import { MCP_NETWORK } from './sandbox';
 import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
 import { deriveHermesRuntimeToken } from '@/lib/agents/hermes/token';
+import {
+  DEPLOYMENT_CONFIG_MOUNT_PATH,
+  configVolumeName,
+  materializeDeploymentConfigVolume,
+} from './deployment-config-volume';
 
 type Entry = {
   child: ChildProcess;
@@ -892,6 +897,7 @@ function bridgeImage(spec: Extract<SpawnSpec, { kind: 'bridge' }>): string {
   const optionsWithValue = new Set([
     '--name', '--cap-drop', '--security-opt', '--tmpfs', '--pids-limit',
     '--memory', '--cpus', '--network', '--pull', '--env', '--env-file', '-e',
+    '--mount', '--workdir',
   ]);
   for (let index = 1; index < spec.args.length; index += 1) {
     const value = spec.args[index];
@@ -1209,6 +1215,25 @@ type LaunchResult = {
   ready: Promise<void> | null;
 };
 
+function withDeploymentConfigVolume(
+  spec: Extract<SpawnSpec, { kind: 'bridge' }>,
+  deploymentId: string,
+): Extract<SpawnSpec, { kind: 'bridge' }> {
+  if (spec.command !== 'docker' || spec.args[0] !== 'run') {
+    throw new Error('Runtime files require a Docker-backed MCP deployment.');
+  }
+  return {
+    ...spec,
+    args: [
+      'run',
+      '--mount',
+      `type=volume,src=${configVolumeName(deploymentId)},dst=${DEPLOYMENT_CONFIG_MOUNT_PATH},readonly`,
+      ...(spec.configWorkingDirectory ? ['--workdir', DEPLOYMENT_CONFIG_MOUNT_PATH] : []),
+      ...spec.args.slice(1),
+    ],
+  };
+}
+
 async function launchProcess(
   deploymentId: string,
   spec: SpawnSpec,
@@ -1230,16 +1255,7 @@ async function launchProcess(
     return { ready: null };
   }
 
-  const managedSpec: SpawnSpec = spec.kind === 'bridge'
-    && spec.command === 'docker'
-    && spec.args[0] === 'run'
-    ? {
-        ...spec,
-        args: ['run', '--name', deploymentContainerName(deploymentId), ...spec.args.slice(1)],
-      }
-    : spec;
-
-  const connectorBroker = managedSpec.kind === 'sandbox' && managedSpec.sandboxKind === 'connector'
+  const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
     ? await ensureConnectorBroker()
     : null;
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
@@ -1268,6 +1284,28 @@ async function launchProcess(
     void persist(deploymentId, registeredAfterLock.status);
     return releaseLockAndReturn({ ready: null });
   }
+  let configRedactionValues: string[] = [];
+  let launchSpec = spec;
+  try {
+    if (spec.kind === 'bridge' && spec.command === 'docker' && spec.args[0] === 'run') {
+      const config = await materializeDeploymentConfigVolume(deploymentId);
+      configRedactionValues = config.redactionValues;
+      if (config.hasFiles) launchSpec = withDeploymentConfigVolume(spec, deploymentId);
+    }
+  } catch (error) {
+    releaseLaunchLock();
+    await persist(deploymentId, 'error');
+    throw error;
+  }
+  if (launchPrevented(deploymentId, workspaceId)) return releaseLockAndReturn({ ready: null });
+  const managedSpec: SpawnSpec = launchSpec.kind === 'bridge'
+    && launchSpec.command === 'docker'
+    && launchSpec.args[0] === 'run'
+    ? {
+        ...launchSpec,
+        args: ['run', '--name', deploymentContainerName(deploymentId), ...launchSpec.args.slice(1)],
+      }
+    : launchSpec;
   const script = managedSpec.kind === 'bridge' ? BRIDGE : managedSpec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
   const managedBridgeImage = managedSpec.kind === 'bridge' ? bridgeImage(managedSpec) : '';
   // This is deliberately generated after the SpawnSpec is built. It is never
@@ -1348,8 +1386,9 @@ async function launchProcess(
     runtime,
     redactionValues: [
       ...redactionValuesForSpec(managedSpec),
+      ...configRedactionValues,
       ...(runtimeEventToken ? [runtimeEventToken] : []),
-    ].sort((a, b) => b.length - a.length),
+    ].filter((value, index, values) => values.indexOf(value) === index).sort((a, b) => b.length - a.length),
     runtimeEventToken,
     stderrBuffer: '',
     stderrDecoder: new StringDecoder('utf8'),

@@ -26,6 +26,13 @@ import {
 import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
+import { encryptSecretText } from '@/lib/security/secrets';
+import {
+  parseRuntimeTextFiles,
+  runtimeFilePathKey,
+  type ValidRuntimeTextFile,
+} from '@/lib/workspace/runtime-files';
+import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -108,15 +115,16 @@ export async function deployCustomServerAction(formData: FormData) {
   if (!ctx) return;
 
   let parsed;
+  let runtimeFiles: ValidRuntimeTextFile[];
   try {
     parsed = parseCustomMcpInput({
-      source: String(formData.get('source') ?? 'npm'),
-      ref: String(formData.get('ref') ?? ''),
-      name: String(formData.get('name') ?? ''),
-      startCommand: String(formData.get('startCommand') ?? ''),
+      // New custom deployments are deliberately JSON-only. Keep legacy source
+      // parsing for catalog recipes and existing deployment configuration.
+      source: 'config',
       config: String(formData.get('config') ?? ''),
       network: String(formData.get('network') ?? 'isolated'),
     });
+    runtimeFiles = parseRuntimeTextFiles(formData.get('runtimeFiles'));
   } catch {
     return;
   }
@@ -130,6 +138,18 @@ export async function deployCustomServerAction(formData: FormData) {
       sourceRef: parsed.ref,
       installCfg: parsed.installCfg ?? undefined,
       status: 'provisioning',
+      ...(runtimeFiles.length
+        ? {
+            configFiles: {
+              create: runtimeFiles.map((file) => ({
+                path: file.path,
+                pathKey: runtimeFilePathKey(file.path),
+                encryptedContent: encryptSecretText(file.content) as Prisma.InputJsonValue,
+                size: file.size,
+              })),
+            },
+          }
+        : {}),
     },
   });
 
@@ -469,6 +489,24 @@ export async function cloneDeploymentAction(formData: FormData) {
   const copyEnvironmentEntries = formData.getAll('copyEnvironmentVariables').map(String);
   const copyEnvironmentVariables = copyEnvironmentEntries.length === 0
     || copyEnvironmentEntries.includes('true');
+  // Runtime files can contain credentials just like environment variables.
+  // A clone stays inside the same authorized workspace and mirrors the
+  // existing default of copying runtime configuration, but users can opt out
+  // explicitly from the clone form.
+  const copyRuntimeFileEntries = formData.getAll('copyRuntimeFiles').map(String);
+  const copyRuntimeFiles = copyRuntimeFileEntries.length === 0
+    || copyRuntimeFileEntries.includes('true');
+  const configFiles = copyRuntimeFiles
+    ? await db.deploymentConfigFile.findMany({
+        where: { deploymentId: source.id },
+        select: {
+          path: true,
+          pathKey: true,
+          encryptedContent: true,
+          size: true,
+        },
+      })
+    : [];
 
   const cloned = await db.deployment.create({
     data: {
@@ -483,6 +521,20 @@ export async function cloneDeploymentAction(formData: FormData) {
       status: 'provisioning',
       mcpToolExposure: source.mcpToolExposure,
       mcpAllowedTools: source.mcpAllowedTools,
+      ...(configFiles.length
+        ? {
+            configFiles: {
+              create: configFiles.map((file) => ({
+                path: file.path,
+                pathKey: file.pathKey,
+                // The ciphertext is copied directly. Runtime file plaintext
+                // is never read merely to clone a deployment.
+                encryptedContent: file.encryptedContent as Prisma.InputJsonValue,
+                size: file.size,
+              })),
+            },
+          }
+        : {}),
     },
     include: { server: { select: { name: true } } },
   });
@@ -506,6 +558,9 @@ export async function removeDeploymentAction(formData: FormData) {
   if (!dep) return;
 
   await killProcess(dep.id, { preventRestart: true });
+  // Clean a stale named volume even if the final file was deleted just before
+  // a failed restart. Builtin deployments have no container volume at all.
+  if (dep.source) await removeDeploymentConfigVolume(dep.id);
   await db.deployment.deleteMany({
     where: { id: dep.id, workspaceId: ctx.ws.id },
   });

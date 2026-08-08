@@ -7,6 +7,7 @@ import {
 } from '@/lib/sandboxes/runtime';
 import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from '@/lib/agents/hermes/archive-limits';
 import { disconnectConnector } from '@/lib/sandboxes/connector-broker';
+import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
 import { closeWorkspaceOperations } from './operation-gate';
 
 export async function workspaceDeploymentIds(workspaceId: string): Promise<string[]> {
@@ -21,7 +22,7 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   // creates in this server process cannot start an ID absent from the snapshot.
   preventWorkspaceStarts(workspaceId);
   await closeWorkspaceOperations(workspaceId);
-  const [deploymentIds, sandboxes] = await Promise.all([
+  const [deploymentIds, sandboxes, configVolumeDeployments] = await Promise.all([
     workspaceDeploymentIds(workspaceId),
     db.sandbox.findMany({
       where: { workspaceId },
@@ -29,6 +30,16 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
         deployment: { select: { installCfg: true } },
         snapshots: { select: { volumeName: true } },
       },
+    }),
+    db.deployment.findMany({
+      where: {
+        workspaceId,
+        AND: [
+          { source: { not: null } },
+          { source: { not: 'sandbox' } },
+        ],
+      },
+      select: { id: true },
     }),
   ]);
   const sandboxDeploymentIds = new Set(sandboxes.map((sandbox) => sandbox.deploymentId));
@@ -39,6 +50,9 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   if (sandboxDeploymentIds.size > 0) {
     await killMany([...sandboxDeploymentIds], { finalStatus: 'deleting' });
   }
+  await Promise.all(configVolumeDeployments.map(({ id }) => (
+    removeDeploymentConfigVolume(id)
+  )));
   // Supervisor writes intentionally tolerate rows deleted by other cleanup
   // paths. Workspace deletion needs a strict final write so connector auth is
   // durably inactive before the one-time WebSocket disconnect.

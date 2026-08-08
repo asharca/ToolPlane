@@ -5,7 +5,9 @@ import {
   CACHE_ENV,
   type McpNetwork,
 } from './sandbox';
+import { commandArgsNeedGit } from './git-source';
 import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxes/connector';
+import { parseDockerJsonArgs } from '@/lib/workspace/docker-json-command';
 
 export type SpawnSpec =
   | { kind: 'builtin'; name: string }
@@ -19,6 +21,10 @@ export type SpawnSpec =
       // image lifecycle without ever recording a command line that may contain
       // `-e KEY=value` secrets.
       image?: string;
+      // JSON-configured npx/uvx/uv MCPs may use relative config file arguments.
+      // When runtime files are attached, the supervisor supplies the managed
+      // config mount and makes it the container working directory.
+      configWorkingDirectory?: boolean;
     }
   | {
       kind: 'sandbox';
@@ -76,10 +82,11 @@ export function buildSpawnSpec(
     case 'npm':
     case 'github': {
       const inner = rebuild ? ['npx', '-y', '--prefer-online', ref] : ['npx', '-y', ref];
+      const image = source === 'github' ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
       return {
         command: 'docker',
-        args: [...run, ...envFlags(CACHE_ENV.npm), ...envFlags(env), WRAP_IMAGE.npm, ...inner],
-        image: WRAP_IMAGE.npm,
+        args: [...run, ...envFlags(CACHE_ENV.npm), ...envFlags(env), image, ...inner],
+        image,
       };
     }
     case 'pypi': {
@@ -113,34 +120,51 @@ export function buildStdioConfigSpawnSpec(
   const run = ['run', ...sandboxFlags(network)];
   if (command === 'npx') {
     const refresh = rebuild ? ['--prefer-online'] : [];
+    const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
     return {
       command: 'docker',
       args: [
         ...run,
         ...envFlags(CACHE_ENV.npm),
         ...envFlags(env),
-        WRAP_IMAGE.npm,
+        image,
         'npx',
         ...refresh,
         ...commandArgs,
       ],
-      image: WRAP_IMAGE.npm,
+      image,
     };
   }
-  if (command === 'uvx') {
-    const refresh = rebuild ? ['--refresh'] : [];
+  if (command === 'uvx' || command === 'uv') {
+    const refresh = command === 'uvx' && rebuild ? ['--refresh'] : [];
+    const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.pypiGit : WRAP_IMAGE.pypi;
     return {
       command: 'docker',
       args: [
         ...run,
         ...envFlags(CACHE_ENV.pypi),
         ...envFlags(env),
-        WRAP_IMAGE.pypi,
-        'uvx',
+        image,
+        command,
         ...refresh,
         ...commandArgs,
       ],
-      image: WRAP_IMAGE.pypi,
+      image,
+    };
+  }
+  if (command === 'docker') {
+    const { image, commandArgs: containerArgs } = parseDockerJsonArgs(commandArgs);
+    const pull = rebuild ? ['--pull', 'always'] : [];
+    return {
+      command: 'docker',
+      args: [
+        ...run,
+        ...pull,
+        ...envFlags(env),
+        image,
+        ...containerArgs,
+      ],
+      image,
     };
   }
   throw new Error(`Unsupported stdio MCP command: ${command || '(none)'}`);
@@ -248,6 +272,9 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       args: configSpec.args,
       env,
       image: configSpec.image,
+      // Docker JSON preserves the image's own WORKDIR. Its mounted runtime
+      // files are still available at /toolplane/config via absolute paths.
+      ...(command !== 'docker' ? { configWorkingDirectory: true } : {}),
     };
   }
   const packageSpec = buildSpawnSpec(

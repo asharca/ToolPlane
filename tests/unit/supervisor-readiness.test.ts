@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   updateDeployment: vi.fn(),
   ensureConnectorBroker: vi.fn(),
+  materializeDeploymentConfigVolume: vi.fn(),
 }));
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -23,6 +24,15 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
+}));
+
+// Bridge launch tests exercise supervisor lifecycle behavior, not Docker volume
+// projection. Keep the materializer behind its own unit tests so these fake
+// child processes are never mistaken for Docker helper processes.
+vi.mock('@/lib/process/deployment-config-volume', () => ({
+  DEPLOYMENT_CONFIG_MOUNT_PATH: '/toolplane/config',
+  configVolumeName: (deploymentId: string) => `toolplane_mcp_config_${deploymentId}`,
+  materializeDeploymentConfigVolume: mocks.materializeDeploymentConfigVolume,
 }));
 
 type Supervisor = typeof import('@/lib/process/supervisor');
@@ -108,6 +118,10 @@ beforeEach(() => {
     port: 9322,
     internalUrl: 'http://127.0.0.1:9322',
     internalToken: 'internal-test-token',
+  });
+  mocks.materializeDeploymentConfigVolume.mockReset().mockResolvedValue({
+    hasFiles: false,
+    redactionValues: [],
   });
   nextPid = 99_000_000;
   vi.spyOn(process, 'kill').mockReturnValue(true);
@@ -601,6 +615,89 @@ describe('supervisor readiness races', () => {
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
     expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
+  });
+
+  it('mounts materialized runtime files read-only, uses their config working directory, and redacts them from stderr', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    mocks.materializeDeploymentConfigVolume.mockResolvedValue({
+      hasFiles: true,
+      redactionValues: ['{abc=P100s0}'],
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await supervisor.startProcess(
+      'ssh-config-bridge',
+      {
+        kind: 'bridge',
+        name: 'SSH config bridge',
+        command: 'docker',
+        args: [
+          'run', '--rm', 'node:24-bookworm-slim',
+          'npx', '-y', '@fangjunjie/ssh-mcp-server', '--config-file', 'ssh-config.json',
+        ],
+        env: {},
+        image: 'node:24-bookworm-slim',
+        configWorkingDirectory: true,
+      },
+      { awaitReady: false },
+    );
+
+    expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith('ssh-config-bridge');
+    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
+    expect(args).toEqual(expect.arrayContaining([
+      '--mount',
+      'type=volume,src=toolplane_mcp_config_ssh-config-bridge,dst=/toolplane/config,readonly',
+      '--workdir',
+      '/toolplane/config',
+      '--config-file',
+      'ssh-config.json',
+    ]));
+
+    child.stderr.emit('data', Buffer.from('ssh config password={abc=P100s0}\n'));
+    const log = supervisor.getDeploymentRuntimeLogChunk('ssh-config-bridge', { limit: 64 * 1024 });
+    expect(log.text).toContain('[REDACTED]');
+    expect(log.text).not.toContain('{abc=P100s0}');
+    expect(consoleError.mock.calls.flat().join(' ')).not.toContain('{abc=P100s0}');
+  });
+
+  it('mounts Docker runtime files without replacing the image working directory', async () => {
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    mocks.materializeDeploymentConfigVolume.mockResolvedValue({
+      hasFiles: true,
+      redactionValues: [],
+    });
+
+    await supervisor.startProcess(
+      'docker-config-bridge',
+      {
+        kind: 'bridge',
+        name: 'Docker config bridge',
+        command: 'docker',
+        args: [
+          'run', '--rm', 'ghcr.io/example/mcp:latest',
+          'mcp-server', '--config', '/toolplane/config/server.toml',
+        ],
+        env: {},
+        image: 'ghcr.io/example/mcp:latest',
+      },
+      { awaitReady: false },
+    );
+
+    const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
+    expect(args).toEqual(expect.arrayContaining([
+      '--mount',
+      'type=volume,src=toolplane_mcp_config_docker-config-bridge,dst=/toolplane/config,readonly',
+      'ghcr.io/example/mcp:latest',
+      'mcp-server',
+      '--config',
+      '/toolplane/config/server.toml',
+    ]));
+    expect(args).not.toContain('--workdir');
+    expect(args.indexOf('ghcr.io/example/mcp:latest')).toBeGreaterThan(args.indexOf('--mount'));
   });
 
   it('publishes bridge phases and a redacted stderr-only runtime log generation', async () => {

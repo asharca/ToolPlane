@@ -7,6 +7,32 @@ export async function registerNode() {
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
   const helpersCreatedBefore = new Date();
+  // A materializer normally lives for only a few seconds. Unlike the broader
+  // sandbox interruption pass, give a just-created stopped helper a grace
+  // period so a concurrent launch cannot be mistaken for a crash remnant.
+  const deploymentConfigHelpersCreatedBefore = new Date(Date.now() - 10 * 60_000);
+
+  async function reconcileDeploymentConfigHelpers(attempt = 1): Promise<void> {
+    try {
+      const { removeStaleDeploymentConfigMaterializerHelpers } = await import(
+        '@/lib/process/deployment-config-volume'
+      );
+      const removed = await removeStaleDeploymentConfigMaterializerHelpers(
+        deploymentConfigHelpersCreatedBefore,
+      );
+      if (removed > 0) {
+        console.warn(`[mcp] cleaned ${removed} stale deployment configuration materializer helper(s)`);
+      }
+    } catch (error) {
+      console.error(`[mcp] deployment configuration helper reconcile attempt ${attempt} failed`, error);
+      if (attempt < 3) {
+        const retry = setTimeout(() => {
+          void reconcileDeploymentConfigHelpers(attempt + 1);
+        }, attempt * 5_000);
+        retry.unref?.();
+      }
+    }
+  }
 
   async function reconcileSandboxCopies(attempt = 1): Promise<void> {
     try {
@@ -38,6 +64,7 @@ export async function registerNode() {
     await ensureSandboxNetwork();
     const { cleanupHermesArchiveStaging } = await import('@/lib/agents/hermes/archive');
     await cleanupHermesArchiveStaging();
+    await reconcileDeploymentConfigHelpers();
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import('@/lib/process/reconcile');
     const n = await reconcileDeployments();

@@ -38,6 +38,7 @@ import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefres
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { McpJsonConfigEditor } from '@/components/dashboard/McpJsonConfigEditor';
 import { McpToolExposureEditor } from '@/components/dashboard/McpToolExposureEditor';
+import { RuntimeFilesEditor } from '@/components/dashboard/RuntimeFilesEditor';
 import {
   isEditableMcpSource,
   serializeMcpDeploymentConfig,
@@ -101,7 +102,13 @@ export default async function DeploymentInspectorPage({
 
   const dep = await db.deployment.findFirst({
     where: { id: deploymentId, workspaceId: ws.id },
-    include: { server: { select: { name: true, slug: true } } },
+    include: {
+      server: { select: { name: true, slug: true } },
+      configFiles: {
+        select: { id: true, path: true, size: true, updatedAt: true },
+        orderBy: { path: 'asc' },
+      },
+    },
   });
   if (!dep) notFound();
 
@@ -116,6 +123,7 @@ export default async function DeploymentInspectorPage({
   const envCfg = (dep.installCfg ?? {}) as {
     env?: Record<string, string>;
     network?: string;
+    command?: string;
     sandboxId?: string;
   };
   const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
@@ -295,14 +303,27 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'configuration' && editableConfiguration ? (
-          <McpJsonConfigEditor
-            slug={slug}
-            deploymentId={deploymentId}
-            maskedConfig={maskedConfig}
-            requiresReveal={serializedConfig !== maskedConfig}
-            initialNetwork={envCfg.network === 'none' ? 'none' : 'isolated'}
-            warnAboutPackageInstall={dep.source !== 'docker'}
-          />
+          <div className="space-y-6">
+            <McpJsonConfigEditor
+              slug={slug}
+              deploymentId={deploymentId}
+              maskedConfig={maskedConfig}
+              requiresReveal={serializedConfig !== maskedConfig}
+              initialNetwork={envCfg.network === 'none' ? 'none' : 'isolated'}
+              warnAboutPackageInstall={dep.source !== 'docker'}
+            />
+            <RuntimeFilesEditor
+              workspace={slug}
+              deploymentId={deploymentId}
+              relativePathArgumentsWork={dep.source === 'config' && envCfg.command !== 'docker'}
+              initialFiles={dep.configFiles.map((file) => ({
+                id: file.id,
+                path: file.path,
+                size: file.size,
+                updatedAt: file.updatedAt.toISOString(),
+              }))}
+            />
+          </div>
         ) : null}
 
         {current === 'tools' ? (
@@ -397,6 +418,7 @@ export default async function DeploymentInspectorPage({
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
                 <input type="hidden" name="copyEnvironmentVariables" value="false" />
+                <input type="hidden" name="copyRuntimeFiles" value="false" />
                 <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('copyName')}
                   <input
@@ -423,6 +445,23 @@ export default async function DeploymentInspectorPage({
                     </span>
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                       {t('copyEnvironmentVariablesDescription')}
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <input
+                    type="checkbox"
+                    name="copyRuntimeFiles"
+                    value="true"
+                    defaultChecked
+                    className="mt-0.5 size-4 rounded border-border accent-brand"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-foreground">
+                      {t('copyRuntimeFiles')}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                      {t('copyRuntimeFilesDescription')}
                     </span>
                   </span>
                 </label>

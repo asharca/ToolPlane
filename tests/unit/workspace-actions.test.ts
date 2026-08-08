@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   deploymentFindFirst: vi.fn(),
+  deploymentConfigFileFindMany: vi.fn(),
   deploymentCreate: vi.fn(),
   deploymentDeleteMany: vi.fn(),
   deploymentUpdate: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   logRequest: vi.fn(),
   resolveSpawnSpec: vi.fn(),
   killProcess: vi.fn(),
+  removeDeploymentConfigVolume: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -31,6 +33,9 @@ vi.mock('@/lib/db', () => ({
       create: mocks.deploymentCreate,
       deleteMany: mocks.deploymentDeleteMany,
       update: mocks.deploymentUpdate,
+    },
+    deploymentConfigFile: {
+      findMany: mocks.deploymentConfigFileFindMany,
     },
     user: {
       findUnique: mocks.userFindUnique,
@@ -54,6 +59,9 @@ vi.mock('@/lib/process/mcp-client', () => ({
 }));
 vi.mock('@/lib/observability/log', () => ({ logRequest: mocks.logRequest }));
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
+vi.mock('@/lib/process/deployment-config-volume', () => ({
+  removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
+}));
 vi.mock('@/lib/workspace/teardown', () => ({ killWorkspaceProcesses: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
@@ -103,6 +111,7 @@ describe('removeDeploymentAction', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.removeDeploymentConfigVolume.mockResolvedValue(undefined);
   });
 
   it('does not kill a process when the deployment is outside the workspace', async () => {
@@ -123,15 +132,22 @@ describe('removeDeploymentAction', () => {
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
   });
 
-  it('kills only after the deployment is confirmed in the workspace', async () => {
-    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1' });
+  it('kills and cleans the configuration volume only after workspace confirmation', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', source: 'npm' });
 
     await removeDeploymentAction(formData('dep1'));
 
     expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { preventRestart: true });
+    expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep1');
+    expect(mocks.killProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0],
+    );
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
       where: { id: 'dep1', workspaceId: 'ws1' },
     });
+    expect(mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deploymentDeleteMany.mock.invocationCallOrder[0],
+    );
   });
 
   it('excludes sandbox-backed deployments from generic lifecycle actions', async () => {
@@ -187,6 +203,7 @@ describe('MCP deployment management actions', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.deploymentConfigFileFindMany.mockResolvedValue([]);
   });
 
   it('renames a deployment only after a workspace-scoped lookup', async () => {
@@ -221,6 +238,14 @@ describe('MCP deployment management actions', () => {
       status: 'provisioning',
     };
     mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    mocks.deploymentConfigFileFindMany.mockResolvedValue([
+      {
+        path: 'ssh-config.json',
+        pathKey: 'ssh-config.json',
+        encryptedContent: { version: 1, ciphertext: 'encrypted-runtime-config' },
+        size: 84,
+      },
+    ]);
     mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
 
@@ -240,8 +265,27 @@ describe('MCP deployment management actions', () => {
         status: 'provisioning',
         mcpToolExposure: 'allowlist',
         mcpAllowedTools: ['search'],
+        configFiles: {
+          create: [
+            {
+              path: 'ssh-config.json',
+              pathKey: 'ssh-config.json',
+              encryptedContent: { version: 1, ciphertext: 'encrypted-runtime-config' },
+              size: 84,
+            },
+          ],
+        },
       },
       include: { server: { select: { name: true } } },
+    });
+    expect(mocks.deploymentConfigFileFindMany).toHaveBeenCalledWith({
+      where: { deploymentId: 'dep1' },
+      select: {
+        path: true,
+        pathKey: true,
+        encryptedContent: true,
+        size: true,
+      },
     });
     expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(clonedDeployment);
     expect(mocks.startProcess).toHaveBeenCalledWith(
@@ -276,6 +320,28 @@ describe('MCP deployment management actions', () => {
     }));
   });
 
+  it('can clone without runtime files when the default is explicitly disabled', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    mocks.deploymentCreate.mockResolvedValue({
+      ...sourceDeployment,
+      id: 'dep-copy',
+      serverId: null,
+      server: null,
+      name: 'No files',
+    });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
+    const fd = formData('dep1');
+    fd.set('name', 'No files');
+    fd.set('copyRuntimeFiles', 'false');
+
+    await cloneDeploymentAction(fd);
+
+    expect(mocks.deploymentConfigFileFindMany).not.toHaveBeenCalled();
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ configFiles: expect.anything() }),
+    }));
+  });
+
   it('does not rename or clone a deployment outside the workspace', async () => {
     mocks.deploymentFindFirst.mockResolvedValue(null);
     const renameFd = formData('foreign-dep');
@@ -298,14 +364,15 @@ describe('deployCustomServerAction', () => {
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
   });
 
-  it('persists the selected no-network mode and starts with that configuration', async () => {
+  it('persists a JSON MCP with no network even when a forged source is submitted', async () => {
+    const configArgs = ['-y', 'mcp-server-fetch'];
     const deployment = {
       id: 'dep-new',
       serverId: null,
       name: 'Offline MCP',
-      source: 'npm',
-      sourceRef: '@scope/server',
-      installCfg: { env: {}, network: 'none' },
+      source: 'config',
+      sourceRef: 'npx',
+      installCfg: { command: 'npx', args: configArgs, env: {}, network: 'none' },
     };
     mocks.deploymentCreate.mockResolvedValue(deployment);
 
@@ -314,6 +381,11 @@ describe('deployCustomServerAction', () => {
       source: 'npm',
       ref: '@scope/server',
       name: 'Offline MCP',
+      config: JSON.stringify({
+        mcpServers: {
+          'Offline MCP': { command: 'npx', args: configArgs },
+        },
+      }),
       network: 'none',
     }));
 
@@ -322,14 +394,15 @@ describe('deployCustomServerAction', () => {
         workspaceId: 'ws1',
         serverId: null,
         name: 'Offline MCP',
-        source: 'npm',
-        sourceRef: '@scope/server',
-        installCfg: { env: {}, network: 'none' },
+        source: 'config',
+        sourceRef: 'npx',
+        installCfg: { command: 'npx', args: configArgs, env: {}, network: 'none' },
         status: 'provisioning',
       },
     });
     expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(expect.objectContaining({
-      installCfg: { env: {}, network: 'none' },
+      source: 'config',
+      installCfg: { command: 'npx', args: configArgs, env: {}, network: 'none' },
     }));
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep-new',
@@ -338,13 +411,182 @@ describe('deployCustomServerAction', () => {
     );
   });
 
-  it('rejects an unsupported network before creating a deployment', async () => {
+  it('persists an mcpServers config runtime file as an encrypted nested create and starts its resolved spec', async () => {
+    const runtimeFileContent = JSON.stringify([
+      {
+        name: 'dev',
+        host: '1.2.3.4',
+        username: 'alice',
+        password: '{abc=P100s0}',
+      },
+    ], null, 2);
+    const configArgs = ['-y', '@fangjunjie/ssh-mcp-server', '--config-file', 'ssh-config.json'];
+    const deployment = {
+      id: 'dep-ssh',
+      serverId: null,
+      name: 'ssh-mcp-server',
+      source: 'config',
+      sourceRef: 'npx',
+      installCfg: { command: 'npx', args: configArgs, env: {} },
+    };
+    mocks.deploymentCreate.mockResolvedValue(deployment);
+
+    await deployCustomServerAction(customMcpFormData({
+      workspace: 'mine',
+      source: 'config',
+      config: JSON.stringify({
+        mcpServers: {
+          'ssh-mcp-server': {
+            command: 'npx',
+            args: configArgs,
+          },
+        },
+      }),
+      network: 'isolated',
+      runtimeFiles: JSON.stringify([
+        { path: 'ssh-config.json', content: runtimeFileContent },
+      ]),
+    }));
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        workspaceId: 'ws1',
+        name: 'ssh-mcp-server',
+        source: 'config',
+        sourceRef: 'npx',
+        installCfg: { command: 'npx', args: configArgs, env: {} },
+        status: 'provisioning',
+      }),
+    }));
+    const createInput = mocks.deploymentCreate.mock.calls[0]?.[0] as {
+      data: { configFiles?: { create: Array<Record<string, unknown>> } };
+    };
+    const storedFile = createInput.data.configFiles?.create[0];
+    expect(storedFile).toMatchObject({
+      path: 'ssh-config.json',
+      pathKey: 'ssh-config.json',
+      size: Buffer.byteLength(runtimeFileContent, 'utf8'),
+      encryptedContent: {
+        v: 1,
+        alg: 'aes-256-gcm',
+        iv: expect.any(String),
+        tag: expect.any(String),
+        data: expect.any(String),
+      },
+    });
+    expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain(runtimeFileContent);
+    expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain('{abc=P100s0}');
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
+      serverId: null,
+      server: null,
+      name: 'ssh-mcp-server',
+      source: 'config',
+      sourceRef: 'npx',
+      installCfg: { command: 'npx', args: configArgs, env: {} },
+    });
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep-ssh',
+      { kind: 'bridge', command: 'docker', args: [] },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+  });
+
+  it('persists JSON Docker runtime files as an encrypted nested create', async () => {
+    const runtimeFileContent = '[server]\nport = 3000\n';
+    const configArgs = [
+      'run',
+      '-i',
+      '--rm',
+      'ghcr.io/example/mcp:latest',
+      'mcp-server',
+      '--config',
+      '/toolplane/config/server.toml',
+    ];
+    const deployment = {
+      id: 'dep-docker-config',
+      serverId: null,
+      name: 'Docker Config MCP',
+      source: 'config',
+      sourceRef: 'docker',
+      installCfg: { command: 'docker', args: configArgs, env: {} },
+    };
+    mocks.deploymentCreate.mockResolvedValue(deployment);
+
+    await deployCustomServerAction(customMcpFormData({
+      workspace: 'mine',
+      source: 'docker',
+      ref: 'ghcr.io/example/mcp:latest',
+      name: 'Docker Config MCP',
+      config: JSON.stringify({
+        mcpServers: {
+          'Docker Config MCP': { command: 'docker', args: configArgs },
+        },
+      }),
+      network: 'isolated',
+      runtimeFiles: JSON.stringify([
+        { path: 'server.toml', content: runtimeFileContent },
+      ]),
+    }));
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        workspaceId: 'ws1',
+        name: 'Docker Config MCP',
+        source: 'config',
+        sourceRef: 'docker',
+        installCfg: { command: 'docker', args: configArgs, env: {} },
+        status: 'provisioning',
+      }),
+    }));
+    const createInput = mocks.deploymentCreate.mock.calls[0]?.[0] as {
+      data: { configFiles?: { create: Array<Record<string, unknown>> } };
+    };
+    const storedFile = createInput.data.configFiles?.create[0];
+    expect(storedFile).toMatchObject({
+      path: 'server.toml',
+      pathKey: 'server.toml',
+      size: Buffer.byteLength(runtimeFileContent, 'utf8'),
+      encryptedContent: {
+        v: 1,
+        alg: 'aes-256-gcm',
+        iv: expect.any(String),
+        tag: expect.any(String),
+        data: expect.any(String),
+      },
+    });
+    expect(JSON.stringify(storedFile?.encryptedContent)).not.toContain(runtimeFileContent);
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
+      serverId: null,
+      server: null,
+      name: 'Docker Config MCP',
+      source: 'config',
+      sourceRef: 'docker',
+      installCfg: { command: 'docker', args: configArgs, env: {} },
+    });
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep-docker-config',
+      { kind: 'bridge', command: 'docker', args: [] },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+  });
+
+  it('rejects empty or multi-server JSON before creating a deployment', async () => {
     await deployCustomServerAction(customMcpFormData({
       workspace: 'mine',
       source: 'npm',
       ref: '@scope/server',
       name: 'Unsafe network',
-      network: 'host',
+      network: 'isolated',
+    }));
+    await deployCustomServerAction(customMcpFormData({
+      workspace: 'mine',
+      config: JSON.stringify({
+        mcpServers: {
+          one: { command: 'npx', args: ['-y', 'one-mcp'] },
+          two: { command: 'uvx', args: ['two-mcp'] },
+        },
+      }),
+      network: 'isolated',
     }));
 
     expect(mocks.deploymentCreate).not.toHaveBeenCalled();

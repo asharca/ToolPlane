@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   preventWorkspaceStarts: vi.fn(),
   removeDockerSandboxRuntimeStrict: vi.fn(),
   removeDockerVolumeStrict: vi.fn(),
+  removeDeploymentConfigVolume: vi.fn(),
   disconnectConnector: vi.fn(),
   closeWorkspaceOperations: vi.fn(),
 }));
@@ -29,6 +30,9 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
   removeDockerSandboxRuntimeStrict: mocks.removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict: mocks.removeDockerVolumeStrict,
 }));
+vi.mock('@/lib/process/deployment-config-volume', () => ({
+  removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
+}));
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   disconnectConnector: mocks.disconnectConnector,
 }));
@@ -45,11 +49,16 @@ describe('workspace process teardown', () => {
     mocks.deploymentUpdateMany.mockResolvedValue({ count: 2 });
     mocks.removeDockerSandboxRuntimeStrict.mockResolvedValue(undefined);
     mocks.removeDockerVolumeStrict.mockResolvedValue(undefined);
+    mocks.removeDeploymentConfigVolume.mockResolvedValue(undefined);
     mocks.closeWorkspaceOperations.mockResolvedValue(undefined);
   });
 
   it('disconnects connectors and strictly removes snapshots before the Docker runtime', async () => {
-    mocks.deploymentFindMany.mockResolvedValue([{ id: 'dep-connector' }, { id: 'dep-docker' }]);
+    // The first deployment query takes the workspace-wide process snapshot;
+    // the second finds bridge deployments whose config volumes must be removed.
+    mocks.deploymentFindMany
+      .mockResolvedValueOnce([{ id: 'dep-connector' }, { id: 'dep-docker' }])
+      .mockResolvedValueOnce([]);
     mocks.sandboxFindMany.mockResolvedValue([
       {
         id: 'sb-connector',
@@ -109,6 +118,17 @@ describe('workspace process teardown', () => {
         snapshots: { select: { volumeName: true } },
       },
     });
+    expect(mocks.deploymentFindMany).toHaveBeenNthCalledWith(2, {
+      where: {
+        workspaceId: 'ws1',
+        AND: [
+          { source: { not: null } },
+          { source: { not: 'sandbox' } },
+        ],
+      },
+      select: { id: true },
+    });
+    expect(mocks.removeDeploymentConfigVolume).not.toHaveBeenCalled();
     expect(mocks.removeDockerVolumeStrict.mock.calls).toEqual([
       ['vol-snapshot-1'],
       ['vol-snapshot-2'],
@@ -131,7 +151,9 @@ describe('workspace process teardown', () => {
 
   it('propagates strict snapshot cleanup failures before removing the main runtime', async () => {
     const cleanupError = new Error('snapshot volume is still in use');
-    mocks.deploymentFindMany.mockResolvedValue([{ id: 'dep-docker' }]);
+    mocks.deploymentFindMany
+      .mockResolvedValueOnce([{ id: 'dep-docker' }])
+      .mockResolvedValueOnce([]);
     mocks.sandboxFindMany.mockResolvedValue([
       {
         id: 'sb-docker',
@@ -150,7 +172,9 @@ describe('workspace process teardown', () => {
   });
 
   it('keeps regular deployments stopped while sandboxes remain deleting', async () => {
-    mocks.deploymentFindMany.mockResolvedValue([{ id: 'dep-regular' }, { id: 'dep-sandbox' }]);
+    mocks.deploymentFindMany
+      .mockResolvedValueOnce([{ id: 'dep-regular' }, { id: 'dep-sandbox' }])
+      .mockResolvedValueOnce([{ id: 'dep-regular' }]);
     mocks.sandboxFindMany.mockResolvedValue([{
       id: 'sb-docker',
       kind: 'docker',
@@ -165,5 +189,9 @@ describe('workspace process teardown', () => {
       [['dep-regular']],
       [['dep-sandbox'], { finalStatus: 'deleting' }],
     ]);
+    expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep-regular');
+    expect(mocks.killMany.mock.invocationCallOrder[1]).toBeLessThan(
+      mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0],
+    );
   });
 });
