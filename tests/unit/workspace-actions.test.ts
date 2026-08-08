@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   logRequest: vi.fn(),
   resolveSpawnSpec: vi.fn(),
   killProcess: vi.fn(),
+  removeDeploymentContainer: vi.fn(),
   removeDeploymentConfigVolume: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
@@ -61,6 +62,9 @@ vi.mock('@/lib/observability/log', () => ({ logRequest: mocks.logRequest }));
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('@/lib/process/deployment-config-volume', () => ({
   removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
+}));
+vi.mock('@/lib/process/deployment-runtime-container', () => ({
+  removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
 vi.mock('@/lib/workspace/teardown', () => ({ killWorkspaceProcesses: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
@@ -111,6 +115,7 @@ describe('removeDeploymentAction', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.removeDeploymentContainer.mockResolvedValue(undefined);
     mocks.removeDeploymentConfigVolume.mockResolvedValue(undefined);
   });
 
@@ -132,14 +137,18 @@ describe('removeDeploymentAction', () => {
     expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
   });
 
-  it('kills and cleans the configuration volume only after workspace confirmation', async () => {
+  it('kills and cleans the runtime container and configuration volume after workspace confirmation', async () => {
     mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', source: 'npm' });
 
     await removeDeploymentAction(formData('dep1'));
 
     expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { preventRestart: true });
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('dep1');
     expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep1');
     expect(mocks.killProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
+    );
+    expect(mocks.removeDeploymentContainer.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0],
     );
     expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
@@ -148,6 +157,19 @@ describe('removeDeploymentAction', () => {
     expect(mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deploymentDeleteMany.mock.invocationCallOrder[0],
     );
+  });
+
+  it('does not require Docker cleanup to remove a builtin deployment', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'builtin1', source: null });
+
+    await removeDeploymentAction(formData('builtin1'));
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('builtin1', { preventRestart: true });
+    expect(mocks.removeDeploymentContainer).not.toHaveBeenCalled();
+    expect(mocks.removeDeploymentConfigVolume).not.toHaveBeenCalled();
+    expect(mocks.deploymentDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'builtin1', workspaceId: 'ws1' },
+    });
   });
 
   it('excludes sandbox-backed deployments from generic lifecycle actions', async () => {

@@ -26,6 +26,10 @@ import {
   configVolumeName,
   materializeDeploymentConfigVolume,
 } from './deployment-config-volume';
+import {
+  deploymentContainerName as managedDeploymentContainerName,
+  removeDeploymentContainer,
+} from './deployment-runtime-container';
 
 type Entry = {
   child: ChildProcess;
@@ -222,7 +226,7 @@ function safeId(id: string): string {
 }
 
 export function deploymentContainerName(deploymentId: string): string {
-  return `toolplane-mcp-${safeId(deploymentId)}`;
+  return managedDeploymentContainerName(deploymentId);
 }
 
 export function sandboxContainerName(sandboxId: string): string {
@@ -1288,6 +1292,10 @@ async function launchProcess(
   let launchSpec = spec;
   try {
     if (spec.kind === 'bridge' && spec.command === 'docker' && spec.args[0] === 'run') {
+      // A bridge can exit after Docker has created the named runtime container.
+      // The per-deployment launch lock lets this launch safely clear that stale
+      // container before it materializes a replacement configuration volume.
+      await removeDeploymentContainer(deploymentId);
       const config = await materializeDeploymentConfigVolume(deploymentId);
       configRedactionValues = config.redactionValues;
       if (config.hasFiles) launchSpec = withDeploymentConfigVolume(spec, deploymentId);

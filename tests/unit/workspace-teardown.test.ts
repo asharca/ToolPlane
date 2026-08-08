@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   preventWorkspaceStarts: vi.fn(),
   removeDockerSandboxRuntimeStrict: vi.fn(),
   removeDockerVolumeStrict: vi.fn(),
+  removeDeploymentContainer: vi.fn(),
   removeDeploymentConfigVolume: vi.fn(),
   disconnectConnector: vi.fn(),
   closeWorkspaceOperations: vi.fn(),
@@ -33,6 +34,9 @@ vi.mock('@/lib/sandboxes/runtime', () => ({
 vi.mock('@/lib/process/deployment-config-volume', () => ({
   removeDeploymentConfigVolume: mocks.removeDeploymentConfigVolume,
 }));
+vi.mock('@/lib/process/deployment-runtime-container', () => ({
+  removeDeploymentContainer: mocks.removeDeploymentContainer,
+}));
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   disconnectConnector: mocks.disconnectConnector,
 }));
@@ -49,6 +53,7 @@ describe('workspace process teardown', () => {
     mocks.deploymentUpdateMany.mockResolvedValue({ count: 2 });
     mocks.removeDockerSandboxRuntimeStrict.mockResolvedValue(undefined);
     mocks.removeDockerVolumeStrict.mockResolvedValue(undefined);
+    mocks.removeDeploymentContainer.mockResolvedValue(undefined);
     mocks.removeDeploymentConfigVolume.mockResolvedValue(undefined);
     mocks.closeWorkspaceOperations.mockResolvedValue(undefined);
   });
@@ -190,7 +195,11 @@ describe('workspace process teardown', () => {
       [['dep-sandbox'], { finalStatus: 'deleting' }],
     ]);
     expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep-regular');
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('dep-regular');
     expect(mocks.killMany.mock.invocationCallOrder[1]).toBeLessThan(
+      mocks.removeDeploymentContainer.mock.invocationCallOrder[0],
+    );
+    expect(mocks.removeDeploymentContainer.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.removeDeploymentConfigVolume.mock.invocationCallOrder[0],
     );
   });

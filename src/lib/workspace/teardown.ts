@@ -1,6 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { killMany, preventWorkspaceStarts } from '@/lib/process/supervisor';
+import { removeDeploymentContainer } from '@/lib/process/deployment-runtime-container';
 import {
   removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict,
@@ -50,9 +51,10 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   if (sandboxDeploymentIds.size > 0) {
     await killMany([...sandboxDeploymentIds], { finalStatus: 'deleting' });
   }
-  await Promise.all(configVolumeDeployments.map(({ id }) => (
-    removeDeploymentConfigVolume(id)
-  )));
+  await Promise.all(configVolumeDeployments.map(async ({ id }) => {
+    await removeDeploymentContainer(id);
+    await removeDeploymentConfigVolume(id);
+  }));
   // Supervisor writes intentionally tolerate rows deleted by other cleanup
   // paths. Workspace deletion needs a strict final write so connector auth is
   // durably inactive before the one-time WebSocket disconnect.
