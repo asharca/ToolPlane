@@ -9,7 +9,14 @@ import {
   resetAgentAttachmentLimit,
   setAgentAttachmentLimitBytes,
 } from '@/lib/agents/attachment-limits';
-import { updateHermesArchiveSettings } from '@/lib/admin/settings';
+import {
+  isValidMcpStartupTimeouts,
+  MAX_MCP_STARTUP_TIMEOUT_MS,
+  MIN_MCP_STARTUP_TIMEOUT_MS,
+  resetMcpStartupTimeoutSettings,
+  updateHermesArchiveSettings,
+  updateMcpStartupTimeoutSettings,
+} from '@/lib/admin/settings';
 import {
   isValidHermesArchiveMaxUploadMiB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
@@ -75,6 +82,43 @@ export async function updateHermesArchiveUploadLimitAction(
 
   try {
     await updateHermesArchiveSettings(hermesArchiveMaxUploadMiB);
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
+
+  revalidatePath('/admin/settings');
+  return { ok: true };
+}
+
+export async function updateMcpStartupTimeoutSettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  await requireAdmin();
+  const t = await getTranslations('admin');
+
+  try {
+    if (String(formData.get('intent') ?? '') === 'reset') {
+      await resetMcpStartupTimeoutSettings();
+    } else {
+      const idleSeconds = parseWholeNumber(formData, 'mcpStartupIdleTimeoutSeconds');
+      const maxSeconds = parseWholeNumber(formData, 'mcpStartupMaxTimeoutSeconds');
+      const idleTimeoutMs = idleSeconds === null ? null : idleSeconds * 1_000;
+      const maxTimeoutMs = maxSeconds === null ? null : maxSeconds * 1_000;
+      if (
+        idleTimeoutMs === null
+        || maxTimeoutMs === null
+        || !isValidMcpStartupTimeouts(idleTimeoutMs, maxTimeoutMs)
+      ) {
+        return {
+          error: t('errorMcpStartupTimeouts', {
+            min: MIN_MCP_STARTUP_TIMEOUT_MS / 1_000,
+            max: MAX_MCP_STARTUP_TIMEOUT_MS / 1_000,
+          }),
+        };
+      }
+      await updateMcpStartupTimeoutSettings(idleTimeoutMs, maxTimeoutMs);
+    }
   } catch {
     return { error: t('errorActionFailed') };
   }

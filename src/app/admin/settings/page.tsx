@@ -6,18 +6,25 @@ import {
   resolveAgentAttachmentLimit,
 } from '@/lib/agents/attachment-limits';
 import { AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
+import { McpRuntimeSettingsForm } from '@/components/admin/McpRuntimeSettingsForm';
 import { RuntimeSettingsForm } from '@/components/admin/RuntimeSettingsForm';
 import { SystemSettingsForm } from '@/components/admin/SystemSettingsForm';
-import { getHermesArchiveSettings } from '@/lib/admin/settings';
+import {
+  getHermesArchiveSettings,
+  MAX_MCP_STARTUP_TIMEOUT_MS,
+  MIN_MCP_STARTUP_TIMEOUT_MS,
+  resolveMcpStartupTimeoutSettings,
+} from '@/lib/admin/settings';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminSettingsPage() {
   await requireAdmin();
-  const [t, attachmentLimit, hermesArchiveSettings] = await Promise.all([
+  const [t, attachmentLimit, hermesArchiveSettings, mcpStartupTimeouts] = await Promise.all([
     getTranslations('admin'),
     resolveAgentAttachmentLimit(),
     getHermesArchiveSettings(),
+    resolveMcpStartupTimeoutSettings(),
   ]);
 
   return (
@@ -28,6 +35,13 @@ export default async function AdminSettingsPage() {
         source={attachmentLimit.source}
         minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
         maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
+      />
+      <McpRuntimeSettingsForm
+        idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
+        maxTimeoutMs={mcpStartupTimeouts.maxTimeoutMs}
+        source={mcpStartupTimeouts.source}
+        minTimeoutSeconds={MIN_MCP_STARTUP_TIMEOUT_MS / 1_000}
+        maxTimeoutSeconds={MAX_MCP_STARTUP_TIMEOUT_MS / 1_000}
       />
       <AdminPanel
         title={t('hermesArchiveImports')}

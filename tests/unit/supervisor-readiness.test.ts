@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
   materializeDeploymentConfigVolume: vi.fn(),
   removeDeploymentContainer: vi.fn(),
+  resolveMcpStartupTimeoutSettings: vi.fn(),
 }));
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -25,6 +26,9 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
+}));
+vi.mock('@/lib/admin/settings', () => ({
+  resolveMcpStartupTimeoutSettings: mocks.resolveMcpStartupTimeoutSettings,
 }));
 
 // Bridge launch tests exercise supervisor lifecycle behavior, not Docker volume
@@ -129,6 +133,11 @@ beforeEach(() => {
     redactionValues: [],
   });
   mocks.removeDeploymentContainer.mockReset().mockResolvedValue(undefined);
+  mocks.resolveMcpStartupTimeoutSettings.mockReset().mockResolvedValue({
+    idleTimeoutMs: 300_000,
+    maxTimeoutMs: 900_000,
+    source: 'database',
+  });
   nextPid = 99_000_000;
   vi.spyOn(process, 'kill').mockReturnValue(true);
   resetSupervisorGlobals();
@@ -163,6 +172,7 @@ describe('supervisor readiness races', () => {
     );
 
     expect(mocks.removeDeploymentContainer).not.toHaveBeenCalled();
+    expect(mocks.resolveMcpStartupTimeoutSettings).not.toHaveBeenCalled();
   });
 
   it('ignores a buffered LISTENING line after stop begins', async () => {
@@ -790,8 +800,8 @@ describe('supervisor readiness races', () => {
     expect(options.env).toMatchObject({
       MCP_CONTAINER_NAME: 'toolplane-mcp-runtime-progress',
       MCP_IMAGE: 'node:24-bookworm-slim',
-      MCP_STARTUP_IDLE_TIMEOUT_MS: expect.any(String),
-      MCP_STARTUP_MAX_TIMEOUT_MS: expect.any(String),
+      MCP_STARTUP_IDLE_TIMEOUT_MS: '300000',
+      MCP_STARTUP_MAX_TIMEOUT_MS: '900000',
       MCP_RUNTIME_EVENT_TOKEN: expect.any(String),
     });
     const eventToken = options.env?.MCP_RUNTIME_EVENT_TOKEN;
