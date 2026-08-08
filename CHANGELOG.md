@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/asharca/ToolPlane/releases/tag/v0.18.1) (2026-08-08)
+
+### What's Changed
+* fix: stream MCP config volume materialization by @renhedata in https://github.com/asharca/ToolPlane/pull/72
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.18.0...v0.18.1
+
 ## [0.18.0](https://github.com/asharca/ToolPlane/releases/tag/v0.18.0) (2026-08-08)
 
 ### What's Changed
