@@ -1,6 +1,5 @@
 import 'server-only';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -93,9 +92,16 @@ function dockerEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runDocker(args: string[], timeoutMs = CONFIG_HELPER_TIMEOUT_MS): Promise<string> {
+function runDocker(
+  args: string[],
+  timeoutMs = CONFIG_HELPER_TIMEOUT_MS,
+  input?: Buffer,
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: dockerEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('docker', args, {
+      env: dockerEnv(),
+      stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+    });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -121,10 +127,52 @@ function runDocker(args: string[], timeoutMs = CONFIG_HELPER_TIMEOUT_MS): Promis
         stdout += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stdout.length);
       }
     });
+    child.stdin?.once('error', (error) => finish(error));
     child.once('error', (error) => finish(error));
     child.once('exit', (code, signal) => {
       if (code === 0) finish();
       else finish(new Error(stderr.trim() || `Docker command failed (${signal ?? code ?? 'unknown'}).`));
+    });
+    if (input !== undefined) child.stdin?.end(input);
+  });
+}
+
+/**
+ * Runtime configuration is bounded to 2 MiB, so a short in-memory tar stream
+ * avoids a host bind mount while remaining safe to pass to a remote Docker
+ * daemon over stdin.
+ */
+function createStagedConfigArchive(stagingDirectory: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-C', stagingDirectory, '-cf', '-', '.'], {
+      env: dockerEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(Buffer.concat(chunks));
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(new Error(`Configuration archive command timed out after ${CONFIG_HELPER_TIMEOUT_MS}ms.`));
+    }, CONFIG_HELPER_TIMEOUT_MS);
+
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < MAX_DOCKER_ERROR_BYTES) {
+        stderr += chunk.toString().slice(0, MAX_DOCKER_ERROR_BYTES - stderr.length);
+      }
+    });
+    child.once('error', (error) => finish(error));
+    child.once('close', (code, signal) => {
+      if (code === 0) finish();
+      else finish(new Error(stderr.trim() || `Configuration archive command failed (${signal ?? code ?? 'unknown'}).`));
     });
   });
 }
@@ -171,24 +219,21 @@ function isPathInside(root: string, target: string): boolean {
   return target.startsWith(`${root}${path.sep}`);
 }
 
-function materializerHelperName(): string {
-  return `toolplane-mcp-config-${randomUUID()}`;
-}
-
 function assertDockerVolumeName(value: string): void {
   if (!DOCKER_VOLUME_NAME.test(value)) throw new Error('Invalid Docker volume name.');
 }
 
 /**
- * A stopped init container receives staged files through `docker cp`, then
- * copies them into the named volume without network access. This intentionally
+ * A short-lived init container receives the staged tar archive on stdin, then
+ * copies it into the named volume without network access. This intentionally
  * avoids a host bind mount: Docker may be reached through a remote socket.
  */
-export function deploymentConfigVolumeHelperArgs(volumeName: string, helperName: string): string[] {
+export function deploymentConfigVolumeHelperArgs(volumeName: string): string[] {
   assertDockerVolumeName(volumeName);
-  assertDockerVolumeName(helperName);
   const materializeScript = [
     'set -eu',
+    'mkdir -p /tmp/toolplane-config',
+    'tar -xof - -C /tmp/toolplane-config',
     `mkdir -p ${DEPLOYMENT_CONFIG_MOUNT_PATH}`,
     `rm -rf ${DEPLOYMENT_CONFIG_MOUNT_PATH}/* ${DEPLOYMENT_CONFIG_MOUNT_PATH}/.[!.]* ${DEPLOYMENT_CONFIG_MOUNT_PATH}/..?*`,
     `cp -R /tmp/toolplane-config/. ${DEPLOYMENT_CONFIG_MOUNT_PATH}/`,
@@ -199,8 +244,9 @@ export function deploymentConfigVolumeHelperArgs(volumeName: string, helperName:
   ].join('; ');
 
   return [
-    'create',
-    '--name', helperName,
+    'run',
+    '--rm',
+    '-i',
     '--label', 'toolplane.mcp-config-materializer=true',
     '--network', 'none',
     '--read-only',
@@ -341,8 +387,9 @@ async function writeStagedConfigFiles(files: MaterializedConfigFile[]): Promise<
 
 /**
  * Decrypt and project a deployment's text files into its dedicated Docker
- * volume. The temporary host directory crosses the Docker boundary only via
- * `docker cp`, which works with a remote Docker socket as well as local Docker.
+ * volume. The temporary host directory crosses the Docker boundary as a tar
+ * stream over stdin, which works with a remote Docker socket as well as local
+ * Docker.
  */
 export async function materializeDeploymentConfigVolume(
   deploymentId: string,
@@ -364,23 +411,16 @@ export async function materializeDeploymentConfigVolume(
   const files = materializeRows(rows);
   const redactionValues = deploymentConfigRedactionValues(files.map((file) => file.content));
   const stagingDirectory = await writeStagedConfigFiles(files);
-  const helperName = materializerHelperName();
   let operationError: unknown;
   try {
+    const archive = await createStagedConfigArchive(stagingDirectory);
     await runDocker(['volume', 'create', volumeName]);
-    await runDocker(deploymentConfigVolumeHelperArgs(volumeName, helperName));
-    await runDocker(['cp', `${stagingDirectory}${path.sep}.`, `${helperName}:/tmp/toolplane-config`]);
-    await runDocker(['start', '--attach', helperName]);
+    await runDocker(deploymentConfigVolumeHelperArgs(volumeName), CONFIG_HELPER_TIMEOUT_MS, archive);
   } catch (error) {
     operationError = error;
     throw error;
   } finally {
     const cleanupErrors: unknown[] = [];
-    try {
-      await runDockerIdempotent(['rm', '-f', helperName], /no such container/i);
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
     try {
       await rm(stagingDirectory, { recursive: true, force: true, maxRetries: 2 });
     } catch (error) {

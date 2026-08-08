@@ -34,14 +34,19 @@ describe('deployment configuration volume helpers', () => {
     expect(isDeploymentConfigText('\uD800')).toBe(false);
   });
 
-  it('builds a least-privilege, no-network volume helper without a bind mount', () => {
-    const args = deploymentConfigVolumeHelperArgs('toolplane_mcp_config_dep1', 'toolplane-mcp-config-helper');
+  it('builds a restricted tar-streaming volume helper without a bind mount', () => {
+    const args = deploymentConfigVolumeHelperArgs('toolplane_mcp_config_dep1');
+    const script = args.at(-1);
 
     expect(args).toEqual(expect.arrayContaining([
-      'create',
+      'run',
+      '--rm',
+      '-i',
       '--network',
       'none',
       '--read-only',
+      '--tmpfs',
+      '/tmp:rw,noexec,nosuid,nodev,size=64m',
       '--cap-drop',
       'ALL',
       '--security-opt',
@@ -49,7 +54,10 @@ describe('deployment configuration volume helpers', () => {
       '--mount',
       `type=volume,src=toolplane_mcp_config_dep1,dst=${DEPLOYMENT_CONFIG_MOUNT_PATH}`,
     ]));
+    expect(args).not.toContain('create');
     expect(args).not.toContain('-v');
     expect(args).not.toContain('--volume');
+    expect(script).toContain('tar -xof - -C /tmp/toolplane-config');
+    expect(script).not.toContain('docker cp');
   });
 });
