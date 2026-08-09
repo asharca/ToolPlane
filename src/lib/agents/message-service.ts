@@ -4,7 +4,7 @@ import { convertToModelMessages, generateText, stepCountIs, type UIMessage } fro
 import { db } from '@/lib/db';
 import { getAgent, getAgentForRequest } from '@/lib/agents/queries';
 import {
-  appendMessage,
+  appendConversationTurn,
   createConversation,
   ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
@@ -49,6 +49,24 @@ export async function runAgentMessage(params: {
   defaults?: Partial<AgentMessageBody>;
 }): Promise<AgentMessageResult> {
   const agent = await getAgentForRequest(params.agentId, params.userId);
+  if (!agent) return { status: 404, body: { error: 'Agent not found' } };
+  return runLoadedAgentMessage({
+    agent,
+    rawBody: params.rawBody,
+    defaults: params.defaults,
+  });
+}
+
+// Workspace-scoped variant for authenticated control-plane integrations. The
+// URL workspace remains a hard boundary even when the caller can access more
+// than one workspace.
+export async function runWorkspaceAgentMessage(params: {
+  workspaceId: string;
+  agentId: string;
+  rawBody: unknown;
+  defaults?: Partial<AgentMessageBody>;
+}): Promise<AgentMessageResult> {
+  const agent = await getAgent(params.workspaceId, params.agentId);
   if (!agent) return { status: 404, body: { error: 'Agent not found' } };
   return runLoadedAgentMessage({
     agent,
@@ -190,8 +208,11 @@ async function runLoadedAgentMessage(params: {
   }
   const silent = isSilentAgentReply(text);
 
-  await appendMessage(conversation.id, 'user', userMessage.parts as never);
-  await appendMessage(conversation.id, 'assistant', [{ type: 'text', text }] as never);
+  await appendConversationTurn(
+    conversation.id,
+    userMessage.parts as never,
+    [{ type: 'text', text }] as never,
+  );
 
   return {
     status: 200,

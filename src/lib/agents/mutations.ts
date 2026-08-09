@@ -21,9 +21,24 @@ function slugify(input: string): string {
   return base || 'agent';
 }
 
-async function uniqueAgentSlug(workspaceId: string, baseSlug: string): Promise<string> {
+async function lockAgentSlugNamespace(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`agent-slug:${workspaceId}`}, 0)
+    )::text AS "lock"
+  `;
+}
+
+async function uniqueAgentSlug(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  baseSlug: string,
+): Promise<string> {
   let slug = baseSlug;
-  for (let i = 1; await db.agent.findFirst({ where: { workspaceId, slug } }); i += 1) {
+  for (let i = 1; await tx.agent.findFirst({ where: { workspaceId, slug } }); i += 1) {
     slug = `${baseSlug}-${i}`;
   }
   return slug;
@@ -70,9 +85,13 @@ function normalizeCloneOptions(options: AgentCloneOptions | undefined): Required
   };
 }
 
-async function uniqueSandboxSlug(workspaceId: string, baseSlug: string): Promise<string> {
+async function uniqueSandboxSlug(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  baseSlug: string,
+): Promise<string> {
   let slug = `${baseSlug}-runtime`;
-  for (let i = 1; await db.sandbox.findFirst({ where: { workspaceId, slug } }); i += 1) {
+  for (let i = 1; await tx.sandbox.findFirst({ where: { workspaceId, slug } }); i += 1) {
     slug = `${baseSlug}-runtime-${i}`;
   }
   return slug;
@@ -146,13 +165,14 @@ export async function createAgent(
   options: CreateAgentOptions = {},
 ) {
   const cleanName = name.trim() || 'New agent';
-  const slug = await uniqueAgentSlug(workspaceId, slugify(cleanName));
-  const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND
-    ? await uniqueSandboxSlug(workspaceId, slug)
-    : undefined;
-  return db.$transaction((tx) => (
-    createAgentRecords(tx, workspaceId, cleanName, slug, options, sandboxSlug)
-  ));
+  return db.$transaction(async (tx) => {
+    await lockAgentSlugNamespace(tx, workspaceId);
+    const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+    const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND
+      ? await uniqueSandboxSlug(tx, workspaceId, slug)
+      : undefined;
+    return createAgentRecords(tx, workspaceId, cleanName, slug, options, sandboxSlug);
+  });
 }
 
 export async function cloneAgent(
@@ -215,7 +235,6 @@ export async function cloneAgent(
   if (!source) return null;
 
   const cleanName = requestedName?.trim() || `${source.name} copy`;
-  const slug = await uniqueAgentSlug(workspaceId, slugify(cleanName));
   const runtime: CreateAgentOptions & { runtime: 'native' | 'hermes' } = source.runtime?.workspaceId === workspaceId
     && source.runtime.kind === HERMES_RUNTIME_KIND
     && source.runtime.sandbox.workspaceId === workspaceId
@@ -227,11 +246,12 @@ export async function cloneAgent(
   const effectiveCloneOptions = runtime.runtime === HERMES_RUNTIME_KIND && cloneOptions.copyHermesVolume
     ? { ...cloneOptions, copyConversations: true }
     : cloneOptions;
-  const sandboxSlug = runtime.runtime === HERMES_RUNTIME_KIND
-    ? await uniqueSandboxSlug(workspaceId, slug)
-    : undefined;
-
   return db.$transaction(async (tx) => {
+    await lockAgentSlugNamespace(tx, workspaceId);
+    const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+    const sandboxSlug = runtime.runtime === HERMES_RUNTIME_KIND
+      ? await uniqueSandboxSlug(tx, workspaceId, slug)
+      : undefined;
     const providerId = runtime.runtime === HERMES_RUNTIME_KIND
       ? null
       : source.providerId
@@ -243,7 +263,7 @@ export async function cloneAgent(
       const requestedIds = source.modelProviders.length > 0
         ? source.modelProviders.map((link) => link.providerId)
         : source.providerId ? [source.providerId] : [];
-      for (const requestedId of [...new Set(requestedIds)]) {
+      for (const requestedId of [...new Set(requestedIds)].sort()) {
         if (await lockProvider(tx, workspaceId, requestedId)) modelProviderIds.push(requestedId);
       }
     }
@@ -589,6 +609,21 @@ export type AgentConfig = {
   maxSteps: number;
 };
 
+export type AgentToolSelection = {
+  deploymentIds: string[];
+  installedSkillIds: string[];
+  toolkitIds: string[];
+  sandboxIds?: string[];
+  subAgentIds?: string[];
+};
+
+export class AgentConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentConfigurationError';
+  }
+}
+
 async function lockProvider(
   tx: Prisma.TransactionClient,
   workspaceId: string,
@@ -601,6 +636,139 @@ async function lockProvider(
     FOR UPDATE
   `;
   return providers.length > 0;
+}
+
+function uniqueIds(ids: readonly string[]): string[] {
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function assertExactResources(
+  label: string,
+  requestedIds: readonly string[],
+  rows: readonly { id: string }[],
+) {
+  const found = new Set(rows.map(({ id }) => id));
+  const missing = requestedIds.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new AgentConfigurationError(`Unknown or unavailable ${label}: ${missing.join(', ')}`);
+  }
+}
+
+// Creates the Agent record, its model configuration, and all bindings in one
+// transaction. This is the safe write primitive for API/MCP callers: unlike
+// the forgiving dashboard mutations, a foreign or stale resource ID aborts
+// the whole operation instead of being silently dropped.
+export async function createConfiguredAgent(
+  workspaceId: string,
+  cfg: AgentConfig,
+  tools: AgentToolSelection,
+  options: CreateAgentOptions = {},
+) {
+  const cleanName = cfg.name.trim() || 'New agent';
+  const deploymentIds = uniqueIds(tools.deploymentIds);
+  const installedSkillIds = uniqueIds(tools.installedSkillIds);
+  const toolkitIds = uniqueIds(tools.toolkitIds);
+  const sandboxIds = uniqueIds(tools.sandboxIds ?? []);
+  const subAgentIds = uniqueIds(tools.subAgentIds ?? []);
+
+  return db.$transaction(async (tx) => {
+    await lockAgentSlugNamespace(tx, workspaceId);
+    const slug = await uniqueAgentSlug(tx, workspaceId, slugify(cleanName));
+    const sandboxSlug = options.runtime === HERMES_RUNTIME_KIND
+      ? await uniqueSandboxSlug(tx, workspaceId, slug)
+      : undefined;
+    const isHermes = options.runtime === HERMES_RUNTIME_KIND;
+    const modelProviderIds = isHermes
+      ? uniqueIds(cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : [])).sort()
+      : [];
+    if (!isHermes && cfg.model && !cfg.providerId) {
+      throw new AgentConfigurationError('A model requires a model provider.');
+    }
+    if (isHermes) {
+      for (const providerId of modelProviderIds) {
+        if (!await lockProvider(tx, workspaceId, providerId)) {
+          throw new AgentConfigurationError(`Unknown model provider: ${providerId}`);
+        }
+      }
+    } else if (cfg.providerId && !await lockProvider(tx, workspaceId, cfg.providerId)) {
+      throw new AgentConfigurationError(`Unknown model provider: ${cfg.providerId}`);
+    }
+
+    // Interactive transactions use one pg connection; keep these awaits
+    // sequential so the adapter never issues overlapping client.query calls.
+    const deployments = await tx.deployment.findMany({
+      where: {
+        id: { in: deploymentIds },
+        workspaceId,
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+      select: { id: true },
+    });
+    const skills = await tx.installedSkill.findMany({
+      where: { id: { in: installedSkillIds }, workspaceId },
+      select: { id: true },
+    });
+    const toolkits = await tx.toolkit.findMany({
+      where: { id: { in: toolkitIds }, workspaceId },
+      select: { id: true },
+    });
+    const sandboxes = await tx.sandbox.findMany({
+      where: {
+        id: { in: sandboxIds },
+        workspaceId,
+        kind: { not: HERMES_RUNTIME_KIND },
+        deployment: { status: { notIn: UNAVAILABLE_SANDBOX_STATUSES } },
+      },
+      select: { id: true },
+    });
+    const subAgents = await tx.agent.findMany({
+      where: { id: { in: subAgentIds }, workspaceId },
+      select: { id: true },
+    });
+    assertExactResources('MCP deployment', deploymentIds, deployments);
+    assertExactResources('installed skill', installedSkillIds, skills);
+    assertExactResources('toolkit', toolkitIds, toolkits);
+    assertExactResources('sandbox', sandboxIds, sandboxes);
+    assertExactResources('sub-agent', subAgentIds, subAgents);
+
+    const agent = await createAgentRecords(
+      tx,
+      workspaceId,
+      cleanName,
+      slug,
+      options,
+      sandboxSlug,
+    );
+    await tx.agent.update({
+      where: { id: agent.id },
+      data: {
+        name: cleanName,
+        systemPrompt: isHermes ? null : cfg.systemPrompt,
+        providerId: isHermes ? null : cfg.providerId,
+        model: isHermes ? null : cfg.providerId ? cfg.model : null,
+        maxSteps: cfg.maxSteps,
+      },
+    });
+    await tx.agentModelProvider.createMany({
+      data: modelProviderIds.map((providerId) => ({ agentId: agent.id, providerId })),
+    });
+    await tx.agentServer.createMany({
+      data: deployments.map(({ id }) => ({ agentId: agent.id, deploymentId: id })),
+    });
+    await tx.agentSkill.createMany({
+      data: skills.map(({ id }) => ({ agentId: agent.id, installedSkillId: id })),
+    });
+    await tx.agentToolkit.createMany({
+      data: toolkits.map(({ id }) => ({ agentId: agent.id, toolkitId: id })),
+    });
+    await tx.agentSandbox.createMany({
+      data: sandboxes.map(({ id }) => ({ agentId: agent.id, sandboxId: id })),
+    });
+    await tx.agentSubAgent.createMany({
+      data: subAgents.map(({ id }) => ({ parentId: agent.id, childId: id })),
+    });
+    return agent;
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 export async function updateAgent(workspaceId: string, agentId: string, cfg: AgentConfig) {
@@ -616,7 +784,7 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     const modelProviderIds: string[] = [];
     if (isHermes) {
       const requestedIds = cfg.providerIds ?? (cfg.providerId ? [cfg.providerId] : []);
-      for (const requestedId of [...new Set(requestedIds.filter(Boolean))]) {
+      for (const requestedId of [...new Set(requestedIds.filter(Boolean))].sort()) {
         if (await lockProvider(tx, workspaceId, requestedId)) modelProviderIds.push(requestedId);
       }
     } else if (providerId && !await lockProvider(tx, workspaceId, providerId)) {
@@ -668,13 +836,7 @@ export async function setHermesRuntimeEnv(
 export async function setAgentTools(
   workspaceId: string,
   agentId: string,
-  tools: {
-    deploymentIds: string[];
-    installedSkillIds: string[];
-    toolkitIds: string[];
-    sandboxIds?: string[];
-    subAgentIds?: string[];
-  },
+  tools: AgentToolSelection,
 ) {
   const agent = await db.agent.findFirst({ where: { id: agentId, workspaceId }, select: { id: true } });
   if (!agent) return;
@@ -877,5 +1039,48 @@ export async function appendMessage(
       }
     }
     return tx.message.create({ data: { conversationId, role, parts } });
+  });
+}
+
+export async function appendConversationTurn(
+  conversationId: string,
+  userParts: Prisma.InputJsonValue,
+  assistantParts: Prisma.InputJsonValue,
+) {
+  return db.$transaction(async (tx) => {
+    const title = conversationTitleFromParts(userParts);
+    if (title) {
+      await tx.conversation.updateMany({
+        where: {
+          id: conversationId,
+          title: null,
+          messages: { none: { role: 'user' } },
+        },
+        data: { title },
+      });
+    }
+
+    // PostgreSQL's now() is stable for an entire transaction. Supply adjacent
+    // timestamps so the existing createdAt ordering always keeps the pair in
+    // user/assistant order while both writes still commit atomically.
+    const userCreatedAt = new Date();
+    const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
+    const user = await tx.message.create({
+      data: {
+        conversationId,
+        role: 'user',
+        parts: userParts,
+        createdAt: userCreatedAt,
+      },
+    });
+    const assistant = await tx.message.create({
+      data: {
+        conversationId,
+        role: 'assistant',
+        parts: assistantParts,
+        createdAt: assistantCreatedAt,
+      },
+    });
+    return { user, assistant };
   });
 }
