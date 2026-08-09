@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import { Inter, Geist_Mono } from 'next/font/google';
-import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getTranslations } from 'next-intl/server';
 import './globals.css';
 import 'streamdown/styles.css';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
+import { siteOrigin } from './(site)/_lib/metadata';
 
 const inter = Inter({
   variable: '--font-inter',
@@ -19,6 +19,7 @@ const geistMono = Geist_Mono({
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('metadata');
   return {
+    metadataBase: siteOrigin(),
     title: t('siteTitle'),
     description: t('siteDescription'),
   };
@@ -38,16 +39,14 @@ export default async function RootLayout({
       className={`${inter.variable} ${geistMono.variable}`}
     >
       <body className="min-h-dvh bg-background font-sans text-foreground antialiased">
-        <NextIntlClientProvider>
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            enableSystem
-            disableTransitionOnChange
-          >
-            {children}
-          </ThemeProvider>
-        </NextIntlClientProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

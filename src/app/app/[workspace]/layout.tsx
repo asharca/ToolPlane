@@ -6,6 +6,9 @@ import {
 } from '@/lib/workspace/queries';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 import { UserTimeZoneProvider } from '@/components/timezone/UserTimeZoneProvider';
+import { NextIntlClientProvider } from 'next-intl';
+import { getMessages } from 'next-intl/server';
+import { runtimeSupportEmail } from '@/lib/site-runtime';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,21 +25,32 @@ export default async function WorkspaceLayout({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const workspaces = await listWorkspacesForUser(user.id);
+  const messages = await getMessages();
 
   return (
-    <UserTimeZoneProvider
-      detectedTimeZone={user.detectedTimeZone}
-      timeZoneOverride={user.timeZoneOverride}
+    <NextIntlClientProvider
+      messages={{
+        common: messages.common,
+        console: messages.console,
+        auth: messages.auth,
+        agentMarket: messages.agentMarket,
+      }}
     >
-      <DashboardChrome
-        slug={ws.slug}
-        workspaceName={ws.name}
-        userLabel={user.name ?? user.email}
-        workspaces={workspaces}
-        isAdmin={user.role === 'admin'}
+      <UserTimeZoneProvider
+        detectedTimeZone={user.detectedTimeZone}
+        timeZoneOverride={user.timeZoneOverride}
       >
-        {children}
-      </DashboardChrome>
-    </UserTimeZoneProvider>
+        <DashboardChrome
+          slug={ws.slug}
+          workspaceName={ws.name}
+          userLabel={user.name ?? user.email}
+          workspaces={workspaces}
+          supportEmail={runtimeSupportEmail()}
+          isAdmin={user.role === 'admin'}
+        >
+          {children}
+        </DashboardChrome>
+      </UserTimeZoneProvider>
+    </NextIntlClientProvider>
   );
 }

@@ -12,7 +12,6 @@ import {
   DEFAULT_CONNECTOR_REMOTE_ROOT,
   hashConnectorToken,
   isConnectorToken,
-  type SandboxConnectorConfig,
 } from '@/lib/sandboxes/connector';
 import { connectorStatus } from '@/lib/sandboxes/connector-broker';
 import { readConnectorSetupTokenCookie } from '@/lib/sandboxes/connector-setup-token';
@@ -44,29 +43,6 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 export const dynamic = 'force-dynamic';
 
 const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
-
-function modeLabel(kind: string): string {
-  if (kind === 'connector') return 'User connector';
-  if (kind === 'ssh') return 'Legacy direct SSH disabled';
-  if (kind === 'host') return 'Disabled host root';
-  return 'Docker Linux';
-}
-
-function backingLabel(sandbox: { kind: string; image: string | null; config: unknown; hostRoot?: string | null }): string {
-  if (sandbox.kind === 'connector') {
-    const connector = connectorFromConfig(sandbox.config);
-    return connector
-      ? `WebSocket agent -> ${connector.remoteRoot}`
-      : 'Connector config missing';
-  }
-  if (sandbox.kind === 'host') return 'Legacy host pass-through is disabled';
-  if (sandbox.kind === 'ssh') return 'Legacy direct SSH is disabled';
-  return sandbox.image ?? '';
-}
-
-function connectorPortLabel(connector: SandboxConnectorConfig | null): string {
-  return connector ? 'ws agent' : 'missing connector';
-}
 
 function CommandBlock({ label, command, copyLabel }: { label: string; command: string; copyLabel: string }) {
   return (
@@ -129,6 +105,27 @@ export default async function SandboxDetailPage({
   ]
     .includes(status);
   const connector = connectorFromConfig(sandbox.config);
+  const mode = sandbox.kind === 'connector'
+    ? t('userConnector')
+    : sandbox.kind === 'ssh'
+      ? t('legacySshDisabled')
+      : sandbox.kind === 'host'
+        ? t('disabledHostMode')
+        : t('dockerLinux');
+  const backingStore = sandbox.kind === 'connector'
+    ? connector
+      ? t('connectorBackingStore', { root: connector.remoteRoot })
+      : t('connectorConfigMissing')
+    : sandbox.kind === 'host'
+      ? t('legacyHostDisabled')
+      : sandbox.kind === 'ssh'
+        ? t('legacySshDisabled')
+        : sandbox.image ?? '';
+  const network = sandbox.kind === 'connector'
+    ? connector ? t('websocketAgent') : t('missingConnector')
+    : sandbox.network === 'none'
+      ? t('networkNone')
+      : t('networkIsolated');
   const tokenParam = connector ? (await readConnectorSetupTokenCookie(sandbox.id))?.trim() ?? '' : '';
   const token = connector
     && isConnectorToken(tokenParam)
@@ -241,7 +238,7 @@ export default async function SandboxDetailPage({
       />
       <DashboardHeader
         breadcrumb={[
-          { label: 'Sandboxes', href: `/app/${slug}/sandboxes` },
+          { label: t('sandboxes'), href: `/app/${slug}/sandboxes` },
           { label: sandbox.name },
         ]}
       />
@@ -258,13 +255,13 @@ export default async function SandboxDetailPage({
                   <span className="font-mono">{sandbox.slug}</span>
                   <span className="inline-flex items-center gap-1">
                     {sandbox.kind === 'connector' ? <Laptop className="size-3.5" /> : <Cpu className="size-3.5" />}
-                    {modeLabel(sandbox.kind)}
+                    {mode}
                   </span>
                   <span className="max-w-[22rem] truncate font-mono">
-                    {backingLabel(sandbox)}
+                    {backingStore}
                   </span>
                   <span className="font-mono">
-                    {sandbox.kind === 'connector' ? connectorPortLabel(connector) : sandbox.network}
+                    {network}
                   </span>
                   <span>{sandbox.agentLinks.length} {t('agents')}</span>
                 </div>

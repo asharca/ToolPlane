@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { ArrowLeft, BadgeCheck, Box, Network, Star, Wrench } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketServer, getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -15,9 +15,10 @@ export default async function McpMarketDetailPage({
 }: {
   params: Promise<{ workspace: string; serverSlug: string }>;
 }) {
-  const [{ workspace: slug, serverSlug }, t] = await Promise.all([
+  const [{ workspace: slug, serverSlug }, t, locale] = await Promise.all([
     params,
     getTranslations('console.market'),
+    getLocale(),
   ]);
   const user = await getCurrentUser();
   if (!user) {
@@ -45,14 +46,14 @@ export default async function McpMarketDetailPage({
           )}
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{server.name}</h1>
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">{server.name}</h2>
               <span className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
                 <BadgeCheck className="size-3.5" />{t('verified')}
               </span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{server.author ?? t('unknownPublisher')}</p>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{server.stars.toLocaleString()}</span>
+              <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{server.stars.toLocaleString(locale)}</span>
               {typeof server.verifiedTools === 'number' ? <span>{t('verifiedTools', { count: server.verifiedTools })}</span> : null}
               {server.isOfficial ? <span>{t('official')}</span> : null}
             </div>

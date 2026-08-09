@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { ServerCard } from '@/components/cards/ServerCard';
 import { ClientCard } from '@/components/cards/ClientCard';
 import { SkillCard } from '@/components/cards/SkillCard';
+import { AgentListingCard } from '@/components/cards/AgentListingCard';
 
 describe('entity cards', () => {
   it('ServerCard renders name, description, author, link and star count', () => {
@@ -83,5 +84,32 @@ describe('entity cards', () => {
       'href',
       '/client/zed',
     );
+  });
+
+  it('AgentListingCard preserves the publisher and listing slugs', () => {
+    render(
+      <AgentListingCard
+        installLabel="Installs"
+        agent={{
+          id: 'listing-1',
+          slug: 'research-copilot',
+          name: 'Research Copilot',
+          summary: 'Research with reviewed sources',
+          author: null,
+          iconUrl: null,
+          installCount: 1200,
+          categories: [{ name: 'Research' }],
+          publisherWorkspace: { slug: 'acme-labs', name: 'Acme Labs' },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Research Copilot/ })).toHaveAttribute(
+      'href',
+      '/agents/acme-labs/research-copilot',
+    );
+    expect(screen.getByText('Acme Labs')).toBeInTheDocument();
+    expect(screen.getByText('1.2k')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Installs: 1,200/ })).toBeInTheDocument();
   });
 });

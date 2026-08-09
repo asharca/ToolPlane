@@ -27,6 +27,15 @@ const toolkits: ToolkitRow[] = [
 ];
 
 describe('ToolkitsBrowser', () => {
+  it('opens the toolkit market from its canonical market route', () => {
+    render(<ToolkitsBrowser slug="acme" toolkits={toolkits} />);
+
+    expect(screen.getByRole('link', { name: 'Browse Market' })).toHaveAttribute(
+      'href',
+      '/app/acme/market/toolkits',
+    );
+  });
+
   it('opens and explicitly closes the labelled create form', async () => {
     const user = userEvent.setup();
     render(<ToolkitsBrowser slug="acme" toolkits={toolkits} />);

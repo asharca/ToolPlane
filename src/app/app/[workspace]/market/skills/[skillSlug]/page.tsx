@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { ArrowLeft, Brain, FileArchive, GitBranch, Star } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketSkill, getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -15,9 +15,10 @@ export default async function SkillMarketDetailPage({
 }: {
   params: Promise<{ workspace: string; skillSlug: string }>;
 }) {
-  const [{ workspace: slug, skillSlug }, t] = await Promise.all([
+  const [{ workspace: slug, skillSlug }, t, locale] = await Promise.all([
     params,
     getTranslations('console.market'),
+    getLocale(),
   ]);
   const user = await getCurrentUser();
   if (!user) {
@@ -46,12 +47,12 @@ export default async function SkillMarketDetailPage({
           )}
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{skill.name}</h1>
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">{skill.name}</h2>
               <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{t('curated')}</span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{skill.author ?? t('unknownPublisher')}</p>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{skill.score.toLocaleString()}</span>
+              <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{skill.score.toLocaleString(locale)}</span>
               <span className="inline-flex items-center gap-1"><FileArchive className="size-3.5" />{t('bundledFiles', { count: fileCount })}</span>
               <span className="inline-flex items-center gap-1"><GitBranch className="size-3.5" />{skill.githubSource ? t('github') : t('catalog')}</span>
             </div>

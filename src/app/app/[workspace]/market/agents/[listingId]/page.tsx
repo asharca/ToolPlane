@@ -83,7 +83,7 @@ export default async function AgentMarketDetailPage({
               </span>
               <span className="inline-flex items-center gap-1"><Copy className="size-3.5" />{t('cloneCount', { count: listing.installCount })}</span>
             </div>
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{listing.name}</h1>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{listing.name}</h2>
             {author ? <p className="mt-2 text-sm text-muted-foreground">{t('publishedBy', { name: author })}</p> : null}
             {listing.summary ? <p className="mt-4 max-w-3xl text-sm leading-6 text-muted-foreground">{listing.summary}</p> : null}
             <div className="mt-4 flex flex-wrap gap-2">
@@ -109,7 +109,7 @@ export default async function AgentMarketDetailPage({
           <section className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center gap-2.5">
               <Bot className="size-[18px] text-muted-foreground" />
-              <h2 className="font-semibold text-foreground">{t('howItWorks')}</h2>
+              <h3 className="font-semibold text-foreground">{t('howItWorks')}</h3>
             </div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('promptDescription')}</p>
             {rootAgent.systemPrompt ? (
@@ -124,7 +124,7 @@ export default async function AgentMarketDetailPage({
           <section className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center gap-2.5">
               <Boxes className="size-[18px] text-muted-foreground" />
-              <h2 className="font-semibold text-foreground">{t('includedTools')}</h2>
+              <h3 className="font-semibold text-foreground">{t('includedTools')}</h3>
             </div>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('includedToolsDescription')}</p>
             <div className="mt-4 divide-y divide-border border-y border-border">
@@ -159,7 +159,7 @@ export default async function AgentMarketDetailPage({
             <section className="rounded-lg border border-border bg-card p-5">
               <div className="flex items-center gap-2.5">
                 <Network className="size-[18px] text-muted-foreground" />
-                <h2 className="font-semibold text-foreground">{t('agentStructure')}</h2>
+                <h3 className="font-semibold text-foreground">{t('agentStructure')}</h3>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {subAgents.map((agent) => (
@@ -176,7 +176,7 @@ export default async function AgentMarketDetailPage({
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
           <section className="rounded-xl border border-border bg-card p-5">
             <ShieldCheck className="size-5 text-foreground" />
-            <h2 className="mt-3 text-lg font-semibold text-foreground">{t('clonePanelTitle')}</h2>
+            <h3 className="mt-3 text-lg font-semibold text-foreground">{t('clonePanelTitle')}</h3>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('clonePanelDescription')}</p>
             {cloneError ? <p role="alert" className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">{cloneError}</p> : null}
             <div className="mt-5">
@@ -196,7 +196,7 @@ export default async function AgentMarketDetailPage({
           </section>
 
           <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold text-foreground">{t('configurationSummary')}</h2>
+            <h3 className="text-sm font-semibold text-foreground">{t('configurationSummary')}</h3>
             <dl className="mt-3 divide-y divide-border text-xs">
               {[
                 [t('modelPreference'), rootAgent.modelRequirement?.model ?? t('notSpecified')],

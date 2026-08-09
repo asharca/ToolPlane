@@ -64,6 +64,7 @@ function renderChrome() {
       slug="smoke"
       workspaceName="Smoke Workspace"
       userLabel="smoke@example.com"
+      supportEmail="support@example.com"
       workspaces={workspaces}
     >
       <main>Workspace content</main>

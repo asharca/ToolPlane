@@ -6,7 +6,7 @@ type SkillCardData = Pick<
   'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'score'
 > & { categories?: { name: string }[] };
 
-export function SkillCard({ skill }: { skill: SkillCardData }) {
+export function SkillCard({ skill, statLabel }: { skill: SkillCardData; statLabel?: string }) {
   return (
     <EntityCard
       href={`/tools/skills/${skill.slug}`}
@@ -15,7 +15,7 @@ export function SkillCard({ skill }: { skill: SkillCardData }) {
       author={skill.author}
       iconUrl={skill.iconUrl}
       category={skill.categories?.[0]?.name ?? null}
-      stat={<ScoreStat value={skill.score} />}
+      stat={<ScoreStat value={skill.score} label={statLabel} />}
     />
   );
 }

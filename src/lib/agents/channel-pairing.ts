@@ -429,7 +429,15 @@ function unsupportedPairing(platform: string): AgentChannelPairingState {
   };
 }
 
-export async function requestAgentChannelPairing(workspaceId: string, connectionId: string) {
+type AgentChannelPairingResult = {
+  error?: string;
+  pairing?: AgentChannelPairingState;
+};
+
+export async function requestAgentChannelPairing(
+  workspaceId: string,
+  connectionId: string,
+): Promise<AgentChannelPairingResult> {
   const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
   if (!row) return { error: 'Channel connection not found.' };
   const platform = getMessagingPlatform(row.platform);
@@ -463,7 +471,10 @@ export async function requestAgentChannelPairing(workspaceId: string, connection
   }
 }
 
-export async function checkAgentChannelPairing(workspaceId: string, connectionId: string) {
+export async function checkAgentChannelPairing(
+  workspaceId: string,
+  connectionId: string,
+): Promise<AgentChannelPairingResult> {
   const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
   if (!row) return { error: 'Channel connection not found.' };
   const platform = getMessagingPlatform(row.platform);

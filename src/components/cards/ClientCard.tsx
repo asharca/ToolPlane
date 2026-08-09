@@ -6,7 +6,7 @@ type ClientCardData = Pick<
   'slug' | 'name' | 'description' | 'author' | 'iconUrl' | 'stars'
 > & { categories?: { name: string }[] };
 
-export function ClientCard({ client }: { client: ClientCardData }) {
+export function ClientCard({ client, statLabel }: { client: ClientCardData; statLabel?: string }) {
   return (
     <EntityCard
       href={`/client/${client.slug}`}
@@ -15,7 +15,7 @@ export function ClientCard({ client }: { client: ClientCardData }) {
       author={client.author}
       iconUrl={client.iconUrl}
       category={client.categories?.[0]?.name ?? null}
-      stat={<StarStat value={client.stars} />}
+      stat={<StarStat value={client.stars} label={statLabel} />}
     />
   );
 }

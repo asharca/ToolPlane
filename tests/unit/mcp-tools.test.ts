@@ -7,13 +7,13 @@ type ToolResult = {
   isError?: boolean;
 } | null;
 type RpcResponse = {
-  result: {
+  result?: {
     serverInfo?: { name: string; version: string };
     protocolVersion?: string;
     tools?: unknown[];
     content?: Array<{ type?: string; text: string }>;
   };
-  error?: unknown;
+  error?: { code: number; message?: string };
 };
 
 const callTool = mcp.callTool as (
@@ -22,7 +22,7 @@ const callTool = mcp.callTool as (
 ) => ToolResult;
 const createRpcHandler = mcp.createRpcHandler as (
   opts?: { name?: string; version?: string },
-) => (msg: unknown) => RpcResponse;
+) => (msg: unknown) => RpcResponse | null;
 const TOOLS = mcp.TOOLS as Array<{ name: string }>;
 
 describe('MCP tool dispatch', () => {
@@ -43,17 +43,17 @@ describe('MCP tool dispatch', () => {
   });
 
   it('add sums numbers and flags non-numeric input', () => {
-    expect(callTool('add', { a: 2, b: 3 }).content[0].text).toBe('5');
-    expect(callTool('add', { a: 'x', b: 3 }).isError).toBe(true);
+    expect(callTool('add', { a: 2, b: 3 })?.content[0].text).toBe('5');
+    expect(callTool('add', { a: 'x', b: 3 })?.isError).toBe(true);
   });
 
   it('uppercase upper-cases text', () => {
-    expect(callTool('uppercase', { text: 'abc' }).content[0].text).toBe('ABC');
+    expect(callTool('uppercase', { text: 'abc' })?.content[0].text).toBe('ABC');
   });
 
   it('random_number stays within bounds', () => {
     for (let i = 0; i < 25; i += 1) {
-      const n = Number(callTool('random_number', { min: 5, max: 7 }).content[0].text);
+      const n = Number(callTool('random_number', { min: 5, max: 7 })?.content[0].text);
       expect(n).toBeGreaterThanOrEqual(5);
       expect(n).toBeLessThanOrEqual(7);
     }
@@ -69,13 +69,13 @@ describe('createRpcHandler', () => {
 
   it('answers initialize with serverInfo', () => {
     const res = handle({ jsonrpc: '2.0', id: 1, method: 'initialize' });
-    expect(res.result.serverInfo).toEqual({ name: 'TestSrv', version: '9.9.9' });
-    expect(res.result.protocolVersion).toBe('2025-06-18');
+    expect(res?.result?.serverInfo).toEqual({ name: 'TestSrv', version: '9.9.9' });
+    expect(res?.result?.protocolVersion).toBe('2025-06-18');
   });
 
   it('lists tools', () => {
     const res = handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    expect(res.result.tools).toHaveLength(5);
+    expect(res?.result?.tools).toHaveLength(5);
   });
 
   it('calls a tool', () => {
@@ -85,7 +85,7 @@ describe('createRpcHandler', () => {
       method: 'tools/call',
       params: { name: 'add', arguments: { a: 10, b: 20 } },
     });
-    expect(res.result.content[0].text).toBe('30');
+    expect(res?.result?.content?.[0]?.text).toBe('30');
   });
 
   it('errors on unknown tool and unknown method', () => {
@@ -95,9 +95,9 @@ describe('createRpcHandler', () => {
       method: 'tools/call',
       params: { name: 'ghost' },
     });
-    expect(unknownTool.error.code).toBe(-32602);
+    expect(unknownTool?.error?.code).toBe(-32602);
     const unknownMethod = handle({ jsonrpc: '2.0', id: 5, method: 'foo/bar' });
-    expect(unknownMethod.error.code).toBe(-32601);
+    expect(unknownMethod?.error?.code).toBe(-32601);
   });
 
   it('treats notifications (no id) as fire-and-forget', () => {

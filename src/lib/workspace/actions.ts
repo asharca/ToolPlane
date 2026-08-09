@@ -24,7 +24,13 @@ import {
   parseMcpDeploymentConfig,
   serializeMcpDeploymentConfig,
 } from '@/lib/workspace/custom-mcp';
-import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
+import {
+  missingDeploymentRequiredEnvironment,
+  missingRequiredEnvironment,
+  parseServerRecipe,
+  recipeToDeploymentData,
+  storedRequiredEnvironment,
+} from '@/lib/workspace/server-recipe';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 import { encryptSecretText } from '@/lib/security/secrets';
@@ -34,6 +40,7 @@ import {
   type ValidRuntimeTextFile,
 } from '@/lib/workspace/runtime-files';
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
+import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -54,8 +61,35 @@ async function deploymentInWorkspace(deploymentId: string, workspaceId: string) 
       workspaceId,
       OR: [{ source: null }, { source: { not: 'sandbox' } }],
     },
-    include: { server: { select: { name: true, slug: true } } },
+    include: { server: { select: { name: true, slug: true, installCfg: true } } },
   });
+}
+
+function missingDeploymentEnvironment(deployment: {
+  installCfg: unknown;
+  server?: { installCfg?: unknown } | null;
+}): string[] {
+  return missingDeploymentRequiredEnvironment(
+    deployment.installCfg,
+    deployment.server?.installCfg,
+  );
+}
+
+async function markDeploymentSetupRequired(deploymentId: string): Promise<void> {
+  // Always enter the supervisor lifecycle queue. A live-status check followed
+  // by a DB write can race a concurrent launch and leave a process running
+  // with credentials the user just removed.
+  await killProcess(deploymentId, { finalStatus: 'setup_required' });
+}
+
+async function deploymentEnvironmentIsReady(deployment: {
+  id: string;
+  installCfg: unknown;
+  server?: { installCfg?: unknown } | null;
+}): Promise<boolean> {
+  if (missingDeploymentEnvironment(deployment).length === 0) return true;
+  await markDeploymentSetupRequired(deployment.id);
+  return false;
 }
 
 export async function deployServerAction(formData: FormData) {
@@ -76,6 +110,7 @@ export async function deployServerAction(formData: FormData) {
   if (!recipe || !server.verifiedAt) return;
 
   const data = recipeToDeploymentData(recipe);
+  const requiresSetup = missingRequiredEnvironment(recipe, data.installCfg).length > 0;
   // `update: {}` on re-deploy intentionally preserves the deployment's existing
   // installCfg — so a user's filled-in env values are not wiped by the recipe's
   // empty seeds. Only the first create seeds from the recipe.
@@ -85,28 +120,36 @@ export async function deployServerAction(formData: FormData) {
     create: {
       workspaceId: ctx.ws.id,
       serverId,
-      status: 'provisioning',
+      status: requiresSetup ? 'setup_required' : 'provisioning',
       source: data.source,
       sourceRef: data.sourceRef,
       installCfg: data.installCfg as Prisma.InputJsonValue,
     },
   });
-  await startProcess(
-    dep.id,
-    resolveSpawnSpec({
-      serverId: dep.serverId,
-      server: { name: server.name },
-      name: dep.name,
-      source: dep.source,
-      sourceRef: dep.sourceRef,
-      installCfg: dep.installCfg,
-    }),
-    { awaitReady: false, workspaceId: ctx.ws.id },
-  );
+
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, dep.id, async () => {
+    // Re-read inside the deployment lock. An existing deployment can be
+    // edited concurrently between the upsert above and process launch.
+    const current = await deploymentInWorkspace(dep.id, ctx.ws.id);
+    if (!current) return 'missing' as const;
+    const currentRecipe = parseServerRecipe(current.server?.installCfg) ?? recipe;
+    if (missingRequiredEnvironment(currentRecipe, current.installCfg).length > 0) {
+      await markDeploymentSetupRequired(current.id);
+      return 'setup_required' as const;
+    }
+    await startProcess(current.id, resolveSpawnSpec(current), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
+    return 'started' as const;
+  });
 
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/market/mcp`);
   revalidatePath(`/app/${slug}/market/mcp/${server.slug}`);
+  if (operation.accepted && operation.value === 'setup_required') {
+    return redirect(`/app/${slug}/mcp/${dep.id}?tab=variables`);
+  }
 }
 
 export async function deployCustomServerAction(formData: FormData) {
@@ -217,60 +260,83 @@ export async function updateMcpJsonConfigAction(
 
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'notAuthorized' };
-  const deployment = await db.deployment.findFirst({
-    where: {
-      id: deploymentId,
-      workspaceId: ctx.ws.id,
-      source: { in: [...EDITABLE_MCP_SOURCES] },
-    },
-  });
-  if (!deployment || !isEditableMcpSource(deployment.source)) {
-    return { error: 'deploymentNotFound' };
-  }
-
-  let parsed;
-  try {
-    parsed = parseMcpDeploymentConfig(
-      config,
-      deployment.source,
-      deployment.name ?? undefined,
-      network === null ? undefined : String(network),
-    );
-  } catch {
-    return { error: 'invalidJsonConfig' };
-  }
-  if (deployment.serverId && parsed.ref !== deployment.sourceRef) {
-    return { error: 'invalidJsonConfig' };
-  }
-  const updated = await db.deployment.update({
-    where: { id: deployment.id },
-    data: {
-      source: parsed.source,
-      sourceRef: parsed.ref,
-      installCfg: parsed.installCfg as Prisma.InputJsonValue,
-      status: 'provisioning',
-    },
-    include: { server: { select: { name: true } } },
-  });
-
-  try {
-    await restartProcess(updated.id, resolveSpawnSpec(updated, true), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const deployment = await db.deployment.findFirst({
+      where: {
+        id: deploymentId,
+        workspaceId: ctx.ws.id,
+        source: { in: [...EDITABLE_MCP_SOURCES] },
+      },
     });
-  } catch {
-    await db.deployment.update({
+    if (!deployment || !isEditableMcpSource(deployment.source)) {
+      return { error: 'deploymentNotFound' } as const;
+    }
+
+    let parsed;
+    try {
+      parsed = parseMcpDeploymentConfig(
+        config,
+        deployment.source,
+        deployment.name ?? undefined,
+        network === null ? undefined : String(network),
+      );
+    } catch {
+      return { error: 'invalidJsonConfig' } as const;
+    }
+    if (deployment.serverId && parsed.ref !== deployment.sourceRef) {
+      return { error: 'invalidJsonConfig' } as const;
+    }
+    const catalogServer = deployment.serverId
+      ? await db.server.findUnique({
+          where: { id: deployment.serverId },
+          select: { installCfg: true },
+        })
+      : null;
+    const recipe = parseServerRecipe(catalogServer?.installCfg);
+    const requiredEnvironment = recipe?.env
+      ?? storedRequiredEnvironment(deployment.installCfg);
+    const nextInstallCfg = {
+      ...parsed.installCfg,
+      ...(requiredEnvironment.length ? { requiredEnv: requiredEnvironment } : {}),
+    };
+    const requiresSetup = missingRequiredEnvironment(
+      { env: requiredEnvironment },
+      nextInstallCfg,
+    ).length > 0;
+    if (requiresSetup) {
+      await markDeploymentSetupRequired(deployment.id);
+    }
+    const updated = await db.deployment.update({
       where: { id: deployment.id },
-      data: { status: 'error' },
+      data: {
+        source: parsed.source,
+        sourceRef: parsed.ref,
+        installCfg: nextInstallCfg as Prisma.InputJsonValue,
+        status: requiresSetup ? 'setup_required' : 'provisioning',
+      },
+      include: { server: { select: { name: true } } },
     });
-    revalidatePath(`/app/${slug}/mcp`);
-    revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
-    return { error: 'rebuildFailed' };
-  }
+
+    if (requiresSetup) return { savedAt: Date.now() };
+
+    try {
+      await restartProcess(updated.id, resolveSpawnSpec(updated, true), {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      });
+    } catch {
+      await db.deployment.update({
+        where: { id: deployment.id },
+        data: { status: 'error' },
+      });
+      return { error: 'rebuildFailed' } as const;
+    }
+    return { savedAt: Date.now() };
+  });
 
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
-  return { savedAt: Date.now() };
+  return operation.accepted ? operation.value : { error: 'deploymentNotFound' };
 }
 
 export type McpToolExposureActionState = {
@@ -401,18 +467,26 @@ function deploymentName(value: FormDataEntryValue | null): string {
 function cloneInstallCfg(
   value: Prisma.JsonValue,
   copyEnvironmentVariables: boolean,
+  requiredEnvironment: string[],
 ): Prisma.InputJsonValue | undefined {
-  if (value === null) return undefined;
-  if (
-    copyEnvironmentVariables
-    || typeof value !== 'object'
-    || Array.isArray(value)
-  ) {
+  if (copyEnvironmentVariables && requiredEnvironment.length === 0) {
+    if (value === null) return undefined;
     return value as Prisma.InputJsonValue;
   }
 
-  const configuration = { ...value };
-  delete configuration.env;
+  const configuration = value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...value }
+    : {};
+  if (requiredEnvironment.length > 0) {
+    configuration.requiredEnv = [...requiredEnvironment];
+  }
+  if (!copyEnvironmentVariables) {
+    if (requiredEnvironment.length > 0) {
+      configuration.env = Object.fromEntries(requiredEnvironment.map((key) => [key, '']));
+    } else {
+      delete configuration.env;
+    }
+  }
   return configuration as Prisma.InputJsonValue;
 }
 
@@ -422,15 +496,6 @@ export async function setDeploymentEnvAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const dep = await db.deployment.findFirst({
-    where: {
-      id: deploymentId,
-      workspaceId: ctx.ws.id,
-      OR: [{ source: null }, { source: { not: 'sandbox' } }],
-    },
-    select: { id: true, installCfg: true },
-  });
-  if (!dep) return;
 
   const env: Record<string, string> = {};
   try {
@@ -440,10 +505,44 @@ export async function setDeploymentEnvAction(formData: FormData) {
     return;
   }
 
-  const next: Record<string, unknown> = { ...((dep.installCfg ?? {}) as Record<string, unknown>), env };
-  await db.deployment.update({
-    where: { id: deploymentId },
-    data: { installCfg: next as Prisma.InputJsonValue },
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await db.deployment.findFirst({
+      where: {
+        id: deploymentId,
+        workspaceId: ctx.ws.id,
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+      select: {
+        id: true,
+        installCfg: true,
+        status: true,
+        server: { select: { installCfg: true } },
+      },
+    });
+    if (!dep) return;
+
+    const next: Record<string, unknown> = {
+      ...((dep.installCfg ?? {}) as Record<string, unknown>),
+      env,
+    };
+    const missing = missingDeploymentEnvironment({ ...dep, installCfg: next });
+    if (missing.length > 0) {
+      // Stop first. If termination fails, retain the old persisted credentials
+      // instead of claiming they were removed while their process still runs.
+      await markDeploymentSetupRequired(dep.id);
+    }
+    const nextStatus = missing.length > 0
+      ? 'setup_required'
+      : dep.status === 'setup_required'
+        ? 'stopped'
+        : null;
+    await db.deployment.update({
+      where: { id: deploymentId },
+      data: {
+        installCfg: next as Prisma.InputJsonValue,
+        ...(nextStatus ? { status: nextStatus } : {}),
+      },
+    });
   });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
@@ -474,78 +573,104 @@ export async function cloneDeploymentAction(formData: FormData) {
 
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const source = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!source) return;
-
-  const defaultName = `${deploymentLabel(source).name
-    .slice(0, MAX_DEPLOYMENT_NAME_LENGTH - 5)
-    .trimEnd()} Copy`;
   const nameEntry = formData.get('name');
-  const name = nameEntry === null ? defaultName : deploymentName(nameEntry);
-  if (!name) return;
-
-  // The form submits a hidden `false` plus a checked `true`. Calls that omit
-  // the field retain the secure in-workspace default of copying the complete
-  // runtime configuration, including environment variables.
   const copyEnvironmentEntries = formData.getAll('copyEnvironmentVariables').map(String);
   const copyEnvironmentVariables = copyEnvironmentEntries.length === 0
     || copyEnvironmentEntries.includes('true');
-  // Runtime files can contain credentials just like environment variables.
-  // A clone stays inside the same authorized workspace and mirrors the
-  // existing default of copying runtime configuration, but users can opt out
-  // explicitly from the clone form.
   const copyRuntimeFileEntries = formData.getAll('copyRuntimeFiles').map(String);
   const copyRuntimeFiles = copyRuntimeFileEntries.length === 0
     || copyRuntimeFileEntries.includes('true');
-  const configFiles = copyRuntimeFiles
-    ? await db.deploymentConfigFile.findMany({
-        where: { deploymentId: source.id },
-        select: {
-          path: true,
-          pathKey: true,
-          encryptedContent: true,
-          size: true,
-        },
-      })
-    : [];
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const source = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!source) return null;
 
-  const cloned = await db.deployment.create({
-    data: {
-      workspaceId: ctx.ws.id,
-      // Catalog deployments are unique per workspace. A clone is deliberately
-      // detached from that directory identity so it can run independently.
-      serverId: null,
-      name,
-      source: source.source,
-      sourceRef: source.sourceRef,
-      installCfg: cloneInstallCfg(source.installCfg, copyEnvironmentVariables),
-      status: 'provisioning',
-      mcpToolExposure: source.mcpToolExposure,
-      mcpAllowedTools: source.mcpAllowedTools,
-      ...(configFiles.length
-        ? {
-            configFiles: {
-              create: configFiles.map((file) => ({
-                path: file.path,
-                pathKey: file.pathKey,
-                // The ciphertext is copied directly. Runtime file plaintext
-                // is never read merely to clone a deployment.
-                encryptedContent: file.encryptedContent as Prisma.InputJsonValue,
-                size: file.size,
-              })),
-            },
-          }
-        : {}),
-    },
-    include: { server: { select: { name: true } } },
-  });
+    const defaultName = `${deploymentLabel(source).name
+      .slice(0, MAX_DEPLOYMENT_NAME_LENGTH - 5)
+      .trimEnd()} Copy`;
+    const name = nameEntry === null ? defaultName : deploymentName(nameEntry);
+    if (!name) return null;
 
-  await startProcess(cloned.id, resolveSpawnSpec(cloned), {
-    awaitReady: false,
-    workspaceId: ctx.ws.id,
+    // A detached clone retains required key names in installCfg so future
+    // lifecycle operations can enforce them without a Server relation.
+    const sourceRecipe = parseServerRecipe(source.server?.installCfg);
+    const requiredEnvironment = sourceRecipe?.env
+      ?? storedRequiredEnvironment(source.installCfg);
+    const clonedInstallCfg = cloneInstallCfg(
+      source.installCfg,
+      copyEnvironmentVariables,
+      requiredEnvironment,
+    );
+    const cloneRequiresSetup = missingRequiredEnvironment(
+      { env: requiredEnvironment },
+      clonedInstallCfg,
+    ).length > 0;
+    const configFiles = copyRuntimeFiles
+      ? await db.deploymentConfigFile.findMany({
+          where: { deploymentId: source.id },
+          select: {
+            path: true,
+            pathKey: true,
+            encryptedContent: true,
+            size: true,
+          },
+        })
+      : [];
+
+    const cloned = await db.deployment.create({
+      data: {
+        workspaceId: ctx.ws.id,
+        // Catalog deployments are unique per workspace. A clone is deliberately
+        // detached from that directory identity so it can run independently.
+        serverId: null,
+        name,
+        source: source.source,
+        sourceRef: source.sourceRef,
+        installCfg: clonedInstallCfg,
+        status: cloneRequiresSetup ? 'setup_required' : 'provisioning',
+        mcpToolExposure: source.mcpToolExposure,
+        mcpAllowedTools: source.mcpAllowedTools,
+        ...(configFiles.length
+          ? {
+              configFiles: {
+                create: configFiles.map((file) => ({
+                  path: file.path,
+                  pathKey: file.pathKey,
+                  // The ciphertext is copied directly. Runtime file plaintext
+                  // is never read merely to clone a deployment.
+                  encryptedContent: file.encryptedContent as Prisma.InputJsonValue,
+                  size: file.size,
+                })),
+              },
+            }
+          : {}),
+      },
+      include: { server: { select: { name: true } } },
+    });
+
+    if (cloneRequiresSetup) return { id: cloned.id, setupRequired: true };
+
+    // Once the row exists it is discoverable by other requests. Acquire the
+    // target deployment lock and re-read before launch so a concurrent env
+    // edit cannot be overwritten by this clone's stale spawn spec.
+    const targetOperation = await runMcpDeploymentOperation(ctx.ws.id, cloned.id, async () => {
+      const current = await deploymentInWorkspace(cloned.id, ctx.ws.id);
+      if (!current) return null;
+      if (!(await deploymentEnvironmentIsReady(current))) {
+        return { id: cloned.id, setupRequired: true };
+      }
+      await startProcess(current.id, resolveSpawnSpec(current), {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      });
+      return { id: cloned.id, setupRequired: false };
+    });
+    return targetOperation.accepted ? targetOperation.value : null;
   });
+  if (!operation.accepted || !operation.value) return;
   revalidatePath(`/app/${slug}/mcp`);
-  redirect(`/app/${slug}/mcp/${cloned.id}`);
+  redirect(
+    `/app/${slug}/mcp/${operation.value.id}${operation.value.setupRequired ? '?tab=variables' : ''}`,
+  );
 }
 
 export async function removeDeploymentAction(formData: FormData) {
@@ -554,26 +679,29 @@ export async function removeDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!dep) return null;
 
-  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!dep) return;
-
-  await killProcess(dep.id, { preventRestart: true });
-  if (dep.source) {
-    // A failed Docker bridge can leave its named runtime container alive after
-    // its local supervisor exits. Remove it before its read-only config volume.
-    await removeDeploymentContainer(dep.id);
-    // Clean a stale named volume even if the final file was deleted just before
-    // a failed restart. Builtin deployments have no container volume at all.
-    await removeDeploymentConfigVolume(dep.id);
-  }
-  await db.deployment.deleteMany({
-    where: { id: dep.id, workspaceId: ctx.ws.id },
+    await killProcess(dep.id, { preventRestart: true });
+    if (dep.source) {
+      // A failed Docker bridge can leave its named runtime container alive after
+      // its local supervisor exits. Remove it before its read-only config volume.
+      await removeDeploymentContainer(dep.id);
+      // Clean a stale named volume even if the final file was deleted just before
+      // a failed restart. Builtin deployments have no container volume at all.
+      await removeDeploymentConfigVolume(dep.id);
+    }
+    await db.deployment.deleteMany({
+      where: { id: dep.id, workspaceId: ctx.ws.id },
+    });
+    return { serverSlug: dep.server?.slug ?? null };
   });
+  if (!operation.accepted || !operation.value) return;
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/market/mcp`);
-  if (dep.server?.slug) {
-    revalidatePath(`/app/${slug}/market/mcp/${dep.server.slug}`);
+  if (operation.value.serverSlug) {
+    revalidatePath(`/app/${slug}/market/mcp/${operation.value.serverSlug}`);
   }
   // Redirect to the list: this action also fires from the deployment detail
   // page, which would otherwise re-render against the now-deleted row → 404.
@@ -586,12 +714,13 @@ export async function startDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!dep) return;
-
-  await startProcess(dep.id, resolveSpawnSpec(dep), {
-    awaitReady: false,
-    workspaceId: ctx.ws.id,
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    await startProcess(dep.id, resolveSpawnSpec(dep), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
@@ -603,10 +732,15 @@ export async function stopDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!dep) return;
-
-  await stopProcess(deploymentId);
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!dep) return;
+    if (missingDeploymentEnvironment(dep).length > 0) {
+      await markDeploymentSetupRequired(dep.id);
+    } else {
+      await stopProcess(deploymentId);
+    }
+  });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
 }
@@ -617,12 +751,13 @@ export async function restartDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!dep) return;
-
-  await restartProcess(dep.id, resolveSpawnSpec(dep), {
-    awaitReady: false,
-    workspaceId: ctx.ws.id,
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    await restartProcess(dep.id, resolveSpawnSpec(dep), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
@@ -636,12 +771,13 @@ export async function rebuildDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-  if (!dep) return;
-
-  await restartProcess(dep.id, resolveSpawnSpec(dep, true), {
-    awaitReady: false,
-    workspaceId: ctx.ws.id,
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
+    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    await restartProcess(dep.id, resolveSpawnSpec(dep, true), {
+      awaitReady: false,
+      workspaceId: ctx.ws.id,
+    });
   });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);

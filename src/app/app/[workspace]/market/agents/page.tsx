@@ -87,7 +87,7 @@ export default async function AgentMarketPage({
   return (
     <DashboardPage className="space-y-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('communityAgents')}</h1>
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('communityAgents')}</h2>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('heroDescription')}</p>
       </div>
 
@@ -188,8 +188,9 @@ export default async function AgentMarketPage({
       <DashboardPagination
         page={result.page}
         lastPage={totalPages}
-        total={result.total}
-        label={t('communityAgents')}
+        summary={t('pageOf', { page: result.page, total: totalPages })}
+        previousLabel={t('previous')}
+        nextLabel={t('next')}
         hrefForPage={(nextPage) => marketHref(slug, { q, category, sort, page: nextPage })}
       />
     </DashboardPage>

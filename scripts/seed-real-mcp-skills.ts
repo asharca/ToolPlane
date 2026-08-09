@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { hashPassword } from '@/lib/auth/password';
 import { fetchGithubSkillBundle, type SkillBundleFile } from '@/lib/skills/bundle';
+import { parseSkillFrontmatter } from '@/lib/skills/frontmatter';
 
 type CategorySeed = { slug: string; name: string };
 type ServerSeed = {
@@ -158,27 +159,8 @@ function titleFromSlug(slug: string): string {
     .join(' ');
 }
 
-function yamlValue(raw: string): string {
-  const value = raw.trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
 function parseSkillMarkdown(slug: string, content: string) {
-  const match = /^---\n([\s\S]*?)\n---/.exec(content);
-  const meta: Record<string, string> = {};
-  if (match) {
-    for (const line of match[1].split('\n')) {
-      const sep = line.indexOf(':');
-      if (sep === -1) continue;
-      meta[line.slice(0, sep).trim()] = yamlValue(line.slice(sep + 1));
-    }
-  }
+  const meta = parseSkillFrontmatter(content);
   return {
     name: meta.name || titleFromSlug(slug),
     description: meta.description || `${titleFromSlug(slug)} agent skill from ${SKILLS_REPO}.`,

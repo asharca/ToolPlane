@@ -40,11 +40,15 @@ export function DashboardSearchForm({
   placeholder,
   clearHref,
   width = 'sm:w-80',
+  submitLabel,
+  clearLabel,
 }: {
   defaultValue?: string;
   placeholder: string;
   clearHref?: string;
   width?: string;
+  submitLabel: string;
+  clearLabel: string;
 }) {
   const hasQuery = Boolean(defaultValue?.trim());
 
@@ -59,13 +63,13 @@ export function DashboardSearchForm({
           className="ui-input ui-input-icon h-9 w-full"
         />
       </div>
-      <button className="ui-button-secondary">Search</button>
+      <button className="ui-button-secondary">{submitLabel}</button>
       {hasQuery && clearHref ? (
         <Link
           href={clearHref}
           className="text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
-          Clear
+          {clearLabel}
         </Link>
       ) : null}
     </form>
@@ -247,32 +251,34 @@ export function DashboardTable({
 export function DashboardPagination({
   page,
   lastPage,
-  total,
-  label,
   hrefForPage,
+  summary,
+  previousLabel,
+  nextLabel,
 }: {
   page: number;
   lastPage: number;
-  total: number;
-  label: string;
   hrefForPage: (page: number) => string;
+  summary: ReactNode;
+  previousLabel: string;
+  nextLabel: string;
 }) {
   if (lastPage <= 1) return null;
 
   return (
     <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
       <span>
-        Showing page {page} of {lastPage} · {total} {label}
+        {summary}
       </span>
       <div className="flex gap-2">
         {page > 1 ? (
           <Link href={hrefForPage(page - 1)} className="ui-button-secondary ui-button-sm">
-            Prev
+            {previousLabel}
           </Link>
         ) : null}
         {page < lastPage ? (
           <Link href={hrefForPage(page + 1)} className="ui-button-secondary ui-button-sm">
-            Next
+            {nextLabel}
           </Link>
         ) : null}
       </div>

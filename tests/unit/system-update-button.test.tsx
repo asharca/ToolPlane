@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { waitForSystemUpdateReady } from '@/components/dashboard/SystemUpdateButton';
+import {
+  systemUpdateVersionDetail,
+  waitForSystemUpdateReady,
+} from '@/components/dashboard/SystemUpdateButton';
 
 describe('SystemUpdateButton restart polling', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('does not repeat the same current and latest version', () => {
+    expect(systemUpdateVersionDetail('v1.2.3', 'v1.2.3')).toBe('v1.2.3');
+    expect(systemUpdateVersionDetail('v1.2.3', 'v1.2.4')).toBe('v1.2.3 → v1.2.4');
   });
 
   it('waits until the restarted runtime reports the target version', async () => {

@@ -8,10 +8,12 @@ export function QrPairingDisplay({
   payload,
   label,
   emptyLabel,
+  errorLabel,
 }: {
   payload?: string | null;
   label: string;
   emptyLabel: string;
+  errorLabel: string;
 }) {
   const [result, setResult] = useState<{ payload: string; svg: string; error: string | null }>({
     payload: '',
@@ -36,12 +38,12 @@ export function QrPairingDisplay({
         if (!cancelled) setResult({ payload: next, svg, error: null });
       })
       .catch(() => {
-        if (!cancelled) setResult({ payload: next, svg: '', error: 'Could not render this QR code.' });
+        if (!cancelled) setResult({ payload: next, svg: '', error: errorLabel });
       });
     return () => {
       cancelled = true;
     };
-  }, [payload]);
+  }, [errorLabel, payload]);
 
   const current = payload?.trim() ?? '';
   const svg = current && result.payload === current ? result.svg : '';

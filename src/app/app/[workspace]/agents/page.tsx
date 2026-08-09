@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Bot, Cpu } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -16,6 +16,7 @@ import { listToolkits } from '@/lib/toolkits/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,10 @@ export default async function AgentsPage({
 }) {
   const { workspace: slug } = await params;
   const { tab } = await searchParams;
-  const t = await getTranslations('console.agents');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.agents'),
+    getLocale(),
+  ]);
   const TABS = [
     { key: 'agents', label: t('agent'), icon: Bot },
     { key: 'providers', label: t('model'), icon: Cpu },
@@ -37,6 +41,7 @@ export default async function AgentsPage({
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
+  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
@@ -120,7 +125,14 @@ export default async function AgentsPage({
             baseUrl: p.baseUrl,
             modelCount: p.models.length,
             models: p.models,
-            modelsFetchedAt: p.modelsFetchedAt?.toLocaleString() ?? null,
+            modelsFetchedAt: p.modelsFetchedAt
+              ? formatInTimeZone(
+                  p.modelsFetchedAt,
+                  timeZone,
+                  { dateStyle: 'medium', timeStyle: 'short' },
+                  locale,
+                )
+              : null,
           }))}
         />
       )}

@@ -547,11 +547,11 @@ function useAgentAttachmentAdapter({
         const content: AttachmentContentPart[] = [{
           type: 'text',
           text: [
-            'Attachment stored in the Hermes workspace (the file content is not included in the conversation):',
-            `- name: ${name}`,
-            `- path: ${result.runtimePath}`,
-            `- size: ${result.size ?? attachment.file.size} bytes`,
-            `- media type: ${attachment.contentType || 'application/octet-stream'}`,
+            t('attachmentStoredInHermesWorkspace'),
+            t('attachmentMetadataName', { name }),
+            t('attachmentMetadataPath', { path: result.runtimePath }),
+            t('attachmentMetadataSize', { size: result.size ?? attachment.file.size }),
+            t('attachmentMetadataType', { type: attachment.contentType || 'application/octet-stream' }),
           ].join('\n'),
         }];
 

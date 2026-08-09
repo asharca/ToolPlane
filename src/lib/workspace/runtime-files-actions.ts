@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { restartProcess } from '@/lib/process/supervisor';
+import { killProcess, restartProcess } from '@/lib/process/supervisor';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { decryptSecretText, encryptSecretText } from '@/lib/security/secrets';
 import {
@@ -18,6 +18,10 @@ import {
   runtimeFilePathKey,
   validateRuntimeTextFiles,
 } from '@/lib/workspace/runtime-files';
+import {
+  missingDeploymentRequiredEnvironment,
+} from '@/lib/workspace/server-recipe';
+import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 
 export type RuntimeFileMetadata = {
   id: string;
@@ -48,8 +52,23 @@ async function editableDeployment(deploymentId: string, workspaceId: string) {
       workspaceId,
       source: { in: [...EDITABLE_MCP_SOURCES] },
     },
-    include: { server: { select: { name: true } } },
+    include: { server: { select: { name: true, installCfg: true } } },
   });
+}
+
+async function requiresCatalogSetup(deployment: {
+  id: string;
+  installCfg: unknown;
+  server?: { installCfg?: unknown } | null;
+}): Promise<boolean> {
+  if (missingDeploymentRequiredEnvironment(
+    deployment.installCfg,
+    deployment.server?.installCfg,
+  ).length === 0) {
+    return false;
+  }
+  await killProcess(deployment.id, { finalStatus: 'setup_required' });
+  return true;
 }
 
 function metadata(file: { id: string; path: string; size: number; updatedAt: Date }): RuntimeFileMetadata {
@@ -158,17 +177,24 @@ export async function upsertDeploymentRuntimeFileAction(
     return { error: 'saveFailed' };
   }
 
-  try {
-    await restartProcess(deployment.id, resolveSpawnSpec(deployment), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
-  } catch {
-    revalidateDeploymentPaths(workspace, deploymentId);
-    return { error: 'restartFailed' };
-  }
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const current = await editableDeployment(deploymentId, ctx.ws.id);
+    if (!current) return { error: 'deploymentNotFound' } as const;
+    if (await requiresCatalogSetup(current)) {
+      return { savedAt: Date.now(), file: metadata(stored) };
+    }
+    try {
+      await restartProcess(current.id, resolveSpawnSpec(current), {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      });
+    } catch {
+      return { error: 'restartFailed' } as const;
+    }
+    return { savedAt: Date.now(), file: metadata(stored) };
+  });
   revalidateDeploymentPaths(workspace, deploymentId);
-  return { savedAt: Date.now(), file: metadata(stored) };
+  return operation.accepted ? operation.value : { error: 'deploymentNotFound' };
 }
 
 export async function deleteDeploymentRuntimeFileAction(
@@ -193,15 +219,20 @@ export async function deleteDeploymentRuntimeFileAction(
   }
   if (!removed.count) return { error: 'fileNotFound' };
 
-  try {
-    await restartProcess(deployment.id, resolveSpawnSpec(deployment), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
-  } catch {
-    revalidateDeploymentPaths(workspace, deploymentId);
-    return { error: 'restartFailed' };
-  }
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+    const current = await editableDeployment(deploymentId, ctx.ws.id);
+    if (!current) return { error: 'deploymentNotFound' } as const;
+    if (await requiresCatalogSetup(current)) return { savedAt: Date.now() };
+    try {
+      await restartProcess(current.id, resolveSpawnSpec(current), {
+        awaitReady: false,
+        workspaceId: ctx.ws.id,
+      });
+    } catch {
+      return { error: 'restartFailed' } as const;
+    }
+    return { savedAt: Date.now() };
+  });
   revalidateDeploymentPaths(workspace, deploymentId);
-  return { savedAt: Date.now() };
+  return operation.accepted ? operation.value : { error: 'deploymentNotFound' };
 }

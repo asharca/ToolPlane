@@ -1,10 +1,11 @@
-import { getLocale } from 'next-intl/server';
-import { CapabilityPage } from '@/components/marketing/CapabilityPage';
-import { getMarketingContent } from '@/lib/marketing/content';
+import type { Metadata } from 'next';
+import { ServerList } from '@/components/server/ServerList';
+import { capabilityMetadata } from '../_lib/metadata';
 
-export default async function Page() {
-  const locale = await getLocale();
-  return (
-    <CapabilityPage capability="mcp" content={getMarketingContent(locale)} />
-  );
+export function generateMetadata(): Promise<Metadata> {
+  return capabilityMetadata('mcp', '/server');
+}
+
+export default function Page() {
+  return <ServerList page={1} />;
 }

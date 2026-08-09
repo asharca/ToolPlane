@@ -79,12 +79,12 @@ export function ToolkitInstall({
   const directSnippet = buildDirectSnippet(client, toolkitSlug, mcpUrl);
   const autoDescription =
     autoClient === 'codex'
-      ? 'Configures Codex MCP, installs a SessionStart sync hook, and syncs skills into your user skills folder.'
+      ? t('codexAutoSyncDescription')
       : autoClient === 'hermes'
-        ? 'Configures Hermes MCP, syncs skills into ~/.hermes/skills/toolplane, and writes a Hermes skill bundle.'
+        ? t('hermesAutoSyncDescription')
       : autoClient === 'opencode'
-        ? 'Configures opencode remote MCP and a toolkit command backed by synced local skill files.'
-        : 'Installs as one Claude Code plugin with MCP tools, synced skills, and skill telemetry hooks.';
+        ? t('openCodeAutoSyncDescription')
+        : t('claudeAutoSyncDescription');
 
   return (
     <div className="rounded-lg border border-sky-100 bg-sky-50 p-4 dark:border-sky-500/20 dark:bg-sky-500/10">

@@ -16,6 +16,7 @@ vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
 import {
   cloneToolkitAction,
+  createToolkitAction,
   deleteToolkitAction,
   renameToolkitAction,
 } from '@/lib/toolkits/actions';
@@ -38,6 +39,13 @@ function actionForm(workspace: string, toolkitSlug: string, name?: string): Form
   form.set('workspace', workspace);
   form.set('toolkitSlug', toolkitSlug);
   if (name !== undefined) form.set('name', name);
+  return form;
+}
+
+function createForm(workspace: string, name: string): FormData {
+  const form = new FormData();
+  form.set('workspace', workspace);
+  form.set('name', name);
   return form;
 }
 
@@ -132,6 +140,30 @@ describe('toolkit management actions', () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/toolkits`);
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       `/app/${ownerSlug}/toolkits/${toolkit.slug}`,
+    );
+  });
+
+  it('allocates distinct slugs when toolkits with the same name are created concurrently', async () => {
+    await Promise.all([
+      createToolkitAction(createForm(ownerSlug, 'Concurrent Create')),
+      createToolkitAction(createForm(ownerSlug, 'Concurrent Create')),
+    ]);
+
+    await expect(
+      db.toolkit.findMany({
+        where: { workspaceId: ownerWorkspaceId },
+        orderBy: { slug: 'asc' },
+        select: { name: true, slug: true },
+      }),
+    ).resolves.toEqual([
+      { name: 'Concurrent Create', slug: 'concurrent-create' },
+      { name: 'Concurrent Create', slug: 'concurrent-create-1' },
+    ]);
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/toolkits/concurrent-create`,
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/toolkits/concurrent-create-1`,
     );
   });
 

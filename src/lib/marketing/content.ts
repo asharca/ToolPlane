@@ -153,7 +153,7 @@ const CONTENT = {
     capabilityCommon: {
       overview: 'Back to overview',
       openConsole: 'Open console',
-      consoleNote: 'Live catalog and actions are available after sign-in.',
+      consoleNote: 'Installation and workspace actions are available after sign-in.',
       howItWorks: 'How it works',
     },
     capabilities: {
@@ -231,9 +231,9 @@ const CONTENT = {
         ],
         flowTitle: 'From resources to a working agent',
         flow: ['Choose a model and instructions', 'Attach workspace resources', 'Test, observe, and refine in the console'],
-        principleTitle: 'The real market is private to signed-in users',
+        principleTitle: 'Published definitions stay inspectable',
         principle:
-          'Listings, details, review state, and install actions live only in the authenticated console. The public site describes the capability without mirroring market data.',
+          'Public pages can show reviewed, portable listing metadata. Secrets, private activity, review controls, and install actions remain inside the authenticated console.',
       },
       clients: {
         eyebrow: 'Client integrations',
@@ -337,7 +337,7 @@ const CONTENT = {
     capabilityCommon: {
       overview: '返回产品概览',
       openConsole: '进入控制台',
-      consoleNote: '登录后可查看真实市场、资源详情和操作入口。',
+      consoleNote: '安装和工作空间操作需登录后使用。',
       howItWorks: '工作方式',
     },
     capabilities: {
@@ -383,8 +383,8 @@ const CONTENT = {
         ],
         flowTitle: '从工作空间资源到可运行智能体',
         flow: ['选择模型并编写指令', '绑定工作空间资源', '在控制台测试、观测和迭代'],
-        principleTitle: '真实市场只对登录用户开放',
-        principle: '市场条目、详情、审核状态和添加操作只存在于登录后的控制台；公开站仅介绍能力，不同步市场数据。',
+        principleTitle: '已发布定义保持透明可查',
+        principle: '公开页面可展示已审核、可移植的条目元数据；密钥、私有活动、审核控制和安装操作仍只存在于登录后的控制台。',
       },
       clients: {
         eyebrow: '客户端集成',

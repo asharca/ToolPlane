@@ -5,6 +5,7 @@ import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import type { AuthState } from '@/lib/auth/actions';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/auth/password-policy';
 import { useDetectedClientTimeZone } from '@/components/timezone/UserTimeZoneContext';
 
 type Action = (prev: AuthState, formData: FormData) => Promise<AuthState>;
@@ -85,17 +86,34 @@ export function AuthForm({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="password" className="text-sm font-medium text-foreground">
-              {t('password')}
-            </label>
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="password" className="text-sm font-medium text-foreground">
+                {t('password')}
+              </label>
+              {!isSignup ? (
+                <Link
+                  href="/app/forgot-password"
+                  className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  {t('forgotPasswordLink')}
+                </Link>
+              ) : null}
+            </div>
             <input
               id="password"
               name="password"
               type="password"
               required
+              minLength={isSignup ? PASSWORD_MIN_LENGTH : undefined}
+              maxLength={PASSWORD_MAX_LENGTH}
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               className="ui-input"
             />
+            {isSignup ? (
+              <p className="text-xs text-muted-foreground">
+                {t('passwordHint', { min: PASSWORD_MIN_LENGTH })}
+              </p>
+            ) : null}
           </div>
 
           {state.error ? (
@@ -103,6 +121,19 @@ export function AuthForm({
           ) : null}
 
           <SubmitButton label={isSignup ? t('createAccount') : t('signIn')} />
+          {isSignup ? (
+            <p className="text-center text-xs leading-5 text-muted-foreground">
+              {t('agreementPrefix')}{' '}
+              <Link href="/terms" className="underline underline-offset-4 hover:text-foreground">
+                {t('terms')}
+              </Link>{' '}
+              {t('agreementAnd')}{' '}
+              <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground">
+                {t('privacy')}
+              </Link>
+              {t('agreementSuffix')}
+            </p>
+          ) : null}
         </form>
       </div>
 

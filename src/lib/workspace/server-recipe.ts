@@ -56,18 +56,67 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
 export type DeploymentRecipeData = {
   source: string;
   sourceRef: string;
-  installCfg: { env: Record<string, string>; startCommand?: string; network?: 'none' };
+  installCfg: {
+    env: Record<string, string>;
+    requiredEnv?: string[];
+    startCommand?: string;
+    network?: 'none';
+  };
 };
 
+// Deployment rows linked to a catalog server can always recover their
+// requirements from Server.installCfg. Detached clones cannot, so carry only
+// the required key names (never values) alongside their runtime config.
+export function storedRequiredEnvironment(installCfg: unknown): string[] {
+  if (!installCfg || typeof installCfg !== 'object' || Array.isArray(installCfg)) return [];
+  const requiredEnv = (installCfg as Record<string, unknown>).requiredEnv;
+  if (!Array.isArray(requiredEnv)) return [];
+  return [...new Set(requiredEnv.filter((key): key is string => (
+    typeof key === 'string' && ENV_KEY.test(key)
+  )))];
+}
+
+// Return the required recipe keys that still need a usable value in a
+// deployment configuration. Catalog variables are deliberately seeded so the
+// Variables editor can render them, but an empty seed is never a credential
+// and must not be passed to a newly started runtime.
+export function missingRequiredEnvironment(
+  recipe: Pick<ServerRecipe, 'env'>,
+  installCfg: unknown,
+): string[] {
+  if (!installCfg || typeof installCfg !== 'object' || Array.isArray(installCfg)) {
+    return [...recipe.env];
+  }
+  const rawEnv = (installCfg as Record<string, unknown>).env;
+  const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+    ? rawEnv as Record<string, unknown>
+    : {};
+  return recipe.env.filter((key) => (
+    typeof env[key] !== 'string' || !(env[key] as string).trim()
+  ));
+}
+
+export function missingDeploymentRequiredEnvironment(
+  installCfg: unknown,
+  serverInstallCfg?: unknown,
+): string[] {
+  const recipe = parseServerRecipe(serverInstallCfg);
+  const env = recipe?.env ?? storedRequiredEnvironment(installCfg);
+  return missingRequiredEnvironment({ env }, installCfg);
+}
+
 // Turn a recipe into the fields a Deployment row needs. The declared env keys
-// are seeded EMPTY so they surface in the workspace's Variables editor for the
-// user to fill, then Rebuild.
+// are seeded EMPTY so they surface in the workspace's Variables editor. The
+// deployment lifecycle checks those required keys before starting a runtime.
 export function recipeToDeploymentData(recipe: ServerRecipe): DeploymentRecipeData {
   // Preset values first; then declared keys default to empty (without clobbering
   // a preset of the same name) for the user to fill in the Variables editor.
   const env: Record<string, string> = { ...(recipe.envValues ?? {}) };
   for (const k of recipe.env) if (!(k in env)) env[k] = '';
-  const installCfg: DeploymentRecipeData['installCfg'] = { env };
+  const installCfg: DeploymentRecipeData['installCfg'] = {
+    env,
+    ...(recipe.env.length ? { requiredEnv: [...recipe.env] } : {}),
+  };
   if (recipe.startCommand) installCfg.startCommand = recipe.startCommand;
   if (recipe.network === 'none') installCfg.network = 'none';
   return { source: recipe.source, sourceRef: recipe.ref, installCfg };

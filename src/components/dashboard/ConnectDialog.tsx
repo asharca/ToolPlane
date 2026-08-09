@@ -7,7 +7,18 @@ import { ArrowRight, ArrowLeft, X, Copy, Check } from 'lucide-react';
 type Client = {
   id: string;
   label: string;
-  howTo: string;
+  labelKey?: 'connectionUrl';
+  howToKey:
+    | 'runInTerminal'
+    | 'addToClaudeDesktopConfig'
+    | 'addToCursorConfig'
+    | 'addToVsCodeConfig'
+    | 'addToCodexConfig'
+    | 'addToOpenCodeConfig'
+    | 'addToWindsurfConfig'
+    | 'addToClineConfig'
+    | 'addToGeminiConfig'
+    | 'useUrlInAnyMcpClient';
   snippet: (key: string, endpoint: string) => string;
 };
 
@@ -29,26 +40,26 @@ const CLIENTS: Client[] = [
   {
     id: 'claude-code',
     label: 'Claude Code',
-    howTo: 'Run in your terminal:',
+    howToKey: 'runInTerminal',
     snippet: (key, endpoint) =>
       `claude mcp add --transport http "${key}" "${endpoint}" \\\n  --header "Authorization: Bearer <API_TOKEN>"`,
   },
   {
     id: 'claude-desktop',
     label: 'Claude Desktop',
-    howTo: 'Add to your claude_desktop_config.json:',
+    howToKey: 'addToClaudeDesktopConfig',
     snippet: jsonConfig,
   },
   {
     id: 'cursor',
     label: 'Cursor',
-    howTo: 'Add to ~/.cursor/mcp.json:',
+    howToKey: 'addToCursorConfig',
     snippet: jsonConfig,
   },
   {
     id: 'vscode',
     label: 'VS Code',
-    howTo: 'Add to .vscode/mcp.json:',
+    howToKey: 'addToVsCodeConfig',
     snippet: (key, endpoint) =>
       `{
   "servers": {
@@ -65,7 +76,7 @@ const CLIENTS: Client[] = [
   {
     id: 'codex',
     label: 'Codex CLI',
-    howTo: 'Add to ~/.codex/config.toml:',
+    howToKey: 'addToCodexConfig',
     snippet: (key, endpoint) =>
       [
         `[mcp_servers.${key}]`,
@@ -76,7 +87,7 @@ const CLIENTS: Client[] = [
   {
     id: 'opencode',
     label: 'opencode',
-    howTo: 'Add to opencode.json:',
+    howToKey: 'addToOpenCodeConfig',
     snippet: (key, endpoint) =>
       [
         '{',
@@ -96,25 +107,26 @@ const CLIENTS: Client[] = [
   {
     id: 'windsurf',
     label: 'Windsurf',
-    howTo: 'Add to ~/.codeium/windsurf/mcp_config.json:',
+    howToKey: 'addToWindsurfConfig',
     snippet: jsonConfig,
   },
   {
     id: 'cline',
     label: 'Cline',
-    howTo: 'Add to cline_mcp_settings.json:',
+    howToKey: 'addToClineConfig',
     snippet: jsonConfig,
   },
   {
     id: 'gemini',
     label: 'Gemini CLI',
-    howTo: 'Add to ~/.gemini/settings.json:',
+    howToKey: 'addToGeminiConfig',
     snippet: jsonConfig,
   },
   {
     id: 'url',
     label: 'Connection URL',
-    howTo: 'Use this URL in any MCP client:',
+    labelKey: 'connectionUrl',
+    howToKey: 'useUrlInAnyMcpClient',
     snippet: (_key, endpoint) => endpoint,
   },
 ];
@@ -122,7 +134,7 @@ const CLIENTS: Client[] = [
 export function ConnectDialog({
   endpoint,
   name,
-  label = 'Connect with…',
+  label,
   variant = 'banner',
 }: {
   endpoint: string;
@@ -136,6 +148,9 @@ export function ConnectDialog({
   const [copied, setCopied] = useState(false);
 
   const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mcp';
+  const selectedLabel = selected
+    ? selected.labelKey ? t(selected.labelKey) : selected.label
+    : null;
 
   function close() {
     setOpen(false);
@@ -162,7 +177,7 @@ export function ConnectDialog({
     <>
       <button type="button" onClick={() => setOpen(true)} className={trigger}>
         {variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
-        {label}
+        {label ?? t('connectWith')}
       </button>
 
       {open ? (
@@ -175,7 +190,7 @@ export function ConnectDialog({
           />
           <div
             role="dialog"
-            aria-label={selected ? selected.label : t('installServer')}
+            aria-label={selectedLabel ?? t('installServer')}
             className="relative z-10 w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
           >
             <div className="mb-4 flex items-center justify-between">
@@ -191,7 +206,7 @@ export function ConnectDialog({
                   </button>
                 ) : null}
                 <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                  {selected ? selected.label : t('installServer')}
+                  {selectedLabel ?? t('installServer')}
                 </h2>
               </div>
               <button
@@ -210,7 +225,7 @@ export function ConnectDialog({
                   {t('howToInstall')}
                 </p>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {selected.howTo}
+                  {t(selected.howToKey)}
                 </p>
                 <div className="relative">
                   <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 pr-12 font-mono text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
@@ -238,7 +253,7 @@ export function ConnectDialog({
                     }}
                     className="rounded-lg border border-zinc-200 px-3 py-2.5 text-left text-sm font-medium text-zinc-800 transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:border-zinc-700 dark:hover:bg-zinc-800"
                   >
-                    {c.label}
+                    {c.labelKey ? t(c.labelKey) : c.label}
                   </button>
                 ))}
               </div>

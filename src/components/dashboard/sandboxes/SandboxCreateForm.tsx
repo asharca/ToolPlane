@@ -183,6 +183,7 @@ function ImageGroup({
   selectedImage: string;
   onSelect: (image: string) => void;
 }) {
+  const t = useTranslations('console.sandboxes');
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -190,7 +191,7 @@ function ImageGroup({
           <h3 className="text-sm font-semibold text-foreground">{title}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
         </div>
-        <span className="text-[11px] text-muted-foreground">{options.length} images</span>
+        <span className="text-[11px] text-muted-foreground">{options.length} {t('images')}</span>
       </div>
       <div className="grid gap-2 xl:grid-cols-2">
         {options.map((option) => (
@@ -311,12 +312,12 @@ export function SandboxCreateForm({
     const archiveInput = form.elements.namedItem('hermesArchive');
     const archive = archiveInput instanceof HTMLInputElement ? archiveInput.files?.[0] : undefined;
     if (!archive || archive.size <= 0) {
-      setImportState({ pending: false, error: 'Choose a non-empty .zip archive to import.' });
+      setImportState({ pending: false, error: t('chooseNonEmptyHermesArchive') });
       return;
     }
     const trustInput = form.elements.namedItem('trustArchive');
     if (!(trustInput instanceof HTMLInputElement) || !trustInput.checked) {
-      setImportState({ pending: false, error: 'Confirm that you trust this archive before importing it.' });
+      setImportState({ pending: false, error: t('confirmTrustHermesArchive') });
       return;
     }
     const hermesImage = String(formData.get('hermesImage') ?? '').trim();
@@ -325,7 +326,7 @@ export function SandboxCreateForm({
     if (archive.size > maxBytes) {
       setImportState({
         pending: false,
-        error: `The archive must be ${hermesArchiveMaxUploadMiB} MiB or smaller.`,
+        error: t('hermesArchiveTooLarge', { max: hermesArchiveMaxUploadMiB }),
       });
       return;
     }
@@ -392,14 +393,14 @@ export function SandboxCreateForm({
             return;
           }
           reject(new Error(
-            typeof result.error === 'string' ? result.error : 'Could not import the Hermes archive.',
+            typeof result.error === 'string' ? result.error : t('hermesArchiveImportFailed'),
           ));
         });
         request.addEventListener('error', () => {
-          reject(new Error('The archive upload was interrupted. Check the connection and try again.'));
+          reject(new Error(t('hermesArchiveUploadInterrupted')));
         });
         request.addEventListener('abort', () => {
-          reject(new Error('The archive upload was cancelled.'));
+          reject(new Error(t('hermesArchiveUploadCancelled')));
         });
         request.send(archive);
       });
@@ -408,7 +409,7 @@ export function SandboxCreateForm({
     } catch (error) {
       setImportState({
         pending: false,
-        error: error instanceof Error ? error.message : 'Could not import the Hermes archive.',
+        error: error instanceof Error ? error.message : t('hermesArchiveImportFailed'),
       });
     }
   };

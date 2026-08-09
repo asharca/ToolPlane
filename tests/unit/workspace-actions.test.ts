@@ -6,8 +6,10 @@ const mocks = vi.hoisted(() => ({
   deploymentFindFirst: vi.fn(),
   deploymentConfigFileFindMany: vi.fn(),
   deploymentCreate: vi.fn(),
+  deploymentUpsert: vi.fn(),
   deploymentDeleteMany: vi.fn(),
   deploymentUpdate: vi.fn(),
+  serverFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
   membershipFindUnique: vi.fn(),
   membershipCreate: vi.fn(),
@@ -32,8 +34,12 @@ vi.mock('@/lib/db', () => ({
     deployment: {
       findFirst: mocks.deploymentFindFirst,
       create: mocks.deploymentCreate,
+      upsert: mocks.deploymentUpsert,
       deleteMany: mocks.deploymentDeleteMany,
       update: mocks.deploymentUpdate,
+    },
+    server: {
+      findUnique: mocks.serverFindUnique,
     },
     deploymentConfigFile: {
       findMany: mocks.deploymentConfigFileFindMany,
@@ -71,6 +77,7 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 
 import {
+  deployServerAction,
   deployCustomServerAction,
   cloneDeploymentAction,
   inviteWorkspaceMemberAction,
@@ -80,6 +87,7 @@ import {
   runMcpConsoleToolAction,
   setDeploymentEnvAction,
   startDeploymentAction,
+  restartDeploymentAction,
   updateMcpToolExposureAction,
   updateMcpJsonConfigAction,
 } from '@/lib/workspace/actions';
@@ -109,6 +117,117 @@ function customMcpFormData(values: Record<string, string>): FormData {
   for (const [key, value] of Object.entries(values)) fd.set(key, value);
   return fd;
 }
+
+function deployFormData(serverId = 'server1'): FormData {
+  const fd = new FormData();
+  fd.set('workspace', 'mine');
+  fd.set('serverId', serverId);
+  return fd;
+}
+
+describe('deployServerAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.liveStatus.mockReturnValue(null);
+  });
+
+  it('creates setup-required deployments without starting empty required variables', async () => {
+    mocks.serverFindUnique.mockResolvedValue({
+      id: 'server1',
+      slug: 'firecrawl',
+      name: 'Firecrawl',
+      verifiedAt: new Date(),
+      installCfg: { source: 'npm', ref: 'firecrawl-mcp', env: ['FIRECRAWL_API_KEY'] },
+    });
+    mocks.deploymentUpsert.mockResolvedValue({
+      id: 'dep1',
+      serverId: 'server1',
+      name: null,
+      source: 'npm',
+      sourceRef: 'firecrawl-mcp',
+      installCfg: { env: { FIRECRAWL_API_KEY: '' } },
+      status: 'setup_required',
+    });
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      workspaceId: 'ws1',
+      serverId: 'server1',
+      name: null,
+      source: 'npm',
+      sourceRef: 'firecrawl-mcp',
+      installCfg: { env: { FIRECRAWL_API_KEY: '' }, requiredEnv: ['FIRECRAWL_API_KEY'] },
+      status: 'setup_required',
+      server: {
+        name: 'Firecrawl',
+        slug: 'firecrawl',
+        installCfg: { source: 'npm', ref: 'firecrawl-mcp', env: ['FIRECRAWL_API_KEY'] },
+      },
+    });
+
+    await deployServerAction(deployFormData());
+
+    expect(mocks.deploymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        status: 'setup_required',
+        installCfg: {
+          env: { FIRECRAWL_API_KEY: '' },
+          requiredEnv: ['FIRECRAWL_API_KEY'],
+        },
+      }),
+    }));
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1?tab=variables');
+  });
+
+  it('preserves one-click startup for recipes without missing required variables', async () => {
+    mocks.serverFindUnique.mockResolvedValue({
+      id: 'server1',
+      slug: 'memory',
+      name: 'Memory',
+      verifiedAt: new Date(),
+      installCfg: { source: 'npm', ref: '@modelcontextprotocol/server-memory', env: [] },
+    });
+    mocks.deploymentUpsert.mockResolvedValue({
+      id: 'dep1',
+      serverId: 'server1',
+      name: null,
+      source: 'npm',
+      sourceRef: '@modelcontextprotocol/server-memory',
+      installCfg: { env: {} },
+      status: 'provisioning',
+    });
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      workspaceId: 'ws1',
+      serverId: 'server1',
+      name: null,
+      source: 'npm',
+      sourceRef: '@modelcontextprotocol/server-memory',
+      installCfg: { env: {} },
+      status: 'provisioning',
+      server: {
+        name: 'Memory',
+        slug: 'memory',
+        installCfg: { source: 'npm', ref: '@modelcontextprotocol/server-memory', env: [] },
+      },
+    });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
+
+    await deployServerAction(deployFormData());
+
+    expect(mocks.deploymentUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: 'provisioning' }),
+    }));
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep1',
+      { kind: 'bridge', command: 'docker', args: [] },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
 
 describe('removeDeploymentAction', () => {
   beforeEach(() => {
@@ -201,6 +320,63 @@ describe('removeDeploymentAction', () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
   });
+
+  it('blocks direct starts while a catalog deployment still has empty required variables', async () => {
+    mocks.liveStatus.mockReturnValue(null);
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      workspaceId: 'ws1',
+      installCfg: { env: { API_TOKEN: '' } },
+      server: {
+        name: 'Protected MCP',
+        slug: 'protected-mcp',
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    });
+
+    await startDeploymentAction(formData('dep1'));
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+  });
+
+  it('stops a live runtime instead of restarting it with an empty required variable', async () => {
+    mocks.liveStatus.mockReturnValue('running');
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      workspaceId: 'ws1',
+      installCfg: { env: { API_TOKEN: '' } },
+      server: {
+        name: 'Protected MCP',
+        slug: 'protected-mcp',
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    });
+
+    await restartDeploymentAction(formData('dep1'));
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
+    expect(mocks.restartProcess).not.toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+  });
+
+  it('enforces stored requirements after a catalog clone is detached', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep-copy',
+      workspaceId: 'ws1',
+      installCfg: {
+        env: { API_TOKEN: '' },
+        requiredEnv: ['API_TOKEN'],
+      },
+      server: null,
+    });
+
+    await startDeploymentAction(formData('dep-copy'));
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep-copy', { finalStatus: 'setup_required' });
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
 });
 
 describe('MCP deployment management actions', () => {
@@ -259,7 +435,9 @@ describe('MCP deployment management actions', () => {
       name: 'Catalog MCP Copy',
       status: 'provisioning',
     };
-    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+    mocks.deploymentFindFirst
+      .mockResolvedValueOnce(sourceDeployment)
+      .mockResolvedValueOnce(clonedDeployment);
     mocks.deploymentConfigFileFindMany.mockResolvedValue([
       {
         path: 'ssh-config.json',
@@ -319,14 +497,18 @@ describe('MCP deployment management actions', () => {
   });
 
   it('can clone without environment variables when the default is explicitly disabled', async () => {
-    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
-    mocks.deploymentCreate.mockResolvedValue({
+    const clonedDeployment = {
       ...sourceDeployment,
       id: 'dep-copy',
       serverId: null,
       server: null,
       name: 'No secrets',
-    });
+      installCfg: { network: 'none' },
+    };
+    mocks.deploymentFindFirst
+      .mockResolvedValueOnce(sourceDeployment)
+      .mockResolvedValueOnce(clonedDeployment);
+    mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
     const fd = formData('dep1');
     fd.set('name', 'No secrets');
@@ -342,15 +524,63 @@ describe('MCP deployment management actions', () => {
     }));
   });
 
-  it('can clone without runtime files when the default is explicitly disabled', async () => {
-    mocks.deploymentFindFirst.mockResolvedValue(sourceDeployment);
+  it('keeps catalog requirements on a detached clone and does not start it without copied values', async () => {
+    const catalogSource = {
+      ...sourceDeployment,
+      server: {
+        name: 'Catalog MCP',
+        slug: 'catalog-mcp',
+        installCfg: { source: 'npm', ref: '@example/mcp', env: ['API_TOKEN'] },
+      },
+    };
+    mocks.deploymentFindFirst.mockResolvedValue(catalogSource);
     mocks.deploymentCreate.mockResolvedValue({
+      ...catalogSource,
+      id: 'dep-copy',
+      serverId: null,
+      server: null,
+      name: 'No catalog secrets',
+      installCfg: {
+        env: { API_TOKEN: '' },
+        network: 'none',
+        requiredEnv: ['API_TOKEN'],
+      },
+      status: 'setup_required',
+    });
+    const fd = formData('dep1');
+    fd.set('name', 'No catalog secrets');
+    fd.set('copyEnvironmentVariables', 'false');
+
+    await cloneDeploymentAction(fd);
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        serverId: null,
+        status: 'setup_required',
+        installCfg: {
+          env: { API_TOKEN: '' },
+          network: 'none',
+          requiredEnv: ['API_TOKEN'],
+        },
+      }),
+    }));
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep-copy?tab=variables');
+  });
+
+  it('can clone without runtime files when the default is explicitly disabled', async () => {
+    const clonedDeployment = {
       ...sourceDeployment,
       id: 'dep-copy',
       serverId: null,
       server: null,
       name: 'No files',
-    });
+    };
+    mocks.deploymentFindFirst
+      .mockResolvedValueOnce(sourceDeployment)
+      .mockResolvedValueOnce(clonedDeployment);
+    mocks.deploymentCreate.mockResolvedValue(clonedDeployment);
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'bridge', command: 'docker', args: [] });
     const fd = formData('dep1');
     fd.set('name', 'No files');
@@ -946,6 +1176,42 @@ describe('updateMcpJsonConfigAction', () => {
     expect(mocks.deploymentUpdate.mock.calls[0][0].data).not.toHaveProperty('name');
   });
 
+  it('saves catalog JSON config without rebuilding when a required variable is empty', async () => {
+    const deployment = {
+      id: 'catalog-dep',
+      workspaceId: 'ws1',
+      serverId: 'server1',
+      name: null,
+      source: 'npm',
+      sourceRef: 'protected-mcp',
+      installCfg: { env: { API_TOKEN: 'old-secret' } },
+    };
+    mocks.deploymentFindFirst.mockResolvedValue(deployment);
+    mocks.serverFindUnique.mockResolvedValue({
+      installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+    });
+    mocks.deploymentUpdate.mockResolvedValue({
+      ...deployment,
+      installCfg: { env: { API_TOKEN: '' } },
+      status: 'setup_required',
+      server: { name: 'Protected MCP' },
+    });
+    mocks.liveStatus.mockReturnValue(null);
+
+    const result = await updateMcpJsonConfigAction({}, configFormData('catalog-dep', {
+      source: 'npm',
+      ref: 'protected-mcp',
+      env: { API_TOKEN: '' },
+    }));
+
+    expect(result.savedAt).toEqual(expect.any(Number));
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'setup_required' }),
+    }));
+    expect(mocks.restartProcess).not.toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+  });
+
   it('rejects replacing the package behind a catalog identity', async () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       id: 'catalog-dep',
@@ -1102,6 +1368,101 @@ describe('setDeploymentEnvAction', () => {
       where: { id: 'dep1' },
       data: { installCfg: { env: { API_TOKEN: 'secret' }, network: 'none' } },
     });
+  });
+
+  it('moves a setup-required catalog deployment to stopped after all required values are saved', async () => {
+    mocks.liveStatus.mockReturnValue(null);
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      status: 'setup_required',
+      installCfg: { env: { API_TOKEN: '' }, network: 'none' },
+      server: {
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    });
+    const fd = formData('dep1');
+    fd.set('env', JSON.stringify([{ key: 'API_TOKEN', value: 'secret' }]));
+
+    await setDeploymentEnvAction(fd);
+
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: {
+        installCfg: { env: { API_TOKEN: 'secret' }, network: 'none' },
+        status: 'stopped',
+      },
+    });
+  });
+
+  it('kills a running deployment and persists setup_required when a required value is cleared', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      status: 'running',
+      installCfg: { env: { API_TOKEN: 'old-secret' }, network: 'none' },
+      server: {
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    });
+    const fd = formData('dep1');
+    fd.set('env', JSON.stringify([{ key: 'API_TOKEN', value: '' }]));
+
+    await setDeploymentEnvAction(fd);
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: {
+        installCfg: { env: { API_TOKEN: '' }, network: 'none' },
+        status: 'setup_required',
+      },
+    });
+    expect(mocks.killProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deploymentUpdate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('serializes credential clearing with start so an old spawn spec cannot win the race', async () => {
+    let current = {
+      id: 'dep1',
+      workspaceId: 'ws1',
+      status: 'running',
+      source: 'npm',
+      sourceRef: 'protected-mcp',
+      installCfg: { env: { API_TOKEN: 'old-secret' } },
+      server: {
+        name: 'Protected MCP',
+        slug: 'protected-mcp',
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    };
+    mocks.deploymentFindFirst.mockImplementation(async () => current);
+    mocks.deploymentUpdate.mockImplementation(async ({ data }) => {
+      current = { ...current, ...data };
+      return current;
+    });
+    let finishKill!: () => void;
+    mocks.killProcess.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishKill = resolve;
+    }));
+
+    const clear = formData('dep1');
+    clear.set('env', JSON.stringify([{ key: 'API_TOKEN', value: '' }]));
+    const clearing = setDeploymentEnvAction(clear);
+    await vi.waitFor(() => expect(mocks.killProcess).toHaveBeenCalledOnce());
+
+    const starting = startDeploymentAction(formData('dep1'));
+    await Promise.resolve();
+    expect(mocks.deploymentFindFirst).toHaveBeenCalledOnce();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+
+    finishKill();
+    await Promise.all([clearing, starting]);
+
+    expect(mocks.deploymentFindFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.killProcess).toHaveBeenCalledTimes(2);
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(current.status).toBe('setup_required');
+    expect(current.installCfg.env.API_TOKEN).toBe('');
   });
 });
 

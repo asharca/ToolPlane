@@ -119,12 +119,12 @@ export default async function ToolkitDetailPage({
 
   const cardHeader =
     'flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800';
-  const defaultCloneName = `${toolkit.name.slice(0, 55).trimEnd()} Copy`;
+  const defaultCloneName = t('copyNameDefault', { name: toolkit.name.slice(0, 55).trimEnd() });
   return (
     <>
       <DashboardHeader
         breadcrumb={[
-          { label: 'Toolkits', href: `/app/${wsSlug}/toolkits` },
+          { label: t('title'), href: `/app/${wsSlug}/toolkits` },
           { label: toolkitSlug },
         ]}
         actions={

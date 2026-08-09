@@ -329,7 +329,7 @@ export function AgentSettingsForm({
               <code className="min-w-0 break-all text-xs text-foreground">{runtime.image}</code>
             </div>
             <div className="grid gap-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
-              <span className="text-muted-foreground">Sandbox</span>
+              <span className="text-muted-foreground">{t('sandbox')}</span>
               <code className="min-w-0 break-all text-xs text-foreground">{runtime.sandboxId}</code>
             </div>
             {runtime.lastSyncedAt ? (

@@ -7,6 +7,7 @@ import {
   MAX_SKILL_IMPORT_SKILLS,
   TEXT_SKILL_EXTENSION_SET,
 } from './limits';
+import { parseSkillFrontmatter } from './frontmatter';
 export {
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
@@ -18,7 +19,6 @@ export {
 
 export type SkillBundleFile = { path: string; content: string; encoding?: 'base64' };
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const GITHUB_SHORT =
   /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:\/(.+))?$/;
 const GITHUB_URL =
@@ -81,30 +81,7 @@ export function parseGithubSkillSource(raw: string): ParsedGithubSkillSource {
   };
 }
 
-function yamlValue(raw: string): string {
-  const value = raw.trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-export function parseSkillFrontmatter(content: string): Record<string, string> {
-  const match = FRONTMATTER.exec(content);
-  if (!match) return {};
-  const result: Record<string, string> = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const idx = line.indexOf(':');
-    if (idx === -1) continue;
-    const key = line.slice(0, idx).trim();
-    const val = yamlValue(line.slice(idx + 1));
-    if (key) result[key] = val;
-  }
-  return result;
-}
+export { parseSkillFrontmatter } from './frontmatter';
 
 export function safeSkillFilePath(raw: string): string | null {
   const path = raw.replace(/\\/g, '/').replace(/^\.\/+/, '').trim();

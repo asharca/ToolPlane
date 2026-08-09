@@ -93,7 +93,7 @@ describe('buildModel', () => {
 
     expect(requestUrl).toBe('https://example.com/v1/chat/completions');
     expect(requestBody).not.toHaveProperty('system');
-    expect(requestBody?.messages).toEqual([
+    expect((requestBody as Record<string, unknown> | null)?.messages).toEqual([
       { role: 'system', content: 'Server system prompt' },
       { role: 'user', content: 'hello' },
     ]);

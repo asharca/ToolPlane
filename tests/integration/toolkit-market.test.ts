@@ -20,6 +20,7 @@ const targetEmail = `tk-market-target-${stamp}@test.dev`;
 const sourceSlug = `tk-market-source-${stamp}`;
 const targetSlug = `tk-market-target-${stamp}`;
 const serverSlug = `tk-market-server-${stamp}`;
+const automaticServerSlug = `tk-market-automatic-server-${stamp}`;
 const skillSlug = `tk-market-skill-${stamp}`;
 
 function formData(toolkitId: string): FormData {
@@ -38,7 +39,7 @@ describe('toolkit market import', () => {
     await db.workspace.deleteMany({ where: { slug: { in: [sourceSlug, targetSlug] } } });
     await db.user.deleteMany({ where: { email: { in: [sourceEmail, targetEmail] } } });
     await db.skill.deleteMany({ where: { slug: skillSlug } });
-    await db.server.deleteMany({ where: { slug: serverSlug } });
+    await db.server.deleteMany({ where: { slug: { in: [serverSlug, automaticServerSlug] } } });
     await db.$disconnect();
   });
 
@@ -82,6 +83,20 @@ describe('toolkit market import', () => {
         },
       },
     });
+    const automaticServer = await db.server.create({
+      data: {
+        slug: automaticServerSlug,
+        name: 'Automatic MCP',
+        curated: true,
+        verifiedAt: new Date(),
+        installCfg: {
+          source: 'npm',
+          ref: '@modelcontextprotocol/server-filesystem',
+          env: ['BUILTIN_MODE'],
+          envValues: { BUILTIN_MODE: 'safe-default' },
+        },
+      },
+    });
     const skill = await db.skill.create({
       data: {
         slug: skillSlug,
@@ -91,7 +106,7 @@ describe('toolkit market import', () => {
       },
     });
 
-    const [catalogDep, customDep, catalogSkill, customSkill] = await Promise.all([
+    const [catalogDep, automaticDep, customDep, catalogSkill, customSkill] = await Promise.all([
       db.deployment.create({
         data: {
           workspaceId: sourceWs.id,
@@ -105,6 +120,16 @@ describe('toolkit market import', () => {
               PUBLIC_MODE: 'source-overridden',
             },
           },
+        },
+      }),
+      db.deployment.create({
+        data: {
+          workspaceId: sourceWs.id,
+          serverId: automaticServer.id,
+          status: 'running',
+          source: 'npm',
+          sourceRef: '@modelcontextprotocol/server-filesystem',
+          installCfg: { env: {} },
         },
       }),
       db.deployment.create({
@@ -142,6 +167,7 @@ describe('toolkit market import', () => {
         servers: {
           create: [
             { deploymentId: catalogDep.id },
+            { deploymentId: automaticDep.id },
             { deploymentId: customDep.id },
           ],
         },
@@ -154,9 +180,16 @@ describe('toolkit market import', () => {
       },
     });
 
-    await clonePublicToolkitAction(formData(sourceToolkit.id));
+    await Promise.all([
+      clonePublicToolkitAction(formData(sourceToolkit.id)),
+      clonePublicToolkitAction(formData(sourceToolkit.id)),
+    ]);
 
     expect(mocks.redirect).toHaveBeenCalledWith(`/app/${targetSlug}/toolkits/research-kit`);
+    expect(mocks.redirect).toHaveBeenCalledWith(`/app/${targetSlug}/toolkits/research-kit-1`);
+    await expect(
+      db.toolkit.count({ where: { workspaceId: targetWs.id } }),
+    ).resolves.toBe(2);
     const targetToolkit = await db.toolkit.findFirst({
       where: { workspaceId: targetWs.id, slug: 'research-kit' },
       include: {
@@ -167,15 +200,26 @@ describe('toolkit market import', () => {
 
     expect(targetToolkit).not.toBeNull();
     expect(targetToolkit?.visibility).toBe('private');
-    expect(targetToolkit?.servers).toHaveLength(1);
-    const targetDeployment = targetToolkit!.servers[0].deployment;
+    expect(targetToolkit?.servers).toHaveLength(2);
+    const targetDeployment = targetToolkit!.servers.find(
+      ({ deployment }) => deployment.serverId === server.id,
+    )!.deployment;
     expect(targetDeployment.serverId).toBe(server.id);
-    expect(targetDeployment.status).toBe('stopped');
+    expect(targetDeployment.status).toBe('setup_required');
     expect(targetDeployment.installCfg).toMatchObject({
       env: {
         SECRET_KEY: '',
         PUBLIC_MODE: '1',
       },
+      requiredEnv: ['SECRET_KEY'],
+    });
+    const automaticDeployment = targetToolkit!.servers.find(
+      ({ deployment }) => deployment.serverId === automaticServer.id,
+    )!.deployment;
+    expect(automaticDeployment.status).toBe('stopped');
+    expect(automaticDeployment.installCfg).toMatchObject({
+      env: { BUILTIN_MODE: 'safe-default' },
+      requiredEnv: ['BUILTIN_MODE'],
     });
 
     expect(targetToolkit?.skills).toHaveLength(2);

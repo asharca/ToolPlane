@@ -687,9 +687,29 @@ describe('agents mutations', () => {
     const msgs = await db.message.findMany({ where: { conversationId: conv!.id } });
     expect(msgs).toHaveLength(1);
     expect(msgs[0].role).toBe('user');
+    expect(await db.conversation.findUnique({ where: { id: conv!.id } })).toMatchObject({
+      title: 'hi',
+    });
+    await appendMessage(conv!.id, 'user', [{ type: 'text', text: 'a later question' }]);
+    expect(await db.conversation.findUnique({ where: { id: conv!.id } })).toMatchObject({
+      title: 'hi',
+    });
     expect(conv).toMatchObject({
       runtimeSessionId: conv!.id,
       runtimeSessionKey: `agent:${a.id}:console:${conv!.id}`,
+    });
+
+    const legacy = await createConversation(workspaceId, a.id);
+    await db.message.create({
+      data: {
+        conversationId: legacy!.id,
+        role: 'user',
+        parts: [{ type: 'text', text: 'legacy turn' }],
+      },
+    });
+    await appendMessage(legacy!.id, 'user', [{ type: 'text', text: 'new turn' }]);
+    expect(await db.conversation.findUnique({ where: { id: legacy!.id } })).toMatchObject({
+      title: null,
     });
 
     const messagingConversation = await createConversation(workspaceId, a.id, 'msg:slack:dm:U123', {
@@ -699,6 +719,20 @@ describe('agents mutations', () => {
       runtimeSessionId: messagingConversation!.id,
       runtimeSessionKey: 'msg:slack:dm:U123',
     });
+  });
+
+  it('atomically derives a title when the first user messages race', async () => {
+    const agent = await createAgent(workspaceId, 'Concurrent title');
+    const conversation = await createConversation(workspaceId, agent.id);
+
+    await Promise.all([
+      appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'First candidate' }]),
+      appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Second candidate' }]),
+    ]);
+
+    const reread = await db.conversation.findUnique({ where: { id: conversation!.id } });
+    expect(['First candidate', 'Second candidate']).toContain(reread?.title);
+    expect(await db.message.count({ where: { conversationId: conversation!.id } })).toBe(2);
   });
 
   it('initializes legacy runtime session aliases once without replacing them', async () => {

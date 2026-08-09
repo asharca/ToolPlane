@@ -78,6 +78,41 @@ function statusLabel(status: string) {
   return status.replace(/_/g, ' ');
 }
 
+function translatedStatus(status: string, t: ReturnType<typeof useTranslations>) {
+  const key = {
+    running: 'statusRunning',
+    stopped: 'statusStopped',
+    error: 'statusError',
+    waiting: 'statusWaiting',
+    scanned: 'statusScanned',
+    ready: 'statusReady',
+    waiting_callback: 'statusWaitingCallback',
+    setup_required: 'statusSetupRequired',
+  }[status];
+  return key ? t(key) : statusLabel(status);
+}
+
+const PAIRING_MESSAGE_KEYS = {
+  'Scan this QR in Telegram to create the managed bot, then check setup status.': 'telegramScanInstructions',
+  'Waiting for Telegram managed bot confirmation.': 'telegramWaitingForConfirmation',
+  'Scan this QR in WeCom to create or authorize the AI Bot.': 'wecomScanInstructions',
+  'WeCom scan completed. Bot ID and Secret were saved.': 'wecomScanCompleted',
+  'Scan this QR in WeChat and confirm login.': 'weixinScanInstructions',
+  'Weixin login completed. Account ID and token were saved.': 'weixinLoginCompleted',
+  'Scanned. Waiting for confirmation in WeChat.': 'weixinWaitingForConfirmation',
+  'Scan this QR in DingTalk to authorize Stream Mode credentials.': 'dingtalkScanInstructions',
+  'DingTalk authorization completed. Client ID and Client Secret were saved.': 'dingtalkAuthorizationCompleted',
+  'Waiting for DingTalk QR authorization.': 'dingtalkWaitingForAuthorization',
+  'DingTalk authorization expired. Request a new QR code.': 'dingtalkAuthorizationExpired',
+  'No active setup runner is configured for this platform yet.': 'noActiveSetupRunner',
+  'Telegram setup saved. Start the hosted runner when ready.': 'telegramSetupSaved',
+} as const;
+
+function translatedPairingMessage(message: string, t: ReturnType<typeof useTranslations>) {
+  const key = PAIRING_MESSAGE_KEYS[message as keyof typeof PAIRING_MESSAGE_KEYS];
+  return key ? t(key) : message;
+}
+
 function CredentialInput({
   credential,
   required,
@@ -129,6 +164,7 @@ function ActivePairingPanel({
   connection: ChannelConnection;
   platform: MessagingPlatform;
 }) {
+  const t = useTranslations('console.agentMessaging');
   const locale = useLocale();
   const { timeZone } = useUserTimeZone();
   if (!platform.pairing) return null;
@@ -148,7 +184,8 @@ function ActivePairingPanel({
       <QrPairingDisplay
         payload={pairing?.qrPayload}
         label={platform.pairing.label}
-        emptyLabel={isReady ? 'Setup complete' : 'Request QR'}
+        emptyLabel={isReady ? t('setupComplete') : t('requestQr')}
+        errorLabel={t('qrRenderFailed')}
       />
       <div className="min-w-0 space-y-3">
         <div>
@@ -157,7 +194,7 @@ function ActivePairingPanel({
             <div className="text-sm font-semibold text-foreground">{platform.pairing.label}</div>
             {pairing?.status ? (
               <span className={`inline-flex h-6 items-center rounded-md px-2 text-[11px] font-medium uppercase tracking-wide ${statusTone(pairing.status)}`}>
-                {statusLabel(pairing.status)}
+                {translatedStatus(pairing.status, t)}
               </span>
             ) : null}
           </div>
@@ -170,7 +207,7 @@ function ActivePairingPanel({
             <input type="hidden" name="agentId" value={agentId} />
             <input type="hidden" name="connectionId" value={connection.id} />
             <button className="ui-button-primary h-9 px-3 text-xs" type="submit">
-              {platform.pairing.requestLabel ?? 'Request QR'}
+              {platform.pairing.requestLabel ?? t('requestQr')}
             </button>
           </form>
           {canCheck ? (
@@ -179,21 +216,21 @@ function ActivePairingPanel({
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="connectionId" value={connection.id} />
               <button className="ui-button-secondary h-9 px-3 text-xs" type="submit">
-                {platform.pairing.checkLabel ?? 'Check setup'}
+                {platform.pairing.checkLabel ?? t('checkSetup')}
               </button>
             </form>
           ) : null}
-          {pairing?.scanUrl && !isReady ? <CopyButton text={pairing.scanUrl} label="Copy URL" /> : null}
+          {pairing?.scanUrl && !isReady ? <CopyButton text={pairing.scanUrl} label={t('copyUrl')} /> : null}
           {pairing?.scanUrl && !isReady ? (
             <Link href={pairing.scanUrl} target="_blank" rel="noreferrer" className="ui-button-secondary h-9 gap-2 px-3 text-xs">
               <ExternalLink className="size-4 shrink-0" />
-              Open
+              {t('open')}
             </Link>
           ) : null}
         </div>
 
         <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-          Scan with {platform.pairing.scanTarget}. {platform.pairing.completion}
+          {t('scanWith', { target: platform.pairing.scanTarget })} {platform.pairing.completion}
         </div>
 
         {isTelegramManaged && pairing?.status === 'ready' ? (
@@ -202,7 +239,7 @@ function ActivePairingPanel({
             <input type="hidden" name="agentId" value={agentId} />
             <input type="hidden" name="connectionId" value={connection.id} />
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-foreground">Telegram bot is ready</span>
+              <span className="text-sm font-semibold text-foreground">{t('telegramBotIsReady')}</span>
               {pairing.extra?.botUsername ? (
                 <code className="inline-flex h-6 items-center rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground">
                   @{pairing.extra.botUsername}
@@ -211,23 +248,25 @@ function ActivePairingPanel({
             </div>
             <label className="block">
               <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Allowed Telegram user IDs (optional)
+                {t('allowedTelegramUserIdsOptional')}
               </span>
               <input
                 name="allowedUserIds"
                 defaultValue={telegramAllowedDefault}
-                placeholder="blank means everyone"
+                placeholder={t('blankMeansEveryone')}
                 className="ui-input mt-1 h-9 w-full"
               />
             </label>
-            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">Save Telegram setup</button>
+            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">{t('saveTelegramSetup')}</button>
           </form>
         ) : null}
 
-        {pairing?.message ? <p className="text-xs text-muted-foreground">{pairing.message}</p> : null}
+        {pairing?.message ? (
+          <p className="text-xs text-muted-foreground">{translatedPairingMessage(pairing.message, t)}</p>
+        ) : null}
         {pairing?.expiresAt ? (
           <p className="text-[11px] text-muted-foreground">
-            Expires:{' '}
+            {t('expires')}{' '}
             {formatInTimeZone(
               pairing.expiresAt,
               timeZone,
@@ -238,7 +277,7 @@ function ActivePairingPanel({
         ) : null}
         {pairing?.error ? (
           <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-xs text-red-700 dark:text-red-300">
-            {pairing.error}
+            {translatedPairingMessage(pairing.error, t)}
           </div>
         ) : null}
       </div>
@@ -274,7 +313,7 @@ function ChannelConnectionCard({
               {connection.platformLabel}
             </span>
             <span className={`inline-flex h-6 items-center rounded-md px-2 text-[11px] font-medium uppercase tracking-wide ${statusTone(connection.status)}`}>
-              {statusLabel(connection.status)}
+              {translatedStatus(connection.status, t)}
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{connection.connectionMode}</p>
@@ -353,11 +392,11 @@ function ChannelConnectionCard({
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-foreground">
             <span className="inline-flex items-center gap-2">
               <KeyRound className="size-4 shrink-0" />
-              Credentials and policy
+              {t('credentialsAndPolicy')}
             </span>
             {missingCredentialDefs.length ? (
               <span className="inline-flex h-6 items-center rounded-md bg-amber-500/10 px-2 text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                missing {missingCredentialDefs.length}
+                {t('missingCount', { count: missingCredentialDefs.length })}
               </span>
             ) : null}
           </summary>
@@ -375,7 +414,7 @@ function ChannelConnectionCard({
                 />
               ))}
             </div>
-            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">Save credentials</button>
+            <button className="ui-button-primary h-9 px-3 text-xs" type="submit">{t('saveCredentials')}</button>
           </form>
         </details>
       ) : null}

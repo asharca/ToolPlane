@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { parseSkillFrontmatter } from '@/lib/skills/frontmatter';
 
 type GithubEntry = {
   type: 'file' | 'dir' | string;
@@ -113,30 +114,6 @@ function titleFromSlug(slug: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-function yamlValue(raw: string): string {
-  const value = raw.trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function parseSkillFrontmatter(content: string): Record<string, string> {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-  if (!match) return {};
-  const meta: Record<string, string> = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const sep = line.indexOf(':');
-    if (sep === -1) continue;
-    const key = line.slice(0, sep).trim();
-    if (key) meta[key] = yamlValue(line.slice(sep + 1));
-  }
-  return meta;
 }
 
 function safeSkillFilePath(raw: string): string | null {

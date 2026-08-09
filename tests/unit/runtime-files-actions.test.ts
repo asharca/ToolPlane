@@ -10,11 +10,14 @@ const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   deploymentFindFirst: vi.fn(),
+  deploymentUpdate: vi.fn(),
   deploymentConfigFileDeleteMany: vi.fn(),
   transaction: vi.fn(),
   transactionConfigFileFindMany: vi.fn(),
   transactionConfigFileUpsert: vi.fn(),
   restartProcess: vi.fn(),
+  killProcess: vi.fn(),
+  liveStatus: vi.fn(),
   resolveSpawnSpec: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -24,11 +27,18 @@ vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorksp
 vi.mock('@/lib/db', () => ({
   db: {
     $transaction: mocks.transaction,
-    deployment: { findFirst: mocks.deploymentFindFirst },
+    deployment: {
+      findFirst: mocks.deploymentFindFirst,
+      update: mocks.deploymentUpdate,
+    },
     deploymentConfigFile: { deleteMany: mocks.deploymentConfigFileDeleteMany },
   },
 }));
-vi.mock('@/lib/process/supervisor', () => ({ restartProcess: mocks.restartProcess }));
+vi.mock('@/lib/process/supervisor', () => ({
+  restartProcess: mocks.restartProcess,
+  killProcess: mocks.killProcess,
+  liveStatus: mocks.liveStatus,
+}));
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 
@@ -114,7 +124,7 @@ describe('runtime file workspace actions', () => {
         workspaceId: 'workspace-1',
         source: { in: ['npm', 'pypi', 'github', 'docker', 'config'] },
       },
-      include: { server: { select: { name: true } } },
+      include: { server: { select: { name: true, installCfg: true } } },
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -223,6 +233,28 @@ describe('runtime file workspace actions', () => {
     expect(mocks.transactionConfigFileUpsert).toHaveBeenCalledOnce();
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/mcp/dep-1');
+  });
+
+  it('persists a runtime file without restarting a catalog deployment that still needs variables', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      ...deployment,
+      source: 'npm',
+      installCfg: { env: { API_TOKEN: '' } },
+      server: {
+        name: 'Protected MCP',
+        installCfg: { source: 'npm', ref: 'protected-mcp', env: ['API_TOKEN'] },
+      },
+    });
+    mocks.liveStatus.mockReturnValue(null);
+
+    await expect(upsertDeploymentRuntimeFileAction({}, upsertForm())).resolves.toMatchObject({
+      savedAt: expect.any(Number),
+      file: { id: 'file-1' },
+    });
+
+    expect(mocks.killProcess).toHaveBeenCalledWith('dep-1', { finalStatus: 'setup_required' });
+    expect(mocks.restartProcess).not.toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
   });
 
   it('returns saveFailed when a scoped runtime-file deletion cannot be persisted', async () => {

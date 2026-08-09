@@ -41,6 +41,7 @@ import { deriveHermesRuntimeToken } from './token';
 import { HERMES_ENV_MERGE_SCRIPT } from './env-merge-script';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 import { readSandboxEnv } from '@/lib/sandboxes/env';
+import { runtimeEnv } from '@/lib/runtime-env';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
 const HERMES_ARCHIVE_COPY_TIMEOUT_MS = HERMES_ARCHIVE_IMPORT_TIMEOUT_MS;
@@ -538,8 +539,8 @@ function safeSkillName(value: string): string {
 }
 
 function runtimePublicBaseUrl(): string {
-  const configured = process.env.TOOLPLANE_HERMES_CALLBACK_URL
-    || process.env.NEXT_PUBLIC_APP_URL
+  const configured = runtimeEnv('TOOLPLANE_HERMES_CALLBACK_URL')
+    || runtimeEnv('NEXT_PUBLIC_APP_URL')
     || 'http://localhost:3000';
   const url = new URL(configured);
   if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {

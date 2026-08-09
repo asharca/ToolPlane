@@ -1,6 +1,7 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
@@ -856,5 +857,25 @@ export async function appendMessage(
   role: string,
   parts: Prisma.InputJsonValue,
 ) {
-  return db.message.create({ data: { conversationId, role, parts } });
+  return db.$transaction(async (tx) => {
+    if (role === 'user') {
+      const title = conversationTitleFromParts(parts);
+      if (title) {
+        // Claim the title before inserting the first user message. Concurrent
+        // callers serialize on the conversation row, so exactly one can
+        // observe a null title with no prior user messages.
+        await tx.conversation.updateMany({
+          where: {
+            id: conversationId,
+            title: null,
+            messages: {
+              none: { role: 'user' },
+            },
+          },
+          data: { title },
+        });
+      }
+    }
+    return tx.message.create({ data: { conversationId, role, parts } });
+  });
 }
