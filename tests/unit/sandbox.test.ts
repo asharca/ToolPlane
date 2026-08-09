@@ -120,6 +120,18 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).not.toContain("'--publish'");
   });
 
+  it('allows the Hermes auto-TTS temp directory without widening the whole system temp root', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain(
+      "'HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp/hermes_voice'",
+    );
+    expect(script.match(/HERMES_TTS_WRITE_SAFE_ROOT_ENV/g)).toHaveLength(3);
+    expect(script.indexOf('...Object.entries(USER_ENV)')).toBeLessThan(
+      script.lastIndexOf('HERMES_TTS_WRITE_SAFE_ROOT_ENV'),
+    );
+  });
+
   it('runs interactive Hermes terminal sessions as the Hermes service user', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 

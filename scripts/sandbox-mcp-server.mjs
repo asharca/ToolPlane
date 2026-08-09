@@ -50,6 +50,11 @@ const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
 const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
 const HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:/opt/hermes/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+// The official Hermes image restricts unattended writes to /opt/data, while
+// gateway auto-TTS intentionally renders short-lived replies in this precise
+// temp directory. Keep the exception narrow instead of allowing all of /tmp.
+const HERMES_TTS_WRITE_SAFE_ROOT_ENV =
+  'HERMES_WRITE_SAFE_ROOT=/opt/data:/tmp/hermes_voice';
 
 const TOOLS = [
   {
@@ -352,16 +357,17 @@ function hasExpectedDockerSandboxCaps(info) {
     (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
   );
   const containerEnv = new Set(info?.Config?.Env ?? []);
-  const dashboardConfigured = KIND !== 'hermes' || [
+  const hermesRuntimeConfigured = KIND !== 'hermes' || [
     'HERMES_DASHBOARD=1',
     'HERMES_DASHBOARD_HOST=127.0.0.1',
     'HERMES_DASHBOARD_PORT=9119',
+    HERMES_TTS_WRITE_SAFE_ROOT_ENV,
   ].every((entry) => containerEnv.has(entry));
   return capDrop.has('ALL')
     && DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap))
     && info?.Config?.Image === IMAGE
     && expectedMount
-    && dashboardConfigured;
+    && hermesRuntimeConfigured;
 }
 
 function dockerCreateArgs() {
@@ -418,6 +424,8 @@ function dockerCreateArgs() {
       'HERMES_DASHBOARD_PORT=9119',
       '--env',
       'HERMES_ACCEPT_HOOKS=1',
+      '--env',
+      HERMES_TTS_WRITE_SAFE_ROOT_ENV,
       '--env',
       'HERMES_ENVIRONMENT_HINT=This Hermes instance is managed by ToolPlane. Use only the configured ToolPlane MCP server and the files under /opt/data.',
       '-v',
