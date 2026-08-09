@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from 'react';
 import { ChevronRight, ChevronDown } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 export type LogEntry = {
   id: string;
@@ -26,6 +27,7 @@ function pretty(s: string | null): string {
 const cell = 'px-4 py-2 text-xs';
 
 export function DeploymentLogs({ logs }: { logs: LogEntry[] }) {
+  const t = useTranslations('console.observability');
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (id: string) =>
     setOpen((s) => {
@@ -41,10 +43,10 @@ export function DeploymentLogs({ logs }: { logs: LogEntry[] }) {
         <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
           <tr>
             <th className="w-8 px-2 py-2.5" />
-            <th className="px-4 py-2.5 font-medium">Time</th>
-            <th className="px-4 py-2.5 font-medium">Call</th>
-            <th className="px-4 py-2.5 font-medium">Status</th>
-            <th className="px-4 py-2.5 text-right font-medium">Latency</th>
+            <th className="px-4 py-2.5 font-medium">{t('time')}</th>
+            <th className="px-4 py-2.5 font-medium">{t('method')}</th>
+            <th className="px-4 py-2.5 font-medium">{t('status')}</th>
+            <th className="px-4 py-2.5 text-right font-medium">{t('duration')}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -85,13 +87,13 @@ export function DeploymentLogs({ logs }: { logs: LogEntry[] }) {
                     <td colSpan={4} className="px-4 py-3">
                       <div className="grid gap-3 md:grid-cols-2">
                         <div>
-                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Request</p>
+                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{t('request')}</p>
                           <pre className="max-h-64 overflow-auto rounded-md border border-zinc-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
                             {pretty(l.request)}
                           </pre>
                         </div>
                         <div>
-                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Response</p>
+                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{t('response')}</p>
                           <pre className="max-h-64 overflow-auto rounded-md border border-zinc-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
                             {pretty(l.response)}
                           </pre>

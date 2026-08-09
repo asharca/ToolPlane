@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('next-intl/server', () => ({
-  getTranslations: async () => (key: string) => key,
+  getTranslations: async () => (key: string) => (key === 'score' ? 'Score' : key),
 }));
 
 import { RankedList } from '@/components/RankedList';

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -8,6 +9,7 @@ import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import { TimeZoneSettings } from '@/components/timezone/TimeZoneSettings';
+import { ChangePasswordForm } from '@/components/auth/PasswordRecoveryForms';
 import {
   DashboardPage,
   DashboardPanel,
@@ -16,6 +18,7 @@ import {
   renameWorkspaceAction,
   deleteWorkspaceAction,
 } from '@/lib/workspace/actions';
+import { originFromHeaders } from '@/lib/http/origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +35,7 @@ export default async function SettingsPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const isOwner = ws.ownerId === user.id;
+  const workspaceUrlPrefix = new URL('/app/', originFromHeaders(await headers())).toString();
 
   return (
     <>
@@ -44,7 +48,7 @@ export default async function SettingsPage({
             <input type="hidden" name="workspace" value={slug} />
             <div className="space-y-1.5">
               <label htmlFor="workspace-name" className="text-sm font-medium text-foreground">
-                {t('orgName')}
+                {t('workspaceName')}
               </label>
               <input
                 id="workspace-name"
@@ -58,7 +62,7 @@ export default async function SettingsPage({
                 {t('urlSlug')}
               </label>
               <div className="flex items-center rounded-md border border-border bg-muted/60">
-                <span className="px-3 text-sm text-muted-foreground">{t('toolplanelocal')}</span>
+                <span className="px-3 text-sm text-muted-foreground">{workspaceUrlPrefix}</span>
                 <input
                   id="workspace-slug"
                   defaultValue={ws.slug}
@@ -100,21 +104,29 @@ export default async function SettingsPage({
           <p className="mt-2 text-xs text-muted-foreground">{t('timezoneDesc')}</p>
         </DashboardPanel>
 
+        <DashboardPanel
+          title={t('security')}
+          description={t('passwordSettingsDesc')}
+          bodyClassName="py-4"
+        >
+          <ChangePasswordForm />
+        </DashboardPanel>
+
         {isOwner ? (
           <DashboardPanel title={t('dangerZone')} tone="danger" bodyClassName="py-4">
             <p className="text-sm font-medium text-foreground">
-              {t('deleteOrg')}
+              {t('deleteWorkspace')}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {t('deleteOrgDesc')}
+              {t('deleteWorkspaceDesc')}
             </p>
             <form action={deleteWorkspaceAction} className="mt-3">
               <input type="hidden" name="workspace" value={slug} />
               <ConfirmSubmitButton
-                triggerLabel={t('deleteOrgButton')}
+                triggerLabel={t('deleteWorkspaceButton')}
                 confirmLabel={common('confirm')}
                 cancelLabel={common('cancel')}
-                prompt={`${t('deleteOrg')}?`}
+                prompt={`${t('deleteWorkspace')}?`}
                 pendingLabel={`${common('confirm')}…`}
                 className="max-w-xl items-start"
                 triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"

@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { parseServerRecipe, recipeToDeploymentData } from '@/lib/workspace/server-recipe';
+import {
+  missingDeploymentRequiredEnvironment,
+  missingRequiredEnvironment,
+  parseServerRecipe,
+  recipeToDeploymentData,
+  storedRequiredEnvironment,
+} from '@/lib/workspace/server-recipe';
 
 describe('parseServerRecipe', () => {
   it('parses a valid npm recipe with env keys', () => {
@@ -49,6 +55,7 @@ describe('recipeToDeploymentData', () => {
     expect(d.source).toBe('npm');
     expect(d.sourceRef).toBe('firecrawl-mcp');
     expect(d.installCfg.env).toEqual({ FIRECRAWL_API_KEY: '', OTHER: '' });
+    expect(d.installCfg.requiredEnv).toEqual(['FIRECRAWL_API_KEY', 'OTHER']);
     expect(d.installCfg.startCommand).toBeUndefined();
   });
 
@@ -69,5 +76,34 @@ describe('recipeToDeploymentData', () => {
       FIRECRAWL_API_KEY: 'self-hosted',
       EXTRA_KEY: '',
     });
+  });
+});
+
+describe('missingRequiredEnvironment', () => {
+  const recipe = {
+    source: 'npm' as const,
+    ref: 'firecrawl-mcp',
+    env: ['FIRECRAWL_API_KEY', 'OTHER'],
+  };
+
+  it('treats empty and whitespace-only values as missing', () => {
+    expect(missingRequiredEnvironment(recipe, {
+      env: { FIRECRAWL_API_KEY: '', OTHER: '   ' },
+    })).toEqual(['FIRECRAWL_API_KEY', 'OTHER']);
+  });
+
+  it('accepts non-empty values for every required key', () => {
+    expect(missingRequiredEnvironment(recipe, {
+      env: { FIRECRAWL_API_KEY: 'secret', OTHER: 'configured' },
+    })).toEqual([]);
+  });
+
+  it('carries and enforces required key names after a deployment is detached', () => {
+    const installCfg = {
+      env: { FIRECRAWL_API_KEY: '' },
+      requiredEnv: ['FIRECRAWL_API_KEY', '1bad', 'FIRECRAWL_API_KEY'],
+    };
+    expect(storedRequiredEnvironment(installCfg)).toEqual(['FIRECRAWL_API_KEY']);
+    expect(missingDeploymentRequiredEnvironment(installCfg)).toEqual(['FIRECRAWL_API_KEY']);
   });
 });

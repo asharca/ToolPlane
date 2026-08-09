@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
@@ -22,6 +22,7 @@ import {
 import { FaGithub } from 'react-icons/fa';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import { SITE, mailto } from '@/lib/site';
+import { useDashboardRuntimeConfig } from './DashboardRuntimeConfig';
 
 type Command = {
   id: string;
@@ -41,13 +42,15 @@ export function DashboardHeaderControls() {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const { resolvedTheme, setTheme } = useTheme();
+  const { supportEmail } = useDashboardRuntimeConfig();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const toggleTheme = () =>
+  const toggleTheme = useCallback(() => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  }, [resolvedTheme, setTheme]);
 
   function openPalette() {
     setQuery('');
@@ -55,9 +58,9 @@ export function DashboardHeaderControls() {
     setOpen(true);
   }
 
-  function closePalette() {
+  const closePalette = useCallback(() => {
     setOpen(false);
-  }
+  }, []);
 
   const commands = useMemo<Command[]>(() => {
     const slug = workspaceSlug(pathname);
@@ -73,26 +76,27 @@ export function DashboardHeaderControls() {
     if (slug) {
       const b = `/app/${slug}`;
       list.push(
-        { id: 'mcp', label: 'MCP', group: 'Manage', icon: Plug, run: go(`${b}/mcp`) },
-        { id: 'skills', label: 'Skills', group: 'Manage', icon: Brain, run: go(`${b}/skills`) },
-        { id: 'toolkits', label: 'Toolkits', group: 'Manage', icon: Wrench, run: go(`${b}/toolkits`) },
-        { id: 'sandboxes', label: 'Sandboxes', group: 'Manage', icon: Boxes, run: go(`${b}/sandboxes`) },
-        { id: 'agents', label: 'Agents', group: 'Manage', icon: Bot, run: go(`${b}/agents`) },
-        { id: 'obs', label: 'Logs', group: 'Monitor', icon: BarChart3, run: go(`${b}/observability`) },
-        { id: 'members', label: 'Members', group: 'Workspace', icon: Users, run: go(`${b}/members`) },
-        { id: 'settings', label: 'Settings', group: 'Workspace', icon: Settings, run: go(`${b}/settings`) },
-        { id: 'browse-mcp', label: 'Browse MCP', group: 'Actions', icon: Plug, run: go(`${b}/market/mcp`) },
-        { id: 'browse-skills', label: 'Browse Skills', group: 'Actions', icon: Brain, run: go(`${b}/market/skills`) },
-        { id: 'browse-agents', label: 'Browse Agents', group: 'Actions', icon: Bot, run: go(`${b}/market/agents`) },
+        { id: 'mcp', label: t('mcp'), group: t('groupManage'), icon: Plug, run: go(`${b}/mcp`) },
+        { id: 'skills', label: t('skills'), group: t('groupManage'), icon: Brain, run: go(`${b}/skills`) },
+        { id: 'toolkits', label: t('toolkits'), group: t('groupManage'), icon: Wrench, run: go(`${b}/toolkits`) },
+        { id: 'sandboxes', label: t('sandboxes'), group: t('groupManage'), icon: Boxes, run: go(`${b}/sandboxes`) },
+        { id: 'agents', label: t('agents'), group: t('groupManage'), icon: Bot, run: go(`${b}/agents`) },
+        { id: 'obs', label: t('logs'), group: t('groupMonitor'), icon: BarChart3, run: go(`${b}/observability`) },
+        { id: 'members', label: t('members'), group: t('groupWorkspace'), icon: Users, run: go(`${b}/members`) },
+        { id: 'settings', label: t('settings'), group: t('groupWorkspace'), icon: Settings, run: go(`${b}/settings`) },
+        { id: 'browse-mcp', label: t('browseMcp'), group: t('groupActions'), icon: Plug, run: go(`${b}/market/mcp`) },
+        { id: 'browse-skills', label: t('browseSkills'), group: t('groupActions'), icon: Brain, run: go(`${b}/market/skills`) },
+        { id: 'browse-agents', label: t('browseAgents'), group: t('groupActions'), icon: Bot, run: go(`${b}/market/agents`) },
+        { id: 'browse-toolkits', label: t('browseToolkits'), group: t('groupActions'), icon: Wrench, run: go(`${b}/market/toolkits`) },
       );
     }
     list.push(
-      { id: 'home', label: 'Back to ToolPlane', group: 'Actions', icon: Home, run: go('/') },
-      { id: 'source', label: 'Source code', group: 'Project', icon: FaGithub, run: openExternal(SITE.sourceUrl) },
+      { id: 'home', label: t('backToToolPlane'), group: t('groupActions'), icon: Home, run: go('/') },
+      { id: 'source', label: t('sourceCode'), group: t('groupProject'), icon: FaGithub, run: openExternal(SITE.sourceUrl) },
       {
         id: 'theme',
-        label: 'Toggle dark mode',
-        group: 'Actions',
+        label: t('toggleDarkMode'),
+        group: t('groupActions'),
         icon: resolvedTheme === 'dark' ? Sun : Moon,
         run: () => {
           toggleTheme();
@@ -101,8 +105,7 @@ export function DashboardHeaderControls() {
       },
     );
     return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, resolvedTheme, router]);
+  }, [closePalette, pathname, resolvedTheme, router, t, toggleTheme]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -122,7 +125,7 @@ export function DashboardHeaderControls() {
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [closePalette, open]);
 
   useEffect(() => {
     if (open) {
@@ -151,14 +154,14 @@ export function DashboardHeaderControls() {
         className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
       >
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        {t('search')}
+        {t('quickNavigation')}
         <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
           ⌘K
         </kbd>
       </button>
 
       <a
-        href={mailto(SITE.supportEmail)}
+        href={mailto(supportEmail)}
         aria-label={t('getHelp')}
         className="ui-button-ghost ui-icon-button"
       >
@@ -200,7 +203,7 @@ export function DashboardHeaderControls() {
                   setActive(0);
                 }}
                 onKeyDown={onListKey}
-                placeholder={t('typeACommandOrSearch')}
+                placeholder={t('searchNavigation')}
                 className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
               />
             </div>

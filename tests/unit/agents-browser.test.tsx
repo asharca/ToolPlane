@@ -76,7 +76,7 @@ describe('AgentsBrowser', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
     await userEvent.type(screen.getByLabelText('Name'), 'Research agent');
-    await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Creating...' })).toBeDisabled());
     finishCreate?.();
@@ -142,7 +142,7 @@ describe('AgentsBrowser', () => {
       'registry.example/hermes:v2026.8.1',
     );
     await user.type(screen.getByLabelText('Name'), 'Custom Hermes');
-    await user.click(screen.getByRole('button', { name: 'Create agent' }));
+    await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
     expect(formData.get('hermesImage')).toBe('registry.example/hermes:v2026.8.1');
@@ -170,7 +170,7 @@ describe('AgentsBrowser', () => {
       screen.getByLabelText('Hermes version'),
       'nousresearch/hermes-agent:v2026.7.20',
     );
-    await user.click(screen.getByRole('button', { name: 'Create agent' }));
+    await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
@@ -199,10 +199,10 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    expect(screen.getByText('1 agent(s) need a model or model provider before they can reply.')).toBeInTheDocument();
+    expect(screen.getByText('Agents awaiting complete model setup: 1.')).toBeInTheDocument();
     const row = screen.getByRole('link', { name: 'Orphaned model' }).closest('li');
     expect(row).not.toBeNull();
-    expect(within(row!).getByText('needs model')).toBeInTheDocument();
+    expect(within(row!).getByText('needs provider')).toBeInTheDocument();
     expect(within(row!).queryByText('Ready')).not.toBeInTheDocument();
   });
 

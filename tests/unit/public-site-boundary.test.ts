@@ -5,11 +5,10 @@ import { describe, expect, it } from 'vitest';
 const SITE_ROOT = path.join(process.cwd(), 'src', 'app', '(site)');
 const SRC_ROOT = path.join(process.cwd(), 'src');
 const BLOCKED_IMPORTS = [
-  '@/lib/db',
-  '@/lib/queries',
-  '@/lib/agents/market',
-  '@/lib/workspace',
   '@/lib/auth/current-user',
+  '@/lib/workspace/actions',
+  '@/lib/workspace/queries',
+  '@/lib/skills/public-install',
 ] as const;
 
 function sourceFiles(directory: string): string[] {
@@ -49,9 +48,10 @@ function publicDependencyGraph(): string[] {
 }
 
 describe('public site architecture boundary', () => {
-  it('does not import authenticated workspace or live directory data', () => {
+  it('reads only public catalog data and never imports authenticated mutations', () => {
     const graph = publicDependencyGraph();
-    expect(graph.some((file) => file.endsWith('components/marketing/MarketingHome.tsx'))).toBe(true);
+    expect(graph.some((file) => file.endsWith('components/home/HomeView.tsx'))).toBe(true);
+    expect(graph.some((file) => file.endsWith('lib/queries/public-search.ts'))).toBe(true);
 
     const violations = graph.flatMap((file) => {
       const source = readFileSync(file, 'utf8');
@@ -66,26 +66,53 @@ describe('public site architecture boundary', () => {
     expect(violations).toEqual([]);
   });
 
-  it('keeps legacy public directory routes as fixed marketing redirects', () => {
-    const redirects = {
-      'server/[slug]/page.tsx': '/server',
-      'server/page/[page]/page.tsx': '/server',
-      'tools/skills/[slug]/page.tsx': '/tools/skills',
-      'tools/skills/leaderboard/page.tsx': '/tools/skills',
-      'agents/[...segments]/page.tsx': '/agents',
-      'client/[slug]/page.tsx': '/client',
-      'categories/page.tsx': '/server',
-      'categories/[slug]/page.tsx': '/server',
-      'search/page.tsx': '/',
-      'daily/page.tsx': '/server',
-      'daily/skills/page.tsx': '/tools/skills',
-      'leaderboards/page.tsx': '/server',
+  it('keeps directory searches and legacy detail slugs usable', () => {
+    const expectations = {
+      'page.tsx': 'HomeView',
+      'search/page.tsx': 'searchPublicDirectory',
+      'server/[slug]/page.tsx': 'getPublicServer',
+      'client/[slug]/page.tsx': 'getPublicClient',
+      'tools/skills/[slug]/page.tsx': 'getPublicSkill',
+      'agents/[...segments]/page.tsx': 'getPublicAgentListing',
     } as const;
 
-    for (const [relativePath, target] of Object.entries(redirects)) {
+    for (const [relativePath, marker] of Object.entries(expectations)) {
       const source = readFileSync(path.join(SITE_ROOT, relativePath), 'utf8');
-      expect(source).toContain("from 'next/navigation'");
-      expect(source).toContain(`permanentRedirect('${target}')`);
+      expect(source).toContain(marker);
+      expect(source).not.toContain('permanentRedirect(');
     }
+
+    const search = readFileSync(path.join(SITE_ROOT, 'search/page.tsx'), 'utf8');
+    expect(search).toContain('searchParams');
+    expect(search).toContain('defaultValue={query}');
+    expect(search).toContain('AgentListingCard');
+
+    const agents = readFileSync(path.join(SITE_ROOT, 'agents/page.tsx'), 'utf8');
+    expect(agents).toContain('listPublicAgents');
+    expect(agents).toContain('AgentListingCard');
+
+    const category = readFileSync(path.join(SITE_ROOT, 'categories/[slug]/page.tsx'), 'utf8');
+    expect(category).toContain('category.agentListings');
+    expect(category).toContain('AgentListingCard');
+  });
+
+  it('defines canonical social metadata for the four public capability pages', () => {
+    const pages = {
+      'server/page.tsx': ["capabilityMetadata('mcp', '/server')"],
+      'client/page.tsx': ['siteMetadata({', "'/client'"],
+      'tools/skills/page.tsx': ['siteMetadata({', "'/tools/skills'"],
+      'agents/page.tsx': ["capabilityMetadata('agents', '/agents')"],
+    } as const;
+
+    for (const [relativePath, metadataMarkers] of Object.entries(pages)) {
+      const source = readFileSync(path.join(SITE_ROOT, relativePath), 'utf8');
+      expect(source).toContain('generateMetadata');
+      for (const marker of metadataMarkers) expect(source).toContain(marker);
+    }
+
+    const helper = readFileSync(path.join(SITE_ROOT, '_lib/metadata.ts'), 'utf8');
+    expect(helper).toContain('alternates: { canonical }');
+    expect(helper).toContain('openGraph:');
+    expect(helper).toContain('twitter:');
   });
 });

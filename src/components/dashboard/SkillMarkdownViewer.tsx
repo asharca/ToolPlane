@@ -71,7 +71,13 @@ export function SkillMarkdownViewer({
 
       {mode === 'rendered' ? (
         <div className="prose prose-sm max-w-none bg-card p-5 leading-7 dark:prose-invert sm:p-6">
-          <SafeStreamdown mode="static" plugins={{ code }}>
+          <SafeStreamdown
+            mode="static"
+            plugins={{ code }}
+            components={{
+              h1: ({ children }) => <h3>{children}</h3>,
+            }}
+          >
             {renderedMarkdown}
           </SafeStreamdown>
         </div>

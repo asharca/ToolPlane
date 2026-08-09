@@ -14,7 +14,7 @@ export async function RankedList({
   title,
   subtitle,
   items,
-  statLabel = 'Score',
+  statLabel,
 }: {
   title: string;
   subtitle?: string;
@@ -68,7 +68,7 @@ export async function RankedList({
                 <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                   <span aria-hidden="true">{item.stat.toLocaleString()}</span>
                   <span className="sr-only">
-                    {statLabel}: {item.stat.toLocaleString()}
+                    {statLabel ?? t('score')}: {item.stat.toLocaleString()}
                   </span>
                 </span>
               </Link>

@@ -67,7 +67,7 @@ export function ToolkitsBrowser({
       <DashboardToolbar
         actions={
           <>
-            <Link href={`/app/${slug}/toolkits/new`} className="ui-button-secondary">
+            <Link href={`/app/${slug}/market/toolkits`} className="ui-button-secondary">
               <Store className="size-4" />
               {t('browseMarket')}
             </Link>

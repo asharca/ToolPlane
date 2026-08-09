@@ -1,10 +1,9 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
 import {
   ArrowLeft,
-  Braces,
   CheckCircle2,
   Download,
   ExternalLink,
@@ -36,19 +35,23 @@ function formatBytes(value: string): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function formatDate(date: Date, timeZone: string): string {
+function formatDate(date: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(date, timeZone, {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }, 'en');
+  }, locale);
 }
 
-function sourceLabel(source: string | null, hasCatalogSkill: boolean): string {
-  if (hasCatalogSkill) return 'Catalog skill';
-  if (!source) return 'Workspace skill';
-  if (source === 'github') return 'GitHub import';
-  if (source === 'upload') return 'Uploaded bundle';
-  if (source === 'custom') return 'Custom skill';
+function sourceLabel(
+  source: string | null,
+  hasCatalogSkill: boolean,
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): string {
+  if (hasCatalogSkill) return t('catalogSkill');
+  if (!source) return t('workspaceSkill');
+  if (source === 'github') return t('githubImport');
+  if (source === 'upload') return t('uploadedBundle');
+  if (source === 'custom') return t('customSkill');
   return source;
 }
 
@@ -178,7 +181,10 @@ export default async function SkillInspectorPage({
 }: {
   params: Promise<{ workspace: string; installId: string }>;
 }) {
-  const t = await getTranslations('console.skills');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.skills'),
+    getLocale(),
+  ]);
   const { workspace: slug, installId } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -214,36 +220,13 @@ export default async function SkillInspectorPage({
     githubOriginal,
     t,
   });
+  const installSourceLabel = sourceLabel(install.source, Boolean(install.skillId), t);
+  const effortLabel = install.effort === 'low'
+    ? t('low')
+    : install.effort === 'high'
+      ? t('high')
+      : t('default');
   const downloadHref = `/api/v1/skills/${install.id}/download`;
-  const rawData = {
-    id: install.id,
-    slug: label.slug,
-    name: label.name,
-    description: install.description,
-    status: install.status,
-    source: install.source,
-    sourceRef: install.sourceRef,
-    skillId: install.skillId,
-    userInvocable: install.userInvocable,
-    agentInvocable: install.agentInvocable,
-    effort: install.effort,
-    createdAt: install.createdAt.toISOString(),
-    catalogSkill: install.skill
-      ? {
-          slug: install.skill.slug,
-          name: install.skill.name,
-          description: install.skill.description,
-          author: install.skill.author,
-          githubSource: install.skill.githubSource,
-          hasStoredSkillMd: Boolean(install.skill.content),
-          bundledFiles: Array.isArray(install.skill.files) ? install.skill.files.length : 0,
-        }
-      : null,
-    files: extraFiles.map((file) => ({
-      path: file.path,
-      bytes: Buffer.byteLength(file.content, 'utf8'),
-    })),
-  };
 
   return (
     <>
@@ -266,7 +249,7 @@ export default async function SkillInspectorPage({
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                    {sourceLabel(install.source, Boolean(install.skillId))}
+                    {installSourceLabel}
                   </span>
                   {extraFiles.length ? (
                     <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
@@ -274,9 +257,9 @@ export default async function SkillInspectorPage({
                     </span>
                   ) : null}
                 </div>
-                <h1 className="break-words text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                <h2 className="break-words text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                   {label.name}
-                </h1>
+                </h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                   {markdownDescription || install.description || install.skill?.description || t('noDescriptionProvided')}
                 </p>
@@ -309,12 +292,12 @@ export default async function SkillInspectorPage({
             />
             <DetailItem
               label={t('source')}
-              value={sourceLabel(install.source, Boolean(install.skillId))}
+              value={installSourceLabel}
               icon={<GitBranch className="size-3.5" />}
             />
             <DetailItem
               label={t('created')}
-              value={formatDate(install.createdAt, timeZone)}
+              value={formatDate(install.createdAt, timeZone, locale)}
               icon={<Info className="size-3.5" />}
             />
             <DetailItem
@@ -333,13 +316,8 @@ export default async function SkillInspectorPage({
             ) : null}
             <DetailItem
               label={t('effort')}
-              value={install.effort || 'default'}
+              value={effortLabel}
               icon={<Settings2 className="size-3.5" />}
-            />
-            <DetailItem
-              label={t('installId')}
-              value={install.id}
-              icon={<Braces className="size-3.5" />}
             />
             <DetailItem
               label={t('bundleFiles')}
@@ -435,19 +413,6 @@ export default async function SkillInspectorPage({
           </section>
         )}
 
-        <section className="ui-panel overflow-hidden">
-          <div className="border-b border-border px-5 py-4 sm:px-6">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              {t('rawSkillData')}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('databaseFieldsUsedByInstallAgentPromptsAndToolkitSync')}
-            </p>
-          </div>
-          <pre className="max-h-96 overflow-auto bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">
-            {JSON.stringify(rawData, null, 2)}
-          </pre>
-        </section>
       </div>
     </>
   );

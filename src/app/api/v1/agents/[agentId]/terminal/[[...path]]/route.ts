@@ -12,12 +12,13 @@ const MAX_TERMINAL_BODY = 1_000_000;
 const SESSION_ID = /^[A-Za-z0-9-]{1,100}$/;
 
 type RouteParams = Promise<{ agentId: string; path?: string[] }>;
+type ResolvedTerminal = { response: Response } | { port: number };
 
 function error(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function resolveTerminal(req: Request, agentId: string) {
+async function resolveTerminal(req: Request, agentId: string): Promise<ResolvedTerminal> {
   const user = await resolveRequestUser(req);
   if (!user) return { response: error('Unauthorized', 401) };
 

@@ -1,6 +1,7 @@
 import 'server-only';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
 import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 
 function slugifyEmail(email: string): string {
@@ -105,6 +106,7 @@ const SKILL_BROWSE_SELECT = {
   name: true,
   author: true,
   description: true,
+  content: true,
   iconUrl: true,
   githubSource: true,
   curated: true,
@@ -251,10 +253,17 @@ export async function getMarketServer(slug: string, workspaceId: string) {
   };
 }
 
-type RawBrowseSkill = Omit<BrowseSkill, 'installed'> & { installs: { id: string }[] };
+type RawBrowseSkill = Omit<BrowseSkill, 'installed'> & {
+  content: string | null;
+  installs: { id: string }[];
+};
 
 function toBrowseSkills(rows: RawBrowseSkill[]): BrowseSkill[] {
-  return rows.map(({ installs, ...skill }) => ({ ...skill, installed: installs.length > 0 }));
+  return rows.map(({ installs, content, ...skill }) => ({
+    ...skill,
+    description: normalizedSkillDescription(skill.description, content),
+    installed: installs.length > 0,
+  }));
 }
 
 export async function getSkillBrowseCategories() {
@@ -369,5 +378,9 @@ export async function getMarketSkill(slug: string, workspaceId: string) {
   });
   if (!skill) return null;
   const { installs, ...marketSkill } = skill;
-  return { ...marketSkill, installId: installs[0]?.id ?? null };
+  return {
+    ...marketSkill,
+    description: normalizedSkillDescription(marketSkill.description, marketSkill.content),
+    installId: installs[0]?.id ?? null,
+  };
 }

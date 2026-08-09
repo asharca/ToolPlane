@@ -132,12 +132,12 @@ function titleCase(value: string) {
 }
 
 function sourceLabel(source: ParsedMessagingSession | null) {
-  if (!source) return 'Chat';
+  if (!source) return '';
   return `${titleCase(source.platform)} ${source.chatType.toUpperCase()}`;
 }
 
 function sourceDetail(source: ParsedMessagingSession | null) {
-  if (!source) return 'ToolPlane';
+  if (!source) return '';
   return [source.chatId, source.contextId ? `context ${source.contextId}` : null].filter(Boolean).join(' · ');
 }
 
@@ -406,10 +406,14 @@ export function AgentChat({
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate font-medium">{conversation.title ?? `Chat ${conversation.createdAt}`}</span>
+                        <span className="truncate font-medium">
+                          {conversation.title ?? t('chatCreatedOn', { date: conversation.createdAt })}
+                        </span>
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {conversation.lastMessageAt ? `Last message ${conversation.lastMessageAt}` : t('noMessagesYet')}
+                        {conversation.lastMessageAt
+                          ? t('lastMessageOn', { date: conversation.lastMessageAt })
+                          : t('noMessagesYet')}
                       </div>
                     </Link>
                   </li>

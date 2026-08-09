@@ -117,7 +117,7 @@
     color: hsl(var(--foreground));
   }
 
-  :where(a, button, input, textarea, select):focus-visible {
+  :where(a, button, input, textarea, select, summary):focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
   }

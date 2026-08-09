@@ -1,10 +1,7 @@
 import 'server-only';
+import { runtimeEnv } from '@/lib/runtime-env';
 
 type HeaderReader = Pick<Headers, 'get'>;
-
-function runtimeEnv(name: string): string | undefined {
-  return process.env[name];
-}
 
 function firstHeaderValue(value: string | null): string | null {
   return value?.split(',')[0]?.trim() || null;

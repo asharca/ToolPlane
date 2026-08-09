@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
@@ -28,12 +28,12 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function formatDate(d: Date, timeZone: string): string {
+function formatDate(d: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }, 'en-US');
+  }, locale);
 }
 
 const rowButton =
@@ -45,8 +45,11 @@ export default async function McpServersPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
-  const t = await getTranslations('console.mcp');
-  const common = await getTranslations('common');
+  const [t, common, locale] = await Promise.all([
+    getTranslations('console.mcp'),
+    getTranslations('common'),
+    getLocale(),
+  ]);
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const timeZone = resolveUserTimeZone(user);
@@ -97,10 +100,10 @@ export default async function McpServersPage({
         ) : (
           <DashboardTable
             headers={[
-              { label: 'Server' },
-              { label: 'Status' },
-              { label: 'Created' },
-              { label: 'Actions', align: 'right' },
+              { label: t('serverColumn') },
+              { label: t('status') },
+              { label: t('created') },
+              { label: t('actions'), align: 'right' },
             ]}
           >
             {deployments.map((d) => {
@@ -134,7 +137,7 @@ export default async function McpServersPage({
                       </Link>
                       {label.source !== 'catalog' ? (
                         <span className="inline-flex items-center rounded-md border border-border bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium uppercase text-muted-foreground">
-                          {label.source}
+                          {t.has(`source.${label.source}`) ? t(`source.${label.source}`) : label.source}
                         </span>
                       ) : null}
                     </div>
@@ -143,7 +146,7 @@ export default async function McpServersPage({
                     <StatusBadge status={status} />
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {formatDate(d.createdAt, timeZone)}
+                    {formatDate(d.createdAt, timeZone, locale)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">

@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { CheckCircle2, Store } from 'lucide-react';
@@ -18,35 +18,17 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date, timeZone: string) {
+function fmt(d: Date, timeZone: string, locale: string) {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }, 'en-US');
+  }, locale);
 }
 
 function fileCount(files: unknown): number {
   return Array.isArray(files) ? files.length : 0;
 }
-
-const STEPS = [
-  {
-    n: '01',
-    title: 'Create or import',
-    body: 'Write a skill from scratch, or pull one from a GitHub repo.',
-  },
-  {
-    n: '02',
-    title: 'Refine in place',
-    body: "Iterate and refine. Every save is versioned, so it's safe to experiment.",
-  },
-  {
-    n: '03',
-    title: 'Sync everywhere',
-    body: 'Skills stay in sync across every client and toolkit. Update once, ship everywhere.',
-  },
-];
 
 export default async function SkillsPage({
   params,
@@ -55,7 +37,10 @@ export default async function SkillsPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ imported?: string | string[] }>;
 }) {
-  const t = await getTranslations('console.skills');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.skills'),
+    getLocale(),
+  ]);
   const { workspace: slug } = await params;
   const query = await searchParams;
   const user = await getCurrentUser();
@@ -70,6 +55,11 @@ export default async function SkillsPage({
       .filter(Boolean),
   );
   const importedSkills = skills.filter((skill) => importedIds.has(skill.id));
+  const steps = [
+    { n: '01', title: t('createOrImport'), body: t('createOrImportDescription') },
+    { n: '02', title: t('refineInPlace'), body: t('refineInPlaceDescription') },
+    { n: '03', title: t('syncEverywhere'), body: t('syncEverywhereDescription') },
+  ];
 
   return (
     <>
@@ -146,7 +136,7 @@ export default async function SkillsPage({
             }
           >
             <div className="mt-6 grid gap-6 sm:grid-cols-3">
-              {STEPS.map((step) => (
+              {steps.map((step) => (
                 <div key={step.n}>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {t('step')} {step.n}
@@ -166,9 +156,9 @@ export default async function SkillsPage({
         {skills.length > 0 ? (
           <DashboardTable
             headers={[
-              { label: 'Skill' },
-              { label: 'Added' },
-              { label: 'Actions', align: 'right' },
+              { label: t('skillColumn') },
+              { label: t('added') },
+              { label: t('actions'), align: 'right' },
             ]}
           >
             {skills.map((s) => {
@@ -198,7 +188,7 @@ export default async function SkillsPage({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {fmt(s.createdAt, timeZone)}
+                    {fmt(s.createdAt, timeZone, locale)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-4">
@@ -206,7 +196,7 @@ export default async function SkillsPage({
                         href={`/app/${slug}/skills/${s.id}`}
                         className="text-xs text-muted-foreground transition-colors hover:text-foreground"
                       >
-                        Use
+                        {t('use')}
                       </Link>
                       <a
                         href={`/api/v1/skills/${s.id}/download`}

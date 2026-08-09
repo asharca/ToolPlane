@@ -1,6 +1,10 @@
 import { getTranslations } from 'next-intl/server';
-import { listServers } from '@/lib/queries/servers';
-import { listCategories } from '@/lib/queries/categories';
+import { notFound } from 'next/navigation';
+import {
+  listPublicCategories,
+  getPublicServerCount,
+  listPublicServers,
+} from '@/app/(site)/_lib/catalog';
 import { ServerCard } from '@/components/cards/ServerCard';
 import { ListingHero } from '@/components/ListingHero';
 import { Pagination } from '@/components/Pagination';
@@ -8,12 +12,15 @@ import { Pagination } from '@/components/Pagination';
 const PAGE_SIZE = 30;
 
 export async function ServerList({ page }: { page: number }) {
-  const t = await getTranslations('server');
-  const [{ items, total }, categories] = await Promise.all([
-    listServers({ page, pageSize: PAGE_SIZE }),
-    listCategories(),
+  const [t, common, total, categories] = await Promise.all([
+    getTranslations('server'),
+    getTranslations('common'),
+    getPublicServerCount(),
+    listPublicCategories(),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (page > totalPages) notFound();
+  const { items } = await listPublicServers(page, PAGE_SIZE);
 
   return (
     <div className="mx-auto max-w-screen-xl px-4">
@@ -33,7 +40,7 @@ export async function ServerList({ page }: { page: number }) {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((server) => (
-              <ServerCard key={server.slug} server={server} />
+              <ServerCard key={server.slug} server={server} statLabel={common('stars')} />
             ))}
           </div>
         )}

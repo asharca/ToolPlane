@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getWorkspaceMembers } from '@/lib/workspace/queries';
@@ -13,12 +13,12 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-function fmt(d: Date, timeZone: string) {
+function fmt(d: Date, timeZone: string, locale: string) {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }, 'en-US');
+  }, locale);
 }
 
 export default async function MembersPage({
@@ -26,7 +26,10 @@ export default async function MembersPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
-  const t = await getTranslations('console.members');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.members'),
+    getLocale(),
+  ]);
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -64,6 +67,11 @@ export default async function MembersPage({
                         <div>
                           <div className="font-medium text-foreground">
                             {m.user.name ?? m.user.email.split('@')[0]}
+                            {m.userId === user.id ? (
+                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                {t('you')}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {m.user.email}
@@ -73,11 +81,11 @@ export default async function MembersPage({
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
-                        {m.role}
+                        {m.role === 'owner' ? t('ownerRole') : t('memberRole')}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {fmt(m.createdAt, timeZone)}
+                      {fmt(m.createdAt, timeZone, locale)}
                     </td>
                   </tr>
                 ))}

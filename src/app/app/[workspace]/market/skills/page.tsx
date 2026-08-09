@@ -65,10 +65,11 @@ export default async function SkillMarketPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<SearchParams>;
 }) {
-  const [{ workspace: slug }, query, t] = await Promise.all([
+  const [{ workspace: slug }, query, t, common] = await Promise.all([
     params,
     searchParams,
     getTranslations('console.market'),
+    getTranslations('common'),
   ]);
   const user = await getCurrentUser();
   if (!user) {
@@ -119,7 +120,7 @@ export default async function SkillMarketPage({
   return (
     <DashboardPage className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('skillsTitle')}</h1>
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('skillsTitle')}</h2>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('skillsDescription')}</p>
       </div>
 
@@ -232,8 +233,9 @@ export default async function SkillMarketPage({
             <DashboardPagination
               page={page}
               lastPage={lastPage}
-              total={total}
-              label={t('skillResources')}
+              summary={t('paginationSummary', { page, lastPage, total, label: t('skillResources') })}
+              previousLabel={common('previous')}
+              nextLabel={common('next')}
               hrefForPage={(nextPage) => skillMarketHref(slug, { q, source, installation, category, sort, page: nextPage })}
             />
           </>

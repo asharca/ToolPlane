@@ -68,10 +68,10 @@ export default async function AgentDetailPage({
   const providerLabel = isHermes
     ? agent.modelProviders.length > 0
       ? agent.modelProviders.map((link) => link.provider.name).join(', ')
-      : 'No model providers selected'
+      : t('noModelProvidersSelected')
     : agent.provider
-      ? `${agent.provider.name} · ${agent.model ?? 'no model selected'}`
-      : 'No model provider selected';
+      ? `${agent.provider.name} · ${agent.model ?? t('noModelSelected')}`
+      : t('noProviderSelected');
   const selectedDeps = new Set(agent.servers.map((server) => server.deploymentId));
   const selectedSkills = new Set(agent.skills.map((skill) => skill.installedSkillId));
   const [

@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import { normalizedSkillDescription } from '@/lib/skills/frontmatter';
 
 export async function listCategories() {
   return db.category.findMany({
@@ -12,6 +13,7 @@ export async function listCategories() {
             where: {
               status: 'published',
               latestReleaseId: { not: null },
+              publisherWorkspace: { is: {} },
               latestRelease: { is: { reviewStatus: 'approved' } },
             },
           },
@@ -22,7 +24,7 @@ export async function listCategories() {
 }
 
 export async function getCategory(slug: string) {
-  return db.category.findUnique({
+  const category = await db.category.findUnique({
     where: { slug },
     include: {
       _count: {
@@ -33,17 +35,43 @@ export async function getCategory(slug: string) {
             where: {
               status: 'published',
               latestReleaseId: { not: null },
+              publisherWorkspace: { is: {} },
               latestRelease: { is: { reviewStatus: 'approved' } },
             },
           },
         },
       },
-      servers: { orderBy: { stars: 'desc' }, take: 60 },
-      skills: { orderBy: { score: 'desc' }, take: 60 },
+      servers: {
+        orderBy: { stars: 'desc' },
+        take: 60,
+        select: {
+          slug: true,
+          name: true,
+          author: true,
+          description: true,
+          iconUrl: true,
+          stars: true,
+          categories: { select: { name: true }, take: 1 },
+        },
+      },
+      skills: {
+        orderBy: { score: 'desc' },
+        take: 60,
+        select: {
+          slug: true,
+          name: true,
+          author: true,
+          description: true,
+          iconUrl: true,
+          score: true,
+          categories: { select: { name: true }, take: 1 },
+        },
+      },
       agentListings: {
         where: {
           status: 'published',
           latestReleaseId: { not: null },
+          publisherWorkspace: { is: {} },
           latestRelease: { is: { reviewStatus: 'approved' } },
         },
         orderBy: [
@@ -53,7 +81,8 @@ export async function getCategory(slug: string) {
         ],
         take: 60,
         select: {
-          directorySlug: true,
+          id: true,
+          slug: true,
           name: true,
           summary: true,
           author: true,
@@ -61,8 +90,18 @@ export async function getCategory(slug: string) {
           installCount: true,
           tags: true,
           categories: { select: { name: true } },
+          publisherWorkspace: { select: { slug: true, name: true } },
         },
       },
     },
   });
+  return category
+    ? {
+        ...category,
+        skills: category.skills.map((skill) => ({
+          ...skill,
+          description: normalizedSkillDescription(skill.description),
+        })),
+      }
+    : null;
 }

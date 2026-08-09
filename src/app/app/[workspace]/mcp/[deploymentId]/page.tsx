@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { Plug, BarChart3, CopyPlus, Pencil, Settings } from 'lucide-react';
@@ -46,22 +46,22 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-function fmtDate(d: Date, timeZone: string): string {
+function fmtDate(d: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }, 'en-US');
+  }, locale);
 }
 
-function fmtTime(d: Date, timeZone: string): string {
+function fmtTime(d: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }, 'en-US');
+  }, locale);
 }
 
 // The gateway logs the rpc method (and tool name for tools/call) into the path
@@ -75,14 +75,6 @@ function parseCall(path: string): { method: string; tool?: string } {
 const actionButton =
   'inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800';
 
-const TABS = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'variables', label: 'Variables' },
-  { key: 'tools', label: 'Tools' },
-  { key: 'logs', label: 'Logs' },
-  { key: 'settings', label: 'Settings' },
-];
-
 export default async function DeploymentInspectorPage({
   params,
   searchParams,
@@ -90,7 +82,10 @@ export default async function DeploymentInspectorPage({
   params: Promise<{ workspace: string; deploymentId: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const t = await getTranslations('console.mcp');
+  const [t, locale] = await Promise.all([
+    getTranslations('console.mcp'),
+    getLocale(),
+  ]);
   const { workspace: slug, deploymentId } = await params;
   const { tab } = await searchParams;
 
@@ -113,13 +108,20 @@ export default async function DeploymentInspectorPage({
   if (!dep) notFound();
 
   const editableConfiguration = isEditableMcpSource(dep.source);
+  const baseTabs = [
+    { key: 'overview', label: t('overview') },
+    { key: 'variables', label: t('variables') },
+    { key: 'tools', label: t('tools') },
+    { key: 'logs', label: t('logs') },
+    { key: 'settings', label: t('settings') },
+  ];
   const tabs = editableConfiguration
-    ? [TABS[0], { key: 'configuration', label: 'Configuration' }, ...TABS.slice(1)]
-    : TABS;
+    ? [baseTabs[0], { key: 'configuration', label: t('configuration') }, ...baseTabs.slice(1)]
+    : baseTabs;
   const current = tabs.some((item) => item.key === tab) ? tab! : 'overview';
 
   const label = deploymentLabel(dep);
-  const defaultCloneName = `${label.name.slice(0, 75).trimEnd()} Copy`;
+  const defaultCloneName = t('copyNameDefault', { name: label.name.slice(0, 75).trimEnd() });
   const envCfg = (dep.installCfg ?? {}) as {
     env?: Record<string, string>;
     network?: string;
@@ -143,6 +145,7 @@ export default async function DeploymentInspectorPage({
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
   const provisioning = status === 'provisioning';
+  const setupRequired = status === 'setup_required';
   const runtimePolling = provisioning || running;
 
   return (
@@ -168,16 +171,18 @@ export default async function DeploymentInspectorPage({
               <StatusBadge status={status} />
               <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
               <span className="text-zinc-300 dark:text-zinc-600">·</span>
-              <span>{t('refreshed')} {fmtDate(dep.updatedAt, timeZone)}</span>
+              <span>{t('refreshedAt', { value: fmtDate(dep.updatedAt, timeZone, locale) })}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ConnectDialog
-              endpoint={endpoint}
-              name={label.name}
-              label={t('connect')}
-              variant="outline"
-            />
+            {running ? (
+              <ConnectDialog
+                endpoint={endpoint}
+                name={label.name}
+                label={t('connect')}
+                variant="outline"
+              />
+            ) : null}
             {running ? (
               <>
                 <form action={restartDeploymentAction}>
@@ -195,6 +200,10 @@ export default async function DeploymentInspectorPage({
                   </SubmitButton>
                 </form>
               </>
+            ) : setupRequired ? (
+              <Link href={`${base}?tab=variables`} className={actionButton}>
+                {baseTabs.find((item) => item.key === 'variables')?.label}
+              </Link>
             ) : (
               <form action={startDeploymentAction}>
                 <input type="hidden" name="workspace" value={slug} />
@@ -204,13 +213,15 @@ export default async function DeploymentInspectorPage({
                 </SubmitButton>
               </form>
             )}
-            <form action={rebuildDeploymentAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="deploymentId" value={deploymentId} />
-              <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={actionButton}>
-                {t('rebuild')}
-              </SubmitButton>
-            </form>
+            {!setupRequired ? (
+              <form action={rebuildDeploymentAction}>
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={actionButton}>
+                  {t('rebuild')}
+                </SubmitButton>
+              </form>
+            ) : null}
             <form action={removeDeploymentAction}>
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="deploymentId" value={deploymentId} />
@@ -242,7 +253,12 @@ export default async function DeploymentInspectorPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner noun="server" endpoint={endpoint} name={label.name} />
+            <ReadyToConnectBanner
+              noun="server"
+              endpoint={endpoint}
+              name={label.name}
+              status={status}
+            />
 
             <section
               id="identity"
@@ -270,7 +286,7 @@ export default async function DeploymentInspectorPage({
                     {t('created')}
                   </dt>
                   <dd className="text-sm text-zinc-700 dark:text-zinc-300">
-                    {fmtDate(dep.createdAt, timeZone)}
+                    {fmtDate(dep.createdAt, timeZone, locale)}
                   </dd>
                 </div>
               </dl>
@@ -511,7 +527,7 @@ export default async function DeploymentInspectorPage({
                     const call = parseCall(l.path);
                     return {
                       id: l.id,
-                      time: fmtTime(l.createdAt, timeZone),
+                      time: fmtTime(l.createdAt, timeZone, locale),
                       method: call.method,
                       tool: call.tool,
                       statusCode: l.statusCode,

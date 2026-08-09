@@ -2,15 +2,17 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 
 export function SettingsTabs({ slug }: { slug: string }) {
   const pathname = usePathname();
+  const t = useTranslations('console.settings');
   const base = `/app/${slug}/settings`;
   const tabs = [
-    { label: 'General', href: base },
-    { label: 'API Tokens', href: `${base}/tokens` },
+    { label: t('general'), href: base },
+    { label: t('tokens'), href: `${base}/tokens` },
   ];
-  const muted = ['Integrations', 'Billing'];
+  const muted = [t('integrations'), t('billing')];
 
   return (
     <nav className="flex items-center gap-6 border-b border-border">

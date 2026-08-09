@@ -134,8 +134,31 @@ Set `TOOLPLANE_IMAGE` when you want to pin a specific tag, for example
 `ghcr.io/asharca/toolplane:sha-dc33d7f`. The published deployment image is
 `linux/amd64`; `TOOLPLANE_PLATFORM` defaults to that for server deployments.
 
-The app image includes the Docker CLI for Docker-source MCP deployments and for
-Docker-source MCP deployments. It talks to Docker only through the restricted
+### Public URL, TLS, and email
+
+Set `NEXT_PUBLIC_APP_URL` to the one canonical HTTPS origin before exposing an
+instance. Terminate TLS at a reverse proxy and forward the original host and
+protocol headers. If both apex and `www` DNS records exist, provision a valid
+certificate and redirect one hostname to the other; otherwise remove the unused
+record so it cannot serve a proxy's default certificate or error page.
+
+Password recovery uses `SMTP_URL` and `SMTP_FROM`. If the instance intentionally
+has no outbound email, an administrator can issue a random temporary password
+and invalidate existing browser sessions with:
+
+```bash
+pnpm account:reset-password -- user@example.com
+```
+
+ToolPlane applies a small in-process burst limit to password-recovery requests.
+`TOOLPLANE_PASSWORD_RESET_GLOBAL_LIMIT` controls the instance-wide ten-minute
+ceiling (default `200`); this is a single-process safety net, not a replacement
+for an edge limiter.
+At the reverse proxy, also rate-limit login, signup, and password-recovery
+Server Actions, and replace (rather than append to) client-supplied
+`X-Forwarded-For` / `X-Real-IP` headers before forwarding them to the app.
+
+The app image includes the Docker CLI for Docker-source MCP deployments. It talks to Docker only through the restricted
 socket proxy, so keep that proxy private to the Compose network.
 
 ### MCP startup timeouts

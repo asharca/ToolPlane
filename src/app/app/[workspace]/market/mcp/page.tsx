@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
+import { getLocale, getTranslations } from 'next-intl/server';
 import { BadgeCheck, Search, Star } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
@@ -40,10 +40,12 @@ export default async function McpMarketPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<{ page?: string | string[]; q?: string | string[] }>;
 }) {
-  const [{ workspace: slug }, query, t] = await Promise.all([
+  const [{ workspace: slug }, query, t, common, locale] = await Promise.all([
     params,
     searchParams,
     getTranslations('console.market'),
+    getTranslations('common'),
+    getLocale(),
   ]);
   const user = await getCurrentUser();
   if (!user) {
@@ -68,7 +70,7 @@ export default async function McpMarketPage({
   return (
     <DashboardPage className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('mcpTitle')}</h1>
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('mcpTitle')}</h2>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('mcpDescription')}</p>
       </div>
 
@@ -150,7 +152,7 @@ export default async function McpMarketPage({
                     <span className="line-clamp-1">{server.description ?? t('noDescription')}</span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{server.stars.toLocaleString()}</span>
+                    <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{server.stars.toLocaleString(locale)}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {deployedIds.has(server.id) ? (
@@ -169,8 +171,9 @@ export default async function McpMarketPage({
             <DashboardPagination
               page={page}
               lastPage={lastPage}
-              total={total}
-              label={t('mcpResources')}
+              summary={t('paginationSummary', { page, lastPage, total, label: t('mcpResources') })}
+              previousLabel={common('previous')}
+              nextLabel={common('next')}
               hrefForPage={(nextPage) => marketHref(slug, { q, page: nextPage })}
             />
           </>

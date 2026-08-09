@@ -155,8 +155,8 @@ export type PublicToolkitBrowseItem = {
 };
 
 export async function getBrowseToolkits(workspaceId: string, page: number, q = '') {
-  const term = q.trim();
-  const skip = (Math.max(1, page) - 1) * TOOLKIT_MARKET_PAGE_SIZE;
+  const safePage = Number.isSafeInteger(page) && page > 0 ? page : 1;
+  const term = q.trim().slice(0, 160);
   const where = {
     visibility: 'public',
     enabled: true,
@@ -173,32 +173,66 @@ export async function getBrowseToolkits(workspaceId: string, page: number, q = '
       : {}),
   };
 
-  const [total, rows] = await Promise.all([
-    db.toolkit.count({ where }),
-    db.toolkit.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      skip,
-      take: TOOLKIT_MARKET_PAGE_SIZE,
-      include: {
-        workspace: { select: { name: true, slug: true } },
-        servers: {
-          include: {
-            deployment: {
-              include: { server: { select: { name: true } } },
-            },
-          },
-        },
-        skills: {
-          include: {
-            installedSkill: {
-              include: { skill: { select: { name: true } } },
+  const total = await db.toolkit.count({ where });
+  const lastPage = Math.max(1, Math.ceil(total / TOOLKIT_MARKET_PAGE_SIZE));
+  if (safePage > lastPage) {
+    return { items: [], total, pageSize: TOOLKIT_MARKET_PAGE_SIZE };
+  }
+
+  const rows = await db.toolkit.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+    skip: (safePage - 1) * TOOLKIT_MARKET_PAGE_SIZE,
+    take: TOOLKIT_MARKET_PAGE_SIZE,
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      createdAt: true,
+      workspace: { select: { name: true, slug: true } },
+      _count: { select: { servers: true, skills: true } },
+      servers: {
+        orderBy: { deploymentId: 'asc' },
+        take: 4,
+        select: {
+          deployment: {
+            select: {
+              serverId: true,
+              name: true,
+              sourceRef: true,
+              server: { select: { name: true } },
             },
           },
         },
       },
-    }),
-  ]);
+      skills: {
+        orderBy: { installedSkillId: 'asc' },
+        take: 4,
+        select: {
+          installedSkill: {
+            select: {
+              name: true,
+              skill: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const customServerCounts = rows.length > 0
+    ? await db.toolkitServer.groupBy({
+        by: ['toolkitId'],
+        where: {
+          toolkitId: { in: rows.map((toolkit) => toolkit.id) },
+          deployment: { serverId: null },
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const customServerCountByToolkit = new Map(
+    customServerCounts.map((row) => [row.toolkitId, row._count._all]),
+  );
 
   const items: PublicToolkitBrowseItem[] = rows.map((t) => {
     const serverNames = t.servers
@@ -213,12 +247,12 @@ export async function getBrowseToolkits(workspaceId: string, page: number, q = '
       slug: t.slug,
       workspaceName: t.workspace.name,
       workspaceSlug: t.workspace.slug,
-      serverCount: t.servers.length,
-      skillCount: t.skills.length,
-      customServerCount: t.servers.filter((s) => !s.deployment.serverId).length,
-      toolCount: t.servers.length + t.skills.length,
-      serverNames: serverNames.slice(0, 4),
-      skillNames: skillNames.slice(0, 4),
+      serverCount: t._count.servers,
+      skillCount: t._count.skills,
+      customServerCount: customServerCountByToolkit.get(t.id) ?? 0,
+      toolCount: t._count.servers + t._count.skills,
+      serverNames,
+      skillNames,
       createdAt: t.createdAt,
     };
   });

@@ -12,6 +12,7 @@ import { Menu } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardLogo } from './DashboardLogo';
+import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
 
 type Workspace = { id: string; slug: string; name: string };
 
@@ -55,6 +56,7 @@ export function DashboardChrome({
   workspaceName,
   userLabel,
   workspaces,
+  supportEmail,
   isAdmin = false,
   children,
 }: {
@@ -62,6 +64,7 @@ export function DashboardChrome({
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  supportEmail: string;
   isAdmin?: boolean;
   children: ReactNode;
 }) {
@@ -101,7 +104,8 @@ export function DashboardChrome({
   }, [closeMenu, open]);
 
   return (
-    <div className="flex min-h-dvh bg-background text-foreground">
+    <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
+      <div className="flex min-h-dvh bg-background text-foreground">
       {open ? (
         <button
           type="button"
@@ -140,6 +144,7 @@ export function DashboardChrome({
         </div>
         {children}
       </div>
-    </div>
+      </div>
+    </DashboardRuntimeConfigProvider>
   );
 }

@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Bot, Brain, Plug } from 'lucide-react';
+import { Bot, Brain, Plug, Wrench } from 'lucide-react';
 
 const TABS = [
   { key: 'mcp', labelKey: 'mcp', icon: Plug },
   { key: 'skills', labelKey: 'skills', icon: Brain },
   { key: 'agents', labelKey: 'agents', icon: Bot },
+  { key: 'toolkits', labelKey: 'toolkits', icon: Wrench },
 ] as const;
 
 export function MarketTabs({ slug }: { slug: string }) {

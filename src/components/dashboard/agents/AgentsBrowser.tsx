@@ -97,11 +97,16 @@ export function AgentsBrowser({
   const [creating, setCreating] = useState(false);
   const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
   const [providerId, setProviderId] = useState('');
+  const [modelId, setModelId] = useState('');
   const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => new Set());
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
+  const hasProviders = createOptions.providers.length > 0;
+  const creatingDraft = runtime === 'hermes'
+    ? selectedProviderIds.size === 0
+    : !providerId || !modelId;
   const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
   const providerOptions = createOptions.providers.map((provider) => ({
     id: provider.id,
@@ -114,6 +119,7 @@ export function AgentsBrowser({
     setCreating(false);
     setRuntime('native');
     setProviderId('');
+    setModelId('');
     setSelectedProviderIds(new Set());
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
@@ -124,7 +130,7 @@ export function AgentsBrowser({
     <DashboardPage className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('agent')}</h1>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('agent')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -147,6 +153,22 @@ export function AgentsBrowser({
           </button>
         </div>
       </div>
+
+      {!hasProviders ? (
+        <div className="flex flex-col gap-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">{t('modelProviderRequired')}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('modelProviderRequiredDescription')}</p>
+            </div>
+          </div>
+          <Link href={`/app/${encodeURIComponent(slug)}/agents?tab=providers`} className="ui-button-secondary shrink-0">
+            <Cpu className="size-4" />
+            {t('addModelProvider')}
+          </Link>
+        </div>
+      ) : null}
 
       {creating ? (
         <form
@@ -228,7 +250,10 @@ export function AgentsBrowser({
                 <NativeSelect
                   name="providerId"
                   value={providerId}
-                  onChange={(event) => setProviderId(event.target.value)}
+                  onChange={(event) => {
+                    setProviderId(event.target.value);
+                    setModelId('');
+                  }}
                   className="ui-input h-10 w-full"
                 >
                   <option value="">{t('none')}</option>
@@ -239,7 +264,13 @@ export function AgentsBrowser({
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
-                <NativeSelect name="model" disabled={!providerId} className="ui-input h-10 w-full disabled:opacity-60">
+                <NativeSelect
+                  name="model"
+                  value={modelId}
+                  onChange={(event) => setModelId(event.target.value)}
+                  disabled={!providerId}
+                  className="ui-input h-10 w-full disabled:opacity-60"
+                >
                   <option value="">{t('select')}</option>
                   {models.map((model) => <option key={model} value={model}>{model}</option>)}
                 </NativeSelect>
@@ -285,7 +316,7 @@ export function AgentsBrowser({
               className="ui-button-primary h-10 gap-2 px-4"
             >
               <Plus className="size-[18px] shrink-0" />
-              {t('createAgent')}
+              {creatingDraft ? t('createDraftAgent') : t('createAgent')}
             </SubmitButton>
           </div>
         </form>
@@ -295,7 +326,15 @@ export function AgentsBrowser({
         <DashboardEmptyState
           icon={Bot}
           title={t('noAgentsYet')}
-          description={t('addAModelProviderCreateAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
+          description={hasProviders
+            ? t('createAnAgentThenConnectItToToolsAndExternalMessagingAdapters')
+            : t('addAModelProviderCreateAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
+          actions={!hasProviders ? (
+            <Link href={`/app/${encodeURIComponent(slug)}/agents?tab=providers`} className="ui-button-primary">
+              <Cpu className="size-4" />
+              {t('addModelProvider')}
+            </Link>
+          ) : undefined}
         />
       ) : (
         <section className="ui-panel overflow-hidden">
@@ -356,7 +395,11 @@ export function AgentsBrowser({
                             )}
                           >
                             {ready ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
-                            {ready ? t('ready') : agent.runtimeKind === 'hermes' ? t('needsProvider') : t('needsModel')}
+                            {ready
+                              ? t('ready')
+                              : agent.runtimeKind === 'hermes' || !agent.providerName
+                                ? t('needsProvider')
+                                : t('needsModel')}
                           </span>
                           <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
                             {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}

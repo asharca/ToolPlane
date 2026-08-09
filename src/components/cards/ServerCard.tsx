@@ -9,9 +9,11 @@ type ServerCardData = Pick<
 export function ServerCard({
   server,
   rank,
+  statLabel,
 }: {
   server: ServerCardData;
   rank?: number;
+  statLabel?: string;
 }) {
   return (
     <EntityCard
@@ -21,7 +23,7 @@ export function ServerCard({
       author={server.author}
       iconUrl={server.iconUrl}
       category={server.categories?.[0]?.name ?? null}
-      stat={<StarStat value={server.stars} />}
+      stat={<StarStat value={server.stars} label={statLabel} />}
       rank={rank}
     />
   );

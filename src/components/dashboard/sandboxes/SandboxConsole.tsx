@@ -71,9 +71,9 @@ function formatSize(size: number | null): string {
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
 }
 
-function downloadBase64File(payload: DownloadPayload, fallbackName: string) {
+function downloadBase64File(payload: DownloadPayload, fallbackName: string, invalidMessage: string) {
   if (payload.encoding !== 'base64' || typeof payload.content !== 'string') {
-    throw new Error('Download response was not base64.');
+    throw new Error(invalidMessage);
   }
   const binary = atob(payload.content);
   const bytes = new Uint8Array(binary.length);
@@ -86,7 +86,12 @@ function downloadBase64File(payload: DownloadPayload, fallbackName: string) {
   URL.revokeObjectURL(url);
 }
 
-async function callTool(deploymentId: string, name: string, args: Record<string, unknown>): Promise<string> {
+async function callTool(
+  deploymentId: string,
+  name: string,
+  args: Record<string, unknown>,
+  fallbackError: string,
+): Promise<string> {
   const res = await fetch(`/api/v1/mcp/${deploymentId}/rpc`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -98,7 +103,7 @@ async function callTool(deploymentId: string, name: string, args: Record<string,
     }),
   });
   const json = await res.json();
-  if (json.error) throw new Error(json.error.message ?? 'Tool call failed.');
+  if (json.error) throw new Error(json.error.message ?? fallbackError);
   const result = json.result as RpcResult | null;
   const text = textFromResult(result);
   if (result?.isError) throw new Error(text);
@@ -152,23 +157,23 @@ export function SandboxConsole({
   const [selectedPath, setSelectedPath] = useState('');
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [terminalStatus, setTerminalStatus] = useState(
-    running ? 'Connecting' : waitingForConnector ? t('waitingForConnector') : 'Stopped',
+    running ? t('terminalConnecting') : waitingForConnector ? t('waitingForConnector') : t('terminalStopped'),
   );
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const [fileStatus, setFileStatus] = useState(
     initialEntries.length
-      ? `${initialEntries.length} item(s)`
+      ? t('itemCount', { count: initialEntries.length })
       : running
-        ? 'Empty directory'
+        ? t('emptyDirectory')
         : waitingForConnector
           ? t('waitingForConnector')
-          : 'Start sandbox to browse files',
+          : t('startTheSandboxToBrowseFiles'),
   );
 
   const loadDirectory = useCallback(
     async (nextPath: string) => {
       const normalized = normalizePath(nextPath);
-      const raw = await callTool(deploymentId, 'list_dir', { path: normalized });
+      const raw = await callTool(deploymentId, 'list_dir', { path: normalized }, t('toolCallFailed'));
       const parsed = parseSandboxDirectoryText(raw, normalized);
       if (!parsed) throw new Error(raw);
       return {
@@ -176,7 +181,7 @@ export function SandboxConsole({
         entries: sortedEntries(parsed.entries),
       };
     },
-    [deploymentId],
+    [deploymentId, t],
   );
 
   const refreshDir = useCallback(
@@ -189,7 +194,7 @@ export function SandboxConsole({
         setEntries(listing.entries);
         setPreview(null);
         setSelectedPath('');
-        setFileStatus(`${listing.entries.length} item(s)`);
+        setFileStatus(t('itemCount', { count: listing.entries.length }));
         return listing.path;
       } catch (error) {
         setFileStatus(String(error instanceof Error ? error.message : error));
@@ -198,7 +203,7 @@ export function SandboxConsole({
         setLoadingPath(null);
       }
     },
-    [dirPath, loadDirectory],
+    [dirPath, loadDirectory, t],
   );
 
   const flushInput = useCallback(() => {
@@ -269,7 +274,7 @@ export function SandboxConsole({
         terminal.writeln(`\x1b[33m${waitingForConnector
           ? t('waitingForConnectorSession')
           : t('sandboxStoppedTerminalHint')}\x1b[0m`);
-        setTerminalStatus(waitingForConnector ? t('waitingForConnector') : 'Stopped');
+        setTerminalStatus(waitingForConnector ? t('waitingForConnector') : t('terminalStopped'));
         return;
       }
 
@@ -279,13 +284,13 @@ export function SandboxConsole({
         body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows }),
       });
       if (!sessionRes.ok) {
-        terminal.writeln(`\x1b[31mFailed to open terminal: ${sessionRes.status}\x1b[0m`);
-        setTerminalStatus('Error');
+        terminal.writeln(`\x1b[31m${t('failedToOpenTerminal', { status: sessionRes.status })}\x1b[0m`);
+        setTerminalStatus(t('terminalError'));
         return;
       }
       const session = (await sessionRes.json()) as TerminalSession;
       sessionIdRef.current = session.id;
-      setTerminalStatus('Connected');
+      setTerminalStatus(t('terminalConnected'));
 
       eventSource = new EventSource(`${terminalBase}/${session.id}/stream`);
       eventSource.addEventListener('data', (event) => {
@@ -295,11 +300,13 @@ export function SandboxConsole({
       });
       eventSource.addEventListener('exit', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as { exitCode?: number };
-        terminal?.writeln(`\r\n\x1b[33mTerminal exited${payload.exitCode == null ? '' : ` (${payload.exitCode})`}.\x1b[0m`);
-        setTerminalStatus('Exited');
+        terminal?.writeln(`\r\n\x1b[33m${payload.exitCode == null
+          ? t('terminalExited')
+          : t('terminalExitedWithCode', { code: payload.exitCode })}\x1b[0m`);
+        setTerminalStatus(t('terminalExitedStatus'));
       });
       eventSource.onerror = () => {
-        if (!disposed) setTerminalStatus('Disconnected');
+        if (!disposed) setTerminalStatus(t('terminalDisconnected'));
       };
 
       terminal.onData((data) => queueInput(data));
@@ -339,7 +346,7 @@ export function SandboxConsole({
     setSelectedPath(path);
     setLoadingPath(path);
     try {
-      const raw = await callTool(deploymentId, 'read_file', { path });
+      const raw = await callTool(deploymentId, 'read_file', { path }, t('toolCallFailed'));
       const payload = JSON.parse(raw) as Partial<FilePreview>;
       if (typeof payload.content !== 'string') throw new Error(t('filePreviewUnavailable'));
       setPreview({ path, content: payload.content });
@@ -354,8 +361,12 @@ export function SandboxConsole({
   async function downloadFile(path: string) {
     setLoadingPath(path);
     try {
-      const raw = await callTool(deploymentId, 'download_file', { path });
-      downloadBase64File(JSON.parse(raw) as DownloadPayload, path.split('/').pop() || 'sandbox-file');
+      const raw = await callTool(deploymentId, 'download_file', { path }, t('toolCallFailed'));
+      downloadBase64File(
+        JSON.parse(raw) as DownloadPayload,
+        path.split('/').pop() || 'sandbox-file',
+        t('invalidDownloadResponse'),
+      );
       setFileStatus(t('downloadFile'));
     } catch (error) {
       setFileStatus(String(error instanceof Error ? error.message : error));
@@ -368,7 +379,7 @@ export function SandboxConsole({
     if (!window.confirm(t('deleteThisFile'))) return;
     setLoadingPath(path);
     try {
-      await callTool(deploymentId, 'delete_file', { path });
+      await callTool(deploymentId, 'delete_file', { path }, t('toolCallFailed'));
       if (selectedPath === path) {
         setSelectedPath('');
         setPreview(null);
@@ -400,7 +411,7 @@ export function SandboxConsole({
           <button
             type="button"
             onClick={() => {
-              setTerminalStatus('Connecting');
+              setTerminalStatus(t('terminalConnecting'));
               setTerminalGeneration((value) => value + 1);
             }}
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100"

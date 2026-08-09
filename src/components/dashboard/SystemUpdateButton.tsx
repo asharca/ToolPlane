@@ -53,6 +53,15 @@ function versionsMatch(current: string, expected: string | null): boolean {
   return Boolean(expected && current.trim() === expected.trim());
 }
 
+export function systemUpdateVersionDetail(
+  currentVersion: string | null | undefined,
+  latestVersion: string | null | undefined,
+): string | null {
+  if (!currentVersion) return null;
+  if (!latestVersion || versionsMatch(currentVersion, latestVersion)) return currentVersion;
+  return `${currentVersion} → ${latestVersion}`;
+}
+
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -80,6 +89,8 @@ export async function waitForSystemUpdateReady(
     pollIntervalMs?: number;
     timeoutMs?: number;
     onProgress?: (status: LocalUpdateStatus['updateJob']) => void;
+    fallbackFailureMessage?: string;
+    requestNotStartedMessage?: string;
   } = {},
 ): Promise<UpdateWaitResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -109,11 +120,14 @@ export async function waitForSystemUpdateReady(
         if (data.updateJob?.status === 'failed') {
           return {
             status: 'failed',
-            message: data.updateJob.message ?? 'System update failed.',
+            message: data.updateJob.message ?? options.fallbackFailureMessage ?? 'System update failed.',
           };
         }
         if (data.updateJob?.status === 'idle') {
-          return { status: 'failed', message: 'The update request did not start.' };
+          return {
+            status: 'failed',
+            message: options.requestNotStartedMessage ?? 'The update request did not start.',
+          };
         }
       }
     } catch (error) {
@@ -186,6 +200,8 @@ export function SystemUpdateButton() {
             setMessage(t('restarting'));
           }
         },
+        fallbackFailureMessage: t('systemUpdateFailed'),
+        requestNotStartedMessage: t('updateDidNotStart'),
       });
       if (controller.signal.aborted) return;
       if (outcome.status === 'ready') {
@@ -219,7 +235,7 @@ export function SystemUpdateButton() {
         return;
       }
       if (!result?.ok) {
-        void waitForRestart(targetVersion, previousRuntimeId, 'Invalid update response.');
+        void waitForRestart(targetVersion, previousRuntimeId, t('invalidUpdateResponse'));
         return;
       }
       if (result.status === 'updating' || result.status === 'restarting') {
@@ -265,12 +281,10 @@ export function SystemUpdateButton() {
     return t('checkAndUpdate');
   }, [status, t, uiState]);
 
-  const versionDetail =
-    status?.latestVersion && status.currentVersion
-      ? `${status.currentVersion} -> ${status.latestVersion}`
-      : status?.currentVersion
-        ? status.currentVersion
-        : null;
+  const versionDetail = systemUpdateVersionDetail(
+    status?.currentVersion,
+    status?.latestVersion,
+  );
   const detail = message || versionDetail || status?.artifactName || t('targetReleaseUnknown');
 
   return (

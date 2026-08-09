@@ -80,6 +80,28 @@ describe('parseSkillFrontmatter', () => {
       parseSkillFrontmatter('---\nname: "pdf"\ndescription: "Work with PDFs"\nauthor: Anthropic\n---\n# PDF'),
     ).toEqual({ name: 'pdf', description: 'Work with PDFs', author: 'Anthropic' });
   });
+
+  it('decodes escaped quoted values', () => {
+    expect(
+      parseSkillFrontmatter(
+        '---\nname: formatter\ndescription: "Turn \\"rough\\" text into polished copy"\n---\n# Formatter',
+      ),
+    ).toMatchObject({
+      name: 'formatter',
+      description: 'Turn "rough" text into polished copy',
+    });
+  });
+
+  it('supports literal and folded YAML block scalars', () => {
+    expect(
+      parseSkillFrontmatter(
+        '---\nname: writer\ndescription: |-\n  Write clear copy.\n  Keep the author voice.\nsummary: >-\n  Clear writing\n  without filler.\n---\n# Writer',
+      ),
+    ).toMatchObject({
+      description: 'Write clear copy.\nKeep the author voice.',
+      summary: 'Clear writing without filler.',
+    });
+  });
 });
 
 describe('parseUploadedSkillBundle', () => {

@@ -158,21 +158,21 @@ export function HomeView({
 
       <SectionGrid
         title={t('officialServers')}
-        viewAllHref="/categories/official"
+        viewAllHref="/server"
         viewAllLabel={t('viewAllOfficialServers')}
       >
         {officialServers.map((s) => (
-          <ServerCard key={s.slug} server={s} />
+          <ServerCard key={s.slug} server={s} statLabel={common('stars')} />
         ))}
       </SectionGrid>
 
       <SectionGrid
         title={t('featuredServers')}
-        viewAllHref="/categories/featured"
+        viewAllHref="/server"
         viewAllLabel={t('viewAllFeaturedServers')}
       >
         {featuredServers.map((s) => (
-          <ServerCard key={s.slug} server={s} />
+          <ServerCard key={s.slug} server={s} statLabel={common('stars')} />
         ))}
       </SectionGrid>
 
@@ -182,7 +182,7 @@ export function HomeView({
         viewAllLabel={t('viewLeaderboard')}
       >
         {topServers.map((s) => (
-          <ServerCard key={s.slug} server={s} />
+          <ServerCard key={s.slug} server={s} statLabel={common('stars')} />
         ))}
       </SectionGrid>
 
@@ -192,7 +192,7 @@ export function HomeView({
         viewAllLabel={t('viewAllNewServers')}
       >
         {latestServers.map((s) => (
-          <ServerCard key={s.slug} server={s} />
+          <ServerCard key={s.slug} server={s} statLabel={common('stars')} />
         ))}
       </SectionGrid>
 
@@ -202,7 +202,7 @@ export function HomeView({
         viewAllLabel={t('viewAllClients')}
       >
         {clients.map((c) => (
-          <ClientCard key={c.slug} client={c} />
+          <ClientCard key={c.slug} client={c} statLabel={common('stars')} />
         ))}
       </SectionGrid>
 
@@ -210,10 +210,10 @@ export function HomeView({
         title={t('topAgentSkills')}
         viewAllHref="/tools/skills"
         viewAllLabel={t('viewAllSkills')}
-        badge={{ label: 'What are Agent Skills?', href: '/tools/skills' }}
+        badge={{ label: t('whatAreAgentSkills'), href: '/tools/skills' }}
       >
         {topSkills.map((k) => (
-          <SkillCard key={k.slug} skill={k} />
+          <SkillCard key={k.slug} skill={k} statLabel={common('score')} />
         ))}
       </SectionGrid>
 

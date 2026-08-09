@@ -7,6 +7,7 @@ import { decryptChannelCredentials } from '@/lib/agents/channel-connections';
 import { hostedRunnerSpec } from '@/lib/agents/platform-runner';
 import { getMessagingPlatform, missingStartCredentialNames } from '@/lib/agents/platforms';
 import { runnerStderrToLastError, runnerStdoutIndicatesConnected } from '@/lib/agents/channel-runtime-logs';
+import { runtimeEnv } from '@/lib/runtime-env';
 
 type RunnerState = {
   child: ChildProcessWithoutNullStreams;
@@ -17,10 +18,6 @@ type RunnerState = {
 
 declare global {
   var __toolplaneAgentChannelRunners: Map<string, RunnerState> | undefined;
-}
-
-function runtimeEnv(name: string): string | undefined {
-  return process.env[name];
 }
 
 function runners() {

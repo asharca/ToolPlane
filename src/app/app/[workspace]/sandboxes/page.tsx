@@ -46,17 +46,17 @@ export const dynamic = 'force-dynamic';
 
 const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
 
-function formatDate(d: Date, timeZone: string): string {
-  return formatInTimeZone(d, timeZone, { month: 'short', day: 'numeric', year: 'numeric' }, 'en-US');
+function formatDate(d: Date, timeZone: string, locale: string): string {
+  return formatInTimeZone(d, timeZone, { month: 'short', day: 'numeric', year: 'numeric' }, locale);
 }
 
-function formatDateTime(d: Date, timeZone: string): string {
+function formatDateTime(d: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(d, timeZone, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  }, 'en-US');
+  }, locale);
 }
 
 function compactVolumeName(sandboxId: string): string {
@@ -86,30 +86,36 @@ function SandboxStat({
   );
 }
 
-function backingStore(sandbox: { kind: string; image: string | null; config: unknown; hostRoot?: string | null }): string {
+function backingStore(
+  sandbox: { kind: string; image: string | null; config: unknown; hostRoot?: string | null },
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): string {
   if (sandbox.kind === 'connector') {
     const connector = connectorFromConfig(sandbox.config);
     return connector
-      ? `WebSocket connector -> ${connector.remoteRoot}`
-      : 'Connector config missing';
+      ? t('connectorBackingStore', { root: connector.remoteRoot })
+      : t('connectorConfigMissing');
   }
-  if (sandbox.kind === 'ssh') return 'Legacy direct SSH disabled';
-  if (sandbox.kind === 'host') return 'Legacy host root disabled';
+  if (sandbox.kind === 'ssh') return t('legacySshDisabled');
+  if (sandbox.kind === 'host') return t('legacyHostDisabled');
   const image = sandbox.image ?? DEFAULT_SANDBOX_IMAGE;
   const option = findSandboxImageOption(image);
   return option ? option.name : image;
 }
 
-function modeLabel(kind: string): string {
-  if (kind === 'connector') return 'Connector';
-  if (kind === 'ssh') return 'Legacy SSH';
-  if (kind === 'host') return 'Disabled host';
-  return 'Docker';
+function modeLabel(kind: string, t: Awaited<ReturnType<typeof getTranslations>>): string {
+  if (kind === 'connector') return t('connectorMode');
+  if (kind === 'ssh') return t('legacySshMode');
+  if (kind === 'host') return t('disabledHostMode');
+  return t('docker');
 }
 
-function connectorMeta(connector: SandboxConnectorConfig | null): string {
-  if (!connector) return 'waiting for config';
-  return 'open sandbox to generate command';
+function connectorMeta(
+  connector: SandboxConnectorConfig | null,
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): string {
+  if (!connector) return t('waitingForConfig');
+  return t('openSandboxToGenerateCommand');
 }
 
 function isImportedHermesArchive(config: unknown): boolean {
@@ -285,7 +291,7 @@ export default async function SandboxesPage({
                       <div>
                         <dt className="text-muted-foreground">{t('lastSync')}</dt>
                         <dd className="mt-1 font-medium text-foreground">
-                          {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone) : t('neverSynced')}
+                          {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone, locale) : t('neverSynced')}
                         </dd>
                       </div>
                       <div className="min-w-0 sm:col-span-2">
@@ -317,10 +323,10 @@ export default async function SandboxesPage({
               headers={[
                 { label: t('runtime') },
                 { label: t('ownerAgent') },
-                { label: 'Status' },
+                { label: t('status') },
                 { label: t('imageAndStorage') },
                 { label: t('lastSync') },
-                { label: 'Actions', align: 'right' },
+                { label: t('actions'), align: 'right' },
               ]}
             >
               {managedRuntimes.map((runtime) => {
@@ -368,7 +374,7 @@ export default async function SandboxesPage({
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone) : t('neverSynced')}
+                      {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone, locale) : t('neverSynced')}
                     </td>
                     <td className="px-4 py-3">
                       <HermesRuntimeDialogLauncher
@@ -440,7 +446,7 @@ export default async function SandboxesPage({
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
                         {s.kind === 'connector' ? <Laptop className="size-3.5" /> : <Cpu className="size-3.5" />}
-                        {modeLabel(s.kind)}
+                        {modeLabel(s.kind, t)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -448,10 +454,12 @@ export default async function SandboxesPage({
                     </td>
                     <td className="max-w-xs px-4 py-3 text-xs text-muted-foreground">
                       <div className="truncate">
-                        {backingStore(s)}
+                        {backingStore(s, t)}
                       </div>
                       <div className={`mt-0.5 text-[11px] text-muted-foreground/70 ${s.kind === 'connector' ? 'font-mono normal-case' : 'uppercase tracking-wide'}`}>
-                        {s.kind === 'connector' ? connectorMeta(connector) : `network: ${s.network}`}
+                        {s.kind === 'connector'
+                          ? connectorMeta(connector, t)
+                          : t('networkValue', { network: s.network })}
                       </div>
                       {s.kind === 'connector' && connector ? (
                         <div className="mt-1">
@@ -461,7 +469,7 @@ export default async function SandboxesPage({
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{s._count.agentLinks}</td>
                     <td className="px-4 py-3 text-muted-foreground">{s._count.snapshots}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone, locale)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-3">
                         <Link href={`/app/${slug}/sandboxes/${s.id}`} className={rowButton}>
