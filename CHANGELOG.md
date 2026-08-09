@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0](https://github.com/asharca/ToolPlane/releases/tag/v0.20.0) (2026-08-09)
+
+### What's Changed
+* feat: production readiness, public discovery, and account recovery by @renhedata in https://github.com/asharca/ToolPlane/pull/76
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.19.1...v0.20.0
+
 ## [0.19.1](https://github.com/asharca/ToolPlane/releases/tag/v0.19.1) (2026-08-09)
 
 ### What's Changed
