@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.1](https://github.com/asharca/ToolPlane/releases/tag/v0.19.1) (2026-08-09)
+
+### What's Changed
+* fix: allow Hermes auto-TTS temporary output by @asharca in https://github.com/asharca/ToolPlane/pull/75
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.19.0...v0.19.1
+
 ## [0.19.0](https://github.com/asharca/ToolPlane/releases/tag/v0.19.0) (2026-08-08)
 
 ### What's Changed
