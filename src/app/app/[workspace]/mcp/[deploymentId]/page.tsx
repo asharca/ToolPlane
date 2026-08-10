@@ -356,6 +356,7 @@ export default async function DeploymentInspectorPage({
               tools={tools}
               initialMode={dep.mcpToolExposure}
               initialAllowedTools={dep.mcpAllowedTools}
+              initialPublicInvocable={dep.publicInvocable}
               running={running}
             />
             {running ? (

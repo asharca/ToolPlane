@@ -388,12 +388,17 @@ export async function updateMcpToolExposureAction(
 
   const selected = validMcpToolNames(formData.getAll('toolName'));
   if (!selected) return { error: 'invalidToolSelection' };
+  const publicInvocable = formData.get('publicInvocable') === 'on';
+  if (publicInvocable && (mode !== 'allowlist' || selected.length === 0)) {
+    return { error: 'invalidToolSelection' };
+  }
 
   await db.deployment.update({
     where: { id: deployment.id },
     data: {
       mcpToolExposure: mode,
       mcpAllowedTools: mode === 'allowlist' ? selected : [],
+      publicInvocable,
     },
   });
   revalidatePath(`/app/${slug}/mcp/${deployment.id}`);

@@ -11,11 +11,29 @@ export type ReconcileDeps = {
 };
 
 const defaultDeps: ReconcileDeps = {
-  loadRunning: () =>
-    db.deployment.findMany({
+  loadRunning: async () => {
+    const deployments = await db.deployment.findMany({
       where: { status: { in: ['running', 'provisioning'] } },
-      include: { server: { select: { name: true } } },
-    }) as Promise<RunningDeployment[]>,
+      include: {
+        server: { select: { name: true } },
+        sandbox: {
+          select: {
+            agentRuntime: {
+              select: {
+                agent: { select: { publicRuntimeAllocation: { select: { id: true } } } },
+              },
+            },
+          },
+        },
+      },
+    });
+    // Public Endpoint runtimes are lazy: a request starts them and the idle
+    // maintenance pass stops them again. Never eagerly boot every tenant
+    // container after an app restart.
+    return deployments.filter((deployment) => (
+      !deployment.sandbox?.agentRuntime?.agent.publicRuntimeAllocation
+    )) as RunningDeployment[];
+  },
   start: startProcess,
 };
 

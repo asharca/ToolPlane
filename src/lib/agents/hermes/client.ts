@@ -76,14 +76,20 @@ async function hermesFetch(params: {
   sessionKey: string;
   stream: boolean;
   writeLease?: HermesRuntimeWriteLease;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ baseUrl: string; response: Response }> {
   if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
     throw new Error('Hermes runtime is not configured.');
   }
+  const timeoutSignal = AbortSignal.timeout(params.timeoutMs ?? 60 * 60_000);
+  const signal = params.signal
+    ? AbortSignal.any([params.signal, timeoutSignal])
+    : timeoutSignal;
   const ready = await ensureHermesRuntimeReady(
     params.agent.workspaceId,
     params.agent.id,
-    { writeLease: params.writeLease },
+    { writeLease: params.writeLease, signal },
   );
   if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
 
@@ -100,14 +106,36 @@ async function hermesFetch(params: {
       messages: params.messages,
       stream: params.stream,
     }),
-    signal: AbortSignal.timeout(60 * 60_000),
+    signal,
     cache: 'no-store',
   });
   return { baseUrl, response };
 }
 
 async function responseError(response: Response): Promise<Error> {
-  const text = (await response.text().catch(() => '')).trim().slice(0, 1000);
+  const reader = response.body?.getReader();
+  if (!reader) return new Error(`Hermes runtime returned ${response.status}.`);
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = '';
+  try {
+    while (received <= 4_096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+      if (received > 4_096) {
+        await reader.cancel('error body limit exceeded').catch(() => undefined);
+        break;
+      }
+    }
+    text += decoder.decode();
+  } catch {
+    text = '';
+  } finally {
+    reader.releaseLock();
+  }
+  text = text.trim().slice(0, 1_000);
   return new Error(text || `Hermes runtime returned ${response.status}.`);
 }
 
@@ -238,6 +266,8 @@ export async function runHermesText(params: {
   sessionId: string;
   sessionKey: string;
   writeLease?: HermesRuntimeWriteLease;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<string> {
   const { response } = await hermesFetch({
     agent: params.agent,
@@ -246,6 +276,8 @@ export async function runHermesText(params: {
     sessionKey: params.sessionKey,
     stream: false,
     writeLease: params.writeLease,
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
   });
   if (!response.ok) throw await responseError(response);
   const body = await response.json() as {
@@ -257,4 +289,121 @@ export async function runHermesText(params: {
     return content.map((part) => part.type === 'text' ? part.text ?? '' : '').join('');
   }
   return '';
+}
+
+export class HermesResponseTooLargeError extends Error {
+  constructor() {
+    super('Hermes response exceeded the configured output limit.');
+    this.name = 'HermesResponseTooLargeError';
+  }
+}
+
+/** Delete a Hermes session before deleting the corresponding public record. */
+export async function deleteHermesSession(params: {
+  agent: HermesRuntimeAgent;
+  sessionId: string;
+  sessionKey: string;
+  writeLease?: HermesRuntimeWriteLease;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
+    throw new Error('Hermes runtime is not configured.');
+  }
+  const timeoutSignal = AbortSignal.timeout(params.timeoutMs ?? 30_000);
+  const signal = params.signal ? AbortSignal.any([params.signal, timeoutSignal]) : timeoutSignal;
+  const ready = await ensureHermesRuntimeReady(
+    params.agent.workspaceId,
+    params.agent.id,
+    { writeLease: params.writeLease, signal },
+  );
+  if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
+  const response = await fetch(
+    `http://127.0.0.1:${ready.port}/hermes/api/sessions/${encodeURIComponent(params.sessionId)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        'x-hermes-session-id': params.sessionId,
+        'x-hermes-session-key': params.sessionKey,
+      },
+      signal,
+      cache: 'no-store',
+    },
+  );
+  if (response.status === 404) return false;
+  if (!response.ok) throw await responseError(response);
+  return true;
+}
+
+/**
+ * Streams only assistant text from Hermes' OpenAI-compatible SSE response.
+ * Public API callers deliberately do not receive internal tool arguments,
+ * tool output, approval events, provider errors, or runtime identifiers.
+ */
+export async function runHermesTextStream(params: {
+  agent: HermesRuntimeAgent;
+  messages: UIMessage[];
+  sessionId: string;
+  sessionKey: string;
+  writeLease?: HermesRuntimeWriteLease;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxOutputCharacters?: number;
+  onDelta: (delta: string) => void | Promise<void>;
+}): Promise<string> {
+  const { response } = await hermesFetch({
+    agent: params.agent,
+    messages: uiMessagesToHermes(params.messages),
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    stream: true,
+    writeLease: params.writeLease,
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
+  });
+  if (!response.ok) throw await responseError(response);
+  if (!response.body) throw new Error('Hermes runtime returned an empty stream.');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      if (params.maxOutputCharacters && buffer.length > params.maxOutputCharacters + 65_536) {
+        throw new HermesResponseTooLargeError();
+      }
+      let match = /\r?\n\r?\n/.exec(buffer);
+      while (match) {
+        const block = buffer.slice(0, match.index);
+        buffer = buffer.slice(match.index + match[0].length);
+        const delta = textDelta(sseData(block));
+        if (delta) {
+          if (params.maxOutputCharacters && text.length + delta.length > params.maxOutputCharacters) {
+            throw new HermesResponseTooLargeError();
+          }
+          text += delta;
+          await params.onDelta(delta);
+        }
+        match = /\r?\n\r?\n/.exec(buffer);
+      }
+      if (done) break;
+    }
+    const trailing = textDelta(sseData(buffer));
+    if (trailing) {
+      if (params.maxOutputCharacters && text.length + trailing.length > params.maxOutputCharacters) {
+        throw new HermesResponseTooLargeError();
+      }
+      text += trailing;
+      await params.onDelta(trailing);
+    }
+    return text;
+  } catch (error) {
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }

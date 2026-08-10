@@ -108,6 +108,25 @@ describe('Hermes agent runtime contract', () => {
     expect(config).not.toContain('system_prompt');
   });
 
+  it('projects an owner-approved system prompt for an isolated public runtime', () => {
+    const config = renderHermesConfig({
+      maxSteps: 8,
+      providers: [],
+      mcpUrl: 'https://toolplane.test/mcp',
+      mcpToken: 'token',
+      systemPrompt: 'Answer only from approved public resources.',
+      publicRuntime: true,
+    });
+
+    expect(config).toContain('system_prompt: "Answer only from approved public resources."');
+    expect(config).toContain('disabled_toolsets:');
+    expect(config).toContain('- "terminal"');
+    expect(config).toContain('- "delegation"');
+    expect(config).toContain('- "memory"');
+    expect(config).toContain('- "mcp-toolplane"');
+    expect(config).toContain('orchestrator_enabled: false');
+  });
+
   it('renders a deterministic Hermes skill bundle', () => {
     const bundle = renderHermesSkillBundle(['pdf', 'github']);
     expect(bundle.indexOf('toolplane-agent/github')).toBeLessThan(

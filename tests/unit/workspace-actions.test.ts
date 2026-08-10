@@ -1494,6 +1494,7 @@ describe('updateMcpToolExposureAction', () => {
       data: {
         mcpToolExposure: 'allowlist',
         mcpAllowedTools: ['read', 'temporarily-missing'],
+        publicInvocable: false,
       },
     });
     expect(mocks.restartProcess).not.toHaveBeenCalled();
@@ -1510,7 +1511,7 @@ describe('updateMcpToolExposureAction', () => {
     await updateMcpToolExposureAction({}, empty);
     expect(mocks.deploymentUpdate).toHaveBeenLastCalledWith({
       where: { id: 'dep1' },
-      data: { mcpToolExposure: 'allowlist', mcpAllowedTools: [] },
+      data: { mcpToolExposure: 'allowlist', mcpAllowedTools: [], publicInvocable: false },
     });
 
     const all = formData('dep1');
@@ -1518,7 +1519,7 @@ describe('updateMcpToolExposureAction', () => {
     await updateMcpToolExposureAction({}, all);
     expect(mocks.deploymentUpdate).toHaveBeenLastCalledWith({
       where: { id: 'dep1' },
-      data: { mcpToolExposure: 'all', mcpAllowedTools: [] },
+      data: { mcpToolExposure: 'all', mcpAllowedTools: [], publicInvocable: false },
     });
   });
 
@@ -1539,6 +1540,7 @@ describe('updateMcpToolExposureAction', () => {
       data: {
         mcpToolExposure: 'allowlist',
         mcpAllowedTools: ['not-reported-anymore'],
+        publicInvocable: false,
       },
     });
 

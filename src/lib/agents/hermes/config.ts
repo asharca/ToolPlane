@@ -12,11 +12,46 @@ export type HermesConfigProjection = {
   providers: HermesProviderProjection[];
   mcpUrl: string;
   mcpToken: string;
+  /** ToolPlane owns this field only for isolated public Endpoint runtimes. */
+  systemPrompt?: string;
+  /** Locks a public runtime to its published MCP capability surface. */
+  publicRuntime?: boolean;
 };
 
 export type HermesEnvProjection = Record<string, string>;
 
 const TOOLPLANE_PROVIDER_PREFIX = 'toolplane-';
+const PUBLIC_RUNTIME_DISABLED_TOOLSETS = [
+  'browser',
+  'clarify',
+  'code_execution',
+  'cronjob',
+  'debugging',
+  'delegation',
+  'discord',
+  'discord_admin',
+  'feishu_doc',
+  'feishu_drive',
+  'file',
+  'homeassistant',
+  'image_gen',
+  'kanban',
+  'memory',
+  'messaging',
+  'moa',
+  'rl',
+  'safe',
+  'search',
+  'session_search',
+  'spotify',
+  'terminal',
+  'todo',
+  'tts',
+  'video',
+  'vision',
+  'web',
+  'yuanbao',
+] as const;
 
 function yamlString(value: string): string {
   return JSON.stringify(value);
@@ -88,6 +123,23 @@ export function renderHermesConfig(input: HermesConfigProjection): string {
     ...providerInventory,
     'agent:',
     `  max_turns: ${maxTurns}`,
+    ...(input.systemPrompt?.trim()
+      ? [`  system_prompt: ${yamlString(input.systemPrompt.trim())}`]
+      : []),
+    ...(input.publicRuntime
+      ? [
+          '  disabled_toolsets:',
+          ...PUBLIC_RUNTIME_DISABLED_TOOLSETS.map((toolset) => `    - ${yamlString(toolset)}`),
+          'tools:',
+          '  api_server:',
+          '    enabled:',
+          '      - "mcp-toolplane"',
+          'delegation:',
+          '  orchestrator_enabled: false',
+          '  max_concurrent_children: 1',
+          '  max_spawn_depth: 1',
+        ]
+      : []),
     'approvals:',
     '  mode: smart',
     'tool_loop_guardrails:',

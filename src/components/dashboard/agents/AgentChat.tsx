@@ -17,6 +17,7 @@ import { AgentMarketSetupBanner } from '@/components/dashboard/agents/AgentMarke
 import Link from 'next/link';
 import {
   Container,
+  Code2,
   Globe2,
   MessageCircle,
   PanelLeftClose,
@@ -34,6 +35,7 @@ import { HERMES_EMBED_CLOSE_MESSAGE } from '@/lib/agents/hermes/embed-message';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
+import type { AgentEndpointView } from '@/components/dashboard/agents/AgentApiPanel';
 
 const AgentSettingsForm = dynamic(() =>
   import('@/components/dashboard/agents/AgentSettingsForm').then(
@@ -50,6 +52,12 @@ const AgentMessagingPanel = dynamic(() =>
 const HermesRuntimePanel = dynamic(() =>
   import('@/components/dashboard/agents/HermesRuntimePanel').then(
     (module) => module.HermesRuntimePanel,
+  ),
+);
+
+const AgentApiPanel = dynamic(() =>
+  import('@/components/dashboard/agents/AgentApiPanel').then(
+    (module) => module.AgentApiPanel,
   ),
 );
 
@@ -92,6 +100,14 @@ type SettingsData = {
 type ChannelSettingsData = {
   connections: AgentChannelConnectionClientView[];
 };
+
+type AgentApiSettingsData = {
+  endpoint: AgentEndpointView | null;
+  origin: string;
+  canManage: boolean;
+};
+
+type SettingsTab = 'agent' | 'channels' | 'api' | 'hermes' | 'terminal';
 
 const FOCUSABLE_SETTINGS_ELEMENTS = [
   'a[href]',
@@ -149,6 +165,8 @@ export function AgentChat({
   conversations,
   settings,
   channelSettings,
+  apiSettings,
+  publicApiDeployments,
   ready,
   agentName,
   providerLabel,
@@ -162,18 +180,24 @@ export function AgentChat({
   conversations: Conversation[];
   settings: SettingsData;
   channelSettings: ChannelSettingsData;
+  apiSettings?: AgentApiSettingsData;
+  publicApiDeployments?: AgentResourceOption[];
   ready: boolean;
   agentName: string;
   providerLabel: string;
   marketSetup?: AgentMarketSetupGuide | null;
-  initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
+  initialSettingsTab?: SettingsTab | null;
 }) {
   const t = useTranslations('console.agents');
-  const supportsChannelSettings = settings.runtime?.kind !== 'hermes';
+  const isHermesRuntime = settings.runtime?.kind === 'hermes';
+  const supportsChannelSettings = !isHermesRuntime;
+  const supportsApiSettings = isHermesRuntime && Boolean(apiSettings);
   const requestedSettingsTab = initialSettingsTab ?? 'agent';
-  const initialTab = !supportsChannelSettings && requestedSettingsTab === 'channels'
-    ? 'agent'
-    : requestedSettingsTab;
+  const initialTab: SettingsTab = (
+    (!supportsChannelSettings && requestedSettingsTab === 'channels')
+    || (!isHermesRuntime && ['api', 'hermes', 'terminal'].includes(requestedSettingsTab))
+    || (!supportsApiSettings && requestedSettingsTab === 'api')
+  ) ? 'agent' : requestedSettingsTab;
   const narrowViewport = useSyncExternalStore(
     subscribeToNarrowViewport,
     getNarrowViewportSnapshot,
@@ -188,7 +212,7 @@ export function AgentChat({
     setSidebarOverrides((current) => ({ ...current, [viewportMode]: collapsed }));
   }, [viewportMode]);
   const [settingsOpen, setSettingsOpen] = useState(Boolean(initialSettingsTab));
-  const [settingsTab, setSettingsTab] = useState<'agent' | 'channels' | 'hermes' | 'terminal'>(initialTab);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialTab);
   const [createdConversation, setCreatedConversation] = useState<{
     selectedConversationId: string | null;
     id: string;
@@ -543,7 +567,7 @@ export function AgentChat({
             </header>
             <div className={cx(
               'grid shrink-0 gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:overflow-x-auto sm:px-5',
-              supportsChannelSettings ? 'grid-cols-2' : 'grid-cols-3',
+              supportsChannelSettings ? 'grid-cols-2' : apiSettings ? 'grid-cols-4' : 'grid-cols-3',
             )}>
               <button
                 type="button"
@@ -575,6 +599,21 @@ export function AgentChat({
               ) : null}
               {settings.runtime?.kind === 'hermes' ? (
                 <>
+                  {apiSettings ? (
+                    <button
+                      type="button"
+                      onClick={() => setSettingsTab('api')}
+                      className={cx(
+                        'inline-flex h-9 min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors sm:w-auto sm:shrink-0 sm:gap-2 sm:px-3.5 sm:text-sm',
+                        settingsTab === 'api'
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                      )}
+                    >
+                      <Code2 className="size-3.5 shrink-0 sm:size-4" />
+                      {t('agentApiSettingsTab')}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setSettingsTab('hermes')}
@@ -616,7 +655,7 @@ export function AgentChat({
                   model={settings.model}
                   maxSteps={settings.maxSteps}
                   providers={settings.providers}
-                  deployments={settings.deployments}
+                  deployments={publicApiDeployments ?? []}
                   skills={settings.skills}
                   toolkits={settings.toolkits}
                   sandboxes={settings.sandboxes}
@@ -634,6 +673,18 @@ export function AgentChat({
                     ready={ready}
                   />
                 </div>
+              ) : settingsTab === 'api' && settings.runtime?.kind === 'hermes' && apiSettings ? (
+                <AgentApiPanel
+                  key={`${apiSettings.endpoint?.id ?? 'draft'}:${apiSettings.endpoint?.revision ?? 0}`}
+                  workspaceSlug={slug}
+                  agentId={agentId}
+                  agentName={agentName}
+                  origin={apiSettings.origin}
+                  canManage={apiSettings.canManage}
+                  endpoint={apiSettings.endpoint}
+                  deployments={settings.deployments}
+                  skills={settings.skills}
+                />
               ) : settings.runtime?.kind === 'hermes' ? (
                 <HermesRuntimePanel
                   view={settingsTab === 'hermes' ? 'web' : 'terminal'}

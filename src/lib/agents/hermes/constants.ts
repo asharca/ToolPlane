@@ -17,6 +17,10 @@ export const HERMES_IMAGE_OPTIONS = [
   `${HERMES_IMAGE_REPOSITORY}:v2026.7.1`,
 ] as const;
 
+const PUBLIC_HERMES_RELEASE_IMAGES = new Set<string>(HERMES_IMAGE_OPTIONS.filter((image) => (
+  image !== DEFAULT_HERMES_IMAGE
+)));
+
 const DOCKER_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$/;
 
 /**
@@ -29,6 +33,39 @@ export function isValidHermesImage(value: unknown): value is string {
   return typeof value === 'string'
     && value.trim().length > 0
     && DOCKER_IMAGE.test(value.trim());
+}
+
+/**
+ * Public runtimes fail closed to images reviewed by this ToolPlane release.
+ * Operators may add exact immutable digests through an explicit allowlist;
+ * mutable `latest` and arbitrary per-Agent custom images never cross into the
+ * untrusted public prompt boundary automatically.
+ */
+export function isPublicHermesImage(value: unknown): value is string {
+  if (!isValidHermesImage(value)) return false;
+  const image = value.trim();
+  if (PUBLIC_HERMES_RELEASE_IMAGES.has(image)) return true;
+  const configured = (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return configured.includes(image) && /@sha256:[a-f0-9]{64}$/i.test(image);
+}
+
+/** Runtime revisions only execute an immutable digest, never a mutable tag. */
+export function isPinnedPublicHermesImage(value: unknown): value is string {
+  if (!isValidHermesImage(value)) return false;
+  const image = value.trim();
+  if (
+    new RegExp(`^(?:docker\\.io/)?${HERMES_IMAGE_REPOSITORY.replace('/', '\\/')}@sha256:[a-f0-9]{64}$`, 'i')
+      .test(image)
+  ) return true;
+  return (process.env.TOOLPLANE_PUBLIC_HERMES_IMAGES ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .includes(image)
+    && /@sha256:[a-f0-9]{64}$/i.test(image);
 }
 
 export function resolveHermesImage(raw: unknown): string {

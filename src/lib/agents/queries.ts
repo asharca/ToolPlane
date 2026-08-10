@@ -8,6 +8,7 @@ import {
   parseAgentMarketSetupResourceIds,
   type AgentMarketSetupGuide,
 } from '@/lib/agents/market-setup';
+import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from '@/lib/agents/public-api/tool-policy';
 
 export type AgentResourceOption = {
   id: string;
@@ -73,6 +74,41 @@ const TOOL_INCLUDE = {
   runtime: {
     include: {
       sandbox: { include: { deployment: true } },
+    },
+  },
+  // Internal lifecycle/execution callers need the immutable public revision
+  // that owns an isolated runtime. Ordinary list/detail/request queries below
+  // explicitly exclude these hidden runtime Agents.
+  publicRuntimeAllocation: {
+    select: {
+      id: true,
+      revisionId: true,
+      revision: {
+        select: {
+          systemPrompt: true,
+          deploymentIds: true,
+          toolPolicy: true,
+        },
+      },
+    },
+  },
+} as const;
+
+// The relation is the primary visibility boundary. The durable sandbox marker
+// keeps the Agent hidden (and fail-closed in the runtime MCP route) if an
+// Endpoint/allocation is deleted before its runtime resources are collected.
+const ORDINARY_AGENT_FILTER = {
+  publicRuntimeAllocation: { is: null },
+  NOT: {
+    runtime: {
+      is: {
+        sandbox: {
+          config: {
+            path: ['managedBy'],
+            equals: AGENT_ENDPOINT_RUNTIME_MANAGED_BY,
+          },
+        },
+      },
     },
   },
 } as const;
@@ -166,7 +202,11 @@ export async function getProvider(workspaceId: string, providerId: string) {
 
 export async function getAgentPageData(workspaceId: string, agentId: string) {
   return db.agent.findFirst({
-    where: { id: agentId, workspaceId },
+    where: {
+      id: agentId,
+      workspaceId,
+      ...ORDINARY_AGENT_FILTER,
+    },
     select: {
       id: true,
       name: true,
@@ -253,7 +293,7 @@ export async function resolveAgentMarketSetupGuide(
 
 export async function listAgents(workspaceId: string) {
   return db.agent.findMany({
-    where: { workspaceId },
+    where: { workspaceId, ...ORDINARY_AGENT_FILTER },
     orderBy: { createdAt: 'desc' },
     include: {
       provider: { select: { name: true } },
@@ -310,6 +350,7 @@ export async function getAgentForRequest(agentId: string, userId: string) {
   return db.agent.findFirst({
     where: {
       id: agentId,
+      ...ORDINARY_AGENT_FILTER,
       workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: { provider: true, ...TOOL_INCLUDE },
@@ -320,6 +361,7 @@ export async function getHermesTerminalForRequest(agentId: string, userId: strin
   return db.agent.findFirst({
     where: {
       id: agentId,
+      ...ORDINARY_AGENT_FILTER,
       workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       runtime: { is: { kind: 'hermes' } },
     },
@@ -341,7 +383,31 @@ export async function getHermesTerminalForRequest(agentId: string, userId: strin
 // workspace. Each nesting level loads the next fresh (no deep nested includes).
 export async function getAgentForRun(agentId: string, workspaceId: string) {
   return db.agent.findFirst({
-    where: { id: agentId, workspaceId },
+    where: {
+      id: agentId,
+      workspaceId,
+      ...ORDINARY_AGENT_FILTER,
+    },
+    include: { provider: true, ...TOOL_INCLUDE },
+  });
+}
+
+// Explicit internal loader for the public execution path. Unlike
+// getAgentForRun, this requires the hidden Agent to be linked to the exact
+// ready allocation, so it cannot become a general sub-agent escape hatch.
+export async function getAgentEndpointRuntimeForExecution(
+  workspaceId: string,
+  agentId: string,
+  allocationId: string,
+) {
+  return db.agent.findFirst({
+    where: {
+      id: agentId,
+      workspaceId,
+      publicRuntimeAllocation: {
+        is: { id: allocationId, status: 'ready' },
+      },
+    },
     include: { provider: true, ...TOOL_INCLUDE },
   });
 }

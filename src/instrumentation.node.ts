@@ -3,7 +3,11 @@
 export async function registerNode() {
   if (process.env.NEXT_PHASE === 'phase-production-build') return;
 
-  const g = globalThis as unknown as { __mcpReconciled?: boolean };
+  const g = globalThis as unknown as {
+    __mcpReconciled?: boolean;
+    __agentApiMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
+  };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
   const helpersCreatedBefore = new Date();
@@ -71,5 +75,58 @@ export async function registerNode() {
     if (n > 0) console.log(`[mcp] reconciled ${n} deployment(s) on startup`);
   } catch (error) {
     console.error('[mcp] startup reconcile failed', error);
+  }
+
+  if (!g.__agentApiMaintenanceTimer) {
+    let running = false;
+    const maintain = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const { runAgentApiMaintenance } = await import('@/lib/agents/public-api/maintenance');
+        const result = await runAgentApiMaintenance();
+        if (Object.values(result).some((count) => count > 0)) {
+          console.log(
+            `[agent-api] retained-data cleanup removed ${result.conversations} conversation(s), `
+            + `${result.runs} response(s), ${result.runtimes} runtime(s), and `
+            + `${result.usageBuckets} usage bucket(s)`,
+          );
+        }
+      } catch (error) {
+        console.error('[agent-api] retained-data cleanup failed', error);
+      } finally {
+        running = false;
+      }
+    };
+    const first = setTimeout(() => { void maintain(); }, 30_000);
+    first.unref?.();
+    g.__agentApiMaintenanceTimer = setInterval(() => { void maintain(); }, 60 * 60_000);
+    g.__agentApiMaintenanceTimer.unref?.();
+  }
+  if (!g.__agentApiIdleMaintenanceTimer) {
+    let idleRunning = false;
+    const stopIdleRuntimes = async () => {
+      if (idleRunning) return;
+      idleRunning = true;
+      try {
+        const { runAgentApiIdleRuntimeMaintenance } = await import(
+          '@/lib/agents/public-api/maintenance'
+        );
+        const stopped = await runAgentApiIdleRuntimeMaintenance();
+        if (stopped > 0) {
+          console.log(`[agent-api] stopped ${stopped} idle public runtime(s)`);
+        }
+      } catch (error) {
+        console.error('[agent-api] idle runtime cleanup failed', error);
+      } finally {
+        idleRunning = false;
+      }
+    };
+    const firstIdleStop = setTimeout(() => { void stopIdleRuntimes(); }, 60_000);
+    firstIdleStop.unref?.();
+    g.__agentApiIdleMaintenanceTimer = setInterval(() => {
+      void stopIdleRuntimes();
+    }, 60_000);
+    g.__agentApiIdleMaintenanceTimer.unref?.();
   }
 }

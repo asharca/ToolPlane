@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { db } from '@/lib/db';
+import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 import { sandboxContainerName } from '@/lib/sandboxes/runtime';
 import { ensureHermesDashboardReady } from './runtime';
 import { verifyHermesDashboardBrokerAccessToken } from './token';
@@ -372,10 +373,23 @@ async function upgradeHermesDashboardWebSocket(
   }
 
   const managedRuntime = await db.agentRuntime.findFirst({
-    where: { id: runtimeId, kind: 'hermes' },
-    select: { id: true, workspaceId: true, agentId: true, sandboxId: true },
+    where: {
+      id: runtimeId,
+      kind: 'hermes',
+      agent: { publicRuntimeAllocation: { is: null } },
+    },
+    select: {
+      id: true,
+      workspaceId: true,
+      agentId: true,
+      sandboxId: true,
+      sandbox: { select: { config: true } },
+    },
   });
-  if (!managedRuntime) {
+  if (
+    !managedRuntime
+    || isAgentEndpointRuntimeSandboxConfig(managedRuntime.sandbox.config)
+  ) {
     rejectWebSocketUpgrade(socket, 401, 'Dashboard access is invalid or expired.');
     return;
   }
@@ -543,10 +557,22 @@ async function proxyDashboard(req: IncomingMessage, res: ServerResponse) {
   }
 
   const managedRuntime = await db.agentRuntime.findFirst({
-    where: { id: runtimeId, kind: 'hermes' },
-    select: { id: true, workspaceId: true, agentId: true },
+    where: {
+      id: runtimeId,
+      kind: 'hermes',
+      agent: { publicRuntimeAllocation: { is: null } },
+    },
+    select: {
+      id: true,
+      workspaceId: true,
+      agentId: true,
+      sandbox: { select: { config: true } },
+    },
   });
-  if (!managedRuntime) {
+  if (
+    !managedRuntime
+    || isAgentEndpointRuntimeSandboxConfig(managedRuntime.sandbox.config)
+  ) {
     json(res, 401, { error: 'Dashboard access is invalid or expired.' });
     return;
   }

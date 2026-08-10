@@ -53,6 +53,9 @@ import {
   withdrawPendingAgentRelease,
 } from '@/lib/agents/market';
 import { safeRelativePath } from '@/lib/auth/safe-redirect';
+import { cleanupAgentEndpointRuntimesForSource } from '@/lib/agents/public-api/maintenance';
+import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
+import { db } from '@/lib/db';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -60,6 +63,21 @@ async function authorizedWorkspace(slug: string) {
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) return null;
   return { user, ws };
+}
+
+async function isManageableAgent(workspaceId: string, agentId: string): Promise<boolean> {
+  const agent = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: {
+      publicRuntimeAllocation: { select: { id: true } },
+      runtime: { select: { sandbox: { select: { config: true } } } },
+    },
+  });
+  return Boolean(
+    agent
+    && !agent.publicRuntimeAllocation
+    && !isAgentEndpointRuntimeSandboxConfig(agent.runtime?.sandbox.config),
+  );
 }
 
 export type ActionState = { error?: string; warning?: string; savedAt?: number };
@@ -264,6 +282,19 @@ export async function deleteAgentAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
+  const publicEndpoint = await db.agentEndpoint.findFirst({
+    where: { workspaceId: ctx.ws.id, sourceAgentId: agentId },
+    select: { id: true },
+  });
+  if (publicEndpoint && ctx.ws.ownerId !== ctx.user.id) {
+    const membership = await db.membership.findUnique({
+      where: { workspaceId_userId: { workspaceId: ctx.ws.id, userId: ctx.user.id } },
+      select: { role: true },
+    });
+    if (membership?.role !== 'admin') return;
+  }
+  if (!await cleanupAgentEndpointRuntimesForSource(ctx.ws.id, agentId)) return;
   if (!await cleanupHermesRuntime(ctx.ws.id, agentId)) return;
   await deleteAgent(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents`);
@@ -277,6 +308,7 @@ export async function cloneAgentAction(formData: FormData) {
   const cloneOptions = cloneOptionsFromFormData(formData);
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !sourceAgentId) return;
+  if (!await isManageableAgent(ctx.ws.id, sourceAgentId)) return;
 
   const cloned = await cloneAgent(ctx.ws.id, sourceAgentId, requestedName, cloneOptions);
   if (!cloned) return;
@@ -320,6 +352,7 @@ export async function publishAgentReleaseAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !agentId) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
 
   const publishPath = `/app/${slug}/agents/${agentId}/publish`;
   if (ctx.ws.ownerId !== ctx.user.id) {
@@ -364,6 +397,7 @@ export async function unpublishAgentListingAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !agentId || ctx.ws.ownerId !== ctx.user.id) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
 
   await unpublishAgentListing({
     workspaceId: ctx.ws.id,
@@ -381,6 +415,7 @@ export async function withdrawPendingAgentReleaseAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !agentId || ctx.ws.ownerId !== ctx.user.id) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
 
   await withdrawPendingAgentRelease({
     workspaceId: ctx.ws.id,
@@ -436,6 +471,7 @@ export async function updateAgentAction(
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
 
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
@@ -474,6 +510,7 @@ export async function syncAgentRuntimeAction(
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
   try {
     const result = await syncHermesRuntime(ctx.ws.id, agentId);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -493,6 +530,7 @@ export async function upgradeHermesRuntimeAction(
   const image = String(formData.get('hermesImage') ?? '').trim();
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
   if (!image) return { error: 'Choose a Hermes image version.' };
 
   try {
@@ -514,6 +552,7 @@ export async function updateHermesRuntimeEnvAction(
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
 
   let env: ReturnType<typeof parseSandboxEnvText>;
   try {
@@ -539,6 +578,7 @@ export async function stopAgentRuntimeAction(
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
   try {
     await stopHermesRuntime(ctx.ws.id, agentId);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -553,6 +593,7 @@ export async function createConversationAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
   const conv = await createConversation(ctx.ws.id, agentId);
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -565,6 +606,7 @@ export async function createAgentChannelConnectionAction(formData: FormData) {
   const platformSlug = String(formData.get('platform') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return;
   const platform = getMessagingPlatform(platformSlug);
   if (!platform) return;
 

@@ -43,25 +43,27 @@ model Server {
 }
 
 model User {
-  id                    String         @id @default(cuid())
-  email                 String         @unique
-  name                  String?
-  passwordHash          String
-  sessionVersion        Int            @default(0)
-  role                  UserRole       @default(user)
-  status                UserStatus     @default(active)
-  locale                String         @default("en")
-  detectedTimeZone      String?
-  timeZoneOverride      String?
-  apiTokens             ApiToken[]
-  passwordResetTokens   PasswordResetToken[]
-  ownedWorkspaces       Workspace[]    @relation("WorkspaceOwner")
-  memberships           Membership[]
-  agentListings         AgentListing[] @relation("AgentListingPublisher")
-  reviewedAgentReleases AgentRelease[] @relation("AgentReleaseReviewer")
-  agentInstalls         AgentInstall[] @relation("AgentInstallActor")
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
+  id                     String               @id @default(cuid())
+  email                  String               @unique
+  name                   String?
+  passwordHash           String
+  sessionVersion         Int                  @default(0)
+  role                   UserRole             @default(user)
+  status                 UserStatus           @default(active)
+  locale                 String               @default("en")
+  detectedTimeZone       String?
+  timeZoneOverride       String?
+  apiTokens              ApiToken[]
+  passwordResetTokens    PasswordResetToken[]
+  ownedWorkspaces        Workspace[]          @relation("WorkspaceOwner")
+  memberships            Membership[]
+  agentListings          AgentListing[]       @relation("AgentListingPublisher")
+  reviewedAgentReleases  AgentRelease[]       @relation("AgentReleaseReviewer")
+  agentInstalls          AgentInstall[]       @relation("AgentInstallActor")
+  createdAgentEndpoints  AgentEndpoint[]      @relation("AgentEndpointCreator")
+  createdAgentApiClients AgentApiClient[]     @relation("AgentApiClientCreator")
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
 }
 
 model PasswordResetToken {
@@ -179,6 +181,7 @@ model Workspace {
   agentChannels    AgentChannelConnection[]
   agentListings    AgentListing[]           @relation("AgentListingWorkspace")
   agentInstalls    AgentInstall[]           @relation("AgentInstallWorkspace")
+  agentEndpoints   AgentEndpoint[]
   skillInvocations SkillInvocation[]
   syncEvents       SyncEvent[]
   createdAt        DateTime                 @default(now())
@@ -198,20 +201,23 @@ model Membership {
 }
 
 model Deployment {
-  id              String          @id @default(cuid())
+  id              String                 @id @default(cuid())
   workspaceId     String
-  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   serverId        String?
-  server          Server?         @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  server          Server?                @relation(fields: [serverId], references: [id], onDelete: Cascade)
   name            String?
   source          String?
   sourceRef       String?
   installCfg      Json?
-  status          String          @default("provisioning")
-  mcpToolExposure McpToolExposure @default(all)
-  mcpAllowedTools String[]        @default([])
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  status          String                 @default("provisioning")
+  mcpToolExposure McpToolExposure        @default(all)
+  mcpAllowedTools String[]               @default([])
+  // Explicit owner review gate for untrusted public Agent prompts. Internal
+  // Agent use and a public multi-tenant API are deliberately separate grants.
+  publicInvocable Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
   toolkitLinks    ToolkitServer[]
   agentLinks      AgentServer[]
   configFiles     DeploymentConfigFile[]
@@ -387,31 +393,33 @@ model ModelProvider {
 }
 
 model Agent {
-  id             String                   @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name           String
-  slug           String
-  systemPrompt   String?
-  providerId     String?
-  provider       ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
-  model          String?
-  maxSteps       Int                      @default(8)
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  servers        AgentServer[]
-  skills         AgentSkill[]
-  toolkits       AgentToolkit[]
-  sandboxes      AgentSandbox[]
-  subAgents      AgentSubAgent[]          @relation("AgentParent")
-  parentLinks    AgentSubAgent[]          @relation("AgentChild")
-  conversations  Conversation[]
-  channels       AgentChannelConnection[]
-  runtime        AgentRuntime?
-  attachments    AgentAttachment[]
-  marketListing  AgentListing?            @relation("AgentListingSource")
-  marketInstall  AgentInstall?            @relation("AgentInstallAgent")
-  modelProviders AgentModelProvider[]
+  id                      String                   @id @default(cuid())
+  workspaceId             String
+  workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                    String
+  slug                    String
+  systemPrompt            String?
+  providerId              String?
+  provider                ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  model                   String?
+  maxSteps                Int                      @default(8)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  servers                 AgentServer[]
+  skills                  AgentSkill[]
+  toolkits                AgentToolkit[]
+  sandboxes               AgentSandbox[]
+  subAgents               AgentSubAgent[]          @relation("AgentParent")
+  parentLinks             AgentSubAgent[]          @relation("AgentChild")
+  conversations           Conversation[]
+  channels                AgentChannelConnection[]
+  runtime                 AgentRuntime?
+  attachments             AgentAttachment[]
+  marketListing           AgentListing?            @relation("AgentListingSource")
+  marketInstall           AgentInstall?            @relation("AgentInstallAgent")
+  modelProviders          AgentModelProvider[]
+  publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
+  publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
 
   @@unique([workspaceId, slug])
 }
@@ -641,18 +649,19 @@ model AgentSandbox {
 }
 
 model Conversation {
-  id                String            @id @default(cuid())
-  agentId           String
-  agent             Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  title             String?
+  id                    String                   @id @default(cuid())
+  agentId               String
+  agent                 Agent                    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title                 String?
   // Hermes keeps its own state in the runtime volume. These aliases let a
   // cloned ToolPlane conversation retain the source runtime's session identity
   // even though its database primary key must be new.
-  runtimeSessionId  String?
-  runtimeSessionKey String?
-  createdAt         DateTime          @default(now())
-  messages          Message[]
-  attachments       AgentAttachment[]
+  runtimeSessionId      String?
+  runtimeSessionKey     String?
+  createdAt             DateTime                 @default(now())
+  messages              Message[]
+  attachments           AgentAttachment[]
+  publicApiConversation AgentPublicConversation?
 }
 
 model Message {
@@ -661,9 +670,232 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   parts          Json
+  textCharacters Int          @default(0)
+  // Public API conversations assign a monotonically increasing sequence so a
+  // user/assistant turn stays deterministic even when DB timestamps tie.
+  sequence       Int          @default(0)
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, sequence])
+}
+
+// Public Agent API control-plane deployment. It is intentionally separate
+// from AgentListing: a marketplace artifact is not a callable runtime.
+model AgentEndpoint {
+  id                        String                    @id @default(cuid())
+  publicId                  String                    @unique
+  workspaceId               String
+  workspace                 Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceAgentId             String                    @unique
+  sourceAgent               Agent                     @relation("EndpointSourceAgent", fields: [sourceAgentId], references: [id], onDelete: Cascade)
+  createdById               String?
+  createdBy                 User?                     @relation("AgentEndpointCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name                      String
+  status                    String                    @default("disabled")
+  isolationMode             String                    @default("subject")
+  rpmLimit                  Int                       @default(60)
+  dailyRequestLimit         Int                       @default(10000)
+  dailyOutputCharacterLimit Int                       @default(100000000)
+  maxConcurrent             Int                       @default(5)
+  maxRuntimes               Int                       @default(100)
+  maxStoredCharacters       Int                       @default(250000000)
+  timeoutSeconds            Int                       @default(300)
+  retentionDays             Int                       @default(30)
+  allowedOrigins            String[]                  @default([])
+  currentRevisionId         String?                   @unique
+  currentRevision           AgentEndpointRevision?    @relation("CurrentEndpointRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+  revisions                 AgentEndpointRevision[]   @relation("EndpointRevisions")
+  clients                   AgentApiClient[]
+  runtimes                  AgentEndpointRuntime[]
+  conversations             AgentPublicConversation[]
+  runs                      AgentRun[]
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model AgentEndpointRevision {
+  id                String                    @id @default(cuid())
+  endpointId        String
+  endpoint          AgentEndpoint             @relation("EndpointRevisions", fields: [endpointId], references: [id], onDelete: Cascade)
+  version           Int
+  systemPrompt      String
+  maxSteps          Int                       @default(8)
+  runtimeImage      String
+  providerIds       String[]                  @default([])
+  deploymentIds     String[]                  @default([])
+  installedSkillIds String[]                  @default([])
+  toolPolicy        Json
+  currentFor        AgentEndpoint?            @relation("CurrentEndpointRevision")
+  runtimes          AgentEndpointRuntime[]
+  conversations     AgentPublicConversation[]
+  runs              AgentRun[]
+  createdAt         DateTime                  @default(now())
+
+  @@unique([endpointId, version])
+  @@index([endpointId, createdAt])
+}
+
+model AgentApiClient {
+  id                        String                    @id @default(cuid())
+  endpointId                String
+  endpoint                  AgentEndpoint             @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  createdById               String?
+  createdBy                 User?                     @relation("AgentApiClientCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name                      String
+  status                    String                    @default("active")
+  scopes                    String[]                  @default(["responses:create", "responses:read", "conversations:read", "conversations:delete", "client_tokens:create"])
+  rpmLimit                  Int                       @default(60)
+  dailyRequestLimit         Int                       @default(10000)
+  dailyOutputCharacterLimit Int                       @default(20000000)
+  maxConcurrent             Int                       @default(5)
+  maxStoredCharacters       Int                       @default(50000000)
+  keys                      AgentApiKey[]
+  conversations             AgentPublicConversation[]
+  runs                      AgentRun[]
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+
+  @@index([endpointId, status])
+}
+
+model AgentApiKey {
+  id         String         @id @default(cuid())
+  clientId   String
+  client     AgentApiClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name       String
+  prefix     String
+  tokenHash  String         @unique
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime       @default(now())
+
+  @@index([clientId, revokedAt])
+}
+
+// A clean hidden Agent/Hermes runtime allocated for either the whole Endpoint
+// or one HMAC-namespaced public subject. runtimeAgentId stays nullable while a
+// crash-safe reservation is being materialized.
+model AgentEndpointRuntime {
+  id                 String                    @id @default(cuid())
+  endpointId         String
+  endpoint           AgentEndpoint             @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  revisionId         String
+  revision           AgentEndpointRevision     @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  subjectHash        String
+  runtimeAgentId     String?                   @unique
+  runtimeAgent       Agent?                    @relation("EndpointRuntimeAgent", fields: [runtimeAgentId], references: [id], onDelete: SetNull)
+  status             String                    @default("provisioning")
+  operationId        String?
+  operationExpiresAt DateTime?
+  lastUsedAt         DateTime?
+  lastError          String?
+  conversations      AgentPublicConversation[]
+  runs               AgentRun[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  @@unique([endpointId, revisionId, subjectHash])
+  @@index([endpointId, lastUsedAt])
+  @@index([revisionId])
+  @@index([status, lastUsedAt])
+  @@index([status, operationExpiresAt])
+}
+
+model AgentPublicConversation {
+  id                  String                @id @default(cuid())
+  publicId            String                @unique
+  endpointId          String
+  endpoint            AgentEndpoint         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  revisionId          String
+  revision            AgentEndpointRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  clientId            String
+  client              AgentApiClient        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  runtimeAllocationId String
+  runtimeAllocation   AgentEndpointRuntime  @relation(fields: [runtimeAllocationId], references: [id], onDelete: Cascade)
+  conversationId      String                @unique
+  conversation        Conversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  subjectHash         String
+  storedCharacters    Int                   @default(0)
+  deletingAt          DateTime?
+  runs                AgentRun[]
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([endpointId, clientId, subjectHash, createdAt])
+  @@index([endpointId, createdAt])
+  @@index([clientId])
+  @@index([revisionId])
+  @@index([runtimeAllocationId, createdAt])
+}
+
+model AgentRun {
+  id                   String                   @id @default(cuid())
+  publicId             String                   @unique
+  requestId            String                   @unique
+  endpointId           String
+  endpoint             AgentEndpoint            @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  revisionId           String
+  revision             AgentEndpointRevision    @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  clientId             String
+  client               AgentApiClient           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  subjectHash          String
+  publicConversationId String?
+  publicConversation   AgentPublicConversation? @relation(fields: [publicConversationId], references: [id], onDelete: SetNull)
+  runtimeAllocationId  String?
+  runtimeAllocation    AgentEndpointRuntime?    @relation(fields: [runtimeAllocationId], references: [id], onDelete: SetNull)
+  idempotencyKey       String?
+  requestHash          String
+  status               String                   @default("provisioning")
+  stream               Boolean                  @default(false)
+  errorCode            String?
+  inputCharacters      Int                      @default(0)
+  outputCharacters     Int                      @default(0)
+  durationMs           Int?
+  outputText           String?
+  cancelRequestedAt    DateTime?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  // Immutable admission snapshot; maintenance never derives a run's deadline
+  // from mutable Endpoint configuration.
+  deadlineAt           DateTime
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  @@unique([clientId, idempotencyKey])
+  @@index([endpointId, status, createdAt])
+  @@index([publicConversationId, status])
+  @@index([clientId, status, createdAt])
+  @@index([clientId, subjectHash, createdAt])
+  @@index([clientId, createdAt])
+  @@index([revisionId])
+  @@index([runtimeAllocationId])
+  @@index([status, deadlineAt])
+}
+
+// Small atomic counters used for minute/day quotas. Request content and
+// credentials never enter this table.
+model AgentApiUsageBucket {
+  key           String
+  windowStart   DateTime
+  windowSeconds Int
+  count         Int      @default(0)
+  expiresAt     DateTime
+
+  @@id([key, windowStart, windowSeconds])
+  @@index([expiresAt])
+}
+
+// Cross-worker lease for bounded maintenance jobs. ownerId is an opaque
+// per-invocation nonce and never identifies a customer or request.
+model AgentApiMaintenanceLease {
+  name      String   @id
+  ownerId   String
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
 }
 
 // Plugin telemetry: a skill firing inside an installed toolkit plugin. Skills
