@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.0](https://github.com/asharca/ToolPlane/releases/tag/v0.21.0) (2026-08-10)
+
+### What's Changed
+* feat: add workspace Agent Control MCP by @renhedata in https://github.com/asharca/ToolPlane/pull/77
+* feat: add public Agent API for Hermes runtimes by @renhedata in https://github.com/asharca/ToolPlane/pull/78
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.20.0...v0.21.0
+
 ## [0.20.0](https://github.com/asharca/ToolPlane/releases/tag/v0.20.0) (2026-08-09)
 
 ### What's Changed
