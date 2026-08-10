@@ -60,6 +60,38 @@ export async function pullDockerImage(
   await runDocker(['pull', image], timeoutMs);
 }
 
+/** Pull a reviewed tag, then freeze the exact registry content address. */
+export async function resolveDockerImageDigest(
+  image: string,
+  timeoutMs = VOLUME_COPY_TIMEOUT_MS,
+): Promise<string> {
+  if (!DOCKER_IMAGE_REFERENCE.test(image)) throw new Error('Invalid Docker image reference.');
+  if (/@sha256:[a-f0-9]{64}$/i.test(image)) return image;
+  await pullDockerImage(image, timeoutMs);
+  const raw = await runDocker(
+    ['image', 'inspect', '--format', '{{json .RepoDigests}}', image],
+    timeoutMs,
+  );
+  let digests: unknown;
+  try {
+    digests = JSON.parse(raw.trim());
+  } catch {
+    throw new Error('Docker did not return a valid image digest.');
+  }
+  if (!Array.isArray(digests)) throw new Error('Docker image has no immutable registry digest.');
+  const valid = digests.filter((value): value is string => (
+    typeof value === 'string' && /@sha256:[a-f0-9]{64}$/i.test(value)
+  ));
+  const lastSlash = image.lastIndexOf('/');
+  const lastColon = image.lastIndexOf(':');
+  const withoutTag = lastColon > lastSlash ? image.slice(0, lastColon) : image;
+  const selected = valid.find((value) => value.startsWith(`${withoutTag}@`)) ?? valid[0];
+  if (!selected || !DOCKER_IMAGE_REFERENCE.test(selected)) {
+    throw new Error('Docker image has no immutable registry digest.');
+  }
+  return selected;
+}
+
 function runDocker(args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, { env: dockerEnv(), stdio: ['ignore', 'pipe', 'pipe'] });

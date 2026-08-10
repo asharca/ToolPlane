@@ -6,6 +6,8 @@ import {
   createHermesDashboardBrokerAccessToken,
   verifyHermesDashboardAccessToken,
 } from '@/lib/agents/hermes/token';
+import { db } from '@/lib/db';
+import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 
 export const runtime = 'nodejs';
 
@@ -48,6 +50,17 @@ function dashboardParentOrigin(req: Request): string {
 async function redirectToDashboardBroker(req: Request, params: RouteParams): Promise<Response> {
   const { runtimeId, accessToken, path = [] } = await params;
   if (!verifyHermesDashboardAccessToken(runtimeId, accessToken)) {
+    return errorResponse('Dashboard access is invalid or expired.', 401);
+  }
+  const runtime = await db.agentRuntime.findFirst({
+    where: {
+      id: runtimeId,
+      kind: 'hermes',
+      agent: { publicRuntimeAllocation: { is: null } },
+    },
+    select: { sandbox: { select: { config: true } } },
+  });
+  if (!runtime || isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config)) {
     return errorResponse('Dashboard access is invalid or expired.', 401);
   }
 

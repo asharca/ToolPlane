@@ -68,6 +68,8 @@ describe('Hermes dashboard separate-origin broker', () => {
       id: 'runtime-1',
       workspaceId: 'workspace-1',
       agentId: 'agent-1',
+      sandboxId: 'sandbox-1',
+      sandbox: { config: { managedBy: 'agent-runtime' } },
     });
     mocks.ensureReady.mockResolvedValue({ port: upstreamPort });
   });

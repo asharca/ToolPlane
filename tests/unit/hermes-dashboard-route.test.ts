@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   ensureBroker: vi.fn(),
   publicUrl: vi.fn(),
   verifyToken: vi.fn(),
+  findRuntime: vi.fn(),
 }));
 
 vi.mock('@/lib/agents/hermes/dashboard-broker', () => ({
@@ -15,6 +16,9 @@ vi.mock('@/lib/agents/hermes/dashboard-broker', () => ({
 vi.mock('@/lib/agents/hermes/token', () => ({
   createHermesDashboardBrokerAccessToken: mocks.createBrokerToken,
   verifyHermesDashboardAccessToken: mocks.verifyToken,
+}));
+vi.mock('@/lib/db', () => ({
+  db: { agentRuntime: { findFirst: mocks.findRuntime } },
 }));
 
 import { GET } from '@/app/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]/route';
@@ -34,6 +38,9 @@ describe('Hermes dashboard redirect boundary', () => {
     mocks.publicUrl.mockReturnValue(
       'http://toolplane.test:9332/agent-runtimes/runtime-1/dashboard/broker-token/assets/app.js',
     );
+    mocks.findRuntime.mockResolvedValue({
+      sandbox: { config: { managedBy: 'agent-runtime' } },
+    });
   });
 
   it('rejects an invalid page capability before starting the broker', async () => {

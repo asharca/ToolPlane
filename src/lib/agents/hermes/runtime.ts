@@ -503,11 +503,28 @@ function dockerEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runDocker(args: string[], input?: string, timeoutMs = DOCKER_TIMEOUT_MS): Promise<DockerResult> {
+function runDocker(
+  args: string[],
+  input?: string,
+  timeoutMs = DOCKER_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<DockerResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: dockerEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('docker', args, {
+      env: dockerEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      signal,
+    });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve({ stdout, stderr });
+    };
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.stdout.on('data', (chunk) => {
       stdout = `${stdout}${chunk}`.slice(-32_000);
@@ -516,13 +533,11 @@ function runDocker(args: string[], input?: string, timeoutMs = DOCKER_TIMEOUT_MS
       stderr = `${stderr}${chunk}`.slice(-32_000);
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
+      finish(error);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(stderr.trim() || `docker exited with code ${code}`));
+      if (code === 0) finish();
+      else finish(new Error(stderr.trim() || `docker exited with code ${code}`));
     });
     child.stdin.end(input ?? '');
   });
@@ -605,6 +620,12 @@ async function buildProjection(
     })),
     mcpUrl: hermesRuntimeMcpUrl(agent.runtime.id),
     mcpToken: deriveHermesRuntimeToken(agent.runtime.id, 'toolplane-mcp'),
+    // Normal Hermes Agents own their prompt inside the Hermes volume. Only a
+    // hidden public Endpoint runtime receives ToolPlane's immutable revision
+    // prompt, so a source Agent's mutable/legacy field can never bleed across
+    // the isolation boundary.
+    systemPrompt: agent.publicRuntimeAllocation?.revision.systemPrompt,
+    publicRuntime: Boolean(agent.publicRuntimeAllocation),
   });
   const envPayload = renderHermesEnvPayload(readSandboxEnv(agent.runtime.sandbox.config));
   await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
@@ -643,10 +664,12 @@ async function installProjection(params: {
   directory: string;
   image: string;
   sandboxId: string;
+  signal?: AbortSignal;
 }) {
   const volume = sandboxVolumeName(params.sandboxId);
   const initContainer = sandboxSyncContainerName(params.sandboxId);
-  await runDocker(['volume', 'create', volume]);
+  await runDocker(['volume', 'create', volume], undefined, DOCKER_TIMEOUT_MS, params.signal);
+  params.signal?.throwIfAborted();
   await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
   const installCommand = [
     'set -eu',
@@ -664,10 +687,20 @@ async function installProjection(params: {
     '--security-opt', 'no-new-privileges',
     ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
     '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
-  ]);
+  ], undefined, DOCKER_TIMEOUT_MS, params.signal);
   try {
-    await runDocker(['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane`]);
-    await runDocker(['start', '--attach', initContainer]);
+    await runDocker(
+      ['cp', `${params.directory}/.`, `${initContainer}:/tmp/toolplane`],
+      undefined,
+      DOCKER_TIMEOUT_MS,
+      params.signal,
+    );
+    await runDocker(
+      ['start', '--attach', initContainer],
+      undefined,
+      DOCKER_TIMEOUT_MS,
+      params.signal,
+    );
   } finally {
     await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
   }
@@ -1493,6 +1526,7 @@ async function upgradeHermesRuntimeUnlocked(
 
 type HermesRuntimeSyncOptions = {
   start?: boolean;
+  signal?: AbortSignal;
   // Only the image-upgrade operation may continue from its durable
   // `upgrading` marker; public sync callers must keep respecting it.
   allowUpgrading?: boolean;
@@ -1509,7 +1543,7 @@ type HermesRuntimeSyncOptions = {
 export async function syncHermesRuntime(
   workspaceId: string,
   agentId: string,
-  options: { start?: boolean } = {},
+  options: { start?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ status: string; error?: string }> {
   return enqueueHermesOperation(
     workspaceId,
@@ -1541,7 +1575,9 @@ async function syncHermesRuntimeUnlocked(
   let projection: Awaited<ReturnType<typeof buildProjection>> | null = null;
 
   try {
+    options.signal?.throwIfAborted();
     projection = await buildProjection(agent);
+    options.signal?.throwIfAborted();
     const configured = agent.modelProviders.length > 0;
     if (
       projection.configHash === runtime.configHash
@@ -1553,6 +1589,7 @@ async function syncHermesRuntimeUnlocked(
         return { status };
       }
       if (!livePort(deploymentId)) {
+        options.signal?.throwIfAborted();
         await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
           awaitReady: false,
           workspaceId,
@@ -1581,12 +1618,16 @@ async function syncHermesRuntimeUnlocked(
         ? { finalStatus: preservedLifecycleStatus }
         : undefined,
     );
+    options.signal?.throwIfAborted();
     await removeDockerSandboxContainer(runtime.sandboxId);
+    options.signal?.throwIfAborted();
     await installProjection({
       directory: projection.directory,
       image: runtime.image,
       sandboxId: runtime.sandboxId,
+      signal: options.signal,
     });
+    options.signal?.throwIfAborted();
 
     const nextStatus = configured
       ? options.start !== false ? 'provisioning' : options.preserveStoppedWhenNotStarting ? 'stopped' : 'setup_required'
@@ -1607,6 +1648,7 @@ async function syncHermesRuntimeUnlocked(
     ]);
 
     if (!configured || options.start === false) return { status: nextStatus };
+    options.signal?.throwIfAborted();
     await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
       awaitReady: false,
       workspaceId,
@@ -1627,22 +1669,47 @@ async function syncHermesRuntimeUnlocked(
   }
 }
 
-async function waitForHermesHealth(deploymentId: string): Promise<number | null> {
+async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
+    return;
+  }
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException('Operation aborted.', 'AbortError'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function waitForHermesHealth(
+  deploymentId: string,
+  signal?: AbortSignal,
+): Promise<number | null> {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const port = livePort(deploymentId);
     if (port) {
       try {
+        const timeoutSignal = AbortSignal.timeout(5_000);
         const response = await fetch(`http://127.0.0.1:${port}/hermes/health`, {
-          signal: AbortSignal.timeout(5_000),
+          signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
           cache: 'no-store',
         });
         if (response.ok) return port;
       } catch {
+        signal?.throwIfAborted();
         // Gateway may still be booting or pulling the image.
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    await abortableDelay(750, signal);
   }
   return null;
 }
@@ -1670,13 +1737,16 @@ async function waitForHermesDashboard(deploymentId: string): Promise<number | nu
 export async function ensureHermesRuntimeReady(
   workspaceId: string,
   agentId: string,
-  options: { writeLease?: HermesRuntimeWriteLease } = {},
+  options: { writeLease?: HermesRuntimeWriteLease; signal?: AbortSignal } = {},
 ): Promise<{ port?: number; error?: string }> {
   return enqueueHermesOperation(
     workspaceId,
     agentId,
     { error: SANDBOX_LIFECYCLE_ERROR },
-    () => ensureHermesRuntimeReadyUnlocked(workspaceId, agentId),
+    () => {
+      options.signal?.throwIfAborted();
+      return ensureHermesRuntimeReadyUnlocked(workspaceId, agentId, options.signal);
+    },
     { writeLease: options.writeLease },
   );
 }
@@ -1684,7 +1754,9 @@ export async function ensureHermesRuntimeReady(
 async function ensureHermesRuntimeReadyUnlocked(
   workspaceId: string,
   agentId: string,
+  signal?: AbortSignal,
 ): Promise<{ port?: number; error?: string }> {
+  signal?.throwIfAborted();
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) {
     return { error: 'Hermes runtime is not configured.' };
@@ -1698,13 +1770,14 @@ async function ensureHermesRuntimeReadyUnlocked(
 
   const deploymentId = agent.runtime.sandbox.deploymentId;
   if (!livePort(deploymentId)) {
+    signal?.throwIfAborted();
     await startProcess(
       deploymentId,
       resolveSpawnSpec(agent.runtime.sandbox.deployment),
-      { awaitReady: true, workspaceId },
+      { awaitReady: false, workspaceId },
     );
   }
-  const port = await waitForHermesHealth(deploymentId);
+  const port = await waitForHermesHealth(deploymentId, signal);
   if (!port) {
     const message = 'Hermes gateway did not become healthy within 45 seconds.';
     await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'error', lastError: message });
@@ -1794,6 +1867,7 @@ async function stopHermesRuntimeUnlocked(workspaceId: string, agentId: string) {
 export async function cleanupHermesRuntime(
   workspaceId: string,
   agentId: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<boolean> {
   return enqueueHermesOperation(workspaceId, agentId, false, async () => {
     const agent = await getAgent(workspaceId, agentId);
@@ -1814,7 +1888,7 @@ export async function cleanupHermesRuntime(
     await removeDockerSandboxRuntimeStrict(
       agent.runtime.sandboxId,
       sandboxVolumeName(agent.runtime.sandboxId),
-      { timeoutMs: HERMES_ARCHIVE_IMPORT_TIMEOUT_MS },
+      { timeoutMs: options.timeoutMs ?? HERMES_ARCHIVE_IMPORT_TIMEOUT_MS },
     );
     return true;
   });

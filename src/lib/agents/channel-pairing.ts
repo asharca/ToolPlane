@@ -509,7 +509,11 @@ export async function checkAgentChannelPairing(
   }
 }
 
-export async function applyAgentChannelPairing(workspaceId: string, connectionId: string, allowedUserIdsText: string) {
+export async function applyAgentChannelPairing(
+  workspaceId: string,
+  connectionId: string,
+  allowedUserIdsText: string,
+): Promise<AgentChannelPairingResult> {
   const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
   if (!row) return { error: 'Channel connection not found.' };
   const platform = getMessagingPlatform(row.platform);

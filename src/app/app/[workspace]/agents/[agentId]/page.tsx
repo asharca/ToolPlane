@@ -1,4 +1,5 @@
 import { redirect, notFound } from 'next/navigation';
+import { headers } from 'next/headers';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -25,6 +26,9 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
+import { originFromHeaders } from '@/lib/http/origin';
+import { getAgentEndpointForManagement } from '@/lib/agents/public-api/queries';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +39,25 @@ function fmtDate(d: Date, timeZone: string, locale: string): string {
     { month: 'short', day: 'numeric' },
     locale,
   );
+}
+
+function isoDate(value: Date | string | null): string | null {
+  if (!value) return null;
+  return typeof value === 'string' ? value : value.toISOString();
+}
+
+function latestDate(values: Array<Date | string | null>): string | null {
+  let latest: Date | string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!value) continue;
+    const time = new Date(value).getTime();
+    if (Number.isFinite(time) && time > latestTime) {
+      latest = value;
+      latestTime = time;
+    }
+  }
+  return isoDate(latest);
 }
 
 export default async function AgentDetailPage({
@@ -79,10 +102,14 @@ export default async function AgentDetailPage({
     channelConnections,
     providers,
     deployments,
+    publicDeploymentRows,
     skills,
     toolkits,
     sandboxes,
     agents,
+    apiEndpoint,
+    managerMembership,
+    requestHeaders,
   ] = await Promise.all([
     listConversations(agentId),
     agent.runtime?.kind === 'hermes'
@@ -90,10 +117,26 @@ export default async function AgentDetailPage({
       : listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id, selectedDeps),
+    db.deployment.findMany({
+      where: {
+        workspaceId: ws.id,
+        publicInvocable: true,
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+      select: { id: true },
+    }),
     listAgentSkillOptions(ws.id, selectedSkills),
     listToolkits(ws.id),
     listSandboxes(ws.id),
     listAgents(ws.id),
+    isHermes ? getAgentEndpointForManagement(ws.id, agentId) : Promise.resolve(null),
+    !isHermes || ws.ownerId === user.id
+      ? Promise.resolve(null)
+      : db.membership.findUnique({
+        where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
+        select: { role: true },
+      }),
+    headers(),
   ]);
 
   const activeId = c ?? conversations[0]?.id ?? null;
@@ -197,11 +240,55 @@ export default async function AgentDetailPage({
         channelSettings={{
           connections: channelConnections.map(toAgentChannelConnectionClientView),
         }}
+        apiSettings={isHermes ? {
+          origin: originFromHeaders(requestHeaders),
+          canManage: ws.ownerId === user.id || managerMembership?.role === 'admin',
+          endpoint: apiEndpoint?.currentRevision ? (() => {
+            const revision = apiEndpoint.currentRevision;
+            return {
+              id: apiEndpoint.publicId,
+              status: apiEndpoint.status,
+              name: apiEndpoint.name,
+              isolationMode: apiEndpoint.isolationMode,
+              rpmLimit: apiEndpoint.rpmLimit,
+              dailyRequestLimit: apiEndpoint.dailyRequestLimit,
+              dailyOutputCharacterLimit: apiEndpoint.dailyOutputCharacterLimit,
+              maxConcurrent: apiEndpoint.maxConcurrent,
+              maxRuntimes: apiEndpoint.maxRuntimes,
+              maxStoredCharacters: apiEndpoint.maxStoredCharacters,
+              timeoutSeconds: apiEndpoint.timeoutSeconds,
+              retentionDays: apiEndpoint.retentionDays,
+              systemPrompt: revision.systemPrompt,
+              allowedOrigins: apiEndpoint.allowedOrigins,
+              revision: revision.version,
+              deploymentIds: revision.deploymentIds,
+              skillIds: revision.installedSkillIds,
+              clients: apiEndpoint.clients.map((client) => ({
+                id: client.id,
+                name: client.name,
+                createdAt: isoDate(client.createdAt) ?? '',
+                lastUsedAt: latestDate(client.keys.map((key) => key.lastUsedAt)),
+                keys: client.keys.map((key) => ({
+                  id: key.id,
+                  name: key.name,
+                  prefix: key.prefix,
+                  createdAt: isoDate(key.createdAt) ?? '',
+                  lastUsedAt: isoDate(key.lastUsedAt),
+                  expiresAt: isoDate(key.expiresAt),
+                  revokedAt: isoDate(key.revokedAt),
+                })),
+              })),
+            };
+          })() : null,
+        } : undefined}
+        publicApiDeployments={deployments.filter((deployment) => (
+          publicDeploymentRows.some((row) => row.id === deployment.id)
+        ))}
         ready={ready}
         agentName={agent.name}
         providerLabel={providerLabel}
         marketSetup={marketSetup}
-        initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </>
   );

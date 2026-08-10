@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 
 export async function listSandboxes(workspaceId: string) {
   return db.sandbox.findMany({
@@ -10,8 +11,12 @@ export async function listSandboxes(workspaceId: string) {
 }
 
 export async function listManagedAgentRuntimes(workspaceId: string) {
-  return db.agentRuntime.findMany({
-    where: { workspaceId, kind: 'hermes' },
+  const runtimes = await db.agentRuntime.findMany({
+    where: {
+      workspaceId,
+      kind: 'hermes',
+      agent: { publicRuntimeAllocation: { is: null } },
+    },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -44,6 +49,9 @@ export async function listManagedAgentRuntimes(workspaceId: string) {
       },
     },
   });
+  return runtimes.filter((runtime) => (
+    !isAgentEndpointRuntimeSandboxConfig(runtime.sandbox.config)
+  ));
 }
 
 export async function getSandbox(workspaceId: string, sandboxId: string) {

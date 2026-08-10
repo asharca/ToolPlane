@@ -2,7 +2,7 @@
 
 import { useActionState, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Bot, CheckSquare2, Save } from 'lucide-react';
+import { Bot, CheckSquare2, Save, ShieldCheck } from 'lucide-react';
 import {
   updateMcpToolExposureAction,
   type McpToolExposureActionState,
@@ -27,6 +27,7 @@ export function McpToolExposureEditor({
   tools,
   initialMode,
   initialAllowedTools,
+  initialPublicInvocable = false,
   running,
 }: {
   workspace: string;
@@ -34,6 +35,7 @@ export function McpToolExposureEditor({
   tools: ToolSummary[];
   initialMode: 'all' | 'allowlist';
   initialAllowedTools: string[];
+  initialPublicInvocable?: boolean;
   running: boolean;
 }) {
   const t = useTranslations('console.mcp');
@@ -235,6 +237,23 @@ export function McpToolExposureEditor({
           </p>
         )}
       </fieldset>
+
+      <label className="mt-4 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+        <input
+          type="checkbox"
+          name="publicInvocable"
+          defaultChecked={initialPublicInvocable}
+          disabled={isPending || mode !== 'allowlist' || selected.size === 0}
+          className="mt-0.5 size-4 rounded border-border"
+        />
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-foreground">{t('publicAgentInvocable')}</span>
+          <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+            {t('publicAgentInvocableHelp')}
+          </span>
+        </span>
+      </label>
 
       <div className="mt-3 min-h-5">
         {error ? (

@@ -1018,7 +1018,8 @@ function hermesProxyPath(req) {
   if (!url.pathname.startsWith('/hermes/')) return null;
   const path = url.pathname.slice('/hermes'.length);
   const sessionMessages = /^\/api\/sessions\/[^/]+\/messages$/.test(path);
-  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/') || sessionMessages)) {
+  const sessionDelete = req.method === 'DELETE' && /^\/api\/sessions\/[^/]+$/.test(path);
+  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/') || sessionMessages || sessionDelete)) {
     return false;
   }
   return `${path}${url.search}`;
@@ -1046,14 +1047,40 @@ function streamCurlResponse(req, res, args, body, responseHeaders) {
   const child = spawn('docker', args, { env: dockerEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   let headerBuffer = Buffer.alloc(0);
   let responseStarted = false;
+  let responseFinished = false;
+  let childClosed = false;
   let stderr = '';
+
+  const stopChild = () => {
+    if (!childClosed && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  };
+  const writeChunk = (chunk) => {
+    if (res.destroyed || responseFinished) {
+      stopChild();
+      return;
+    }
+    try {
+      if (!res.write(chunk)) {
+        child.stdout.pause();
+        res.once('drain', () => child.stdout.resume());
+      }
+    } catch {
+      stopChild();
+    }
+  };
 
   child.stdout.on('data', (chunk) => {
     if (responseStarted) {
-      res.write(chunk);
+      writeChunk(chunk);
       return;
     }
     headerBuffer = Buffer.concat([headerBuffer, chunk]);
+    if (headerBuffer.length > 64 * 1024) {
+      stopChild();
+      responseStarted = true;
+      sendJson(res, 502, { error: 'Hermes proxy response headers were too large.' });
+      return;
+    }
     const marker = headerBuffer.indexOf('\r\n\r\n');
     const fallbackMarker = marker === -1 ? headerBuffer.indexOf('\n\n') : -1;
     const splitAt = marker === -1 ? fallbackMarker : marker;
@@ -1063,28 +1090,40 @@ function streamCurlResponse(req, res, args, body, responseHeaders) {
     res.writeHead(parsed.status, parsed.headers);
     responseStarted = true;
     const rest = headerBuffer.subarray(splitAt + markerLength);
-    if (rest.length) res.write(rest);
+    if (rest.length) writeChunk(rest);
     headerBuffer = Buffer.alloc(0);
   });
   child.stderr.on('data', (chunk) => {
     stderr = truncate(stderr + chunk.toString('utf8'), 8_000);
   });
   child.on('error', (error) => {
+    childClosed = true;
     if (!responseStarted) {
       responseStarted = true;
       sendJson(res, 502, { error: error.message });
     } else {
+      responseFinished = true;
       res.end();
     }
   });
   child.on('close', (code) => {
+    childClosed = true;
     if (!responseStarted) {
       sendJson(res, 502, { error: stderr || `Hermes proxy exited with code ${code}` });
       return;
     }
-    res.end();
+    if (!responseFinished) {
+      responseFinished = true;
+      res.end();
+    }
   });
-  req.on('aborted', () => child.kill('SIGTERM'));
+  req.once('aborted', stopChild);
+  req.once('error', stopChild);
+  res.once('error', stopChild);
+  res.once('close', () => {
+    if (!responseFinished) stopChild();
+  });
+  child.stdin.on('error', () => undefined);
   child.stdin.end(body);
 }
 

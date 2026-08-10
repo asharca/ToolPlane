@@ -42,6 +42,15 @@ vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
   SandboxConsole: () => <div>Hermes shell</div>,
 }));
 
+vi.mock('@/components/dashboard/agents/AgentApiPanel', () => ({
+  AgentApiPanel: () => (
+    <section>
+      <h3>Agent API</h3>
+      <p>Publish behind a stable HTTPS API.</p>
+    </section>
+  ),
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -61,6 +70,14 @@ vi.mock('@/lib/agents/actions', () => ({
   upgradeHermesRuntimeAction: vi.fn(),
   updateHermesRuntimeEnvAction: vi.fn(),
   updateAgentAction: vi.fn(),
+}));
+
+vi.mock('@/lib/agents/public-api/actions', () => ({
+  publishAgentEndpointAction: vi.fn(),
+  setAgentEndpointStatusAction: vi.fn(),
+  createAgentApiClientAction: vi.fn(),
+  revokeAgentApiKeyAction: vi.fn(),
+  createAgentClientTokenAction: vi.fn(),
 }));
 
 const settings = {
@@ -93,16 +110,24 @@ const hermesRuntime = {
   dashboardUrl: '/api/v1/agent-runtimes/runtime-1/dashboard/capability/',
 };
 
+const apiSettings = {
+  endpoint: null,
+  origin: 'https://toolplane.example',
+  canManage: true,
+};
+
 function renderChat({
   conversationId = 'conv-1',
   initialMessages = [{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text: 'hello' }] }] as HermesUIMessage[],
   initialSettingsTab = null,
   runtime = null,
+  api = undefined,
 }: {
   conversationId?: string | null;
   initialMessages?: HermesUIMessage[];
-  initialSettingsTab?: 'agent' | 'channels' | 'hermes' | 'terminal' | null;
+  initialSettingsTab?: 'agent' | 'channels' | 'api' | 'hermes' | 'terminal' | null;
   runtime?: typeof hermesRuntime | null;
+  api?: typeof apiSettings;
 } = {}) {
   return render(
     <AgentChat
@@ -130,6 +155,7 @@ function renderChat({
       ]}
       settings={{ ...settings, runtime }}
       channelSettings={channelSettings}
+      apiSettings={api}
       ready
       agentName="Test agent"
       providerLabel="Provider · model"
@@ -760,6 +786,15 @@ describe('AgentChat', () => {
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
     expect(await screen.findByText('Connected channels')).toBeInTheDocument();
+  });
+
+  it('opens the Hermes public API settings from a deep link', async () => {
+    renderChat({ initialSettingsTab: 'api', runtime: hermesRuntime, api: apiSettings });
+
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'API' })).toHaveClass('bg-accent');
+    expect(await screen.findByRole('heading', { name: 'Agent API' })).toBeInTheDocument();
+    expect(screen.getByText(/stable HTTPS API/)).toBeInTheDocument();
   });
 
   it('lets the separate-origin Hermes dashboard use browser storage', () => {

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   revalidatePath: vi.fn(),
   upgradeHermesRuntime: vi.fn(),
+  agentFindFirst: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -12,6 +13,9 @@ vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorksp
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
 vi.mock('@/lib/agents/queries', () => ({ getProvider: vi.fn() }));
+vi.mock('@/lib/db', () => ({
+  db: { agent: { findFirst: mocks.agentFindFirst } },
+}));
 vi.mock('@/lib/agents/mutations', () => ({
   cloneAgent: vi.fn(),
   cloneHermesVolumeData: vi.fn(),
@@ -67,6 +71,10 @@ describe('upgradeHermesRuntimeAction', () => {
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
     mocks.upgradeHermesRuntime.mockResolvedValue({ status: 'provisioning' });
+    mocks.agentFindFirst.mockResolvedValue({
+      publicRuntimeAllocation: null,
+      runtime: { sandbox: { config: { managedBy: 'agent-runtime' } } },
+    });
   });
 
   it('authorizes through the workspace and forwards a trimmed image choice', async () => {

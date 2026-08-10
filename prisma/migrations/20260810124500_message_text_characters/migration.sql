@@ -1,0 +1,2 @@
+ALTER TABLE "Message"
+ADD COLUMN "textCharacters" INTEGER NOT NULL DEFAULT 0;

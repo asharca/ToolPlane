@@ -4,17 +4,20 @@ import { db } from '@/lib/db';
 export type McpToolPolicy = {
   mode: 'all' | 'allowlist';
   allowedTools: readonly string[];
+  publicInvocable?: boolean;
 };
 
 export type StoredMcpToolPolicy = {
   mcpToolExposure: string;
   mcpAllowedTools: readonly string[];
+  publicInvocable?: boolean;
 };
 
 export function mcpToolPolicyFromStored(stored: StoredMcpToolPolicy): McpToolPolicy {
   return {
     mode: stored.mcpToolExposure === 'allowlist' ? 'allowlist' : 'all',
     allowedTools: stored.mcpAllowedTools,
+    publicInvocable: stored.publicInvocable === true,
   };
 }
 
@@ -46,6 +49,7 @@ export async function loadMcpToolPolicies(
       id: true,
       mcpToolExposure: true,
       mcpAllowedTools: true,
+      publicInvocable: true,
     },
   });
 
