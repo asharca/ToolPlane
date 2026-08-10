@@ -14,6 +14,7 @@ import {
   setHermesRuntimeEnv,
   updateProvider,
   appendMessage,
+  appendConversationTurn,
   createConversation,
   ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
@@ -74,6 +75,14 @@ describe('agents mutations', () => {
     expect(a.slug).toBe('my-agent');
     const b = await createAgent(workspaceId, 'My Agent');
     expect(b.slug).toBe('my-agent-1');
+  });
+
+  it('serializes concurrent slug allocation within a workspace', async () => {
+    const name = `Concurrent Agent ${Date.now()}`;
+    const agents = await Promise.all(Array.from({ length: 4 }, () => (
+      createAgent(workspaceId, name)
+    )));
+    expect(new Set(agents.map(({ slug }) => slug)).size).toBe(4);
   });
 
   it('clones reusable configuration and bindings without copying agent history', async () => {
@@ -721,6 +730,32 @@ describe('agents mutations', () => {
     });
   });
 
+  it('persists a generated user/assistant turn atomically and in order', async () => {
+    const agent = await createAgent(workspaceId, 'Atomic turn');
+    const conversation = await createConversation(workspaceId, agent.id);
+    await appendConversationTurn(
+      conversation!.id,
+      [{ type: 'text', text: 'Question' }],
+      [{ type: 'text', text: 'Answer' }],
+    );
+
+    const messages = await db.message.findMany({
+      where: { conversationId: conversation!.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(messages.map(({ role }) => role)).toEqual(['user', 'assistant']);
+
+    const rollbackConversation = await createConversation(workspaceId, agent.id);
+    await expect(appendConversationTurn(
+      rollbackConversation!.id,
+      [{ type: 'text', text: 'Must roll back' }],
+      undefined as unknown as Prisma.InputJsonValue,
+    )).rejects.toThrow();
+    await expect(db.message.count({
+      where: { conversationId: rollbackConversation!.id },
+    })).resolves.toBe(0);
+  });
+
   it('atomically derives a title when the first user messages race', async () => {
     const agent = await createAgent(workspaceId, 'Concurrent title');
     const conversation = await createConversation(workspaceId, agent.id);
@@ -982,7 +1017,7 @@ describe('agents mutations', () => {
     expect(afterReady[0].missingStartCredentialNames).toEqual(['TELEGRAM_BOT_TOKEN']);
 
     const applied = await applyAgentChannelPairing(workspaceId, connectionId, '');
-    expect(applied.error).toBeUndefined();
+    expect('error' in applied ? applied.error : undefined).toBeUndefined();
 
     const afterApply = await listAgentChannelConnections(workspaceId, a.id);
     expect(afterApply[0].status).toBe('stopped');

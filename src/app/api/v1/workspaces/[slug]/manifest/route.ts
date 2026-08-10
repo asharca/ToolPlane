@@ -45,6 +45,13 @@ export async function GET(
   const manifest = {
     workspace: { slug: ws.slug, name: ws.name },
     generatedAt: new Date().toISOString(),
+    agentControl: {
+      transport: 'streamable-http',
+      protocolVersion: '2025-06-18',
+      authentication: 'personal-bearer',
+      endpoint: `/api/v1/workspaces/${encodeURIComponent(ws.slug)}/agents/mcp`,
+      capabilities: ['discover', 'create', 'inspect', 'message'],
+    },
     servers: ws.deployments.map((d) => ({
       name: deploymentLabel(d).name,
       slug: d.server?.slug ?? d.sourceRef ?? d.id,

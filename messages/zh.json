@@ -511,6 +511,7 @@
       "removeProviderPrompt": "移除 {name}？使用此提供商的智能体将需要重新选择提供商和模型。",
       "removingProvider": "移除中…",
       "close": "关闭",
+      "connectAi": "连接 AI 创建智能体",
       "newAgent": "新建智能体",
       "name": "名称",
       "runtime": "运行时",

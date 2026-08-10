@@ -34,6 +34,21 @@ The runtime is real, not mocked. Each MCP deployment is a live child process
 managed by `src/lib/process/supervisor.ts`, and the gateway proxies JSON-RPC
 requests to the live process while recording observability data.
 
+### Agent Control MCP
+
+External AI clients can create and run workspace agents through the Agent
+Control MCP endpoint:
+
+```text
+POST /api/v1/workspaces/<workspace-slug>/agents/mcp
+Authorization: Bearer <personal-api-token>
+```
+
+Open **Agents → Connect AI** for ready-to-copy client configuration. The MCP
+server exposes safe resource discovery, atomic agent creation, MCP inspection,
+and persistent agent messaging without returning provider keys or runtime
+secrets. See [docs/AGENT_CONTROL_MCP.md](docs/AGENT_CONTROL_MCP.md).
+
 ## Quick Start
 
 Requirements:
@@ -217,3 +232,4 @@ ToolPlane: self-hosted control plane for agent tools, MCP servers, skills, toolk
 - Deep architecture notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Sandbox and connector design: [docs/SANDBOXES.md](docs/SANDBOXES.md)
 - Toolkit sync design: [docs/TOOLKIT_SYNC.md](docs/TOOLKIT_SYNC.md)
+- Agent Control MCP: [docs/AGENT_CONTROL_MCP.md](docs/AGENT_CONTROL_MCP.md)

@@ -511,6 +511,7 @@
       "removeProviderPrompt": "Remove {name}? Agents using this provider will need a new provider and model.",
       "removingProvider": "Removing…",
       "close": "Close",
+      "connectAi": "Connect AI",
       "newAgent": "New agent",
       "name": "Name",
       "runtime": "Runtime",

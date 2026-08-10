@@ -33,6 +33,7 @@ import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
 import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
+import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
 
 export type AgentRow = {
   id: string;
@@ -84,11 +85,13 @@ function CountPill({
 
 export function AgentsBrowser({
   slug,
+  agentControlEndpoint,
   agents,
   createOptions,
   hermesImages,
 }: {
   slug: string;
+  agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
   hermesImages?: string[];
@@ -134,6 +137,14 @@ export function AgentsBrowser({
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {agentControlEndpoint ? (
+            <ConnectDialog
+              endpoint={agentControlEndpoint}
+              name={`${slug}-agent-control`}
+              label={t('connectAi')}
+              variant="outline"
+            />
+          ) : null}
           <Link href={`/app/${encodeURIComponent(slug)}/market/agents`} className="ui-button-secondary h-10 gap-2 px-4">
             <Store className="size-[18px] shrink-0" />
             {t('browseAgentMarket')}

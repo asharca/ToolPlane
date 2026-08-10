@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Bot, Cpu } from 'lucide-react';
@@ -17,6 +18,7 @@ import { effectiveStatus } from '@/lib/process/supervisor';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { originFromHeaders } from '@/lib/http/origin';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +47,7 @@ export default async function AgentsPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
+  const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
   const [agents, providers, deployments, skills, toolkits] = await Promise.all([
     current === 'agents' ? listAgents(ws.id) : Promise.resolve([]),
@@ -83,6 +86,7 @@ export default async function AgentsPage({
       {current === 'agents' ? (
         <AgentsBrowser
           slug={slug}
+          agentControlEndpoint={agentControlEndpoint}
           agents={agents.map((a) => ({
             id: a.id,
             name: a.name,

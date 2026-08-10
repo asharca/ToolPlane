@@ -240,8 +240,16 @@ tests/, e2e/
 | `GET /api/v1/skills/[installId]/download` | Bearer 或 会话 | 下载 `SKILL.md` 工件 |
 | `GET /api/v1/workspaces/[slug]/manifest` | Bearer 或 会话 | 导出整个工作区的 toolkit manifest（全部部署+技能）|
 | `GET /api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest` | Bearer 或 会话 | 导出**单个** toolkit 的 manifest（仅该包选中项）|
+| `POST /api/v1/workspaces/[slug]/agents/mcp` | 仅 Personal Bearer | **Agent Control MCP**：发现资源、原子创建智能体、检查 MCP 工具并调用智能体；拒绝 Cookie 会话与 Toolkit 专用 Token |
 
 **网关流程**（`/mcp/[id]/rpc`）：`resolveRequestUser` 鉴权 → 校验该 deployment 属于用户工作区 → 用 `livePort()` 找到子进程端口 → `fetch http://127.0.0.1:<port>/`（3s 超时）→ 透传响应 → `logRequest` 落库（含 `#method` 便于审计）。进程未运行返回 503，上游不可达返回 502。
+
+**Agent Control MCP** 是控制面而不是 Deployment/Toolkit 数据面。它位于
+`workspaces/[slug]/agents/mcp`，通过安全 DTO 暴露 `list_agent_resources`、
+`inspect_mcp_deployment`、`list_agents`、`get_agent`、`create_agent` 和
+`send_message_to_agent`。创建前会在同一事务内验证 workspace 下的 Provider、
+Deployment、Skill、Toolkit、Sandbox 与 Sub-agent，任何外部 ID 都使事务整体
+失败。完整客户端配置与工具说明见 [`docs/AGENT_CONTROL_MCP.md`](./AGENT_CONTROL_MCP.md)。
 
 ---
 

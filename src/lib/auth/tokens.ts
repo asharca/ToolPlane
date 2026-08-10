@@ -33,7 +33,7 @@ export async function revokeApiToken(userId: string, id: string): Promise<void> 
   await db.apiToken.deleteMany({ where: { id, userId } });
 }
 
-export async function verifyApiToken(authHeader: string | null) {
+export async function verifyApiTokenContext(authHeader: string | null) {
   if (!authHeader) return null;
   const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
   const token = match?.[1];
@@ -50,5 +50,15 @@ export async function verifyApiToken(authHeader: string | null) {
     where: { id: record.id },
     data: { lastUsedAt: new Date() },
   });
-  return record.user;
+  return {
+    user: record.user,
+    token: {
+      id: record.id,
+      toolkitId: record.toolkitId,
+    },
+  };
+}
+
+export async function verifyApiToken(authHeader: string | null) {
+  return (await verifyApiTokenContext(authHeader))?.user ?? null;
 }
