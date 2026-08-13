@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.1](https://github.com/asharca/ToolPlane/releases/tag/v0.21.1) (2026-08-13)
+
+### What's Changed
+* fix: make Hermes channel restarts reliable by @renhedata in https://github.com/asharca/ToolPlane/pull/79
+* refactor: adopt Radix primitives for dialogs and popovers by @renhedata in https://github.com/asharca/ToolPlane/pull/80
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.0...v0.21.1
+
 ## [0.21.0](https://github.com/asharca/ToolPlane/releases/tag/v0.21.0) (2026-08-10)
 
 ### What's Changed
