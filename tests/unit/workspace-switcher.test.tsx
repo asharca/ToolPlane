@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@/lib/workspace/actions', () => ({
@@ -18,7 +18,7 @@ const workspaces = [
 ];
 
 describe('WorkspaceSwitcher', () => {
-  it('shows the current workspace and toggles the dropdown', async () => {
+  it('shows the current workspace in a popover', async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -30,36 +30,20 @@ describe('WorkspaceSwitcher', () => {
     );
 
     const trigger = screen.getByRole('button', { name: /Acme/ });
-    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull();
 
     await user.click(trigger);
-    const menu = screen.getByRole('menu');
-    expect(menu).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Acme/ })).toHaveAttribute(
+    expect(await screen.findByRole('dialog', { name: /workspaces/i })).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.getByRole('link', { name: /Acme/ })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    expect(screen.getByRole('menuitem', { name: /Acme/ })).toHaveFocus();
-    expect(screen.getByRole('menuitem', { name: /Staging/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
       'href',
       '/app/staging/mcp',
     );
-  });
-
-  it('focuses the first menu item when the current workspace is unavailable', async () => {
-    const user = userEvent.setup();
-    render(
-      <WorkspaceSwitcher
-        slug="missing"
-        workspaceName="Unavailable"
-        userLabel="me@x.com"
-        workspaces={workspaces}
-      />,
-    );
-
-    await user.click(screen.getByRole('button', { name: /Unavailable/ }));
-
-    expect(screen.getByRole('menuitem', { name: /Acme/ })).toHaveFocus();
   });
 
   it('reveals an inline create form', async () => {
@@ -73,7 +57,7 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
     await user.click(screen.getByRole('button', { name: /Acme/ }));
-    await user.click(screen.getByRole('menuitem', { name: /create workspace/i }));
+    await user.click(screen.getByRole('button', { name: /create workspace/i }));
     const input = screen.getByPlaceholderText(/workspace name/i);
     expect(input).toBeInTheDocument();
     expect(input).toHaveFocus();
@@ -84,36 +68,6 @@ describe('WorkspaceSwitcher', () => {
     expect(input).toHaveFocus();
     expect(input).toHaveValue('New workspace');
     expect(screen.getByRole('button', { name: 'Create' })).toBeInTheDocument();
-  });
-
-  it('navigates menu items with arrow, Home, and End keys', async () => {
-    const user = userEvent.setup();
-    render(
-      <WorkspaceSwitcher
-        slug="acme"
-        workspaceName="Acme"
-        userLabel="me@x.com"
-        workspaces={workspaces}
-      />,
-    );
-
-    await user.click(screen.getByRole('button', { name: /Acme/ }));
-    const acme = screen.getByRole('menuitem', { name: /Acme/ });
-    const staging = screen.getByRole('menuitem', { name: /Staging/ });
-    const create = screen.getByRole('menuitem', { name: /create workspace/i });
-    const signOut = screen.getByRole('menuitem', { name: /sign out/i });
-
-    expect(acme).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(staging).toHaveFocus();
-    await user.keyboard('{End}');
-    expect(signOut).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(acme).toHaveFocus();
-    await user.keyboard('{ArrowUp}');
-    expect(signOut).toHaveFocus();
-    await user.keyboard('{Home}{ArrowUp}{ArrowUp}');
-    expect(create).toHaveFocus();
   });
 
   it('closes on Escape and restores focus to the trigger', async () => {
@@ -129,32 +83,32 @@ describe('WorkspaceSwitcher', () => {
 
     const trigger = screen.getByRole('button', { name: /Acme/ });
     await user.click(trigger);
-    await user.keyboard('{ArrowDown}{Escape}');
-
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
-  });
-
-  it('closes on Escape after focus moves outside the menu', async () => {
-    const user = userEvent.setup();
-    render(
-      <WorkspaceSwitcher
-        slug="acme"
-        workspaceName="Acme"
-        userLabel="me@x.com"
-        workspaces={workspaces}
-      />,
-    );
-
-    const trigger = screen.getByRole('button', { name: /Acme/ });
-    await user.click(trigger);
-    await user.tab({ shift: true });
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-
     await user.keyboard('{Escape}');
 
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('closes when an outside control is clicked', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <WorkspaceSwitcher
+          slug="acme"
+          workspaceName="Acme"
+          userLabel="me@x.com"
+          workspaces={workspaces}
+        />
+        <button type="button">Outside</button>
+      </>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Acme/ }));
+    const outside = screen.getByRole('button', { name: 'Outside' });
+    await user.click(outside);
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull());
+    expect(outside).toHaveFocus();
   });
 
   it('shows a sign out action in the account menu', async () => {
@@ -170,6 +124,6 @@ describe('WorkspaceSwitcher', () => {
 
     await user.click(screen.getByRole('button', { name: /Acme/ }));
 
-    expect(screen.getByRole('menuitem', { name: /sign out/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
   });
 });

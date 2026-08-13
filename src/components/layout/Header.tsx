@@ -1,6 +1,5 @@
 import Link from 'next/link';
-import { Menu, X } from 'lucide-react';
-import { FaGithub } from 'react-icons/fa';
+import { Code2, Menu, X } from 'lucide-react';
 import { getLocale } from 'next-intl/server';
 import { getMarketingContent } from '@/lib/marketing/content';
 import { SITE } from '@/lib/site';
@@ -43,7 +42,7 @@ export async function Header() {
               rel="noopener noreferrer"
               className="hidden items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground lg:inline-flex"
             >
-              <FaGithub className="size-4" />
+              <Code2 className="size-4" />
               {navigation.sourceCode}
             </a>
             <Link
@@ -78,7 +77,7 @@ export async function Header() {
                     rel="noopener noreferrer"
                     className="flex min-h-11 items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-muted"
                   >
-                    <FaGithub className="size-4" />
+                    <Code2 className="size-4" />
                     {navigation.sourceCode}
                   </a>
                 </nav>

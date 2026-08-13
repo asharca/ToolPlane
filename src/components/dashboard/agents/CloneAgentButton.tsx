@@ -1,10 +1,20 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Check, CopyPlus, Loader2, X } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
 import { cloneAgentAction } from '@/lib/agents/actions';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/Dialog';
 
 type CloneScope = {
   mcp: boolean;
@@ -104,7 +114,6 @@ export function CloneAgentButton({
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<CloneScope>(defaultScope);
-  const titleId = useId();
   const isHermes = runtimeKind === 'hermes';
   const isComplete = scope.mcp
     && scope.skills
@@ -126,52 +135,44 @@ export function CloneAgentButton({
     });
   }
 
-  function openDialog() {
-    setScope(defaultScope());
-    setOpen(true);
-  }
-
   return (
-    <>
-      <button
-        type="button"
-        onClick={openDialog}
-        className="ui-button-secondary h-10 gap-2 px-4 text-sm"
-      >
-        <CopyPlus className="size-[18px] shrink-0" />
-        {t('cloneAgent')}
-      </button>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setScope(defaultScope());
+        setOpen(nextOpen);
+      }}
+    >
+      <DialogTrigger asChild>
+        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+          <CopyPlus className="size-[18px] shrink-0" />
+          {t('cloneAgent')}
+        </button>
+      </DialogTrigger>
 
-      {open ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setOpen(false);
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            className="ui-panel max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto shadow-xl"
-          >
-            <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-              <div>
-                <h2 id={titleId} className="text-base font-semibold text-foreground">{t('cloneAgentDialogTitle')}</h2>
-                <p className="mt-1 text-xs text-muted-foreground">{t('cloneAgentDialogDescription')}</p>
-              </div>
+      <DialogPortal>
+        <DialogOverlay className="!bg-black/40" />
+        <DialogContent className="ui-panel !block !max-h-[calc(100vh-2rem)] !w-full !max-w-2xl !gap-0 !overflow-y-auto !p-0 shadow-xl">
+          <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <DialogTitle className="!text-base !leading-normal !tracking-normal text-foreground">
+                {t('cloneAgentDialogTitle')}
+              </DialogTitle>
+              <DialogDescription className="mt-1 !text-xs">{t('cloneAgentDialogDescription')}</DialogDescription>
+            </div>
+            <DialogClose asChild>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
                 aria-label={t('close')}
                 title={t('close')}
                 className="ui-button-secondary size-9 shrink-0 px-0"
               >
                 <X className="size-4" />
               </button>
-            </header>
+            </DialogClose>
+          </header>
 
-            <form action={cloneAgentAction} className="space-y-5 px-5 py-5">
+          <form action={cloneAgentAction} className="space-y-5 px-5 py-5">
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="cloneOptions" value="1" />
@@ -275,15 +276,14 @@ export function CloneAgentButton({
               </fieldset>
 
               <footer className="flex justify-end gap-2 border-t border-border pt-4">
-                <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4">
-                  {t('cancel')}
-                </button>
+                <DialogClose asChild>
+                  <button type="button" className="ui-button-secondary h-10 px-4">{t('cancel')}</button>
+                </DialogClose>
                 <CloneSubmitButton />
               </footer>
-            </form>
-          </section>
-        </div>
-      ) : null}
-    </>
+          </form>
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
   );
 }

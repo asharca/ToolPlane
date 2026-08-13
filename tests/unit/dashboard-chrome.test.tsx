@@ -97,7 +97,7 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('title', 'Agents');
   });
 
-  it('restores a saved collapsed preference and opens the workspace menu beside the rail', async () => {
+  it('restores a saved collapsed preference and opens the workspace popover beside the rail', async () => {
     window.localStorage.setItem('toolplane:dashboard-sidebar-collapsed', 'true');
     renderChrome();
 
@@ -105,8 +105,8 @@ describe('DashboardChrome sidebar', () => {
     await waitFor(() => expect(sidebar).toHaveAttribute('data-collapsed', 'true'));
 
     await userEvent.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
-    expect(screen.getByRole('menu').className).toContain('lg:left-full');
-    expect(screen.getByRole('menuitem', { name: /Staging/ })).toHaveAttribute(
+    expect(screen.getByRole('dialog', { name: 'Workspaces' })).toHaveAttribute('data-side', 'right');
+    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
       'href',
       '/app/staging/mcp',
     );

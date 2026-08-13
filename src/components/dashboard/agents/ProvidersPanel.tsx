@@ -2,7 +2,6 @@
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
-import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import {
   Braces,
@@ -28,6 +27,15 @@ import {
 } from '@/lib/agents/actions';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/Dialog';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export type ProviderRow = {
@@ -70,51 +78,57 @@ function ActionMessage({ state }: { state: ActionState }) {
   return null;
 }
 
-function DialogShell({
+const dialogWidths = {
+  'max-w-xl': '!max-w-xl',
+  'max-w-2xl': '!max-w-2xl',
+  'max-w-4xl': '!max-w-4xl',
+} as const;
+
+function ProviderDialog({
   open,
-  onClose,
+  onOpenChange,
+  trigger,
   title,
-  titleId,
   maxWidth = 'max-w-xl',
   children,
 }: {
   open: boolean;
-  onClose: () => void;
+  onOpenChange: (open: boolean) => void;
+  trigger: ReactNode;
   title: string;
-  titleId: string;
-  maxWidth?: string;
+  maxWidth?: keyof typeof dialogWidths;
   children: ReactNode;
 }) {
   const t = useTranslations('console.agents');
-  if (!open) return null;
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className={`max-h-[calc(100vh-2rem)] w-full ${maxWidth} overflow-hidden rounded-xl border border-border bg-card shadow-xl`}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 id={titleId} className="text-sm font-semibold text-foreground">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('close')}
-            title={t('close')}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-        <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
-          {children}
-        </div>
-      </div>
-    </div>,
-    document.body,
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogPortal>
+        <DialogOverlay className="!bg-black/40" />
+        <DialogContent
+          aria-describedby={undefined}
+          className={`!block !max-h-[calc(100vh-2rem)] !w-full ${dialogWidths[maxWidth]} !gap-0 !overflow-hidden !p-0 shadow-xl`}
+        >
+          <div className="flex items-center justify-between border-b border-border px-5 py-4">
+            <DialogTitle className="!text-sm !leading-normal !tracking-normal text-foreground">{title}</DialogTitle>
+            <DialogClose asChild>
+              <button
+                type="button"
+                aria-label={t('close')}
+                title={t('close')}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-5" />
+              </button>
+            </DialogClose>
+          </div>
+          <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
+            {children}
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
   );
 }
 
@@ -124,18 +138,17 @@ function AddProviderDialog({ slug }: { slug: string }) {
   const [state, formAction] = useActionState<ActionState, FormData>(createProviderAction, {});
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className="ui-button-primary h-10 gap-2 px-4">
-        <Plus className="size-[18px] shrink-0" />
-        {t('addProvider')}
-      </button>
-
-      <DialogShell
-        open={open}
-        onClose={() => setOpen(false)}
-        title={t('addModelProvider')}
-        titleId="add-provider-title"
-      >
+    <ProviderDialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t('addModelProvider')}
+      trigger={(
+        <button type="button" className="ui-button-primary h-10 gap-2 px-4">
+          <Plus className="size-[18px] shrink-0" />
+          {t('addProvider')}
+        </button>
+      )}
+    >
         <form action={formAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
           <input type="hidden" name="workspace" value={slug} />
           <Field icon={Cpu} label={t('name')}>
@@ -175,8 +188,7 @@ function AddProviderDialog({ slug }: { slug: string }) {
             </div>
           </div>
         </form>
-      </DialogShell>
-    </>
+    </ProviderDialog>
   );
 }
 
@@ -217,19 +229,18 @@ function ViewModelsDialog({ slug, provider }: { slug: string; provider: Provider
   const [open, setOpen] = useState(false);
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className="ui-button-secondary h-10 gap-2 px-4 text-sm">
-        <Eye className="size-[18px] shrink-0" />
-        {t('viewModels')}
-      </button>
-
-      <DialogShell
-        open={open}
-        onClose={() => setOpen(false)}
-        title={t('viewModels')}
-        titleId={`provider-models-${provider.id}`}
-        maxWidth="max-w-4xl"
-      >
+    <ProviderDialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t('viewModels')}
+      maxWidth="max-w-4xl"
+      trigger={(
+        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+          <Eye className="size-[18px] shrink-0" />
+          {t('viewModels')}
+        </button>
+      )}
+    >
         <div className="space-y-4 px-5 py-5">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
@@ -250,8 +261,7 @@ function ViewModelsDialog({ slug, provider }: { slug: string; provider: Provider
             <p className="text-sm text-muted-foreground">{t('noModelsCachedYet')}</p>
           )}
         </div>
-      </DialogShell>
-    </>
+    </ProviderDialog>
   );
 }
 
@@ -261,19 +271,18 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
   const [updateState, updateAction] = useActionState<ActionState, FormData>(updateProviderAction, {});
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className="ui-button-secondary h-10 gap-2 px-4 text-sm">
-        <Pencil className="size-[18px] shrink-0" />
-        {t('editProvider')}
-      </button>
-
-      <DialogShell
-        open={open}
-        onClose={() => setOpen(false)}
-        title={t('editProvider')}
-        titleId={`edit-provider-${provider.id}`}
-        maxWidth="max-w-2xl"
-      >
+    <ProviderDialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t('editProvider')}
+      maxWidth="max-w-2xl"
+      trigger={(
+        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+          <Pencil className="size-[18px] shrink-0" />
+          {t('editProvider')}
+        </button>
+      )}
+    >
         <form action={updateAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="providerId" value={provider.id} />
@@ -316,8 +325,7 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
             </div>
           </div>
         </form>
-      </DialogShell>
-    </>
+    </ProviderDialog>
   );
 }
 

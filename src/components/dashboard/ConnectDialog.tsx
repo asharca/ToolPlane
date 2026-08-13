@@ -3,6 +3,15 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { ArrowRight, ArrowLeft, X, Copy, Check } from 'lucide-react';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/Dialog';
 
 type Client = {
   id: string;
@@ -158,6 +167,14 @@ export function ConnectDialog({
     setCopied(false);
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setOpen(true);
+    } else {
+      close();
+    }
+  }
+
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -174,25 +191,18 @@ export function ConnectDialog({
       : 'inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800';
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className={trigger}>
-        {variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
-        {label ?? t('connectWith')}
-      </button>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <button type="button" className={trigger}>
+          {variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
+          {label ?? t('connectWith')}
+        </button>
+      </DialogTrigger>
 
-      {open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label={t('close')}
-            onClick={close}
-            className="absolute inset-0 bg-black/50"
-          />
-          <div
-            role="dialog"
-            aria-label={selectedLabel ?? t('installServer')}
-            className="relative z-10 w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
-          >
+      <DialogPortal>
+        <DialogOverlay className="bg-black/50" />
+        <DialogContent aria-describedby={undefined} className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-5 shadow-xl sm:!p-5 dark:border-zinc-800 dark:bg-zinc-900">
+          <div>
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 {selected ? (
@@ -205,18 +215,19 @@ export function ConnectDialog({
                     {t('changeClient')}
                   </button>
                 ) : null}
-                <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                <DialogTitle className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
                   {selectedLabel ?? t('installServer')}
-                </h2>
+                </DialogTitle>
               </div>
-              <button
-                type="button"
-                aria-label={t('close')}
-                onClick={close}
-                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
-              >
-                <X className="size-4" />
-              </button>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  aria-label={t('close')}
+                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
+                >
+                  <X className="size-4" />
+                </button>
+              </DialogClose>
             </div>
 
             {selected ? (
@@ -259,8 +270,8 @@ export function ConnectDialog({
               </div>
             )}
           </div>
-        </div>
-      ) : null}
-    </>
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
   );
 }

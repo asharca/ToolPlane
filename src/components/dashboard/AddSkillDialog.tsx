@@ -2,8 +2,16 @@
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Plus, X, FileText, GitBranch, Upload } from 'lucide-react';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/Dialog';
 import { createCustomSkillAction, importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
 import {
   MAX_SKILL_FILE_BYTES,
@@ -105,18 +113,21 @@ export function AddSkillDialog({ slug }: { slug: string }) {
   const displayedSkillRoots = displaySkillRoots(folder.skillRoots);
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
-        <Plus className="size-4" /> {t('addSkill')}
-      </button>
+    <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
+      <DialogTrigger asChild>
+        <button type="button" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
+          <Plus className="size-4" /> {t('addSkill')}
+        </button>
+      </DialogTrigger>
 
-      {open
-        ? createPortal(
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={close}>
-              <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-950" onClick={(e) => e.stopPropagation()}>
+      <DialogPortal>
+        <DialogOverlay className="!bg-black/40" />
+        <DialogContent aria-describedby={undefined} className="!block !gap-0 w-full max-w-md rounded-xl border-zinc-200 bg-white !p-6 dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('addASkill')}</h2>
-                  <button type="button" onClick={close} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+                  <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('addASkill')}</DialogTitle>
+                  <DialogClose asChild>
+                    <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('close')}><X className="size-5" /></button>
+                  </DialogClose>
                 </div>
 
                 {mode === 'menu' ? (
@@ -194,11 +205,8 @@ export function AddSkillDialog({ slug }: { slug: string }) {
                     <button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900">{t('upload')}</button>
                   </form>
                 ) : null}
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
   );
 }
