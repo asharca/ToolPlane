@@ -18,4 +18,17 @@ describe('AddSkillDialog', () => {
     await userEvent.click(screen.getByText('Create new'));
     expect(screen.getByPlaceholderText('My awesome skill')).toBeInTheDocument();
   });
+
+  it('closes with Escape and returns focus to its trigger', async () => {
+    const user = userEvent.setup();
+    render(<AddSkillDialog slug="acme" />);
+
+    const trigger = screen.getByRole('button', { name: /add skill/i });
+    await user.click(trigger);
+    expect(screen.getByRole('dialog', { name: 'Add a skill' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
 });

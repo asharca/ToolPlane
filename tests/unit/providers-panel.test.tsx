@@ -16,6 +16,23 @@ const actions = vi.hoisted(() => ({
 vi.mock('@/lib/agents/actions', () => actions);
 
 describe('ProvidersPanel', () => {
+  it('closes the add-provider dialog with Escape and restores trigger focus', async () => {
+    const user = userEvent.setup();
+    render(<ProvidersPanel slug="acme" providers={[]} />);
+
+    const trigger = screen.getByRole('button', { name: 'Add provider' });
+    await user.click(trigger);
+
+    expect(screen.getByRole('dialog', { name: 'Add model provider' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Add model provider' })).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
+  });
+
   it('requires confirmation before deleting a provider', async () => {
     const user = userEvent.setup();
     render(

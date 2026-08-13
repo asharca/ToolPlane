@@ -15,12 +15,12 @@ import {
   Settings,
   Store,
   Shield,
+  Code2,
   PanelLeftClose,
   PanelLeftOpen,
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { FaGithub } from 'react-icons/fa';
 import { SITE } from '@/lib/site';
 import { DashboardLogo } from './DashboardLogo';
 import { SystemUpdateButton } from './SystemUpdateButton';
@@ -242,7 +242,7 @@ export function DashboardSidebar({
           title={collapsed ? t('sourceCode') : undefined}
           className={`ui-button-secondary w-full ${collapsed ? 'lg:px-0' : ''}`}
         >
-          <FaGithub className="size-4" />
+          <Code2 className="size-4" />
           <span className={collapsed ? 'lg:hidden' : undefined}>{t('sourceCode')}</span>
         </a>
         {isAdmin ? (

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const { pushMock, setThemeMock } = vi.hoisted(() => ({
@@ -44,6 +44,18 @@ describe('DashboardHeaderControls (command palette)', () => {
     await userEvent.type(input, 'logs');
     expect(screen.getByRole('button', { name: /Logs/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Members/ })).toBeNull();
+  });
+
+  it('closes with Escape and restores focus to its trigger', async () => {
+    const user = userEvent.setup();
+    render(<DashboardHeaderControls />);
+
+    const trigger = screen.getByRole('button', { name: /quick navigation/i });
+    await user.click(trigger);
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it('opens workspace market routes instead of legacy create pages', async () => {

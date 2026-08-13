@@ -2,12 +2,25 @@
 
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useState, useSyncExternalStore } from 'react';
+import { Popover } from 'radix-ui';
 import { Check, ChevronsUpDown, LogOut, Plus } from 'lucide-react';
 import { logoutAction } from '@/lib/auth/actions';
 import { createWorkspaceAction } from '@/lib/workspace/actions';
 
 type Workspace = { id: string; slug: string; name: string };
+const WIDE_VIEWPORT_QUERY = '(min-width: 1024px)';
+
+function subscribeToWideViewport(onChange: () => void) {
+  const media = window.matchMedia?.(WIDE_VIEWPORT_QUERY);
+  if (!media) return () => undefined;
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function getWideViewportSnapshot() {
+  return window.matchMedia?.(WIDE_VIEWPORT_QUERY).matches ?? false;
+}
 
 function initialsOf(name: string): string {
   return (name.match(/\b\w/g) ?? ['W']).slice(0, 2).join('').toUpperCase();
@@ -27,136 +40,47 @@ export function WorkspaceSwitcher({
   compact?: boolean;
 }) {
   const t = useTranslations('console.workspaceSwitcher');
-  const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  function closeMenu({ restoreFocus = false } = {}) {
-    setOpen(false);
-    setCreating(false);
-    if (restoreFocus) triggerRef.current?.focus();
-  }
-
-  function menuItems(): HTMLElement[] {
-    return Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-  }
-
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      closeMenu({ restoreFocus: true });
-      return;
-    }
-
-    const target = event.target;
-    if (
-      target instanceof HTMLElement &&
-      (target.matches('input, textarea, select') || target.isContentEditable)
-    ) {
-      return;
-    }
-
-    const items = menuItems();
-    if (items.length === 0) return;
-
-    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
-    let nextIndex: number | undefined;
-
-    switch (event.key) {
-      case 'ArrowDown':
-        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-        break;
-      case 'ArrowUp':
-        nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
-        break;
-      case 'Home':
-        nextIndex = 0;
-        break;
-      case 'End':
-        nextIndex = items.length - 1;
-        break;
-      default:
-        return;
-    }
-
-    event.preventDefault();
-    items[nextIndex].focus();
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setCreating(false);
-      }
-    }
-    function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      setOpen(false);
-      setCreating(false);
-      triggerRef.current?.focus();
-    }
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || creating) return;
-    const items = menuItems();
-    const currentItem = items.find((item) => item.getAttribute('aria-current') === 'page');
-    (currentItem ?? items[0])?.focus();
-  }, [open, creating]);
+  const wideViewport = useSyncExternalStore(
+    subscribeToWideViewport,
+    getWideViewportSnapshot,
+    () => false,
+  );
+  const compactDesktop = compact && wideViewport;
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => {
-          if (open) {
-            closeMenu();
-          } else {
-            setOpen(true);
-          }
-        }}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
-        title={compact ? workspaceName : undefined}
-        className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
-      >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
-          {initialsOf(workspaceName)}
-        </span>
-        <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
-          <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            {workspaceName}
+    <Popover.Root onOpenChange={(nextOpen) => !nextOpen && setCreating(false)}>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
+          title={compact ? workspaceName : undefined}
+          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
+            {initialsOf(workspaceName)}
           </span>
-          <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
-            {userLabel}
+          <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
+            <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              {workspaceName}
+            </span>
+            <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
+              {userLabel}
+            </span>
           </span>
-        </span>
-        <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
-      </button>
+          <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
+        </button>
+      </Popover.Trigger>
 
-      {open ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          onKeyDown={onMenuKeyDown}
-          className={`absolute z-20 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 ${
-            compact
-              ? 'bottom-full left-0 mb-2 w-full lg:bottom-0 lg:left-full lg:mb-0 lg:ml-2 lg:w-64'
-              : 'bottom-full left-0 mb-2 w-full'
+      <Popover.Portal>
+        <Popover.Content
+          side={compactDesktop ? 'right' : 'top'}
+          align={compactDesktop ? 'end' : 'start'}
+          sideOffset={8}
+          collisionPadding={8}
+          aria-label={t('workspaces')}
+          className={`z-50 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 lg:z-20 ${
+            compactDesktop ? 'w-64' : 'w-[var(--radix-popover-trigger-width)]'
           }`}
         >
           <div className="max-h-64 overflow-y-auto py-1">
@@ -166,22 +90,21 @@ export function WorkspaceSwitcher({
             {workspaces.map((w) => {
               const active = w.slug === slug;
               return (
-                <Link
-                  key={w.id}
-                  href={`/app/${w.slug}/mcp`}
-                  role="menuitem"
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => closeMenu()}
-                  className="flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded bg-zinc-900 text-[10px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
-                    {initialsOf(w.name)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{w.name}</span>
-                  {active ? (
-                    <Check className="size-4 shrink-0 text-zinc-900 dark:text-zinc-100" />
-                  ) : null}
-                </Link>
+                <Popover.Close key={w.id} asChild>
+                  <Link
+                    href={`/app/${w.slug}/mcp`}
+                    aria-current={active ? 'page' : undefined}
+                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded bg-zinc-900 text-[10px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
+                      {initialsOf(w.name)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{w.name}</span>
+                    {active ? (
+                      <Check className="size-4 shrink-0 text-zinc-900 dark:text-zinc-100" />
+                    ) : null}
+                  </Link>
+                </Popover.Close>
               );
             })}
           </div>
@@ -207,7 +130,6 @@ export function WorkspaceSwitcher({
             ) : (
               <button
                 type="button"
-                role="menuitem"
                 onClick={() => setCreating(true)}
                 className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
@@ -218,7 +140,6 @@ export function WorkspaceSwitcher({
             <form action={logoutAction} className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800">
               <button
                 type="submit"
-                role="menuitem"
                 className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
               >
                 <LogOut className="size-4 shrink-0" />
@@ -226,8 +147,8 @@ export function WorkspaceSwitcher({
               </button>
             </form>
           </div>
-        </div>
-      ) : null}
-    </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }

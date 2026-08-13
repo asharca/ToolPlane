@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
@@ -15,12 +15,20 @@ import {
   Boxes,
   Bot,
   BarChart3,
+  Code2,
   Users,
   Settings,
   Home,
 } from 'lucide-react';
-import { FaGithub } from 'react-icons/fa';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
+import {
+  Dialog,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/Dialog';
 import { SITE, mailto } from '@/lib/site';
 import { useDashboardRuntimeConfig } from './DashboardRuntimeConfig';
 
@@ -46,7 +54,6 @@ export function DashboardHeaderControls() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const toggleTheme = useCallback(() => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
@@ -61,6 +68,11 @@ export function DashboardHeaderControls() {
   const closePalette = useCallback(() => {
     setOpen(false);
   }, []);
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) openPalette();
+    else closePalette();
+  }
 
   const commands = useMemo<Command[]>(() => {
     const slug = workspaceSlug(pathname);
@@ -92,7 +104,7 @@ export function DashboardHeaderControls() {
     }
     list.push(
       { id: 'home', label: t('backToToolPlane'), group: t('groupActions'), icon: Home, run: go('/') },
-      { id: 'source', label: t('sourceCode'), group: t('groupProject'), icon: FaGithub, run: openExternal(SITE.sourceUrl) },
+      { id: 'source', label: t('sourceCode'), group: t('groupProject'), icon: Code2, run: openExternal(SITE.sourceUrl) },
       {
         id: 'theme',
         label: t('toggleDarkMode'),
@@ -119,19 +131,11 @@ export function DashboardHeaderControls() {
         e.preventDefault();
         if (open) closePalette();
         else openPalette();
-      } else if (e.key === 'Escape') {
-        closePalette();
       }
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [closePalette, open]);
-
-  useEffect(() => {
-    if (open) {
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
 
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -148,55 +152,30 @@ export function DashboardHeaderControls() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openPalette}
-        className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
-      >
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        {t('quickNavigation')}
-        <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          ⌘K
-        </kbd>
-      </button>
-
-      <a
-        href={mailto(supportEmail)}
-        aria-label={t('getHelp')}
-        className="ui-button-ghost ui-icon-button"
-      >
-        <HelpCircle className="size-4" />
-      </a>
-
-      <button
-        type="button"
-        aria-label={t('toggleTheme')}
-        onClick={toggleTheme}
-        className="ui-button-ghost ui-icon-button"
-      >
-        <span aria-hidden="true">
-          <Sun className="hidden size-4 dark:block" />
-          <Moon className="size-4 dark:hidden" />
-        </span>
-      </button>
-
-      <LocaleSwitcher />
-
-      {open ? (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh]"
-          onClick={closePalette}
-        >
-          <div
-            role="dialog"
-            aria-label={t('commandPalette')}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
           >
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            {t('quickNavigation')}
+            <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              ⌘K
+            </kbd>
+          </button>
+        </DialogTrigger>
+
+        <DialogPortal>
+          <DialogOverlay className="!bg-black/40" />
+          <DialogContent
+            aria-describedby={undefined}
+            className="!top-[12vh] !block !max-h-none !translate-y-0 !gap-0 !overflow-hidden !rounded-xl !border-zinc-200 !bg-white !p-0 !shadow-2xl dark:!border-zinc-700 dark:!bg-zinc-900 sm:!p-0"
+          >
+            <DialogTitle className="sr-only">{t('commandPalette')}</DialogTitle>
             <div className="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-700">
               <Search className="size-4 text-muted-foreground" />
               <input
-                ref={inputRef}
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -238,9 +217,31 @@ export function DashboardHeaderControls() {
                 })
               )}
             </ul>
-          </div>
-        </div>
-      ) : null}
+          </DialogContent>
+        </DialogPortal>
+      </Dialog>
+
+      <a
+        href={mailto(supportEmail)}
+        aria-label={t('getHelp')}
+        className="ui-button-ghost ui-icon-button"
+      >
+        <HelpCircle className="size-4" />
+      </a>
+
+      <button
+        type="button"
+        aria-label={t('toggleTheme')}
+        onClick={toggleTheme}
+        className="ui-button-ghost ui-icon-button"
+      >
+        <span aria-hidden="true">
+          <Sun className="hidden size-4 dark:block" />
+          <Moon className="size-4 dark:hidden" />
+        </span>
+      </button>
+
+      <LocaleSwitcher />
     </>
   );
 }
