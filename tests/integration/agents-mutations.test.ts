@@ -453,20 +453,30 @@ describe('agents mutations', () => {
     await expect(setHermesRuntimeEnv(workspaceId, agent.id, {
       OPENROUTER_API_KEY: 'secret',
       FEATURE_FLAG: 'enabled',
+      TELEGRAM_BOT_TOKEN: 'legacy-channel-token',
     })).resolves.toBe(true);
     await expect(setHermesRuntimeEnv('other-workspace', agent.id, {
       LEAKED: 'no',
     })).resolves.toBe(false);
     const updatedSandbox = await db.sandbox.findUniqueOrThrow({
       where: { id: runtime!.sandboxId },
-      select: { config: true },
+      select: { config: true, deployment: { select: { installCfg: true } } },
     });
     expect(updatedSandbox.config).toMatchObject({
       managedBy: 'agent-runtime',
       env: {
         OPENROUTER_API_KEY: 'secret',
         FEATURE_FLAG: 'enabled',
+        TELEGRAM_BOT_TOKEN: 'legacy-channel-token',
       },
+    });
+    expect(updatedSandbox.deployment.installCfg).toMatchObject({
+      runtimeId: runtime?.id,
+      kind: 'hermes',
+    });
+    expect((updatedSandbox.deployment.installCfg as { env?: unknown }).env).toEqual({
+      OPENROUTER_API_KEY: 'secret',
+      FEATURE_FLAG: 'enabled',
     });
 
     await deleteAgent(workspaceId, agent.id);

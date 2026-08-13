@@ -50,6 +50,76 @@ const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
 const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
 const HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:/opt/hermes/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const HERMES_TERMINAL_SHELL = String.raw`
+export VIRTUAL_ENV=/opt/hermes/.venv
+export PATH=${HERMES_TERMINAL_PATH}
+if command -v bash >/dev/null 2>&1; then
+  hermes() {
+    local is_gateway_restart=0
+    local previous_gateway_pid=0
+    if [ "$#" -eq 2 ] && [ "$1" = "gateway" ] && [ "$2" = "restart" ]; then
+      is_gateway_restart=1
+      previous_gateway_pid="$(
+        curl --silent --fail --max-time 2 \
+          http://127.0.0.1:9119/api/status \
+          | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); running = value.get("gateway_running"); pid = int(value.get("gateway_pid") or 0); print(pid if running is True and pid > 0 else 0 if running is False else "")' \
+          2>/dev/null || true
+      )"
+      if [[ ! "$previous_gateway_pid" =~ ^[0-9]+$ ]]; then
+        echo "Hermes gateway status could not be verified before restart." >&2
+        return 1
+      fi
+    fi
+
+    command hermes "$@"
+    local command_status=$?
+    if [ "$command_status" -ne 0 ]; then
+      return "$command_status"
+    fi
+    if [ "$is_gateway_restart" -ne 1 ]; then
+      return 0
+    fi
+
+    # Upstream restart is s6-svc -t, which is a successful no-op for a slot
+    # that is already want-down. Follow it with start (-u) and do not return a
+    # successful terminal prompt until the real API gateway is healthy.
+    command hermes gateway start >/dev/null || return $?
+    local health_attempt=0
+    while [ "$health_attempt" -lt 60 ]; do
+      local current_gateway_pid
+      current_gateway_pid="$(
+        curl --silent --fail --max-time 2 \
+          http://127.0.0.1:9119/api/status \
+          | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); pid = int(value.get("gateway_pid") or 0); print(pid if value.get("gateway_running") is True and value.get("gateway_state") == "running" and pid > 0 else "")' \
+          2>/dev/null || true
+      )"
+      if [[ "$current_gateway_pid" =~ ^[0-9]+$ ]] \
+        && [ "$current_gateway_pid" -gt 0 ] \
+        && { [ "$previous_gateway_pid" -le 0 ] || [ "$current_gateway_pid" -ne "$previous_gateway_pid" ]; }; then
+        local api_gateway_pid
+        api_gateway_pid="$(
+          curl --silent --fail --max-time 2 \
+            --header "Authorization: Bearer $API_SERVER_KEY" \
+            http://127.0.0.1:8642/health/detailed \
+            | /opt/hermes/.venv/bin/python3 -c 'import json, sys; value = json.load(sys.stdin); pid = int(value.get("pid") or 0); print(pid if value.get("gateway_state") == "running" and pid > 0 else "")' \
+            2>/dev/null || true
+        )"
+        if [ "$api_gateway_pid" = "$current_gateway_pid" ]; then
+          echo "Hermes gateway restarted and is healthy."
+          return 0
+        fi
+      fi
+      health_attempt=$((health_attempt + 1))
+      sleep 0.75
+    done
+    echo "Hermes gateway restart was submitted, but the gateway did not become healthy within 45 seconds." >&2
+    return 1
+  }
+  export -f hermes
+  exec bash
+fi
+exec sh
+`.trim();
 // The official Hermes image restricts unattended writes to /opt/data, while
 // gateway auto-TTS intentionally renders short-lived replies in this precise
 // temp directory. Keep the exception narrow instead of allowing all of /tmp.
@@ -358,9 +428,11 @@ function hasExpectedDockerSandboxCaps(info) {
   );
   const containerEnv = new Set(info?.Config?.Env ?? []);
   const hermesRuntimeConfigured = KIND !== 'hermes' || [
+    'HERMES_HOME=/opt/data',
     'HERMES_DASHBOARD=1',
     'HERMES_DASHBOARD_HOST=127.0.0.1',
     'HERMES_DASHBOARD_PORT=9119',
+    'GATEWAY_MULTIPLEX_PROFILES=1',
     HERMES_TTS_WRITE_SAFE_ROOT_ENV,
   ].every((entry) => containerEnv.has(entry));
   return capDrop.has('ALL')
@@ -409,6 +481,8 @@ function dockerCreateArgs() {
       '--env',
       'API_SERVER_ENABLED=true',
       '--env',
+      'HERMES_HOME=/opt/data',
+      '--env',
       'API_SERVER_HOST=127.0.0.1',
       '--env',
       'API_SERVER_PORT=8642',
@@ -424,6 +498,11 @@ function dockerCreateArgs() {
       'HERMES_DASHBOARD_PORT=9119',
       '--env',
       'HERMES_ACCEPT_HOOKS=1',
+      // ToolPlane exposes one fixed gateway API port. A multiplexed default
+      // gateway owns every profile's channel connections without allowing
+      // imported per-profile services to race for that port.
+      '--env',
+      'GATEWAY_MULTIPLEX_PROFILES=1',
       '--env',
       HERMES_TTS_WRITE_SAFE_ROOT_ENV,
       '--env',
@@ -693,8 +772,13 @@ function createTerminal(cols = 80, rows = 24) {
   const safeCols = Math.min(Math.max(Number(cols) || 80, 20), 240);
   const safeRows = Math.min(Math.max(Number(rows) || 24, 6), 80);
   const shellCommand = KIND === 'hermes'
-    ? `export VIRTUAL_ENV=/opt/hermes/.venv; export PATH=${HERMES_TERMINAL_PATH}; if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi`
+    ? HERMES_TERMINAL_SHELL
     : 'if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi';
+  const shellArgs = KIND === 'hermes'
+    // The wrapper defines and exports a Bash function. The Hermes image ships
+    // Bash, while its /bin/sh is dash and rejects `export -f`.
+    ? ['bash', '-lc', shellCommand]
+    : ['sh', '-lc', shellCommand];
   const term = pty.spawn('docker', [
     'exec',
     '-it',
@@ -702,9 +786,7 @@ function createTerminal(cols = 80, rows = 24) {
     '-w',
     WORKSPACE_ROOT,
     CONTAINER,
-    'sh',
-    '-lc',
-    shellCommand,
+    ...shellArgs,
   ], {
     name: 'xterm-256color',
     cols: safeCols,
@@ -1194,6 +1276,41 @@ async function handleHermesProxy(req, res) {
   return true;
 }
 
+async function handleHermesControl(req, res) {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (url.pathname !== '/hermes/control/gateway/default/up') return false;
+  if (KIND !== 'hermes') {
+    sendJson(res, 404, { error: 'Hermes runtime is not enabled for this sandbox.' });
+    return true;
+  }
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'method not allowed' });
+    return true;
+  }
+
+  // `hermes gateway restart` maps to s6-svc -t upstream. That signal is a
+  // no-op when the service is already want-down, so explicitly restore the
+  // default slot's want-up state. The Hermes CLI also persists desired_state,
+  // which keeps the repaired gateway enabled across container restarts.
+  const started = await run('docker', [
+    'exec',
+    '--user',
+    'hermes',
+    '--env',
+    'HERMES_HOME=/opt/data',
+    CONTAINER,
+    '/opt/hermes/.venv/bin/hermes',
+    'gateway',
+    'start',
+  ], { env: dockerEnv(), timeoutMs: 15_000 });
+  if (started.exitCode !== 0 || started.timedOut) {
+    sendJson(res, 502, { error: 'Could not bring the default Hermes gateway online.' });
+    return true;
+  }
+  sendJson(res, 200, { ok: true });
+  return true;
+}
+
 function hermesDashboardProxyPath(req) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   if (url.pathname !== '/hermes-dashboard' && !url.pathname.startsWith('/hermes-dashboard/')) return null;
@@ -1380,6 +1497,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (await handleRuntimeFiles(req, res)) return;
     if (await handleHermesDashboardProxy(req, res)) return;
+    if (await handleHermesControl(req, res)) return;
     if (await handleHermesProxy(req, res)) return;
     if (await handleTerminal(req, res)) return;
   } catch (error) {

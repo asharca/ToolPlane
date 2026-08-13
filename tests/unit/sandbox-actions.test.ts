@@ -1167,7 +1167,7 @@ describe('renameSandboxAction', () => {
       }),
     }));
     expect(mocks.setHermesRuntimeEnv).toHaveBeenCalledWith('ws1', 'agent-1', { API_KEY: 'secret' });
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1');
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
     expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
     expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();

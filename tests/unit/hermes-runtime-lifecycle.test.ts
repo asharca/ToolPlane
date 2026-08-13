@@ -63,6 +63,7 @@ import {
   copyHermesRuntimeVolume,
   ensureHermesDashboardReady,
   ensureHermesRuntimeReady,
+  runHermesDashboardMutation,
   runHermesRuntimeMaintenance,
   stopHermesRuntime,
   syncHermesRuntime,
@@ -130,6 +131,24 @@ function successfulDockerChild() {
   child.stdin = new PassThrough();
   child.kill = vi.fn();
   queueMicrotask(() => child.emit('close', 0));
+  return child;
+}
+
+function failedDockerChild(message: string) {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: PassThrough;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  child.kill = vi.fn();
+  queueMicrotask(() => {
+    child.stderr.write(message);
+    child.emit('close', 1);
+  });
   return child;
 }
 
@@ -247,6 +266,161 @@ describe('Hermes sandbox lifecycle isolation', () => {
     );
   });
 
+  it('rebuilds an unchanged projection only when an explicit sync is forced', async () => {
+    const agent = deletingAgent();
+    agent.runtime.status = 'stopped';
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    (agent.runtime.sandbox.config.env as Record<string, string>).TELEGRAM_BOT_TOKEN =
+      'legacy-channel-token';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.agentRuntimeUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime, data);
+      return { count: 1 };
+    });
+    mocks.deploymentUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(agent.runtime.sandbox.deployment, data);
+      return { count: 1 };
+    });
+
+    await expect(syncHermesRuntime('workspace-1', agent.id, { start: false })).resolves.toEqual({
+      status: 'setup_required',
+    });
+    expect(agent.runtime.configHash).toEqual(expect.any(String));
+
+    mocks.killProcess.mockClear();
+    mocks.spawn.mockClear();
+    await expect(syncHermesRuntime('workspace-1', agent.id, { start: false })).resolves.toEqual({
+      status: 'stopped',
+    });
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+
+    await expect(syncHermesRuntime(
+      'workspace-1',
+      agent.id,
+      { start: false, force: true },
+    )).resolves.toEqual({ status: 'setup_required' });
+    expect(mocks.killProcess).toHaveBeenCalledWith('deployment-1', undefined);
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'docker',
+      ['rm', '-f', 'sandbox-sandbox-1'],
+      expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
+    const syncCreate = mocks.spawn.mock.calls.find(([, args]) => (
+      Array.isArray(args) && args[0] === 'create' && args.includes('sandbox-sandbox-1-sync')
+    ));
+    expect(syncCreate?.[1]).toEqual(expect.arrayContaining(['--env', 'HERMES_HOME=/opt/data']));
+    expect(String(syncCreate?.[1]?.at(-1))).toContain(
+      "migrate(interactive=False, quiet=True) if callable(migrate) else None",
+    );
+    expect(mocks.sandboxUpdateMany).toHaveBeenLastCalledWith({
+      where: { id: 'sandbox-1', workspaceId: 'workspace-1' },
+      data: { config: { env: { EXISTING: 'value' } } },
+    });
+    expect(mocks.deploymentUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        installCfg: expect.objectContaining({ env: { EXISTING: 'value' } }),
+      }),
+    }));
+  });
+
+  it('fails a rebuild without installing or restarting when Docker cannot remove the old container', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.spawn.mockImplementation((_command: string, args: string[]) => (
+      args[0] === 'rm' && args[2] === 'sandbox-sandbox-1'
+        ? failedDockerChild('Docker daemon unavailable')
+        : successfulDockerChild()
+    ));
+
+    await expect(syncHermesRuntime(
+      'workspace-1',
+      agent.id,
+      { force: true },
+    )).resolves.toEqual({
+      status: 'error',
+      error: 'Docker daemon unavailable',
+    });
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'runtime-1', workspaceId: 'workspace-1' },
+      data: { status: 'error', lastError: 'Docker daemon unavailable' },
+    });
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'deployment-1', workspaceId: 'workspace-1' },
+      data: { status: 'error' },
+    });
+  });
+
+  it('rejects an ancient imported config before stopping the current runtime', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'running';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.spawn.mockImplementation((_command: string, args: string[]) => (
+      args[0] === 'run'
+        ? failedDockerChild(
+            'ToolPlane cannot safely sync this Hermes volume because config.yaml has _config_version 6, below Hermes supported migration floor 12.',
+          )
+        : successfulDockerChild()
+    ));
+
+    await expect(syncHermesRuntime(
+      'workspace-1',
+      agent.id,
+      { force: true },
+    )).resolves.toEqual({
+      status: 'error',
+      error: expect.stringContaining('_config_version 6'),
+    });
+
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining([
+        'run',
+        '--read-only',
+        'volume-sandbox-1:/opt/data:ro',
+        '/opt/hermes/.venv/bin/python',
+      ]),
+      expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+
+  it('does not report stopped when the strict Docker stop fails', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.stopDockerSandboxContainer.mockRejectedValueOnce(new Error('Docker daemon unavailable'));
+
+    await expect(stopHermesRuntime('workspace-1', agent.id)).rejects.toThrow(
+      'Could not stop the Hermes runtime: Docker daemon unavailable',
+    );
+
+    expect(mocks.agentRuntimeUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'stopped' }),
+    }));
+    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'runtime-1', workspaceId: 'workspace-1' },
+      data: {
+        status: 'error',
+        lastError: 'Could not stop the Hermes runtime: Docker daemon unavailable',
+      },
+    });
+    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'deployment-1',
+        workspaceId: 'workspace-1',
+        source: 'sandbox',
+      },
+      data: { status: 'error' },
+    });
+  });
+
   it('serializes readiness and cleanup for the same Hermes agent', async () => {
     const agent = deletingAgent();
     agent.runtime.sandbox.deployment.status = 'stopped';
@@ -256,7 +430,11 @@ describe('Hermes sandbox lifecycle isolation', () => {
     mocks.startProcess.mockImplementation(() => new Promise<void>((resolve) => {
       releaseStart = resolve;
     }));
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      gateway_state: 'running',
+      pid: 141,
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
 
     const ready = ensureHermesRuntimeReady('workspace-serial', 'agent-1');
     await vi.waitFor(() => expect(mocks.startProcess).toHaveBeenCalledOnce());
@@ -268,8 +446,106 @@ describe('Hermes sandbox lifecycle isolation', () => {
     releaseStart?.();
 
     await expect(ready).resolves.toEqual({ port: 4312 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:4312/hermes/health/detailed',
+      expect.objectContaining({ cache: 'no-store' }),
+    );
     await expect(cleanup).resolves.toBe(true);
     expect(mocks.killProcess).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not treat a live outer proxy as a healthy Hermes gateway', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.livePort.mockReturnValue(4312);
+    const abort = new AbortController();
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      abort.abort(new Error('stop readiness polling'));
+      return new Response(JSON.stringify({
+        gateway_state: 'startup_failed',
+        pid: 141,
+      }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(ensureHermesRuntimeReady('workspace-1', agent.id, {
+      signal: abort.signal,
+    })).rejects.toThrow('stop readiness polling');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:4312/hermes/health/detailed',
+      expect.objectContaining({ cache: 'no-store' }),
+    );
+
+    vi.unstubAllGlobals();
+  });
+
+  it('restores a default gateway left want-down by an inner Hermes stop', async () => {
+    vi.useFakeTimers();
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.livePort.mockReturnValue(4312);
+    let healthReads = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/hermes/control/gateway/default/up')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      healthReads += 1;
+      return new Response(JSON.stringify(healthReads === 1
+        ? { gateway_state: 'stopped', pid: null }
+        : { gateway_state: 'running', pid: 242 }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ready = ensureHermesRuntimeReady('workspace-1', agent.id);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(ready).resolves.toEqual({ port: 4312 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:4312/hermes/control/gateway/default/up',
+      expect.objectContaining({ method: 'POST', cache: 'no-store' }),
+    );
+    expect(healthReads).toBe(2);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps a dashboard save in the lifecycle queue until its upstream write completes', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.livePort.mockReturnValue(4312);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    const lease = acquireHermesRuntimeWriteLease('workspace-1', agent.id);
+    expect(lease).not.toBeNull();
+
+    let markWriteStarted!: () => void;
+    let finishWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve; });
+    const writeCanFinish = new Promise<void>((resolve) => { finishWrite = resolve; });
+    const mutation = runHermesDashboardMutation(
+      'workspace-1',
+      agent.id,
+      lease!,
+      async () => {
+        markWriteStarted();
+        await writeCanFinish;
+        return 'saved';
+      },
+    );
+    await writeStarted;
+
+    const stop = stopHermesRuntime('workspace-1', agent.id);
+    await Promise.resolve();
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+
+    finishWrite();
+    await expect(mutation).resolves.toBe('saved');
+    lease?.release();
+    await expect(stop).resolves.toBeUndefined();
+    expect(mocks.stopProcess).toHaveBeenCalledWith('deployment-1');
     vi.unstubAllGlobals();
   });
 
@@ -738,7 +1014,11 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(mocks.killProcess).toHaveBeenNthCalledWith(2, 'deployment-1', {
       finalStatus: 'upgrading',
     });
-    expect(mocks.removeDockerSandboxContainer).toHaveBeenCalledWith('sandbox-1');
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'docker',
+      ['rm', '-f', 'sandbox-sandbox-1'],
+      expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
     expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ image: targetImage, status: 'upgrading', configHash: null }),
     }));
@@ -784,7 +1064,7 @@ describe('Hermes sandbox lifecycle isolation', () => {
 
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.killProcess).not.toHaveBeenCalled();
-    expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
     expect(agent.runtime.image).toBe('hermes:test');
     expect(agent.runtime.sandbox.deployment.sourceRef).toBe('hermes:test');
   });

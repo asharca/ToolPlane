@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
+import { withoutHermesChannelEnv } from '@/lib/agents/hermes/env-merge-script';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
 
@@ -315,7 +316,7 @@ export async function cloneAgent(
               volumeName: sandboxVolumeName(targetRuntime.sandboxId),
               runtimeId: targetRuntime.id,
               runtimeModelName: slug,
-              env,
+              env: withoutHermesChannelEnv(env),
             },
           },
         }),
@@ -819,17 +820,44 @@ export async function setHermesRuntimeEnv(
     const runtime = await tx.agentRuntime.findFirst({
       where: { agentId, workspaceId, kind: HERMES_RUNTIME_KIND },
       select: {
-        sandbox: { select: { id: true, workspaceId: true, config: true } },
+        sandbox: {
+          select: {
+            id: true,
+            workspaceId: true,
+            config: true,
+            deploymentId: true,
+            deployment: { select: { installCfg: true } },
+          },
+        },
       },
     });
     if (!runtime || runtime.sandbox.workspaceId !== workspaceId) return false;
 
     const config = sandboxConfigWithEnv(runtime.sandbox.config, env);
-    const updated = await tx.sandbox.updateMany({
-      where: { id: runtime.sandbox.id, workspaceId },
-      data: { config: config ?? {} },
-    });
-    return updated.count === 1;
+    const existingInstallCfg = runtime.sandbox.deployment.installCfg;
+    const installCfg = existingInstallCfg
+      && typeof existingInstallCfg === 'object'
+      && !Array.isArray(existingInstallCfg)
+      ? existingInstallCfg as Prisma.InputJsonObject
+      : {};
+    const [sandboxUpdated, deploymentUpdated] = await Promise.all([
+      tx.sandbox.updateMany({
+        where: { id: runtime.sandbox.id, workspaceId },
+        data: { config: config ?? {} },
+      }),
+      tx.deployment.updateMany({
+        where: {
+          id: runtime.sandbox.deploymentId,
+          workspaceId,
+          source: 'sandbox',
+        },
+        data: { installCfg: { ...installCfg, env: withoutHermesChannelEnv(env) } },
+      }),
+    ]);
+    if (sandboxUpdated.count !== 1 || deploymentUpdated.count !== 1) {
+      throw new Error('Could not update the Hermes runtime environment projection.');
+    }
+    return true;
   });
 }
 
