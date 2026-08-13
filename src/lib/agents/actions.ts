@@ -40,6 +40,7 @@ import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/pl
 import {
   copyHermesRuntimeVolume,
   cleanupHermesRuntime,
+  ensureHermesRuntimeReady,
   stopHermesRuntime,
   syncHermesRuntime,
   upgradeHermesRuntime,
@@ -512,9 +513,13 @@ export async function syncAgentRuntimeAction(
   if (!ctx) return { error: 'Not authorized.' };
   if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
   try {
-    const result = await syncHermesRuntime(ctx.ws.id, agentId);
+    const result = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
     revalidatePath(`/app/${slug}/agents/${agentId}`);
     if (result.error) return { error: result.error };
+    if (result.status === 'provisioning') {
+      const ready = await ensureHermesRuntimeReady(ctx.ws.id, agentId);
+      if (ready.error) return { error: ready.error };
+    }
     return { savedAt: Date.now() };
   } catch {
     return { error: 'Could not sync the Hermes runtime.' };
@@ -564,9 +569,13 @@ export async function updateHermesRuntimeEnvAction(
   if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) {
     return { error: 'Hermes runtime not found.' };
   }
-  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
+  const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
+  if (runtimeResult.status === 'provisioning') {
+    const ready = await ensureHermesRuntimeReady(ctx.ws.id, agentId);
+    if (ready.error) return { error: `Saved, but Hermes sync failed: ${ready.error}` };
+  }
   return { savedAt: Date.now() };
 }
 
@@ -583,8 +592,10 @@ export async function stopAgentRuntimeAction(
     await stopHermesRuntime(ctx.ws.id, agentId);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
     return { savedAt: Date.now() };
-  } catch {
-    return { error: 'Could not stop the Hermes runtime.' };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Could not stop the Hermes runtime.',
+    };
   }
 }
 

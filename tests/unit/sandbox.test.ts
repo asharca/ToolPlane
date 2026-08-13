@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { sandboxFlags, envFlags, MCP_NETWORK } from '@/lib/process/sandbox';
@@ -120,6 +121,28 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).not.toContain("'--publish'");
   });
 
+  it('uses one multiplexed Hermes gateway for imported profiles', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    // Keep the compatibility check and create arguments in sync so existing
+    // non-multiplexed containers are recreated while their named volume stays.
+    expect(script.match(/GATEWAY_MULTIPLEX_PROFILES=1/g)).toHaveLength(2);
+    expect(script).toMatch(
+      /'GATEWAY_MULTIPLEX_PROFILES=1',\r?\n\s+HERMES_TTS_WRITE_SAFE_ROOT_ENV/,
+    );
+    expect(script.match(/HERMES_HOME=\/opt\/data/g)).toHaveLength(3);
+  });
+
+  it('can restore the multiplexed default gateway when upstream restart targets a down s6 slot', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("url.pathname !== '/hermes/control/gateway/default/up'");
+    expect(script).toMatch(
+      /'\/opt\/hermes\/\.venv\/bin\/hermes',\r?\n\s+'gateway',\r?\n\s+'start'/,
+    );
+    expect(script).toContain('if (await handleHermesControl(req, res)) return;');
+  });
+
   it('allows the Hermes auto-TTS temp directory without widening the whole system temp root', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 
@@ -137,8 +160,34 @@ describe('persistent Docker sandbox runtime', () => {
 
     expect(script).toContain("...(KIND === 'hermes' ? ['--user', 'hermes'] : [])");
     expect(script).toContain("HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:");
-    expect(script).toContain('export VIRTUAL_ENV=/opt/hermes/.venv; export PATH=${HERMES_TERMINAL_PATH}');
+    expect(script).toContain('export VIRTUAL_ENV=/opt/hermes/.venv');
+    expect(script).toContain('export PATH=${HERMES_TERMINAL_PATH}');
+    expect(script).toContain("? ['bash', '-lc', shellCommand]");
     expect(script).toContain("chown \"$(id -u hermes):$(id -g hermes)\"");
+  });
+
+  it('makes a bare terminal gateway restart wait for the real gateway to recover', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain('command hermes gateway start >/dev/null');
+    expect(script).toContain('http://127.0.0.1:9119/api/status');
+    expect(script).toContain('http://127.0.0.1:8642/health/detailed');
+    expect(script).toContain('previous_gateway_pid');
+    expect(script).toContain('current_gateway_pid');
+    expect(script).toContain('api_gateway_pid');
+    expect(script).toContain('"$api_gateway_pid" = "$current_gateway_pid"');
+    expect(script).toContain('gateway status could not be verified before restart');
+    expect(script).toContain('gateway did not become healthy within 45 seconds');
+    expect(script).toContain('export -f hermes');
+  });
+
+  it('keeps the interactive Hermes terminal wrapper valid Bash', () => {
+    const source = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+    const wrapper = /const HERMES_TERMINAL_SHELL = String\.raw`([\s\S]*?)`\.trim\(\);/.exec(source)?.[1];
+    expect(wrapper).toBeTruthy();
+
+    const parsed = spawnSync('bash', ['-n'], { input: wrapper, encoding: 'utf8' });
+    expect(parsed.status, parsed.stderr).toBe(0);
   });
 
   it('streams Hermes attachments into an atomic temporary file without base64 buffering', () => {

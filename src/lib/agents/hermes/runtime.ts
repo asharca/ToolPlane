@@ -21,7 +21,6 @@ import {
 } from '@/lib/process/supervisor';
 import {
   copyDockerVolume,
-  removeDockerSandboxContainer,
   removeDockerSandboxRuntimeStrict,
   pullDockerImage,
   sandboxContainerName,
@@ -38,9 +37,12 @@ import {
   renderHermesSkillBundle,
 } from './config';
 import { deriveHermesRuntimeToken } from './token';
-import { HERMES_ENV_MERGE_SCRIPT } from './env-merge-script';
+import {
+  HERMES_ENV_MERGE_SCRIPT,
+  withoutHermesChannelEnv,
+} from './env-merge-script';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
-import { readSandboxEnv } from '@/lib/sandboxes/env';
+import { readSandboxEnv, sandboxConfigWithEnv } from '@/lib/sandboxes/env';
 import { runtimeEnv } from '@/lib/runtime-env';
 
 const DOCKER_TIMEOUT_MS = 15 * 60_000;
@@ -52,7 +54,7 @@ const HERMES_SYNC_CONTAINER_RESOURCE_LIMITS = [
   '--cpus', '2',
 ];
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
-const HERMES_CONFIG_VERSION = 6;
+const HERMES_CONFIG_VERSION = 7;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'copying',
@@ -64,6 +66,40 @@ const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'deleting',
 ]);
 const SANDBOX_LIFECYCLE_ERROR = 'The Hermes sandbox has a pending lifecycle operation.';
+const CONFIG_COMPATIBILITY_SCRIPT = String.raw`import pathlib
+import sys
+
+import yaml
+try:
+    from hermes_cli.config_migrations import SUPPORT_FLOOR_VERSION
+except (ImportError, AttributeError):
+    # Images from before Hermes introduced a migration support floor retain
+    # their original migration behavior and remain valid ToolPlane targets.
+    raise SystemExit(0)
+
+
+path = pathlib.Path("/opt/data/config.yaml")
+if not path.exists():
+    raise SystemExit(0)
+value = yaml.safe_load(path.read_text(encoding="utf-8"))
+if not isinstance(value, dict) or "_config_version" not in value:
+    raise SystemExit(0)
+raw_version = value.get("_config_version")
+try:
+    version = 0 if isinstance(raw_version, bool) else max(int(raw_version), 0)
+except (TypeError, ValueError):
+    version = 0
+if version < SUPPORT_FLOOR_VERSION:
+    print(
+        "ToolPlane cannot safely sync this Hermes volume because config.yaml "
+        f"has _config_version {version}, below Hermes' supported migration floor "
+        f"{SUPPORT_FLOOR_VERSION}. Back up /opt/data/config.yaml, review the Hermes "
+        "changelog, and migrate it manually before syncing; the running container "
+        "and volume were left unchanged.",
+        file=sys.stderr,
+    )
+    raise SystemExit(78)
+`;
 const CONFIG_MERGE_SCRIPT = String.raw`import os
 import pathlib
 import sys
@@ -190,6 +226,11 @@ finally:
 type DockerResult = { stdout: string; stderr: string };
 
 type DashboardReadyEntry = { port: number; checkedAt: number };
+type HermesGatewayHealth = {
+  gatewayState?: string;
+  pid?: number;
+  exitReason?: string;
+};
 type HermesRuntimeAccessState = {
   activeWrites: number;
   copyInProgress: boolean;
@@ -467,6 +508,30 @@ function enqueueHermesOperation<T>(
 }
 
 /**
+ * Serialize a Hermes Dashboard mutation with sync, stop, clone, restore, and
+ * upgrade operations for the same agent. The caller must acquire a write
+ * lease before reading the HTTP request body so maintenance can drain an
+ * already-admitted save without racing the actual upstream write.
+ */
+export function runHermesDashboardMutation<T>(
+  workspaceId: string,
+  agentId: string,
+  writeLease: HermesRuntimeWriteLease,
+  operation: (ready: { port?: number; error?: string }) => Promise<T>,
+): Promise<T | undefined> {
+  if (!holdsHermesRuntimeWriteLease(workspaceId, agentId, writeLease)) {
+    return Promise.reject(new Error('The Hermes dashboard write lease is invalid or expired.'));
+  }
+  return enqueueHermesOperation(
+    workspaceId,
+    agentId,
+    undefined as T | undefined,
+    async () => operation(await ensureHermesDashboardReadyUnlocked(workspaceId, agentId)),
+    { writeLease },
+  );
+}
+
+/**
  * Acquire both runtime queues in a stable order. A volume copy temporarily
  * stops the source and prepares the target, so it must not race a sync,
  * readiness check, or cleanup on either agent.
@@ -601,6 +666,23 @@ async function writeSkill(
   return name;
 }
 
+async function validateHermesConfigCompatibility(params: {
+  image: string;
+  sandboxId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  await runDocker([
+    'run', '--rm', '--network', 'none', '--read-only',
+    '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+    ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
+    '-v', `${sandboxVolumeName(params.sandboxId)}:/opt/data:ro`,
+    '--env', 'HERMES_HOME=/opt/data',
+    '--entrypoint', '/opt/hermes/.venv/bin/python',
+    params.image,
+    '-c', CONFIG_COMPATIBILITY_SCRIPT,
+  ], undefined, DOCKER_TIMEOUT_MS, params.signal);
+}
+
 async function buildProjection(
   agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
 ): Promise<{ directory: string; configHash: string }> {
@@ -627,7 +709,8 @@ async function buildProjection(
     systemPrompt: agent.publicRuntimeAllocation?.revision.systemPrompt,
     publicRuntime: Boolean(agent.publicRuntimeAllocation),
   });
-  const envPayload = renderHermesEnvPayload(readSandboxEnv(agent.runtime.sandbox.config));
+  const runtimeEnvironment = readSandboxEnv(agent.runtime.sandbox.config);
+  const envPayload = renderHermesEnvPayload(runtimeEnvironment);
   await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
   await writeFile(path.join(directory, 'env.json'), envPayload, { mode: 0o600 });
   await writeFile(
@@ -641,7 +724,10 @@ async function buildProjection(
     { mode: 0o600 },
   );
   hash.update(config);
-  hash.update(`env\0${envPayload}\0`);
+  // Native channel values are merely a one-time compatibility seed; Hermes'
+  // volume owns them afterwards, so they must not keep invalidating the
+  // ToolPlane projection fingerprint.
+  hash.update(`env\0${renderHermesEnvPayload(withoutHermesChannelEnv(runtimeEnvironment))}\0`);
   hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
 
   const usedNames = new Set<string>();
@@ -678,6 +764,7 @@ async function installProjection(params: {
     `if [ -d /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} ]; then cp -R /tmp/toolplane/skills/${TOOLPLANE_SKILL_ROOT} /opt/data/skills/; fi`,
     `if [ -f /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml ]; then cp /tmp/toolplane/skill-bundles/${TOOLPLANE_SKILL_ROOT}.yaml /opt/data/skill-bundles/; fi`,
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml',
+    '/opt/hermes/.venv/bin/python -c "from hermes_cli import config; migrate = getattr(config, \'migrate_config\', None); migrate(interactive=False, quiet=True) if callable(migrate) else None"',
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json',
     'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/skills /opt/data/skill-bundles /opt/data/memories /opt/data/workspace 2>/dev/null || true; fi',
   ].join(' && ');
@@ -686,6 +773,7 @@ async function installProjection(params: {
     '--cap-drop', 'ALL', '--cap-add', 'CHOWN', '--cap-add', 'DAC_OVERRIDE',
     '--security-opt', 'no-new-privileges',
     ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
+    '--env', 'HERMES_HOME=/opt/data',
     '-v', `${volume}:/opt/data`, '--entrypoint', '/bin/sh', params.image, '-c', installCommand,
   ], undefined, DOCKER_TIMEOUT_MS, params.signal);
   try {
@@ -703,6 +791,18 @@ async function installProjection(params: {
     );
   } finally {
     await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
+  }
+}
+
+async function removeHermesContainerStrict(sandboxId: string): Promise<void> {
+  try {
+    await runDocker(['rm', '-f', sandboxContainerName(sandboxId)]);
+  } catch (error) {
+    // A missing container is the desired postcondition. Every other Docker
+    // failure must abort the rebuild so the old container cannot be reused
+    // with stale in-memory configuration.
+    if (/no such container/i.test(copyErrorMessage(error))) return;
+    throw error;
   }
 }
 
@@ -807,7 +907,7 @@ async function setHermesRuntimeUpgradePending(
     sandboxId: runtime.sandboxId,
     runtimeId: runtime.id,
     runtimeModelName: agent.slug,
-    env: readSandboxEnv(runtime.sandbox.config),
+    env: withoutHermesChannelEnv(readSandboxEnv(runtime.sandbox.config)),
   });
 
   await db.$transaction(async (tx) => {
@@ -1493,6 +1593,10 @@ async function upgradeHermesRuntimeUnlocked(
 
   let upgradePending = false;
   try {
+    await validateHermesConfigCompatibility({
+      image,
+      sandboxId: runtime.sandboxId,
+    });
     // A cached healthy dashboard port is tied to the old child/container.
     dashboardReadyCache().delete(deployment.id);
     await setHermesRuntimeUpgradePending(workspaceId, agent, image);
@@ -1502,7 +1606,7 @@ async function upgradeHermesRuntimeUnlocked(
     // all image references point at the new image. The named data volume is
     // intentionally retained, then `sync` projects managed files into it.
     await killProcess(deployment.id, { finalStatus: 'upgrading' });
-    await removeDockerSandboxContainer(runtime.sandboxId);
+    await removeHermesContainerStrict(runtime.sandboxId);
 
     const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
       allowUpgrading: true,
@@ -1527,6 +1631,10 @@ async function upgradeHermesRuntimeUnlocked(
 type HermesRuntimeSyncOptions = {
   start?: boolean;
   signal?: AbortSignal;
+  // Explicit operator syncs rebuild even when ToolPlane's projection hash is
+  // unchanged. Hermes-owned files (for example channel settings) live in the
+  // persistent volume and are intentionally not part of that hash.
+  force?: boolean;
   // Only the image-upgrade operation may continue from its durable
   // `upgrading` marker; public sync callers must keep respecting it.
   allowUpgrading?: boolean;
@@ -1543,7 +1651,7 @@ type HermesRuntimeSyncOptions = {
 export async function syncHermesRuntime(
   workspaceId: string,
   agentId: string,
-  options: { start?: boolean; signal?: AbortSignal } = {},
+  options: { start?: boolean; signal?: AbortSignal; force?: boolean } = {},
 ): Promise<{ status: string; error?: string }> {
   return enqueueHermesOperation(
     workspaceId,
@@ -1580,7 +1688,8 @@ async function syncHermesRuntimeUnlocked(
     options.signal?.throwIfAborted();
     const configured = agent.modelProviders.length > 0;
     if (
-      projection.configHash === runtime.configHash
+      !options.force
+      && projection.configHash === runtime.configHash
       && runtime.configVersion >= HERMES_CONFIG_VERSION
     ) {
       if (!configured || options.start === false) {
@@ -1612,6 +1721,17 @@ async function syncHermesRuntimeUnlocked(
       : options.allowRestoring && deploymentStatus === 'restoring'
         ? 'restoring'
         : undefined;
+    // Reject an explicitly ancient imported config before taking a currently
+    // usable runtime down. Hermes deliberately retired those migrations, so
+    // deleting or blindly bumping the version would risk corrupting channels
+    // and provider settings.
+    await validateHermesConfigCompatibility({
+      image: runtime.image,
+      sandboxId: runtime.sandboxId,
+      signal: options.signal,
+    });
+    options.signal?.throwIfAborted();
+    dashboardReadyCache().delete(deploymentId);
     await killProcess(
       deploymentId,
       preservedLifecycleStatus
@@ -1619,7 +1739,7 @@ async function syncHermesRuntimeUnlocked(
         : undefined,
     );
     options.signal?.throwIfAborted();
-    await removeDockerSandboxContainer(runtime.sandboxId);
+    await removeHermesContainerStrict(runtime.sandboxId);
     options.signal?.throwIfAborted();
     await installProjection({
       directory: projection.directory,
@@ -1632,6 +1752,18 @@ async function syncHermesRuntimeUnlocked(
     const nextStatus = configured
       ? options.start !== false ? 'provisioning' : options.preserveStoppedWhenNotStarting ? 'stopped' : 'setup_required'
       : 'setup_required';
+    const launchEnvironment = withoutHermesChannelEnv(readSandboxEnv(runtime.sandbox.config));
+    const launchInstallCfg = hermesInstallConfigWithImage({
+      installCfg: runtime.sandbox.deployment.installCfg,
+      image: runtime.image,
+      sandboxId: runtime.sandboxId,
+      runtimeId: runtime.id,
+      runtimeModelName: agent.slug,
+      // Channel credentials are owned by Hermes' persistent .env. Keeping a
+      // second stale copy in Docker's inherited environment would let it win
+      // before Hermes reloads the Dashboard-managed file.
+      env: launchEnvironment,
+    });
     await Promise.all([
       updateRuntimeState(workspaceId, runtime.id, {
         status: nextStatus,
@@ -1643,7 +1775,17 @@ async function syncHermesRuntimeUnlocked(
       }),
       db.deployment.updateMany({
         where: { id: deploymentId, workspaceId },
-        data: { status: configured && options.start !== false ? 'provisioning' : 'stopped' },
+        data: {
+          status: configured && options.start !== false ? 'provisioning' : 'stopped',
+          installCfg: launchInstallCfg,
+        },
+      }),
+      // Complete the one-time ownership migration after the persistent .env
+      // merge succeeds. This removes stale channel duplicates from ToolPlane's
+      // UI/database while leaving their effective values in Hermes' volume.
+      db.sandbox.updateMany({
+        where: { id: runtime.sandboxId, workspaceId },
+        data: { config: sandboxConfigWithEnv(runtime.sandbox.config, launchEnvironment) ?? {} },
       }),
     ]);
 
@@ -1691,27 +1833,69 @@ async function abortableDelay(milliseconds: number, signal?: AbortSignal): Promi
 async function waitForHermesHealth(
   deploymentId: string,
   signal?: AbortSignal,
-): Promise<number | null> {
+): Promise<{ port?: number; health?: HermesGatewayHealth }> {
   const deadline = Date.now() + 45_000;
+  let latestHealth: HermesGatewayHealth | undefined;
+  let defaultUpRequested = false;
+  let nextDefaultUpAttemptAt = 0;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     const port = livePort(deploymentId);
     if (port) {
       try {
         const timeoutSignal = AbortSignal.timeout(5_000);
-        const response = await fetch(`http://127.0.0.1:${port}/hermes/health`, {
+        const response = await fetch(`http://127.0.0.1:${port}/hermes/health/detailed`, {
           signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
           cache: 'no-store',
         });
-        if (response.ok) return port;
+        if (response.ok) {
+          const status = await response.json() as {
+            gateway_state?: unknown;
+            pid?: unknown;
+            exit_reason?: unknown;
+          };
+          latestHealth = {
+            gatewayState: typeof status.gateway_state === 'string' ? status.gateway_state : undefined,
+            pid: Number.isInteger(status.pid) && Number(status.pid) > 0
+              ? Number(status.pid)
+              : undefined,
+            exitReason: typeof status.exit_reason === 'string'
+              ? status.exit_reason.slice(0, 500)
+              : undefined,
+          };
+          if (
+            latestHealth.gatewayState === 'running'
+            && latestHealth.pid
+          ) return { port, health: latestHealth };
+        }
       } catch {
         signal?.throwIfAborted();
         // Gateway may still be booting or pulling the image.
       }
+      signal?.throwIfAborted();
+      if (!defaultUpRequested && Date.now() >= nextDefaultUpAttemptAt) {
+        nextDefaultUpAttemptAt = Date.now() + 3_000;
+        try {
+          const timeoutSignal = AbortSignal.timeout(15_000);
+          const response = await fetch(
+            `http://127.0.0.1:${port}/hermes/control/gateway/default/up`,
+            {
+              method: 'POST',
+              signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+              cache: 'no-store',
+            },
+          );
+          defaultUpRequested = response.ok;
+        } catch {
+          signal?.throwIfAborted();
+          // The Docker container may not accept exec yet. Retry on the next
+          // bounded interval while the outer proxy remains available.
+        }
+      }
     }
     await abortableDelay(750, signal);
   }
-  return null;
+  return { health: latestHealth };
 }
 
 async function waitForHermesDashboard(deploymentId: string): Promise<number | null> {
@@ -1777,14 +1961,18 @@ async function ensureHermesRuntimeReadyUnlocked(
       { awaitReady: false, workspaceId },
     );
   }
-  const port = await waitForHermesHealth(deploymentId, signal);
-  if (!port) {
-    const message = 'Hermes gateway did not become healthy within 45 seconds.';
+  const ready = await waitForHermesHealth(deploymentId, signal);
+  if (!ready.port) {
+    const detail = ready.health?.exitReason
+      || (ready.health?.gatewayState ? `gateway state: ${ready.health.gatewayState}` : null);
+    const message = detail
+      ? `Hermes gateway did not become healthy within 45 seconds (${detail}).`
+      : 'Hermes gateway did not become healthy within 45 seconds.';
     await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'error', lastError: message });
     return { error: message };
   }
   await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'running', lastError: null });
-  return { port };
+  return { port: ready.port };
 }
 
 export async function ensureHermesDashboardReady(
@@ -1858,10 +2046,24 @@ async function stopHermesRuntimeUnlocked(workspaceId: string, agentId: string) {
   const agent = await getAgent(workspaceId, agentId);
   if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return;
   if (BLOCKED_SANDBOX_LIFECYCLE_STATES.has(agent.runtime.sandbox.deployment.status)) return;
-  dashboardReadyCache().delete(agent.runtime.sandbox.deploymentId);
-  await stopProcess(agent.runtime.sandbox.deploymentId);
-  await runDocker(['stop', '--time', '10', sandboxContainerName(agent.runtime.sandboxId)]).catch(() => undefined);
-  await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'stopped', lastError: null });
+  const deploymentId = agent.runtime.sandbox.deploymentId;
+  dashboardReadyCache().delete(deploymentId);
+  try {
+    await stopProcess(deploymentId);
+    await stopDockerSandboxContainer(agent.runtime.sandboxId);
+    await updateRuntimeState(workspaceId, agent.runtime.id, { status: 'stopped', lastError: null });
+  } catch (error) {
+    const message = `Could not stop the Hermes runtime: ${copyErrorMessage(error)}`.slice(0, 4000);
+    await Promise.all([
+      updateRuntimeState(workspaceId, agent.runtime.id, { status: 'error', lastError: message })
+        .catch(() => undefined),
+      db.deployment.updateMany({
+        where: { id: deploymentId, workspaceId, source: 'sandbox' },
+        data: { status: 'error' },
+      }).catch(() => undefined),
+    ]);
+    throw new Error(message, { cause: error });
+  }
 }
 
 export async function cleanupHermesRuntime(

@@ -809,7 +809,7 @@ export async function updateSandboxEnvAction(formData: FormData) {
       const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
       if (!agentId) return;
       if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) return;
-      const synced = await syncHermesRuntime(ctx.ws.id, agentId);
+      const synced = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
       revalidatePath(`/app/${slug}/agents/${agentId}`);
       if (synced.error) throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
       revalidatePath(`/app/${slug}/sandboxes`);

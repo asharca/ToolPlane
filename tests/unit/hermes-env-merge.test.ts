@@ -3,7 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { HERMES_ENV_MERGE_SCRIPT } from '@/lib/agents/hermes/env-merge-script';
+import {
+  HERMES_ENV_MERGE_SCRIPT,
+  withoutHermesChannelEnv,
+} from '@/lib/agents/hermes/env-merge-script';
 
 describe('Hermes managed environment merge', () => {
   let directory = '';
@@ -25,6 +28,13 @@ describe('Hermes managed environment merge', () => {
     expect(result.status, result.stderr).toBe(0);
     return envPath;
   }
+
+  it('keeps channel credentials out of the Docker launch environment', () => {
+    expect(withoutHermesChannelEnv({
+      TELEGRAM_BOT_TOKEN: 'channel-secret',
+      CUSTOM_SETTING: 'keep',
+    })).toEqual({ CUSTOM_SETTING: 'keep' });
+  });
 
   it('updates ToolPlane-owned keys while preserving Hermes-owned variables', () => {
     directory = mkdtempSync(path.join(os.tmpdir(), 'toolplane-hermes-env-'));
@@ -58,5 +68,65 @@ describe('Hermes managed environment merge', () => {
     expect(cleared).toContain('HERMES_TOKEN=keep');
     expect(cleared).not.toContain('NEW_KEY=');
     expect(cleared).not.toContain('SHARED=');
+  });
+
+  it('releases legacy channel keys to Hermes without overwriting Dashboard changes', () => {
+    directory = mkdtempSync(path.join(os.tmpdir(), 'toolplane-hermes-env-'));
+    const envPath = path.join(directory, '.env');
+    writeFileSync(envPath, [
+      'TELEGRAM_BOT_TOKEN=dashboard-new',
+      'CUSTOM_SETTING=old',
+      '',
+    ].join('\n'));
+    writeFileSync(
+      path.join(directory, '.toolplane-env-keys.json'),
+      '["CUSTOM_SETTING","TELEGRAM_BOT_TOKEN"]',
+    );
+
+    merge({ TELEGRAM_BOT_TOKEN: 'database-old', CUSTOM_SETTING: 'new' });
+
+    const merged = readFileSync(envPath, 'utf8');
+    expect(merged).toContain('TELEGRAM_BOT_TOKEN=dashboard-new\n');
+    expect(merged).not.toContain('database-old');
+    expect(merged).toContain('CUSTOM_SETTING="new"\n');
+    expect(readFileSync(path.join(directory, '.toolplane-env-keys.json'), 'utf8')).toBe(
+      '["CUSTOM_SETTING"]',
+    );
+
+    merge({ TELEGRAM_BOT_TOKEN: 'database-old', CUSTOM_SETTING: 'newer' });
+    expect(readFileSync(envPath, 'utf8')).toContain('TELEGRAM_BOT_TOKEN=dashboard-new\n');
+  });
+
+  it('seeds a legacy channel key once when Hermes has no value yet', () => {
+    directory = mkdtempSync(path.join(os.tmpdir(), 'toolplane-hermes-env-'));
+    const envPath = merge({ TELEGRAM_BOT_TOKEN: 'legacy-seed' });
+
+    expect(readFileSync(envPath, 'utf8')).toContain('TELEGRAM_BOT_TOKEN="legacy-seed"\n');
+    expect(readFileSync(path.join(directory, '.toolplane-env-keys.json'), 'utf8')).toBe('[]');
+
+    writeFileSync(envPath, 'TELEGRAM_BOT_TOKEN=dashboard-replacement\n');
+    merge({ TELEGRAM_BOT_TOKEN: 'legacy-seed' });
+    expect(readFileSync(envPath, 'utf8')).toBe('TELEGRAM_BOT_TOKEN=dashboard-replacement\n');
+  });
+
+  it('preserves a Dashboard channel deletion while releasing legacy ownership', () => {
+    directory = mkdtempSync(path.join(os.tmpdir(), 'toolplane-hermes-env-'));
+    writeFileSync(path.join(directory, '.env'), 'CUSTOM_SETTING=keep\n');
+    writeFileSync(
+      path.join(directory, '.toolplane-env-keys.json'),
+      '["CUSTOM_SETTING","TELEGRAM_BOT_TOKEN"]',
+    );
+
+    const envPath = merge({
+      CUSTOM_SETTING: 'updated',
+      TELEGRAM_BOT_TOKEN: 'database-stale',
+    });
+
+    const merged = readFileSync(envPath, 'utf8');
+    expect(merged).not.toContain('TELEGRAM_BOT_TOKEN');
+    expect(merged).toContain('CUSTOM_SETTING="updated"\n');
+    expect(readFileSync(path.join(directory, '.toolplane-env-keys.json'), 'utf8')).toBe(
+      '["CUSTOM_SETTING"]',
+    );
   });
 });
