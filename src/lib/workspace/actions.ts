@@ -45,6 +45,10 @@ import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 export type WorkspaceInviteState = { error?: string; message?: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_DEPLOYMENT_ENV_VARS = 100;
+const MAX_DEPLOYMENT_ENV_VALUE_LENGTH = 16_000;
+const MAX_DEPLOYMENT_ENV_LENGTH = 64_000;
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -150,6 +154,10 @@ export async function deployServerAction(formData: FormData) {
   if (operation.accepted && operation.value === 'setup_required') {
     return redirect(`/app/${slug}/mcp/${dep.id}?tab=variables`);
   }
+  // A catalog install is only useful once people can see its lifecycle,
+  // endpoint, and any next setup step. Keep the market focused on discovery
+  // and land the user on the deployment they just created.
+  redirect(`/app/${slug}/mcp/${dep.id}`);
 }
 
 export async function deployCustomServerAction(formData: FormData) {
@@ -217,6 +225,7 @@ export async function deployCustomServerAction(formData: FormData) {
 export type McpJsonConfigActionState = {
   error?: 'invalidJsonConfig' | 'notAuthorized' | 'deploymentNotFound' | 'rebuildFailed';
   savedAt?: number;
+  requiresSetup?: boolean;
 };
 
 export type McpJsonConfigRevealResult = {
@@ -245,7 +254,7 @@ export async function revealMcpJsonConfigAction({
   if (!deployment || !isEditableMcpSource(deployment.source)) {
     return { error: 'deploymentNotFound' };
   }
-  return { config: serializeMcpDeploymentConfig(deployment) };
+  return { config: serializeMcpDeploymentConfig(deployment, { includeEnv: false }) };
 }
 
 export async function updateMcpJsonConfigAction(
@@ -279,6 +288,7 @@ export async function updateMcpJsonConfigAction(
         deployment.source,
         deployment.name ?? undefined,
         network === null ? undefined : String(network),
+        { allowEnvironment: false },
       );
     } catch {
       return { error: 'invalidJsonConfig' } as const;
@@ -297,6 +307,10 @@ export async function updateMcpJsonConfigAction(
       ?? storedRequiredEnvironment(deployment.installCfg);
     const nextInstallCfg = {
       ...parsed.installCfg,
+      // Credentials have a dedicated Variables view. Keep their current
+      // values while a user updates launch/configuration fields so two tabs
+      // cannot silently overwrite one another.
+      env: deploymentEnvironmentValues(deployment.installCfg),
       ...(requiredEnvironment.length ? { requiredEnv: requiredEnvironment } : {}),
     };
     const requiresSetup = missingRequiredEnvironment(
@@ -317,7 +331,7 @@ export async function updateMcpJsonConfigAction(
       include: { server: { select: { name: true } } },
     });
 
-    if (requiresSetup) return { savedAt: Date.now() };
+    if (requiresSetup) return { savedAt: Date.now(), requiresSetup: true };
 
     try {
       await restartProcess(updated.id, resolveSpawnSpec(updated, true), {
@@ -331,7 +345,7 @@ export async function updateMcpJsonConfigAction(
       });
       return { error: 'rebuildFailed' } as const;
     }
-    return { savedAt: Date.now() };
+    return { savedAt: Date.now(), requiresSetup: false };
   });
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -462,8 +476,66 @@ export async function runMcpConsoleToolAction(input: {
   return result ? { result } : { error: 'toolCallFailed' };
 }
 
-const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_DEPLOYMENT_NAME_LENGTH = 80;
+
+type DeploymentEnvironmentPatch = {
+  set: Record<string, string>;
+  remove: string[];
+};
+
+function deploymentEnvironmentValues(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const raw = (value as Record<string, unknown>).env;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const env: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (ENV_KEY.test(key) && typeof entry === 'string') env[key] = entry;
+  }
+  return env;
+}
+
+function validDeploymentEnvironment(
+  env: Record<string, string>,
+): boolean {
+  const entries = Object.entries(env);
+  if (entries.length > MAX_DEPLOYMENT_ENV_VARS) return false;
+  let size = 0;
+  for (const [key, value] of entries) {
+    if (!ENV_KEY.test(key) || value.includes('\0') || value.length > MAX_DEPLOYMENT_ENV_VALUE_LENGTH) {
+      return false;
+    }
+    size += key.length + value.length;
+  }
+  return size <= MAX_DEPLOYMENT_ENV_LENGTH;
+}
+
+function parseDeploymentEnvironmentPatch(value: FormDataEntryValue | null): DeploymentEnvironmentPatch | null {
+  try {
+    const parsed = JSON.parse(String(value ?? '')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    const rawSet = record.set ?? {};
+    const rawRemove = record.remove ?? [];
+    if (!rawSet || typeof rawSet !== 'object' || Array.isArray(rawSet) || !Array.isArray(rawRemove)) {
+      return null;
+    }
+    const set: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(rawSet as Record<string, unknown>)) {
+      if (typeof entry !== 'string') return null;
+      set[key] = entry;
+    }
+    const remove = [...new Set(rawRemove)];
+    if (remove.some((key) => typeof key !== 'string' || !ENV_KEY.test(key))) return null;
+    if (Object.keys(set).some((key) => !ENV_KEY.test(key))
+      || Object.keys(set).length + remove.length > MAX_DEPLOYMENT_ENV_VARS
+      || !validDeploymentEnvironment(set)) {
+      return null;
+    }
+    return { set, remove: remove as string[] };
+  } catch {
+    return null;
+  }
+}
 
 function deploymentName(value: FormDataEntryValue | null): string {
   return String(value ?? '').trim().slice(0, MAX_DEPLOYMENT_NAME_LENGTH);
@@ -502,13 +574,25 @@ export async function setDeploymentEnvAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  const env: Record<string, string> = {};
-  try {
-    const rows = JSON.parse(String(formData.get('env') ?? '[]')) as { key: string; value: string }[];
-    for (const r of rows) if (r.key && ENV_KEY.test(r.key)) env[r.key] = String(r.value ?? '');
-  } catch {
-    return;
+  const patch = formData.has('changes')
+    ? parseDeploymentEnvironmentPatch(formData.get('changes'))
+    : null;
+  let legacyEnv: Record<string, string> | null = null;
+  if (!formData.has('changes')) {
+    try {
+      const rows = JSON.parse(String(formData.get('env') ?? '[]')) as { key: string; value: string }[];
+      const next: Record<string, string> = {};
+      for (const row of rows) {
+        if (!row.key || !ENV_KEY.test(row.key)) continue;
+        next[row.key] = String(row.value ?? '');
+      }
+      if (!validDeploymentEnvironment(next)) return;
+      legacyEnv = next;
+    } catch {
+      return;
+    }
   }
+  if (formData.has('changes') && !patch) return;
 
   await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await db.deployment.findFirst({
@@ -525,6 +609,15 @@ export async function setDeploymentEnvAction(formData: FormData) {
       },
     });
     if (!dep) return;
+
+    const env = legacyEnv
+      ? legacyEnv
+      : {
+          ...deploymentEnvironmentValues(dep.installCfg),
+          ...patch?.set,
+        };
+    for (const key of patch?.remove ?? []) delete env[key];
+    if (!validDeploymentEnvironment(env)) return;
 
     const next: Record<string, unknown> = {
       ...((dep.installCfg ?? {}) as Record<string, unknown>),
@@ -719,16 +812,23 @@ export async function startDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    if (!dep) return 'missing' as const;
+    if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
     await startProcess(dep.id, resolveSpawnSpec(dep), {
       awaitReady: false,
       workspaceId: ctx.ws.id,
     });
+    return 'started' as const;
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+  if (!operation.accepted || operation.value === 'missing') return;
+  if (operation.value === 'setup_required') {
+    return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
+  }
+  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
 }
 
 export async function stopDeploymentAction(formData: FormData) {
@@ -756,36 +856,50 @@ export async function restartDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    if (!dep) return 'missing' as const;
+    if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
     await restartProcess(dep.id, resolveSpawnSpec(dep), {
       awaitReady: false,
       workspaceId: ctx.ws.id,
     });
+    return 'restarted' as const;
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+  if (!operation.accepted || operation.value === 'missing') return;
+  if (operation.value === 'setup_required') {
+    return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
+  }
+  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
 }
 
 // Rebuild = tear the process down and spawn it fresh, re-fetching the package /
-// image (vs. Restart, which reuses the cached one). Stays on the detail page.
+// image (vs. Restart, which reuses the cached one).
 export async function rebuildDeploymentAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const deploymentId = String(formData.get('deploymentId') ?? '');
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
+    if (!dep) return 'missing' as const;
+    if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
     await restartProcess(dep.id, resolveSpawnSpec(dep, true), {
       awaitReady: false,
       workspaceId: ctx.ws.id,
     });
+    return 'rebuilt' as const;
   });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
   revalidatePath(`/app/${slug}/mcp`);
+  if (!operation.accepted || operation.value === 'missing') return;
+  if (operation.value === 'setup_required') {
+    return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
+  }
+  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
 }
 
 export async function installSkillAction(formData: FormData) {

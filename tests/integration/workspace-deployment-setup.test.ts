@@ -139,7 +139,9 @@ describe('catalog MCP deployment setup', () => {
       expect.any(Object),
       { awaitReady: false, workspaceId },
     );
-    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      `/app/${workspaceSlug}/mcp/${deployment.id}`,
+    );
   });
 
   it('keeps required-env constraints when a catalog deployment is cloned without values', async () => {

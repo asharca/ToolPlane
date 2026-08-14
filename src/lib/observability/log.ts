@@ -2,6 +2,7 @@ import 'server-only';
 import { db } from '@/lib/db';
 import { formatInTimeZone } from '@/lib/timezone';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { inspectMcpLog } from '@/lib/observability/mcp-log-entry';
 
 export async function logRequest(entry: {
   workspaceId: string;
@@ -20,9 +21,9 @@ export async function logRequest(entry: {
   }
 }
 
-export async function getDeploymentLogs(deploymentId: string, limit = 100) {
+export async function getDeploymentLogs(workspaceId: string, deploymentId: string, limit = 100) {
   return db.requestLog.findMany({
-    where: { deploymentId },
+    where: { workspaceId, deploymentId },
     orderBy: { createdAt: 'desc' },
     take: limit,
     select: {
@@ -61,6 +62,21 @@ export type DeploymentUsage = {
   avgMs: number;
 };
 
+type ObservabilityRow = {
+  deploymentId: string | null;
+  path: string;
+  statusCode: number;
+  responseBody?: string | null;
+};
+
+function hasObservabilityError(log: ObservabilityRow): boolean {
+  // Workspace API rows have no MCP JSON-RPC semantics. For a deployment row,
+  // inspect the response too: MCP tool errors commonly use HTTP 200.
+  return log.deploymentId
+    ? inspectMcpLog(log).outcome === 'error'
+    : log.statusCode >= 400;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const RECENT_LOG_LIMIT = 50;
 
@@ -87,6 +103,7 @@ export async function getObservability(
         path: true,
         statusCode: true,
         durationMs: true,
+        responseBody: true,
         createdAt: true,
       },
     }),
@@ -120,7 +137,7 @@ export async function getObservability(
   );
 
   const total = logs.length;
-  const errors = logs.filter((l) => l.statusCode >= 400).length;
+  const errors = logs.filter(hasObservabilityError).length;
   const avgMs =
     total === 0
       ? 0
@@ -136,7 +153,7 @@ export async function getObservability(
     const bucket = buckets.get(Math.floor(l.createdAt.getTime() / HOUR_MS) * HOUR_MS);
     if (bucket) {
       bucket.total += 1;
-      if (l.statusCode >= 400) bucket.errors += 1;
+      if (hasObservabilityError(l)) bucket.errors += 1;
     }
   }
   const series: HourBucket[] = [...buckets.entries()].map(([t, v]) => ({
@@ -154,7 +171,7 @@ export async function getObservability(
     const current = usage.get(log.deploymentId) ?? { total: 0, errors: 0, durationMs: 0 };
     current.total += 1;
     current.durationMs += log.durationMs;
-    if (log.statusCode >= 400) current.errors += 1;
+    if (hasObservabilityError(log)) current.errors += 1;
     usage.set(log.deploymentId, current);
   }
   const deploymentUsage: DeploymentUsage[] = deploymentRows

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Download, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -263,23 +263,21 @@ export function SystemUpdateButton() {
   };
 
   const disabled = !status?.canUpdate || uiState === 'checking' || uiState === 'updating' || uiState === 'restarting';
-  const Icon = useMemo(() => {
-    if (uiState === 'error') return TriangleAlert;
-    if (status?.updateAvailable === false) return CheckCircle2;
-    if (uiState === 'checking' || uiState === 'updating' || uiState === 'restarting') return RefreshCw;
-    return Download;
-  }, [status?.updateAvailable, uiState]);
-
-  const label = useMemo(() => {
-    if (uiState === 'checking') return t('checking');
-    if (uiState === 'updating') return t('updating');
-    if (uiState === 'restarting') return t('restartingShort');
-    if (uiState === 'error') return t('failed');
-    if (!status?.canUpdate) return t('unavailable');
-    if (status.updateAvailable === false) return t('upToDate');
-    if (status.updateAvailable === true) return t('updateAvailable');
-    return t('checkAndUpdate');
-  }, [status, t, uiState]);
+  const Icon = uiState === 'error'
+    ? TriangleAlert
+    : status?.updateAvailable === false
+      ? CheckCircle2
+      : uiState === 'checking' || uiState === 'updating' || uiState === 'restarting'
+        ? RefreshCw
+        : Download;
+  let label = t('checkAndUpdate');
+  if (uiState === 'checking') label = t('checking');
+  else if (uiState === 'updating') label = t('updating');
+  else if (uiState === 'restarting') label = t('restartingShort');
+  else if (uiState === 'error') label = t('failed');
+  else if (!status?.canUpdate) label = t('unavailable');
+  else if (status.updateAvailable === false) label = t('upToDate');
+  else if (status.updateAvailable === true) label = t('updateAvailable');
 
   const versionDetail = systemUpdateVersionDetail(
     status?.currentVersion,

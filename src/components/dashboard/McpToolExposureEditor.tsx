@@ -82,7 +82,7 @@ export function McpToolExposureEditor({
 
   if (!running) {
     return (
-      <section className="max-w-4xl border-b border-border pb-6">
+      <section className="max-w-4xl">
         <div className="flex min-w-0 items-start gap-2.5">
           <Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
@@ -99,7 +99,7 @@ export function McpToolExposureEditor({
   }
 
   return (
-    <form action={formAction} className="max-w-4xl border-b border-border pb-6">
+    <form action={formAction} className="max-w-4xl">
       <input type="hidden" name="workspace" value={workspace} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
       <input type="hidden" name="revision" value={revision} />

@@ -1,29 +1,20 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
-import { Store } from 'lucide-react';
+import { Plug, Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getDeployments } from '@/lib/workspace/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { DeployCustomMcpDialog } from '@/components/dashboard/DeployCustomMcpDialog';
-import {
-  removeDeploymentAction,
-  startDeploymentAction,
-  stopDeploymentAction,
-  restartDeploymentAction,
-} from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
+import { McpDeploymentsBrowser } from '@/components/dashboard/McpDeploymentsBrowser';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -36,18 +27,14 @@ function formatDate(d: Date, timeZone: string, locale: string): string {
   }, locale);
 }
 
-const rowButton =
-  'text-xs text-muted-foreground transition-colors hover:text-foreground';
-
 export default async function McpServersPage({
   params,
 }: {
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
-  const [t, common, locale] = await Promise.all([
+  const [t, locale] = await Promise.all([
     getTranslations('console.mcp'),
-    getTranslations('common'),
     getLocale(),
   ]);
   const user = await getCurrentUser();
@@ -56,9 +43,20 @@ export default async function McpServersPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const deployments = await getDeployments(ws.id);
-  const anyProvisioning = deployments.some(
-    (d) => effectiveStatus(d.id, d.status) === 'provisioning',
-  );
+  const deploymentItems = deployments.map((deployment) => {
+    const label = deploymentLabel(deployment);
+    return {
+      id: deployment.id,
+      name: label.name,
+      source: label.source,
+      reference: deployment.server?.slug ?? label.ref,
+      status: effectiveStatus(deployment.id, deployment.status),
+      createdAt: formatDate(deployment.createdAt, timeZone, locale),
+      iconUrl: deployment.server?.iconUrl ?? null,
+    };
+  });
+  const anyProvisioning = deploymentItems.some((deployment) => deployment.status === 'provisioning');
+  const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
 
   return (
     <>
@@ -68,7 +66,7 @@ export default async function McpServersPage({
         <DashboardToolbar
           actions={
             <>
-              <Link href={`/app/${slug}/market/mcp`} className="ui-button-secondary">
+              <Link href={marketHref} className="ui-button-secondary">
                 <Store className="size-4" />
                 {t('browseToolplane')}
               </Link>
@@ -76,18 +74,23 @@ export default async function McpServersPage({
             </>
           }
         >
-          <p className="text-sm text-muted-foreground">
-            {t('deploymentCountSummary', { count: deployments.length })}
-          </p>
+          <div>
+            <p className="text-sm text-muted-foreground">{t('serversDeployedToYourOrg')}</p>
+            <p className="mt-1 text-xs text-muted-foreground/80">
+              {t('deploymentCountSummary', { count: deployments.length })}
+            </p>
+          </div>
         </DashboardToolbar>
 
         {deployments.length === 0 ? (
           <DashboardEmptyState
-            description={t('noServersDeployedYet')}
+            icon={Plug}
+            title={t('noServersDeployedYet')}
+            description={t('serversDeployedToYourOrg')}
             actions={
               <>
                 <Link
-                  href={`/app/${slug}/market/mcp`}
+                  href={marketHref}
                   className="ui-button-secondary"
                 >
                   <Store className="size-4" />
@@ -98,109 +101,7 @@ export default async function McpServersPage({
             }
           />
         ) : (
-          <DashboardTable
-            headers={[
-              { label: t('serverColumn') },
-              { label: t('status') },
-              { label: t('created') },
-              { label: t('actions'), align: 'right' },
-            ]}
-          >
-            {deployments.map((d) => {
-              const status = effectiveStatus(d.id, d.status);
-              const isUp = status === 'running' || status === 'provisioning';
-              const label = deploymentLabel(d);
-              return (
-                <tr
-                  key={d.id}
-                  className="transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      {d.server?.iconUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={d.server.iconUrl}
-                          alt=""
-                          width={20}
-                          height={20}
-                          className="size-5 rounded object-cover"
-                        />
-                      ) : (
-                        <span className="size-5 rounded bg-muted" />
-                      )}
-                      <Link
-                        href={`/app/${slug}/mcp/${d.id}`}
-                        className="font-medium text-foreground hover:underline"
-                      >
-                        {label.name}
-                      </Link>
-                      {label.source !== 'catalog' ? (
-                        <span className="inline-flex items-center rounded-md border border-border bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium uppercase text-muted-foreground">
-                          {t.has(`source.${label.source}`) ? t(`source.${label.source}`) : label.source}
-                        </span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={status} />
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {formatDate(d.createdAt, timeZone, locale)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-3">
-                      <Link href={`/app/${slug}/mcp/${d.id}`} className={rowButton}>
-                        {t('inspect')}
-                      </Link>
-                      {isUp ? (
-                        <>
-                          <form action={stopDeploymentAction}>
-                            <input type="hidden" name="workspace" value={slug} />
-                            <input type="hidden" name="deploymentId" value={d.id} />
-                            <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
-                              {t('stop')}
-                            </SubmitButton>
-                          </form>
-                          <form action={restartDeploymentAction}>
-                            <input type="hidden" name="workspace" value={slug} />
-                            <input type="hidden" name="deploymentId" value={d.id} />
-                            <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
-                              {t('restart')}
-                            </SubmitButton>
-                          </form>
-                        </>
-                      ) : (
-                        <form action={startDeploymentAction}>
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input type="hidden" name="deploymentId" value={d.id} />
-                          <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
-                            {t('start')}
-                          </SubmitButton>
-                        </form>
-                      )}
-                      <form action={removeDeploymentAction}>
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="deploymentId" value={d.id} />
-                        <ConfirmSubmitButton
-                          triggerLabel={t('remove')}
-                          confirmLabel={common('confirm')}
-                          cancelLabel={common('cancel')}
-                          prompt={`${t('remove')} ${label.name}?`}
-                          pendingLabel={`${t('remove')}…`}
-                          className="items-center justify-end"
-                          triggerClassName={rowButton + ' hover:text-red-600'}
-                          confirmClassName="text-xs font-medium text-red-600 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                          cancelClassName={rowButton}
-                          promptClassName="max-w-40 truncate text-xs text-muted-foreground"
-                        />
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </DashboardTable>
+          <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
         )}
       </DashboardPage>
     </>

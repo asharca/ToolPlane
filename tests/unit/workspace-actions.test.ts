@@ -88,6 +88,7 @@ import {
   setDeploymentEnvAction,
   startDeploymentAction,
   restartDeploymentAction,
+  rebuildDeploymentAction,
   updateMcpToolExposureAction,
   updateMcpJsonConfigAction,
 } from '@/lib/workspace/actions';
@@ -225,7 +226,7 @@ describe('deployServerAction', () => {
       { kind: 'bridge', command: 'docker', args: [] },
       { awaitReady: false, workspaceId: 'ws1' },
     );
-    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1');
   });
 });
 
@@ -303,6 +304,7 @@ describe('removeDeploymentAction', () => {
       }),
     }));
     expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
   it('starts deployments in provisioning mode without waiting for ready', async () => {
@@ -319,6 +321,48 @@ describe('removeDeploymentAction', () => {
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
+    );
+    expect(mocks.redirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts deployments and opens the runtime log stream', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', workspaceId: 'ws1' });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'builtin' });
+
+    await restartDeploymentAction(formData('dep1'));
+
+    expect(mocks.restartProcess).toHaveBeenCalledWith(
+      'dep1',
+      { kind: 'builtin' },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
+    );
+    expect(mocks.redirect).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebuilds deployments and opens the runtime log stream', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1', workspaceId: 'ws1' });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'builtin' });
+
+    await rebuildDeploymentAction(formData('dep1'));
+
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith(
+      { id: 'dep1', workspaceId: 'ws1' },
+      true,
+    );
+    expect(mocks.restartProcess).toHaveBeenCalledWith(
+      'dep1',
+      { kind: 'builtin' },
+      { awaitReady: false, workspaceId: 'ws1' },
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
+    );
+    expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
 
   it('blocks direct starts while a catalog deployment still has empty required variables', async () => {
@@ -339,6 +383,8 @@ describe('removeDeploymentAction', () => {
     expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1?tab=variables');
+    expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
 
   it('stops a live runtime instead of restarting it with an empty required variable', async () => {
@@ -359,6 +405,8 @@ describe('removeDeploymentAction', () => {
     expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
     expect(mocks.restartProcess).not.toHaveBeenCalled();
     expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1?tab=variables');
+    expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
 
   it('enforces stored requirements after a catalog clone is detached', async () => {
@@ -853,7 +901,7 @@ describe('revealMcpJsonConfigAction', () => {
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
   });
 
-  it('returns the full config only after a workspace-scoped lookup', async () => {
+  it('returns launch configuration only after a workspace-scoped lookup', async () => {
     mocks.deploymentFindFirst.mockResolvedValue({
       source: 'config',
       sourceRef: 'npx',
@@ -878,7 +926,7 @@ describe('revealMcpJsonConfigAction', () => {
       select: { source: true, sourceRef: true, installCfg: true },
     });
     expect(result.config).toContain('secret');
-    expect(result.config).toContain('token-value');
+    expect(result.config).not.toContain('token-value');
   });
 
   it('does not reveal a config outside the current workspace', async () => {
@@ -910,7 +958,6 @@ describe('revealMcpJsonConfigAction', () => {
       source: 'docker',
       ref: 'mcp/filesystem',
       startCommand: '--token secret /tmp',
-      env: { API_TOKEN: 'secret' },
     });
   });
 
@@ -1008,7 +1055,6 @@ describe('updateMcpJsonConfigAction', () => {
     const fd = configFormData('dep1', {
       command: 'npx',
       args: ['-y', '@fangjunjie/ssh-mcp-server', '--port', '2222'],
-      env: { SSH_USER: 'root' },
     });
     fd.set('network', 'none');
     const result = await updateMcpJsonConfigAction({}, fd);
@@ -1030,7 +1076,7 @@ describe('updateMcpJsonConfigAction', () => {
         installCfg: {
           command: 'npx',
           args: ['-y', '@fangjunjie/ssh-mcp-server', '--port', '2222'],
-          env: { SSH_USER: 'root' },
+          env: {},
           network: 'none',
         },
         status: 'provisioning',
@@ -1049,10 +1095,10 @@ describe('updateMcpJsonConfigAction', () => {
     {
       source: 'npm',
       currentRef: 'old-package',
-      config: { source: 'npm', ref: '@modelcontextprotocol/server-memory', env: { TOKEN: 'value' } },
+      config: { source: 'npm', ref: '@modelcontextprotocol/server-memory' },
       network: 'none',
       expectedRef: '@modelcontextprotocol/server-memory',
-      expectedInstallCfg: { env: { TOKEN: 'value' }, network: 'none' },
+      expectedInstallCfg: { env: {}, network: 'none' },
     },
     {
       source: 'pypi',
@@ -1156,7 +1202,6 @@ describe('updateMcpJsonConfigAction', () => {
     const fd = configFormData('catalog-dep', {
       source: 'npm',
       ref: '@modelcontextprotocol/server-memory',
-      env: { MEMORY_PATH: '/tmp/memory.json' },
     });
     fd.set('network', 'none');
     const result = await updateMcpJsonConfigAction({}, fd);
@@ -1167,7 +1212,7 @@ describe('updateMcpJsonConfigAction', () => {
       data: {
         source: 'npm',
         sourceRef: '@modelcontextprotocol/server-memory',
-        installCfg: { env: { MEMORY_PATH: '/tmp/memory.json' }, network: 'none' },
+      installCfg: { env: {}, network: 'none' },
         status: 'provisioning',
       },
       include: { server: { select: { name: true } } },
@@ -1176,7 +1221,7 @@ describe('updateMcpJsonConfigAction', () => {
     expect(mocks.deploymentUpdate.mock.calls[0][0].data).not.toHaveProperty('name');
   });
 
-  it('saves catalog JSON config without rebuilding when a required variable is empty', async () => {
+  it('keeps an existing required variable while saving catalog JSON configuration', async () => {
     const deployment = {
       id: 'catalog-dep',
       workspaceId: 'ws1',
@@ -1201,15 +1246,36 @@ describe('updateMcpJsonConfigAction', () => {
     const result = await updateMcpJsonConfigAction({}, configFormData('catalog-dep', {
       source: 'npm',
       ref: 'protected-mcp',
-      env: { API_TOKEN: '' },
     }));
 
     expect(result.savedAt).toEqual(expect.any(Number));
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: 'setup_required' }),
+      data: expect.objectContaining({
+        installCfg: expect.objectContaining({ env: { API_TOKEN: 'old-secret' } }),
+        status: 'provisioning',
+      }),
     }));
-    expect(mocks.restartProcess).not.toHaveBeenCalled();
-    expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
+    expect(mocks.restartProcess).toHaveBeenCalled();
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalled();
+  });
+
+  it('rejects environment fields in an existing deployment configuration edit', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      workspaceId: 'ws1',
+      source: 'config',
+      sourceRef: 'npx',
+      installCfg: { command: 'npx', args: ['mcp-server'], env: { TOKEN: 'keep' } },
+    });
+
+    const result = await updateMcpJsonConfigAction({}, configFormData('dep1', {
+      command: 'npx',
+      args: ['mcp-server'],
+      env: { TOKEN: 'replacement' },
+    }));
+
+    expect(result).toEqual({ error: 'invalidJsonConfig' });
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects replacing the package behind a catalog identity', async () => {
@@ -1367,6 +1433,45 @@ describe('setDeploymentEnvAction', () => {
     expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
       where: { id: 'dep1' },
       data: { installCfg: { env: { API_TOKEN: 'secret' }, network: 'none' } },
+    });
+  });
+
+  it('merges a variable patch without sending existing secrets back to the browser', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      status: 'stopped',
+      installCfg: { env: { API_TOKEN: 'old-secret', KEEP_ME: 'unchanged' }, network: 'none' },
+    });
+    const fd = formData('dep1');
+    fd.set('changes', JSON.stringify({ set: { API_TOKEN: 'replacement' }, remove: [] }));
+
+    await setDeploymentEnvAction(fd);
+
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: {
+        installCfg: {
+          env: { API_TOKEN: 'replacement', KEEP_ME: 'unchanged' },
+          network: 'none',
+        },
+      },
+    });
+  });
+
+  it('removes an explicitly selected variable while preserving untouched values', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      status: 'stopped',
+      installCfg: { env: { API_TOKEN: 'old-secret', OPTIONAL: 'keep' } },
+    });
+    const fd = formData('dep1');
+    fd.set('changes', JSON.stringify({ set: {}, remove: ['API_TOKEN'] }));
+
+    await setDeploymentEnvAction(fd);
+
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: { installCfg: { env: { OPTIONAL: 'keep' } } },
     });
   });
 
