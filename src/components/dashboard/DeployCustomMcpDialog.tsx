@@ -1,9 +1,9 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, X, AlertTriangle } from 'lucide-react';
+import { Plus, X, AlertTriangle, Plug } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
 import { parseMcpJsonConfig } from '@/lib/workspace/custom-mcp';
 import { McpNetworkModeControl } from './McpNetworkModeControl';
@@ -82,11 +82,16 @@ const JSON_CONFIG_EXAMPLES = {
 } as const;
 
 const field =
-  'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
+  'w-full rounded-md border border-input bg-card px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/15';
 const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
 
 export function DeployCustomMcpDialog({ slug }: { slug: string }) {
   const t = useTranslations('console.mcp');
+  // `jsonGitHint` includes URL placeholders such as `<host>`. Read it as raw
+  // text so next-intl does not interpret those placeholders as rich-text tags.
+  const jsonGitHint = typeof t.raw === 'function'
+    ? String(t.raw('jsonGitHint'))
+    : t('jsonGitHint');
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState('');
   const [configError, setConfigError] = useState<string | null>(null);
@@ -94,6 +99,9 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
   const [runtimeFilesError, setRuntimeFilesError] = useState<string | null>(null);
   const [network, setNetwork] = useState<'isolated' | 'none'>('isolated');
   const [networkTouched, setNetworkTouched] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const configRef = useRef<HTMLTextAreaElement>(null);
+  const restoreTriggerFocus = useRef(false);
   const parsedConfig = useMemo(() => {
     if (!config.trim()) return null;
     try {
@@ -160,9 +168,31 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
     }
   };
 
+  const closeDialog = () => {
+    restoreTriggerFocus.current = true;
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    if (!open) {
+      if (restoreTriggerFocus.current) {
+        restoreTriggerFocus.current = false;
+        triggerRef.current?.focus();
+      }
+      return;
+    }
+    configRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDialog();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         className="ui-button-primary"
@@ -173,21 +203,35 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
 
       {open
         ? createPortal(
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setOpen(false)}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/35 p-4 backdrop-blur-[1px]" onClick={closeDialog}>
               <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="deploy-custom-mcp-title"
-                className="flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+                aria-describedby="deploy-custom-mcp-description"
+                className="flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="shrink-0 px-6 pt-6">
-                  <div className="mb-1 flex items-center justify-between">
-                    <h2 id="deploy-custom-mcp-title" className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('deployCustomMcp')}</h2>
-                    <button type="button" onClick={() => setOpen(false)} aria-label={t('cancel')} className="text-muted-foreground hover:text-foreground">
-                      <X className="size-5" />
-                    </button>
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-gradient-to-r from-brand-soft/70 to-transparent px-5 py-5 sm:px-6">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand text-brand-foreground shadow-sm">
+                      <Plug className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 id="deploy-custom-mcp-title" className="text-lg font-semibold tracking-tight text-foreground">{t('deployCustomMcp')}</h2>
+                      <p id="deploy-custom-mcp-description" className="mt-1 text-sm text-muted-foreground">
+                        {t('jsonSingleServerHint')}
+                      </p>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={closeDialog}
+                    aria-label={t('cancel')}
+                    className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                      <X className="size-5" />
+                  </button>
                 </div>
 
                 <form action={deployCustomServerAction} onSubmit={validateBeforeSubmit} className="flex min-h-0 flex-1 flex-col">
@@ -197,79 +241,99 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
 
                   <div
                     data-testid="deploy-custom-mcp-scroll-area"
-                    className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4"
+                    className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-6"
                   >
-                    <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    <div className="flex gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
                       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                       <span>{t('mcpCanAccessYourDataAndExecuteArbitraryCodeOnlyInstallSourcesYouTrust')}</span>
                     </div>
 
-                  <div>
-                    <label htmlFor="config" className={labelCls}>{t('jsonConfig')}</label>
-                    <details className="mb-2 rounded-md border border-zinc-200 dark:border-zinc-800">
-                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-foreground">
-                        {t('jsonExamples')}
-                      </summary>
-                      <div className="space-y-3 border-t border-zinc-200 px-3 py-3 dark:border-zinc-800">
-                        <p className="text-xs leading-5 text-muted-foreground">{t('jsonExamplesHint')}</p>
-                        {([
-                          ['npxConfig', 'jsonExampleNpxConfig'],
-                          ['npxGit', 'jsonExampleNpxGit'],
-                          ['uvxGit', 'jsonExampleUvxGit'],
-                          ['uv', 'jsonExampleUv'],
-                          ['docker', 'jsonExampleDocker'],
-                        ] as const).map(([key, label]) => (
-                          <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2">
-                            <span className="text-xs font-medium text-foreground">{t(label)}</span>
-                            <button
-                              type="button"
-                              onClick={() => setJsonConfig(JSON_CONFIG_EXAMPLES[key])}
-                              className="ui-button-secondary ui-button-sm"
-                            >
-                              {t('useJsonExample')}
-                            </button>
+                    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_12.5rem]">
+                      <section className="min-w-0 rounded-lg border border-border bg-card">
+                        <header className="flex items-start gap-3 border-b border-border px-4 py-3.5">
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-bold text-brand">1</span>
+                          <div className="min-w-0">
+                            <label htmlFor="config" className="block text-sm font-semibold text-foreground">{t('jsonConfig')}</label>
+                            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('jsonCommandHint')}</p>
                           </div>
-                        ))}
-                        <p className="text-xs leading-5 text-muted-foreground">{t('jsonGitHint')}</p>
-                      </div>
-                    </details>
-                    <textarea
-                      id="config"
-                      name="config"
-                      required
-                      value={config}
-                      onChange={(event) => setJsonConfig(event.target.value)}
-                      placeholder={JSON_CONFIG_EXAMPLES.npxConfig}
-                      spellCheck={false}
-                      aria-invalid={Boolean(configError)}
-                      aria-describedby={configError ? 'config-error' : undefined}
-                      className={`${field} min-h-48 resize-y py-3 font-mono text-xs leading-5`}
-                    />
-                    {configError ? (
-                      <p id="config-error" className="mt-1.5 text-xs text-red-600 dark:text-red-400">
-                        {configError}
-                      </p>
-                    ) : null}
-                    <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{t('jsonSingleServerHint')}</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('jsonCommandHint')}</p>
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">/{slug}{t('mcp')}{slugPreview}</p>
-                  </div>
+                        </header>
+                        <div className="space-y-3 p-4">
+                          <details className="rounded-md border border-border bg-muted/20">
+                            <summary className="cursor-pointer px-3 py-2.5 text-xs font-semibold text-foreground marker:text-muted-foreground">
+                              {t('jsonExamples')}
+                            </summary>
+                            <div className="space-y-3 border-t border-border px-3 py-3">
+                              <p className="text-xs leading-5 text-muted-foreground">{t('jsonExamplesHint')}</p>
+                              {([
+                                ['npxConfig', 'jsonExampleNpxConfig'],
+                                ['npxGit', 'jsonExampleNpxGit'],
+                                ['uvxGit', 'jsonExampleUvxGit'],
+                                ['uv', 'jsonExampleUv'],
+                                ['docker', 'jsonExampleDocker'],
+                              ] as const).map(([key, label]) => (
+                                <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2">
+                                  <span className="text-xs font-medium text-foreground">{t(label)}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setJsonConfig(JSON_CONFIG_EXAMPLES[key])}
+                                    className="ui-button-secondary ui-button-sm"
+                                  >
+                                    {t('useJsonExample')}
+                                  </button>
+                                </div>
+                              ))}
+                              <p className="text-xs leading-5 text-muted-foreground">{jsonGitHint}</p>
+                            </div>
+                          </details>
+                          <textarea
+                            ref={configRef}
+                            id="config"
+                            name="config"
+                            required
+                            value={config}
+                            onChange={(event) => setJsonConfig(event.target.value)}
+                            placeholder={JSON_CONFIG_EXAMPLES.npxConfig}
+                            spellCheck={false}
+                            aria-invalid={Boolean(configError)}
+                            aria-describedby={configError ? 'config-error' : undefined}
+                            className={`${field} min-h-48 resize-y py-3 font-mono text-xs leading-5`}
+                          />
+                          {configError ? (
+                            <p id="config-error" role="alert" className="text-xs text-red-600 dark:text-red-400">
+                              {configError}
+                            </p>
+                          ) : null}
+                        </div>
+                      </section>
+
+                      <aside className="space-y-3">
+                        <section className="rounded-lg border border-border bg-muted/30 p-3.5">
+                          <p className={labelCls}>{t('endpoint')}</p>
+                          <code className="block break-all rounded-md border border-border bg-card px-2.5 py-2 font-mono text-[11px] leading-5 text-foreground">
+                            /{slug}{t('mcp')}{slugPreview}
+                          </code>
+                          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                            {configName || t('configuration')}
+                          </p>
+                        </section>
+                      </aside>
+                    </div>
 
                   <div className="space-y-2">
-                    <details className="rounded-md border border-zinc-200 dark:border-zinc-800">
-                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-foreground">
+                    <details className="rounded-lg border border-border bg-card">
+                      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground">
                         {t('runtimeFilesOptional')}
                       </summary>
-                      <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+                      <div className="border-t border-border p-3">
                         <p className="mb-3 text-xs leading-5 text-muted-foreground">{t('runtimeFilesOptionalHint')}</p>
-                      <RuntimeFileDraftsInput
-                        value={runtimeFiles}
-                        relativePathArgumentsWork={configCommand !== 'docker'}
-                        onChange={(files) => {
-                          setRuntimeFiles(files);
-                          setRuntimeFilesError(null);
-                        }}
-                      />
+                        <RuntimeFileDraftsInput
+                          value={runtimeFiles}
+                          relativePathArgumentsWork={configCommand !== 'docker'}
+                          onChange={(files) => {
+                            setRuntimeFiles(files);
+                            setRuntimeFilesError(null);
+                          }}
+                        />
                       </div>
                     </details>
                     {runtimeFilesError ? (
@@ -279,22 +343,24 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
                     ) : null}
                   </div>
 
-                  <McpNetworkModeControl
-                    value={network}
-                    onChange={(value) => {
-                      setNetwork(value);
-                      setNetworkTouched(true);
-                    }}
-                    warnAboutPackageInstall={configCommand !== 'docker'}
-                  />
+                    <section className="rounded-lg border border-border bg-card p-4">
+                      <McpNetworkModeControl
+                        value={network}
+                        onChange={(value) => {
+                          setNetwork(value);
+                          setNetworkTouched(true);
+                        }}
+                        warnAboutPackageInstall={configCommand !== 'docker'}
+                      />
+                    </section>
                   </div>
 
                   <div
                     data-testid="deploy-custom-mcp-footer"
-                    className="flex shrink-0 justify-end gap-2 border-t border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950"
+                    className="flex shrink-0 justify-end gap-2 border-t border-border bg-card px-5 py-4 sm:px-6"
                   >
-                    <button type="button" onClick={() => setOpen(false)} className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">{t('cancel')}</button>
-                    <SubmitButton pendingLabel={t('deploying')} className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900">{t('deploy')}</SubmitButton>
+                    <button type="button" onClick={closeDialog} className="ui-button-secondary h-9 px-4">{t('cancel')}</button>
+                    <SubmitButton pendingLabel={t('deploying')} className="ui-button-primary h-9 px-4">{t('deploy')}</SubmitButton>
                   </div>
                 </form>
               </div>

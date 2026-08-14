@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   DEFAULT_HERMES_IMAGE,
@@ -37,7 +37,7 @@ export function HermesImageSelector({
   onValueChange?: (value: string) => void;
 }) {
   const t = useTranslations('console.agents');
-  const availableImages = useMemo(() => uniqueImages(images), [images]);
+  const availableImages = uniqueImages(images);
   const initialImage = value?.trim() || availableImages[0] || DEFAULT_HERMES_IMAGE;
   const isPreset = availableImages.includes(initialImage);
   const [selectedOption, setSelectedOption] = useState(

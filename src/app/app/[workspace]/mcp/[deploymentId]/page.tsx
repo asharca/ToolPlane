@@ -1,8 +1,21 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { Plug, BarChart3, CopyPlus, Pencil, Settings } from 'lucide-react';
 import Link from 'next/link';
+import {
+  Activity,
+  BarChart3,
+  CheckCircle2,
+  CircleAlert,
+  CopyPlus,
+  KeyRound,
+  LoaderCircle,
+  Pencil,
+  Play,
+  Plug,
+  RefreshCw,
+  Wrench,
+} from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
@@ -31,6 +44,7 @@ import {
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { getDeploymentLogs } from '@/lib/observability/log';
 import { DeploymentLogs } from '@/components/dashboard/DeploymentLogs';
 import { ContainerLogs } from '@/components/dashboard/ContainerLogs';
@@ -43,6 +57,15 @@ import {
   isEditableMcpSource,
   serializeMcpDeploymentConfig,
 } from '@/lib/workspace/custom-mcp';
+import {
+  parseServerRecipe,
+  storedRequiredEnvironment,
+} from '@/lib/workspace/server-recipe';
+import {
+  DashboardEmptyState,
+  DashboardPage,
+  DashboardPanel,
+} from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,16 +87,15 @@ function fmtTime(d: Date, timeZone: string, locale: string): string {
   }, locale);
 }
 
-// The gateway logs the rpc method (and tool name for tools/call) into the path
-// as `…/rpc#tools/call:toolName`. Parse it back for display.
-function parseCall(path: string): { method: string; tool?: string } {
-  const frag = path.split('#')[1] ?? '';
-  const [method, tool] = frag.split(':');
-  return { method: method || 'request', tool: tool || undefined };
-}
-
-const actionButton =
-  'inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800';
+const secondaryAction = 'ui-button-secondary h-9';
+const primaryAction = 'ui-button-primary h-9';
+const transitioningStatuses = new Set([
+  'provisioning',
+  'copying',
+  'restoring',
+  'upgrading',
+  'deleting',
+]);
 
 export default async function DeploymentInspectorPage({
   params,
@@ -82,8 +104,9 @@ export default async function DeploymentInspectorPage({
   params: Promise<{ workspace: string; deploymentId: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const [t, locale] = await Promise.all([
+  const [t, common, locale] = await Promise.all([
     getTranslations('console.mcp'),
+    getTranslations('common'),
     getLocale(),
   ]);
   const { workspace: slug, deploymentId } = await params;
@@ -98,7 +121,7 @@ export default async function DeploymentInspectorPage({
   const dep = await db.deployment.findFirst({
     where: { id: deploymentId, workspaceId: ws.id },
     include: {
-      server: { select: { name: true, slug: true } },
+      server: { select: { name: true, slug: true, installCfg: true } },
       configFiles: {
         select: { id: true, path: true, size: true, updatedAt: true },
         orderBy: { path: 'asc' },
@@ -126,18 +149,34 @@ export default async function DeploymentInspectorPage({
     env?: Record<string, string>;
     network?: string;
     command?: string;
-    sandboxId?: string;
   };
-  const envRows = Object.entries(envCfg.env ?? {}).map(([key, value]) => ({ key, value }));
-  const serializedConfig = editableConfiguration ? serializeMcpDeploymentConfig(dep) : '';
+  const declaredEnvironment = parseServerRecipe(dep.server?.installCfg)?.env
+    ?? storedRequiredEnvironment(dep.installCfg);
+  const variableKeys = [...new Set([
+    ...declaredEnvironment,
+    ...Object.keys(envCfg.env ?? {}),
+  ])].sort((left, right) => left.localeCompare(right));
+  const envRows = variableKeys.map((key) => ({
+    key,
+    configured: Boolean(envCfg.env?.[key]?.trim()),
+    required: declaredEnvironment.includes(key),
+  }));
+  const missingRequiredVariables = envRows.filter((row) => row.required && !row.configured);
+  const configuredVariables = envRows.filter((row) => row.configured).length;
+  // Credentials live in Variables after the initial deployment. Keep the
+  // editable runtime config focused on commands, references, and networking.
+  const serializedConfig = editableConfiguration
+    ? serializeMcpDeploymentConfig(dep, { includeEnv: false })
+    : '';
   const maskedConfig = editableConfiguration
-    ? serializeMcpDeploymentConfig(dep, { maskSecrets: true })
+    ? serializeMcpDeploymentConfig(dep, { maskSecrets: true, includeEnv: false })
     : '';
 
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
+  const transitioning = transitioningStatuses.has(status);
   const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
-  const logs = current === 'logs' ? await getDeploymentLogs(deploymentId) : [];
+  const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId) : [];
   const runtimeSnapshot = current === 'logs'
     ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;
@@ -147,6 +186,11 @@ export default async function DeploymentInspectorPage({
   const provisioning = status === 'provisioning';
   const setupRequired = status === 'setup_required';
   const runtimePolling = provisioning || running;
+  const sourceLabel = label.source === 'catalog'
+    ? t('catalog')
+    : ['custom', 'config', 'docker'].includes(label.source)
+      ? t(`source.${label.source}`)
+      : label.source;
 
   return (
     <>
@@ -161,78 +205,92 @@ export default async function DeploymentInspectorPage({
           { label: dep.server?.slug ?? label.name },
         ]}
       />
-      <div className="space-y-6 px-8 py-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-2">
-            <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-              {label.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-500 dark:text-zinc-400">
-              <StatusBadge status={status} />
-              <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
-              <span className="text-zinc-300 dark:text-zinc-600">·</span>
-              <span>{t('refreshedAt', { value: fmtDate(dep.updatedAt, timeZone, locale) })}</span>
+      <DashboardPage className="space-y-6">
+        <section className="ui-panel overflow-hidden">
+          <div className="flex flex-wrap items-start justify-between gap-5 px-5 py-5 sm:px-6">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+                <Plug className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">{label.name}</h1>
+                  <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {sourceLabel}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                  <StatusBadge status={status} />
+                  {label.ref ? <code className="max-w-full truncate font-mono text-xs">{label.ref}</code> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {running ? <ConnectDialog endpoint={endpoint} name={label.name} label={t('connect')} variant="outline" /> : null}
+              {transitioning ? (
+                <>
+                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
+                  {status !== 'deleting' ? (
+                    <form action={stopDeploymentAction}>
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input type="hidden" name="deploymentId" value={deploymentId} />
+                      <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
+                        {t('stop')}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </>
+              ) : setupRequired ? (
+                <Link href={`${base}?tab=variables`} className={primaryAction}>
+                  <KeyRound className="size-4" />
+                  {t('configureVariables')}
+                </Link>
+              ) : running ? (
+                <>
+                  <form action={restartDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <SubmitButton flash={false} pendingLabel={t('restarting')} className={secondaryAction}>
+                      <RefreshCw className="size-3.5" />
+                      {t('restart')}
+                    </SubmitButton>
+                  </form>
+                  <form action={stopDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
+                      {t('stop')}
+                    </SubmitButton>
+                  </form>
+                </>
+              ) : (
+                <form action={startDeploymentAction}>
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="deploymentId" value={deploymentId} />
+                  <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
+                    <Play className="size-3.5" />
+                    {t('start')}
+                  </SubmitButton>
+                </form>
+              )}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {running ? (
-              <ConnectDialog
-                endpoint={endpoint}
-                name={label.name}
-                label={t('connect')}
-                variant="outline"
-              />
-            ) : null}
-            {running ? (
-              <>
-                <form action={restartDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel={t('restarting')} className={actionButton}>
-                    {t('restart')}
-                  </SubmitButton>
-                </form>
-                <form action={stopDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel={t('stopping')} className={actionButton}>
-                    {t('stop')}
-                  </SubmitButton>
-                </form>
-              </>
-            ) : setupRequired ? (
-              <Link href={`${base}?tab=variables`} className={actionButton}>
-                {baseTabs.find((item) => item.key === 'variables')?.label}
-              </Link>
-            ) : (
-              <form action={startDeploymentAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
-                <SubmitButton flash={false} pendingLabel={t('starting')} className={actionButton}>
-                  {t('start')}
-                </SubmitButton>
-              </form>
-            )}
-            {!setupRequired ? (
-              <form action={rebuildDeploymentAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
-                <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={actionButton}>
-                  {t('rebuild')}
-                </SubmitButton>
-              </form>
-            ) : null}
-            <form action={removeDeploymentAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="deploymentId" value={deploymentId} />
-              <button className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10">
-                {t('remove')}
-              </button>
-            </form>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3 sm:px-6">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('endpoint')}</p>
+              <div className="mt-1 flex min-w-0 items-center gap-2">
+                <code className="max-w-[min(42rem,70vw)] truncate font-mono text-xs text-foreground">{endpoint}</code>
+                <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('configurationUpdatedAt', { value: fmtDate(dep.updatedAt, timeZone, locale) })}</p>
           </div>
-        </div>
+        </section>
 
-        <TabBar tabs={tabs} current={current} basePath={base} />
+        <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
+          <TabBar tabs={tabs} current={current} basePath={base} />
+        </div>
 
         {provisioning ? (
           <section className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
@@ -253,64 +311,122 @@ export default async function DeploymentInspectorPage({
 
         {current === 'overview' ? (
           <div className="space-y-5">
-            <ReadyToConnectBanner
-              noun="server"
-              endpoint={endpoint}
-              name={label.name}
-              status={status}
-            />
+            {running ? (
+              <ReadyToConnectBanner
+                noun="server"
+                endpoint={endpoint}
+                name={label.name}
+                status={status}
+              />
+            ) : null}
 
-            <section
-              id="identity"
-              className="rounded-lg border border-zinc-200 dark:border-zinc-800"
-            >
-              <header className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  {t('identity')}
-                </h2>
-              </header>
-              <dl className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                  <dt className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {t('endpoint')}
-                  </dt>
-                  <dd className="flex items-center gap-2">
-                    <code className="max-w-[28rem] truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                      {endpoint}
-                    </code>
-                    <CopyButton text={endpoint} />
-                  </dd>
+            <DashboardPanel title={t('nextStep')} description={t('nextStepDescription')} bodyClassName="py-4">
+              {setupRequired ? (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-300" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t('variablesNeedAttention', { count: missingRequiredVariables.length })}</p>
+                      {missingRequiredVariables.length ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{missingRequiredVariables.map((row) => row.key).join(' · ')}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <Link href={`${base}?tab=variables`} className={primaryAction}>
+                    <KeyRound className="size-4" />
+                    {t('configureVariables')}
+                  </Link>
                 </div>
-                <div className="flex items-center justify-between gap-3 px-4 py-3">
-                  <dt className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {t('created')}
-                  </dt>
-                  <dd className="text-sm text-zinc-700 dark:text-zinc-300">
-                    {fmtDate(dep.createdAt, timeZone, locale)}
-                  </dd>
+              ) : transitioning ? (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-brand" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t('runtimeStartingDescription')}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t('runtimeStartingHint')}</p>
+                    </div>
+                  </div>
+                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
                 </div>
-              </dl>
-            </section>
+              ) : status === 'error' ? (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t('runtimeErrorDescription')}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t('runtimeErrorHint')}</p>
+                    </div>
+                  </div>
+                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
+                </div>
+              ) : running ? (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t('runningNextStep')}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t('runningNextStepHint')}</p>
+                    </div>
+                  </div>
+                  <ConnectDialog endpoint={endpoint} name={label.name} label={t('connect')} variant="outline" />
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <Play className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t('stoppedNextStep')}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t('stoppedNextStepHint')}</p>
+                    </div>
+                  </div>
+                  <form action={startDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
+                      <Play className="size-3.5" />
+                      {t('start')}
+                    </SubmitButton>
+                  </form>
+                </div>
+              )}
+            </DashboardPanel>
 
-            <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 px-4 py-4 dark:border-zinc-800">
-              <div className="flex items-start gap-3">
-                <BarChart3 className="mt-0.5 size-4 text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    {t('trackRequestsLatencyAndErrors')}
-                  </p>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {t('viewToolCallsLatencyAndErrorsInObservability')}
-                  </p>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <DashboardPanel title={t('connectionDetails')}>
+                <dl className="divide-y divide-border text-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                    <dt className="text-muted-foreground">{t('endpoint')}</dt>
+                    <dd className="flex max-w-full items-center gap-2">
+                      <code className="max-w-[20rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
+                      <CopyButton text={endpoint} />
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
+                    <dt className="text-muted-foreground">{t('created')}</dt>
+                    <dd className="text-foreground">{fmtDate(dep.createdAt, timeZone, locale)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
+                    <dt className="text-muted-foreground">{t('apiToken')}</dt>
+                    <dd>
+                      <Link href={`/app/${slug}/settings/tokens`} className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:underline">
+                        <KeyRound className="size-3.5" />
+                        {t('manageTokens')}
+                      </Link>
+                    </dd>
+                  </div>
+                </dl>
+              </DashboardPanel>
+
+              <DashboardPanel title={t('requestActivity')} description={t('requestActivityDescription')} bodyClassName="py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <BarChart3 className="mt-0.5 size-5 text-muted-foreground" />
+                    <p className="max-w-sm text-sm leading-6 text-muted-foreground">{t('viewToolCallsLatencyAndErrorsInObservability')}</p>
+                  </div>
+                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('openObservability')}</Link>
                 </div>
-              </div>
-              <Link
-                href={`/app/${slug}/observability?deploymentId=${deploymentId}`}
-                className={actionButton}
-              >
-                {t('openObservability')}
-              </Link>
-            </section>
+              </DashboardPanel>
+            </div>
           </div>
         ) : null}
 
@@ -327,6 +443,8 @@ export default async function DeploymentInspectorPage({
               requiresReveal={serializedConfig !== maskedConfig}
               initialNetwork={envCfg.network === 'none' ? 'none' : 'isolated'}
               warnAboutPackageInstall={dep.source !== 'docker'}
+              variablesHref={`${base}?tab=variables`}
+              configuredVariables={configuredVariables}
             />
             <RuntimeFilesEditor
               workspace={slug}
@@ -343,59 +461,65 @@ export default async function DeploymentInspectorPage({
         ) : null}
 
         {current === 'tools' ? (
-          <section className="space-y-6">
-            <div className="mb-3 flex items-center gap-2">
-              <Plug className="size-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {t('tools')} {tools.length > 0 ? `(${tools.length})` : ''}
-              </h2>
-            </div>
-            <McpToolExposureEditor
-              workspace={slug}
-              deploymentId={deploymentId}
-              tools={tools}
-              initialMode={dep.mcpToolExposure}
-              initialAllowedTools={dep.mcpAllowedTools}
-              initialPublicInvocable={dep.publicInvocable}
-              running={running}
-            />
+          <div className="space-y-6">
+            <section className="ui-panel overflow-hidden">
+              <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">{t('toolAccess')}</h2>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('toolAccessDescription')}</p>
+                  </div>
+                </div>
+                {running ? (
+                  <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                    {t('toolsCount', { count: tools.length })}
+                  </span>
+                ) : null}
+              </header>
+              <div className="px-5 py-5">
+                <McpToolExposureEditor
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  tools={tools}
+                  initialMode={dep.mcpToolExposure}
+                  initialAllowedTools={dep.mcpAllowedTools}
+                  initialPublicInvocable={dep.publicInvocable}
+                  running={running}
+                />
+              </div>
+            </section>
+
             {running ? (
-              <div>
-                <h3 className="mb-3 text-sm font-semibold text-foreground">{t('manualToolTesting')}</h3>
-                <ToolPlayground workspace={slug} deploymentId={deploymentId} tools={tools} />
-              </div>
+              <section className="ui-panel overflow-hidden">
+                <header className="border-b border-border px-5 py-4">
+                  <h2 className="text-sm font-semibold text-foreground">{t('manualToolTesting')}</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('manualToolTestingDescription')}</p>
+                </header>
+                <div className="px-5 py-5">
+                  <ToolPlayground workspace={slug} deploymentId={deploymentId} tools={tools} />
+                </div>
+              </section>
             ) : (
-              <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {t('deploymentNotRunningTools', {
-                    status: status === 'stopped'
-                      ? t('stopped')
-                      : status === 'error'
-                        ? t('error')
-                        : status,
-                  })}
-                </p>
-              </div>
+              <DashboardEmptyState
+                icon={Wrench}
+                title={t('toolsUnavailable')}
+                description={t('deploymentNotRunningTools', { status })}
+                actions={(
+                  <Link href={`${base}?tab=logs`} className="ui-button-secondary">
+                    {t('viewRuntimeLogs')}
+                  </Link>
+                )}
+                className="min-h-44"
+              />
             )}
-          </section>
+          </div>
         ) : null}
 
         {current === 'settings' ? (
-          <div className="max-w-3xl divide-y divide-border">
-            <section className="pb-6">
-              <div className="flex items-center gap-2">
-                <Settings className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('generalSettings')}
-                </h2>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('renameMcpDescription')}
-              </p>
-              <form
-                action={renameDeploymentAction}
-                className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
-              >
+          <div className="max-w-4xl space-y-5">
+            <DashboardPanel title={t('generalSettings')} description={t('renameMcpDescription')}>
+              <form action={renameDeploymentAction} className="flex max-w-xl flex-col items-stretch gap-3 sm:flex-row sm:items-end">
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
@@ -410,28 +534,15 @@ export default async function DeploymentInspectorPage({
                     className="ui-input h-9 min-w-0 text-sm"
                   />
                 </label>
-                <SubmitButton
-                  pendingLabel={t('renaming')}
-                  savedLabel={t('renamed')}
-                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
-                >
+                <SubmitButton pendingLabel={t('renaming')} savedLabel={t('renamed')} className={`${secondaryAction} shrink-0`}>
                   <Pencil className="size-3.5" />
                   {t('rename')}
                 </SubmitButton>
               </form>
-            </section>
+            </DashboardPanel>
 
-            <section className="py-6">
-              <div className="flex items-center gap-2">
-                <CopyPlus className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">
-                  {t('cloneMcp')}
-                </h2>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('cloneMcpDescription')}
-              </p>
-              <form action={cloneDeploymentAction} className="mt-4 max-w-xl space-y-4">
+            <DashboardPanel title={t('cloneMcp')} description={t('cloneMcpDescription')}>
+              <form action={cloneDeploymentAction} className="max-w-xl space-y-4">
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
                 <input type="hidden" name="copyEnvironmentVariables" value="false" />
@@ -448,101 +559,114 @@ export default async function DeploymentInspectorPage({
                     className="ui-input h-9 text-sm"
                   />
                 </label>
+                <p className="rounded-md border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                  {t('cloneSensitiveDataHint')}
+                </p>
                 <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input
-                    type="checkbox"
-                    name="copyEnvironmentVariables"
-                    value="true"
-                    defaultChecked
-                    className="mt-0.5 size-4 rounded border-border accent-brand"
-                  />
+                  <input type="checkbox" name="copyEnvironmentVariables" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
                   <span>
-                    <span className="block text-sm font-medium text-foreground">
-                      {t('copyEnvironmentVariables')}
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                      {t('copyEnvironmentVariablesDescription')}
-                    </span>
+                    <span className="block text-sm font-medium text-foreground">{t('copyEnvironmentVariables')}</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyEnvironmentVariablesDescription')}</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input
-                    type="checkbox"
-                    name="copyRuntimeFiles"
-                    value="true"
-                    defaultChecked
-                    className="mt-0.5 size-4 rounded border-border accent-brand"
-                  />
+                  <input type="checkbox" name="copyRuntimeFiles" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
                   <span>
-                    <span className="block text-sm font-medium text-foreground">
-                      {t('copyRuntimeFiles')}
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                      {t('copyRuntimeFilesDescription')}
-                    </span>
+                    <span className="block text-sm font-medium text-foreground">{t('copyRuntimeFiles')}</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyRuntimeFilesDescription')}</span>
                   </span>
                 </label>
-                <SubmitButton
-                  flash={false}
-                  pendingLabel={t('cloning')}
-                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
-                >
+                <SubmitButton flash={false} pendingLabel={t('cloning')} className={secondaryAction}>
                   <CopyPlus className="size-3.5" />
                   {t('clone')}
                 </SubmitButton>
               </form>
-            </section>
+            </DashboardPanel>
+
+            <DashboardPanel title={t('maintenance')} description={t('maintenanceDescription')}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <Activity className="mt-0.5 size-4 text-muted-foreground" />
+                  <p className="max-w-xl text-sm leading-6 text-muted-foreground">{t('rebuildDescription')}</p>
+                </div>
+                <form action={rebuildDeploymentAction}>
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="deploymentId" value={deploymentId} />
+                  <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={secondaryAction}>
+                    <RefreshCw className="size-3.5" />
+                    {t('rebuild')}
+                  </SubmitButton>
+                </form>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel title={t('dangerZone')} description={t('removeMcpDescription')} tone="danger" bodyClassName="py-4">
+              <form action={removeDeploymentAction} className="flex flex-wrap items-center justify-between gap-4">
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{t('removeMcpWarning')}</p>
+                <ConfirmSubmitButton
+                  triggerLabel={t('remove')}
+                  confirmLabel={common('confirm')}
+                  cancelLabel={common('cancel')}
+                  prompt={t('removeMcpPrompt', { name: label.name })}
+                  pendingLabel={t('removing')}
+                  className="items-center"
+                  triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
+                  confirmClassName="inline-flex h-9 items-center rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                  cancelClassName="ui-button-secondary h-9"
+                />
+              </form>
+            </DashboardPanel>
           </div>
         ) : null}
 
         {current === 'logs' ? (
-          <div className="space-y-8">
-            <ContainerLogs
-              key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
-              deploymentId={deploymentId}
-              initialSnapshot={runtimeSnapshot}
-              initialStatus={status}
-              title={t('runtimeLogs')}
-              refreshLabel={t('refreshLogs')}
-              emptyLabel={t('noRuntimeLogsYet')}
-              unavailableLabel={t('runtimeUnavailable')}
-              statusLabel={t('runtimeStatus')}
-              phaseLabel={t('runtimePhase')}
-              imageStateLabel={t('runtimeImageState')}
-              containerStateLabel={t('runtimeContainerState')}
-              syncErrorLabel={t('runtimeLogSyncFailed')}
-              truncatedLabel={t('runtimeLogTruncated')}
-            />
+          <div className="space-y-6">
+            <section id="runtime-logs" className="ui-panel scroll-mt-6 px-5 py-5">
+              <ContainerLogs
+                key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
+                deploymentId={deploymentId}
+                initialSnapshot={runtimeSnapshot}
+                initialStatus={status}
+                title={t('runtimeLogs')}
+                refreshLabel={t('refreshLogs')}
+                emptyLabel={t('noRuntimeLogsYet')}
+                unavailableLabel={t('runtimeUnavailable')}
+                statusLabel={t('runtimeStatus')}
+                phaseLabel={t('runtimePhase')}
+                imageStateLabel={t('runtimeImageState')}
+                containerStateLabel={t('runtimeContainerState')}
+                syncErrorLabel={t('runtimeLogSyncFailed')}
+                truncatedLabel={t('runtimeLogTruncated')}
+              />
+            </section>
 
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>
-              {logs.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-zinc-200 py-16 text-center dark:border-zinc-700">
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
-                  </p>
-                </div>
-              ) : (
-                <DeploymentLogs
-                  logs={logs.map((l) => {
-                    const call = parseCall(l.path);
-                    return {
-                      id: l.id,
-                      time: fmtTime(l.createdAt, timeZone, locale),
-                      method: call.method,
-                      tool: call.tool,
-                      statusCode: l.statusCode,
-                      durationMs: l.durationMs,
-                      request: l.requestBody,
-                      response: l.responseBody,
-                    };
-                  })}
-                />
-              )}
+            <section className="ui-panel overflow-hidden">
+              <header className="border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('requestLogsDescription')}</p>
+              </header>
+              <div className="px-5 py-5">
+                {logs.length === 0 ? (
+                  <div className="ui-empty min-h-48">
+                    <p className="text-sm text-muted-foreground">
+                      {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
+                    </p>
+                  </div>
+                ) : (
+                  <DeploymentLogs
+                    logs={logs.map((log) => ({
+                      ...log,
+                      time: fmtTime(log.createdAt, timeZone, locale),
+                    }))}
+                  />
+                )}
+              </div>
             </section>
           </div>
         ) : null}
-      </div>
+      </DashboardPage>
     </>
   );
 }

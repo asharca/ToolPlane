@@ -38,6 +38,27 @@ describe('McpJsonConfigEditor', () => {
     expect(screen.getByRole('button', { name: 'Save and rebuild' })).toBeInTheDocument();
   });
 
+  it('links to the dedicated variable editor instead of showing credentials in JSON', () => {
+    render(
+      <McpJsonConfigEditor
+        slug="acme"
+        deploymentId="dep1"
+        maskedConfig={JSON.stringify({ command: 'npx', args: ['mcp-server'] })}
+        requiresReveal={false}
+        initialNetwork="isolated"
+        warnAboutPackageInstall={false}
+        variablesHref="/app/acme/mcp/dep1?tab=variables"
+        configuredVariables={2}
+      />,
+    );
+
+    expect(screen.getByText('Environment variables are managed separately')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Manage variables' })).toHaveAttribute(
+      'href',
+      '/app/acme/mcp/dep1?tab=variables',
+    );
+  });
+
   it('allows the runtime network mode to be changed independently of JSON', () => {
     render(
       <McpJsonConfigEditor

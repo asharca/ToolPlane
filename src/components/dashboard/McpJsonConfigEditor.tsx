@@ -2,7 +2,8 @@
 
 import { useActionState, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
-import { Eye, Loader2, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { Eye, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import {
   revealMcpJsonConfigAction,
   updateMcpJsonConfigAction,
@@ -29,6 +30,8 @@ export function McpJsonConfigEditor({
   requiresReveal,
   initialNetwork,
   warnAboutPackageInstall,
+  variablesHref,
+  configuredVariables = 0,
 }: {
   slug: string;
   deploymentId: string;
@@ -36,6 +39,8 @@ export function McpJsonConfigEditor({
   requiresReveal: boolean;
   initialNetwork: McpNetworkMode;
   warnAboutPackageInstall: boolean;
+  variablesHref?: string;
+  configuredVariables?: number;
 }) {
   const t = useTranslations('console.mcp');
   const [state, formAction, isPending] = useActionState<McpJsonConfigActionState, FormData>(
@@ -68,22 +73,43 @@ export function McpJsonConfigEditor({
   };
 
   return (
-    <form action={formAction} className="max-w-4xl space-y-4">
+    <form action={formAction} className="ui-panel max-w-4xl overflow-hidden">
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
-      <McpNetworkModeControl
-        value={network}
-        onChange={(value) => {
-          setNetwork(value);
-          setLastEditAt(Date.now());
-        }}
-        disabled={isPending}
-        warnAboutPackageInstall={warnAboutPackageInstall}
-      />
-      <div>
-        <p className="mb-2 text-sm font-semibold text-foreground">
-          {t('jsonConfig')}
-        </p>
+      <header className="border-b border-border px-5 py-4">
+        <h2 className="text-sm font-semibold text-foreground">{t('configuration')}</h2>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('configurationDescription')}</p>
+      </header>
+      <div className="space-y-5 px-5 py-5">
+        {variablesHref ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/25 px-3 py-3">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('variablesManagedSeparately')}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {t('configuredVariableCount', { count: configuredVariables })}
+                </p>
+              </div>
+            </div>
+            <Link href={variablesHref} className="ui-button-secondary ui-button-sm shrink-0">
+              {t('manageVariables')}
+            </Link>
+          </div>
+        ) : null}
+        <McpNetworkModeControl
+          value={network}
+          onChange={(value) => {
+            setNetwork(value);
+            setLastEditAt(Date.now());
+          }}
+          disabled={isPending}
+          warnAboutPackageInstall={warnAboutPackageInstall}
+        />
+        <div>
+          <p className="mb-2 text-sm font-semibold text-foreground">
+            {t('jsonConfig')}
+          </p>
         {revealed ? (
           <textarea
             id="mcp-json-config"
@@ -121,30 +147,33 @@ export function McpJsonConfigEditor({
             </button>
           </>
         )}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-h-5">
-          {error ? (
-            <p id="mcp-json-config-error" className="text-sm text-red-600 dark:text-red-400" role="alert">
-              {error}
-            </p>
-          ) : state.savedAt && state.savedAt > lastEditAt ? (
-            <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
-              {t('configurationSavedAndRebuildSubmitted')}
-            </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-h-5">
+            {error ? (
+              <p id="mcp-json-config-error" className="text-sm text-red-600 dark:text-red-400" role="alert">
+                {error}
+              </p>
+            ) : state.savedAt && state.savedAt > lastEditAt ? (
+              <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+                {state.requiresSetup
+                  ? t('configurationSavedVariablesRequired')
+                  : t('configurationSavedAndRebuildSubmitted')}
+              </p>
+            ) : null}
+          </div>
+          {revealed ? (
+            <SubmitButton
+              error={error}
+              flash={false}
+              pendingLabel={t('savingAndRebuilding')}
+              className="ui-button-primary h-9"
+            >
+              <RefreshCw className="size-4" />
+              {t('saveAndRebuild')}
+            </SubmitButton>
           ) : null}
         </div>
-        {revealed ? (
-          <SubmitButton
-            error={error}
-            flash={false}
-            pendingLabel={t('savingAndRebuilding')}
-            className="ui-button-primary h-9"
-          >
-            <RefreshCw className="size-4" />
-            {t('saveAndRebuild')}
-          </SubmitButton>
-        ) : null}
       </div>
     </form>
   );

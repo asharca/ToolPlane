@@ -308,19 +308,6 @@ export default async function ObservabilityPage({
                     second: '2-digit',
                   }, dateLocale),
                 }))}
-                labels={{
-                  expand: t('expandLog'),
-                  collapse: t('collapseLog'),
-                  server: t('server'),
-                  path: t('path'),
-                  method: t('method'),
-                  status: t('status'),
-                  duration: t('duration'),
-                  time: t('time'),
-                  request: t('request'),
-                  response: t('response'),
-                  openServer: t('openServer'),
-                }}
               />
             )}
           </DashboardPanel>

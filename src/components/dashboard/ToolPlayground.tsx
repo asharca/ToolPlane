@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Play, Loader2 } from 'lucide-react';
 import { runMcpConsoleToolAction } from '@/lib/workspace/actions';
@@ -51,10 +51,7 @@ export function ToolPlayground({
   const t = useTranslations('console.mcp');
   const argumentsId = useId();
   const [selected, setSelected] = useState(tools[0]?.name ?? '');
-  const current = useMemo(
-    () => tools.find((t) => t.name === selected),
-    [tools, selected],
-  );
+  const current = tools.find((tool) => tool.name === selected);
   const [args, setArgs] = useState(() => skeletonArgs(tools[0]));
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

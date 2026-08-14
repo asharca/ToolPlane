@@ -173,7 +173,7 @@ function serializedArgs(value: unknown, maskSecrets: boolean): string[] {
 
 export function serializeMcpJsonConfig(
   installCfg: unknown,
-  options: { maskSecrets?: boolean } = {},
+  options: { maskSecrets?: boolean; includeEnv?: boolean } = {},
 ): string {
   const stored = (installCfg ?? {}) as {
     command?: unknown;
@@ -187,13 +187,13 @@ export function serializeMcpJsonConfig(
   return JSON.stringify({
     command,
     args,
-    ...(Object.keys(env).length ? { env } : {}),
+    ...(options.includeEnv !== false && Object.keys(env).length ? { env } : {}),
   }, null, 2);
 }
 
 export function serializeMcpDeploymentConfig(
   deployment: { source: string | null; sourceRef: string | null; installCfg: unknown },
-  options: { maskSecrets?: boolean } = {},
+  options: { maskSecrets?: boolean; includeEnv?: boolean } = {},
 ): string {
   if (deployment.source === 'config') {
     return serializeMcpJsonConfig(deployment.installCfg, options);
@@ -215,7 +215,7 @@ export function serializeMcpDeploymentConfig(
     source: deployment.source,
     ref: deployment.sourceRef ?? '',
     ...(deployment.source === 'docker' && startCommand ? { startCommand } : {}),
-    ...(Object.keys(env).length ? { env } : {}),
+    ...(options.includeEnv !== false && Object.keys(env).length ? { env } : {}),
   }, null, 2);
 }
 
@@ -337,7 +337,11 @@ function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
   return 'mcp-server';
 }
 
-export function parseMcpJsonConfig(raw: string, fallbackName?: string): ParsedCustomMcp {
+export function parseMcpJsonConfig(
+  raw: string,
+  fallbackName?: string,
+  options: { allowEnvironment?: boolean } = {},
+): ParsedCustomMcp {
   let document: unknown;
   try {
     document = JSON.parse(raw);
@@ -382,7 +386,12 @@ export function parseMcpJsonConfig(raw: string, fallbackName?: string): ParsedCu
     config = value as Record<string, unknown>;
   }
 
-  const allowedKeys = new Set(['command', 'args', 'env', 'network']);
+  const allowedKeys = new Set([
+    'command',
+    'args',
+    ...(options.allowEnvironment === false ? [] : ['env']),
+    'network',
+  ]);
   const unknownKey = Object.keys(config).find((key) => !allowedKeys.has(key));
   if (unknownKey) return configError(`unsupported field: ${unknownKey}.`);
 
@@ -414,9 +423,10 @@ export function parseMcpDeploymentConfig(
   expectedSource: EditableMcpSource,
   fallbackName?: string,
   networkOverride?: unknown,
+  options: { allowEnvironment?: boolean } = {},
 ): ParsedMcpDeploymentConfig {
   if (expectedSource === 'config') {
-    const parsed = parseMcpJsonConfig(raw, fallbackName);
+    const parsed = parseMcpJsonConfig(raw, fallbackName, options);
     if (!parsed.installCfg || !('command' in parsed.installCfg)) {
       return configError('the command configuration is invalid.');
     }
@@ -439,7 +449,13 @@ export function parseMcpDeploymentConfig(
     return configError('the top level must be an object.');
   }
   const config = document as Record<string, unknown>;
-  const allowedKeys = new Set(['source', 'ref', 'startCommand', 'env', 'network']);
+  const allowedKeys = new Set([
+    'source',
+    'ref',
+    'startCommand',
+    ...(options.allowEnvironment === false ? [] : ['env']),
+    'network',
+  ]);
   const unknownKey = Object.keys(config).find((key) => !allowedKeys.has(key));
   if (unknownKey) return configError(`unsupported field: ${unknownKey}.`);
   if (config.source !== expectedSource) {
