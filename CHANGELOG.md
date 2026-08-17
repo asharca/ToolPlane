@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.7](https://github.com/asharca/ToolPlane/releases/tag/v0.21.7) (2026-08-17)
+
+### What's Changed
+* fix: start the Hermes dashboard broker on boot by @renhedata in https://github.com/asharca/ToolPlane/pull/86
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.6...v0.21.7
+
 ## [0.21.6](https://github.com/asharca/ToolPlane/releases/tag/v0.21.6) (2026-08-17)
 
 ### What's Changed
