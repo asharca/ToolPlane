@@ -64,6 +64,8 @@ export async function registerNode() {
   try {
     const { ensureConnectorBroker } = await import('@/lib/sandboxes/connector-broker');
     await ensureConnectorBroker();
+    const { ensureHermesDashboardBroker } = await import('@/lib/agents/hermes/dashboard-broker');
+    await ensureHermesDashboardBroker();
     const { ensureSandboxNetwork } = await import('@/lib/process/supervisor');
     await ensureSandboxNetwork();
     const { cleanupHermesArchiveStaging } = await import('@/lib/agents/hermes/archive');
