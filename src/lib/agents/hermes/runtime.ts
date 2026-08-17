@@ -674,6 +674,7 @@ async function validateHermesConfigCompatibility(params: {
   await runDocker([
     'run', '--rm', '--network', 'none', '--read-only',
     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+    '--user', 'hermes',
     ...HERMES_SYNC_CONTAINER_RESOURCE_LIMITS,
     '-v', `${sandboxVolumeName(params.sandboxId)}:/opt/data:ro`,
     '--env', 'HERMES_HOME=/opt/data',
