@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.4](https://github.com/asharca/ToolPlane/releases/tag/v0.21.4) (2026-08-17)
+
+### What's Changed
+* fix(hermes): make dashboard runtime files reliable by @renhedata in https://github.com/asharca/ToolPlane/pull/83
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.3...v0.21.4
+
 ## [0.21.3](https://github.com/asharca/ToolPlane/releases/tag/v0.21.3) (2026-08-17)
 
 ### What's Changed
