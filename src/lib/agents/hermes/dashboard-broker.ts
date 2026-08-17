@@ -483,12 +483,17 @@ function setSecurityHeaders(res: ServerResponse, parentOrigin: string) {
   res.setHeader('x-content-type-options', 'nosniff');
 }
 
-function injectSettingsEscapeBridge(html: string): string {
-  if (html.includes(SETTINGS_CLOSE_MESSAGE)) return html;
+function rewriteDashboardAssetUrls(body: string, prefix: string): string {
+  return body.replace(/(["'(])\/assets\//g, `$1${prefix}/assets/`);
+}
+
+function injectSettingsEscapeBridge(html: string, prefix: string): string {
+  const rewritten = rewriteDashboardAssetUrls(html, prefix);
+  if (rewritten.includes(SETTINGS_CLOSE_MESSAGE)) return rewritten;
   const bridge = `<script>window.addEventListener("keydown",function(event){if(event.key==="Escape"){event.preventDefault();event.stopPropagation();window.parent.postMessage("${SETTINGS_CLOSE_MESSAGE}","*");}},true);</script>`;
-  return html.includes('</head>')
-    ? html.replace('</head>', `${bridge}</head>`)
-    : `${bridge}${html}`;
+  return rewritten.includes('</head>')
+    ? rewritten.replace('</head>', `${bridge}</head>`)
+    : `${bridge}${rewritten}`;
 }
 
 async function readRequestBody(req: IncomingMessage): Promise<ArrayBuffer | undefined> {
@@ -1001,7 +1006,14 @@ async function sendDashboardResponse(
   if (contentType.includes('text/html')) {
     res.removeHeader('etag');
     res.setHeader('cache-control', 'no-store');
-    res.end(injectSettingsEscapeBridge(await upstream.text()));
+    res.end(injectSettingsEscapeBridge(await upstream.text(), prefix));
+    return;
+  }
+
+  if (contentType.includes('text/css')) {
+    res.removeHeader('etag');
+    res.setHeader('cache-control', 'no-store');
+    res.end(rewriteDashboardAssetUrls(await upstream.text(), prefix));
     return;
   }
 

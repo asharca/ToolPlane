@@ -195,7 +195,7 @@ if replace_model:
     else:
         current.pop("model", None)
 
-for section in ("agent", "approvals", "tool_loop_guardrails"):
+for section in ("agent", "approvals", "tool_loop_guardrails", "platforms"):
     incoming = managed.get(section, {})
     existing = current.get(section)
     if not isinstance(existing, dict):
@@ -755,6 +755,22 @@ async function installProjection(params: {
 }) {
   const volume = sandboxVolumeName(params.sandboxId);
   const initContainer = sandboxSyncContainerName(params.sandboxId);
+  const hermesOwnedPaths = [
+    '/opt/data/config.yaml',
+    '/opt/data/.env',
+    '/opt/data/.toolplane-env-keys.json',
+    '/opt/data/SOUL.md',
+    '/opt/data/cron',
+    '/opt/data/sessions',
+    '/opt/data/logs',
+    '/opt/data/memories',
+    '/opt/data/pairing',
+    '/opt/data/hooks',
+    '/opt/data/image_cache',
+    '/opt/data/audio_cache',
+    '/opt/data/skills',
+    '/opt/data/skill-bundles',
+  ].join(' ');
   await runDocker(['volume', 'create', volume], undefined, DOCKER_TIMEOUT_MS, params.signal);
   params.signal?.throwIfAborted();
   await runDocker(['rm', '-f', initContainer]).catch(() => undefined);
@@ -767,7 +783,7 @@ async function installProjection(params: {
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml',
     '/opt/hermes/.venv/bin/python -c "from hermes_cli import config; migrate = getattr(config, \'migrate_config\', None); migrate(interactive=False, quiet=True) if callable(migrate) else None"',
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json',
-    'if id hermes >/dev/null 2>&1; then chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/skills /opt/data/skill-bundles /opt/data/memories /opt/data/workspace 2>/dev/null || true; fi',
+    `if id hermes >/dev/null 2>&1; then for path in ${hermesOwnedPaths}; do [ ! -e "$path" ] || chown -R "$(id -u hermes):$(id -g hermes)" "$path"; done; chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/workspace 2>/dev/null || true; fi`,
   ].join(' && ');
   await runDocker([
     'create', '--name', initContainer, '--network', 'none',

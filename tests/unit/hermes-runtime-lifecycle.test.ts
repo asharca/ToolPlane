@@ -313,6 +313,18 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(String(syncCreate?.[1]?.at(-1))).toContain(
       "migrate(interactive=False, quiet=True) if callable(migrate) else None",
     );
+    expect(String(syncCreate?.[1]?.at(-1))).toContain(
+      'for path in /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/SOUL.md /opt/data/cron /opt/data/sessions /opt/data/logs /opt/data/memories /opt/data/pairing /opt/data/hooks /opt/data/image_cache /opt/data/audio_cache /opt/data/skills /opt/data/skill-bundles; do',
+    );
+    expect(String(syncCreate?.[1]?.at(-1))).toContain(
+      '[ ! -e "$path" ] || chown -R "$(id -u hermes):$(id -g hermes)" "$path"; done; chown -R',
+    );
+    expect(String(syncCreate?.[1]?.at(-1))).not.toContain(
+      'chown -R "$(id -u hermes):$(id -g hermes)" /opt/data; fi',
+    );
+    expect(String(syncCreate?.[1]?.at(-1))).toContain(
+      'chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/workspace 2>/dev/null || true; fi',
+    );
     expect(mocks.sandboxUpdateMany).toHaveBeenLastCalledWith({
       where: { id: 'sandbox-1', workspaceId: 'workspace-1' },
       data: { config: { env: { EXISTING: 'value' } } },

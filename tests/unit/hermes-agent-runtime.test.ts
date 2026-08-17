@@ -105,6 +105,7 @@ describe('Hermes agent runtime contract', () => {
     expect(config).toContain('"claude-haiku": {}');
     expect(config).toContain('Authorization: "Bearer runtime-token"');
     expect(config).toContain('hard_stop_enabled: true');
+    expect(config).toContain('platforms:\n  api_server:\n    enabled: true');
     expect(config).not.toContain('system_prompt');
   });
 
