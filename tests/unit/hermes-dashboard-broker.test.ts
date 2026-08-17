@@ -51,6 +51,9 @@ function serveDashboardHtml(req: http.IncomingMessage, res: http.ServerResponse)
     etag: 'upstream-html',
   });
   res.end([
+    '<link rel="stylesheet" href="/assets/index.css">',
+    '<script type="module" src="/assets/index.js"></script>',
+    '<script type="module" src="/agent-runtimes/runtime-1/dashboard/broker-token/assets/already-prefixed.js"></script>',
     '<script>window.__HERMES_DASHBOARD_EMBEDDED_CHAT__=true;</script>',
     '<script>localStorage.getItem("hermes-theme")</script>',
   ].join(''));
@@ -142,6 +145,9 @@ describe('Hermes dashboard separate-origin broker', () => {
     expect(html).toContain('localStorage.getItem');
     expect(html).toContain('window.__HERMES_DASHBOARD_EMBEDDED_CHAT__=true');
     expect(html).toContain('toolplane:close-agent-settings');
+    expect(html).toContain('href="/agent-runtimes/runtime-1/dashboard/broker-token/assets/index.css"');
+    expect(html).toContain('src="/agent-runtimes/runtime-1/dashboard/broker-token/assets/index.js"');
+    expect(html).toContain('src="/agent-runtimes/runtime-1/dashboard/broker-token/assets/already-prefixed.js"');
 
     expect(lastUpstreamRequest?.url).toBe('/hermes-dashboard/?theme=dark');
     expect(lastUpstreamRequest?.headers['x-forwarded-prefix']).toBe(
@@ -153,6 +159,34 @@ describe('Hermes dashboard separate-origin broker', () => {
     expect(mocks.acquireWriteLease).not.toHaveBeenCalled();
     expect(mocks.runMutation).not.toHaveBeenCalled();
     expect(mocks.ensureReady).toHaveBeenCalledWith('workspace-1', 'agent-1');
+  });
+
+  it('keeps CSS asset URLs within the dashboard capability path', async () => {
+    upstreamHandler = (req, res) => {
+      lastUpstreamRequest = {
+        headers: req.headers,
+        method: req.method || 'GET',
+        url: req.url || '/',
+      };
+      res.writeHead(200, {
+        'cache-control': 'public, max-age=31536000, immutable',
+        'content-type': 'text/css; charset=utf-8',
+        etag: 'upstream-css',
+      });
+      res.end('body{background:url(/assets/background.svg)}');
+    };
+
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/assets/index.css`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('etag')).toBeNull();
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.text()).toBe(
+      'body{background:url(/agent-runtimes/runtime-1/dashboard/broker-token/assets/background.svg)}',
+    );
+    expect(lastUpstreamRequest?.url).toBe('/hermes-dashboard/assets/index.css');
   });
 
   it('serializes channel writes through the runtime lifecycle queue while preserving profile scope', async () => {
