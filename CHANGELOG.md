@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.2](https://github.com/asharca/ToolPlane/releases/tag/v0.21.2) (2026-08-17)
+
+### What's Changed
+* feat(mcp): improve deployment management by @renhedata in https://github.com/asharca/ToolPlane/pull/81
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.1...v0.21.2
+
 ## [0.21.1](https://github.com/asharca/ToolPlane/releases/tag/v0.21.1) (2026-08-13)
 
 ### What's Changed
