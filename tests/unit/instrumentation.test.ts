@@ -67,11 +67,13 @@ describe('startup sandbox lifecycle reconciliation', () => {
         restoresInterrupted: 1,
         upgradesInterrupted: 1,
         snapshotsInterrupted: 1,
-      });
+    });
 
     await register();
+    await vi.waitFor(() => {
+      expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
+    });
 
-    expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
     expect(mocks.cleanupHermesArchiveStaging).toHaveBeenCalledTimes(1);
     expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileSandboxVolumeCopies).toHaveBeenCalledTimes(1);
@@ -88,5 +90,19 @@ describe('startup sandbox lifecycle reconciliation', () => {
       mocks.reconcileSandboxVolumeCopies.mock.calls[1][0].helpersCreatedBefore,
     ).toBe(firstCutoff);
     expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not block the web server on slow deployment recovery', async () => {
+    let finishRecovery!: (count: number) => void;
+    mocks.reconcileDeployments.mockImplementation(() => new Promise<number>((resolve) => {
+      finishRecovery = resolve;
+    }));
+
+    await register();
+    await vi.waitFor(() => {
+      expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
+    });
+
+    finishRecovery(0);
   });
 });
