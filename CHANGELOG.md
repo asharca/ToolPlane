@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.6](https://github.com/asharca/ToolPlane/releases/tag/v0.21.6) (2026-08-17)
+
+### What's Changed
+* fix: keep startup recovery off the request path by @renhedata in https://github.com/asharca/ToolPlane/pull/85
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.5...v0.21.6
+
 ## [0.21.5](https://github.com/asharca/ToolPlane/releases/tag/v0.21.5) (2026-08-17)
 
 ### What's Changed
