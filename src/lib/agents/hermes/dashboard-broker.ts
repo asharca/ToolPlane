@@ -487,6 +487,13 @@ function rewriteDashboardAssetUrls(body: string, prefix: string): string {
   return body.replace(/(["'(])\/assets\//g, `$1${prefix}/assets/`);
 }
 
+function rewriteDashboardPreloadBase(script: string, prefix: string): string {
+  return script.replace(
+    /return\s*(?:`\/`|'\/'|"\/")\s*\+\s*([A-Za-z_$][\w$]*)/g,
+    `return ${JSON.stringify(`${prefix}/`)}+$1`,
+  );
+}
+
 function injectSettingsEscapeBridge(html: string, prefix: string): string {
   const rewritten = rewriteDashboardAssetUrls(html, prefix);
   if (rewritten.includes(SETTINGS_CLOSE_MESSAGE)) return rewritten;
@@ -1014,6 +1021,17 @@ async function sendDashboardResponse(
     res.removeHeader('etag');
     res.setHeader('cache-control', 'no-store');
     res.end(rewriteDashboardAssetUrls(await upstream.text(), prefix));
+    return;
+  }
+
+  if (contentType.includes('javascript')) {
+    const script = await upstream.text();
+    const rewritten = rewriteDashboardPreloadBase(script, prefix);
+    if (rewritten !== script) {
+      res.removeHeader('etag');
+      res.setHeader('cache-control', 'no-store');
+    }
+    res.end(rewritten);
     return;
   }
 

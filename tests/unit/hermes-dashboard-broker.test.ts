@@ -189,6 +189,34 @@ describe('Hermes dashboard separate-origin broker', () => {
     expect(lastUpstreamRequest?.url).toBe('/hermes-dashboard/assets/index.css');
   });
 
+  it('keeps dynamic Vite preload URLs within the dashboard capability path', async () => {
+    upstreamHandler = (req, res) => {
+      lastUpstreamRequest = {
+        headers: req.headers,
+        method: req.method || 'GET',
+        url: req.url || '/',
+      };
+      res.writeHead(200, {
+        'cache-control': 'public, max-age=31536000, immutable',
+        'content-type': 'text/javascript; charset=utf-8',
+        etag: 'upstream-js',
+      });
+      res.end('const preload=(e)=>{return`/`+e};');
+    };
+
+    const response = await fetch(
+      `http://127.0.0.1:${brokerPort}/agent-runtimes/runtime-1/dashboard/broker-token/assets/react-vendor.js`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('etag')).toBeNull();
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.text()).toBe(
+      'const preload=(e)=>{return "/agent-runtimes/runtime-1/dashboard/broker-token/"+e};',
+    );
+    expect(lastUpstreamRequest?.url).toBe('/hermes-dashboard/assets/react-vendor.js');
+  });
+
   it('serializes channel writes through the runtime lifecycle queue while preserving profile scope', async () => {
     upstreamHandler = (req, res) => {
       lastUpstreamRequest = {
