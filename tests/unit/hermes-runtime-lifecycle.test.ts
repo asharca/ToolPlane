@@ -382,6 +382,8 @@ describe('Hermes sandbox lifecycle isolation', () => {
       expect.arrayContaining([
         'run',
         '--read-only',
+        '--user',
+        'hermes',
         'volume-sandbox-1:/opt/data:ro',
         '/opt/hermes/.venv/bin/python',
       ]),
