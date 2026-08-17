@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.3](https://github.com/asharca/ToolPlane/releases/tag/v0.21.3) (2026-08-17)
+
+### What's Changed
+* fix: run Hermes config checks as hermes user by @renhedata in https://github.com/asharca/ToolPlane/pull/82
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.2...v0.21.3
+
 ## [0.21.2](https://github.com/asharca/ToolPlane/releases/tag/v0.21.2) (2026-08-17)
 
 ### What's Changed
