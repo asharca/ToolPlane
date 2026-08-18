@@ -16,12 +16,18 @@ import {
   resetMcpStartupTimeoutSettings,
   updateHermesArchiveSettings,
   updateMcpStartupTimeoutSettings,
+  updateSkillImportSettings,
 } from '@/lib/admin/settings';
 import {
   isValidHermesArchiveMaxUploadMiB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   MIN_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
 } from '@/lib/agents/hermes/archive-limits';
+import {
+  isValidSkillImportMaxSkills,
+  MAX_SKILL_IMPORT_SKILLS,
+  MIN_SKILL_IMPORT_SKILLS,
+} from '@/lib/skills/limits';
 
 export type AdminSettingsActionState = { ok?: boolean; error?: string };
 
@@ -82,6 +88,32 @@ export async function updateHermesArchiveUploadLimitAction(
 
   try {
     await updateHermesArchiveSettings(hermesArchiveMaxUploadMiB);
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
+
+  revalidatePath('/admin/settings');
+  return { ok: true };
+}
+
+export async function updateSkillImportLimitAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  await requireAdmin();
+  const t = await getTranslations('admin');
+  const maxSkills = parseWholeNumber(formData, 'skillImportMaxSkills');
+  if (!isValidSkillImportMaxSkills(maxSkills)) {
+    return {
+      error: t('errorSkillImportMaxSkills', {
+        min: MIN_SKILL_IMPORT_SKILLS,
+        max: MAX_SKILL_IMPORT_SKILLS,
+      }),
+    };
+  }
+
+  try {
+    await updateSkillImportSettings(maxSkills);
   } catch {
     return { error: t('errorActionFailed') };
   }

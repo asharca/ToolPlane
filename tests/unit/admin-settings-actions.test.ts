@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   updateHermesArchiveSettings: vi.fn(),
+  updateSkillImportSettings: vi.fn(),
   updateMcpStartupTimeoutSettings: vi.fn(),
   resetMcpStartupTimeoutSettings: vi.fn(),
   isValidMcpStartupTimeouts: vi.fn((idleTimeoutMs: unknown, maxTimeoutMs: unknown) => (
@@ -22,6 +23,7 @@ vi.mock('next-intl/server', () => ({ getTranslations: mocks.getTranslations }));
 vi.mock('@/lib/auth/admin', () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock('@/lib/admin/settings', () => ({
   updateHermesArchiveSettings: mocks.updateHermesArchiveSettings,
+  updateSkillImportSettings: mocks.updateSkillImportSettings,
   updateMcpStartupTimeoutSettings: mocks.updateMcpStartupTimeoutSettings,
   resetMcpStartupTimeoutSettings: mocks.resetMcpStartupTimeoutSettings,
   isValidMcpStartupTimeouts: mocks.isValidMcpStartupTimeouts,
@@ -38,6 +40,7 @@ vi.mock('@/lib/agents/attachment-limits', () => ({
 import {
   updateHermesArchiveUploadLimitAction,
   updateMcpStartupTimeoutSettingsAction,
+  updateSkillImportLimitAction,
 } from '@/lib/admin/settings-actions';
 
 function settingsForm(value: string): FormData {
@@ -51,6 +54,12 @@ function mcpTimeoutsForm(idleSeconds: string, maxSeconds: string, intent?: strin
   formData.set('mcpStartupIdleTimeoutSeconds', idleSeconds);
   formData.set('mcpStartupMaxTimeoutSeconds', maxSeconds);
   if (intent) formData.set('intent', intent);
+  return formData;
+}
+
+function skillImportForm(value: string): FormData {
+  const formData = new FormData();
+  formData.set('skillImportMaxSkills', value);
   return formData;
 }
 
@@ -119,5 +128,30 @@ describe('updateMcpStartupTimeoutSettingsAction', () => {
 
     expect(mocks.resetMcpStartupTimeoutSettings).toHaveBeenCalledOnce();
     expect(mocks.updateMcpStartupTimeoutSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateSkillImportLimitAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({ id: 'admin-1' });
+    mocks.getTranslations.mockResolvedValue((key: string) => key);
+    mocks.updateSkillImportSettings.mockResolvedValue({ maxSkills: 80 });
+  });
+
+  it('requires an admin and persists a valid whole-skill limit', async () => {
+    await expect(updateSkillImportLimitAction({}, skillImportForm('80'))).resolves.toEqual({ ok: true });
+
+    expect(mocks.requireAdmin).toHaveBeenCalledOnce();
+    expect(mocks.updateSkillImportSettings).toHaveBeenCalledWith(80);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
+  });
+
+  it.each(['', '1.5', '0', '513', '999999999999999999999'])('rejects invalid setting %j without writing', async (value) => {
+    await expect(updateSkillImportLimitAction({}, skillImportForm(value))).resolves.toEqual({
+      error: 'errorSkillImportMaxSkills',
+    });
+
+    expect(mocks.updateSkillImportSettings).not.toHaveBeenCalled();
   });
 });

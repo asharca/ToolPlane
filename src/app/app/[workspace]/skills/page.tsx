@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { CheckCircle2, Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { getSkillImportSettings } from '@/lib/admin/settings';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -48,7 +49,10 @@ export default async function SkillsPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
-  const skills = await getInstalledSkills(ws.id);
+  const [skills, skillImportSettings] = await Promise.all([
+    getInstalledSkills(ws.id),
+    getSkillImportSettings(),
+  ]);
   const importedIds = new Set(
     String(Array.isArray(query.imported) ? query.imported[0] : query.imported || '')
       .split(',')
@@ -72,7 +76,7 @@ export default async function SkillsPage({
                 <Store className="size-4" />
                 {t('browseSkillMarket')}
               </Link>
-              <AddSkillDialog slug={slug} />
+              <AddSkillDialog slug={slug} maxSkillImportSkills={skillImportSettings.maxSkills} />
             </>
           }
         >
@@ -125,7 +129,7 @@ export default async function SkillsPage({
             description={t('skillsAddFocusedCapabilitiesToYourAgent')}
             actions={
               <>
-                <AddSkillDialog slug={slug} />
+                <AddSkillDialog slug={slug} maxSkillImportSkills={skillImportSettings.maxSkills} />
                 <Link
                   href={`/app/${slug}/market/skills`}
                   className="ui-button-secondary"

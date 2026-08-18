@@ -8,9 +8,11 @@ import {
 import { AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
 import { McpRuntimeSettingsForm } from '@/components/admin/McpRuntimeSettingsForm';
 import { RuntimeSettingsForm } from '@/components/admin/RuntimeSettingsForm';
+import { SkillImportSettingsForm } from '@/components/admin/SkillImportSettingsForm';
 import { SystemSettingsForm } from '@/components/admin/SystemSettingsForm';
 import {
   getHermesArchiveSettings,
+  getSkillImportSettings,
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resolveMcpStartupTimeoutSettings,
@@ -20,10 +22,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function AdminSettingsPage() {
   await requireAdmin();
-  const [t, attachmentLimit, hermesArchiveSettings, mcpStartupTimeouts] = await Promise.all([
+  const [t, attachmentLimit, hermesArchiveSettings, skillImportSettings, mcpStartupTimeouts] = await Promise.all([
     getTranslations('admin'),
     resolveAgentAttachmentLimit(),
     getHermesArchiveSettings(),
+    getSkillImportSettings(),
     resolveMcpStartupTimeoutSettings(),
   ]);
 
@@ -51,6 +54,7 @@ export default async function AdminSettingsPage() {
           hermesArchiveMaxUploadMiB={hermesArchiveSettings.hermesArchiveMaxUploadMiB}
         />
       </AdminPanel>
+      <SkillImportSettingsForm maxSkills={skillImportSettings.maxSkills} />
     </AdminPage>
   );
 }
