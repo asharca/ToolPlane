@@ -48,11 +48,31 @@ const MAX_PROCESS_ARG_LENGTH = 8_192;
 const MAX_PROCESS_ARG_TOTAL = 24_000;
 const DOCKER_CREATE_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINAL_BUFFER = 200;
-const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID'];
+// KILL (but not SYS_ADMIN): CAP_DROP ALL would otherwise let root signal only
+// its own uid, blocking root from restarting the non-root Hermes service
+// processes that share the sandbox.
+const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID', 'KILL'];
 const HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:/opt/hermes/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const HERMES_TERMINAL_SHELL = String.raw`
 export VIRTUAL_ENV=/opt/hermes/.venv
 export PATH=${HERMES_TERMINAL_PATH}
+# The terminal runs as the image default user (root). The Hermes service owns
+# /opt/data, so the CLI drops back to that user to keep service state files
+# (config, gateway state, channel directory) maintainable by the service.
+hermes_cli() {
+  local hermes_bin
+  hermes_bin="$(command -v hermes 2>/dev/null || true)"
+  if [ -z "$hermes_bin" ]; then
+    echo "hermes: command not found" >&2
+    return 127
+  fi
+  if [ "$(id -u)" = "0" ] && id hermes >/dev/null 2>&1 && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid=hermes --regid=hermes --init-groups \
+      env HERMES_HOME=/opt/data HOME=/opt/data "$hermes_bin" "$@"
+  else
+    "$hermes_bin" "$@"
+  fi
+}
 if command -v bash >/dev/null 2>&1; then
   hermes() {
     local is_gateway_restart=0
@@ -71,7 +91,7 @@ if command -v bash >/dev/null 2>&1; then
       fi
     fi
 
-    command hermes "$@"
+    hermes_cli "$@"
     local command_status=$?
     if [ "$command_status" -ne 0 ]; then
       return "$command_status"
@@ -83,7 +103,7 @@ if command -v bash >/dev/null 2>&1; then
     # Upstream restart is s6-svc -t, which is a successful no-op for a slot
     # that is already want-down. Follow it with start (-u) and do not return a
     # successful terminal prompt until the real API gateway is healthy.
-    command hermes gateway start >/dev/null || return $?
+    hermes_cli gateway start >/dev/null || return $?
     local health_attempt=0
     while [ "$health_attempt" -lt 60 ]; do
       local current_gateway_pid
@@ -115,6 +135,7 @@ if command -v bash >/dev/null 2>&1; then
     echo "Hermes gateway restart was submitted, but the gateway did not become healthy within 45 seconds." >&2
     return 1
   }
+  export -f hermes_cli
   export -f hermes
   exec bash
 fi
@@ -779,10 +800,12 @@ function createTerminal(cols = 80, rows = 24) {
     // Bash, while its /bin/sh is dash and rejects `export -f`.
     ? ['bash', '-lc', shellCommand]
     : ['sh', '-lc', shellCommand];
+  // No --user: interactive sessions run as the image default user (root in the
+  // Hermes image), matching the MCP shell/file tools. The hermes_cli wrapper
+  // re-drops to the service user for Hermes state changes.
   const term = pty.spawn('docker', [
     'exec',
     '-it',
-    ...(KIND === 'hermes' ? ['--user', 'hermes'] : []),
     '-w',
     WORKSPACE_ROOT,
     CONTAINER,

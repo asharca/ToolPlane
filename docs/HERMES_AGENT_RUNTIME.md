@@ -261,12 +261,13 @@ HTTP + SSE API 连接到 supervisor：
   -> verify user membership and URL Agent runtime
   -> auto-start Hermes runtime when needed
   -> supervised /terminal/session
-  -> docker exec --user hermes -w /opt/data/workspace
+  -> docker exec -w /opt/data/workspace
 ```
 
 终端 session 只能在 URL 中该 Agent 的容器内解析，不能拿一个 Agent 的 session ID 访问另一个
-runtime。Shell 以 `hermes` 服务用户而不是 root 运行；ToolPlane 同步目录和上传附件也会修正为该用户
-可读写，避免终端操作产生 Hermes 后续无法维护的文件。
+runtime。Shell 以镜像默认用户（root）运行，与 MCP 的 shell/文件工具一致，可以直接 apt-get、
+chown 等；wrapper 中的 `hermes` CLI 通过 `setpriv` 降回 `hermes` 服务用户执行，`/opt/data` 下的
+服务状态文件保持服务用户可维护。ToolPlane 同步目录和上传附件仍会修正为该用户可读写。
 
 ## 5. Chat、记忆与附件
 
