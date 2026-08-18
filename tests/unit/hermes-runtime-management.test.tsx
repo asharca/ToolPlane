@@ -9,6 +9,7 @@ const actions = vi.hoisted(() => ({
   renameSandboxAction: vi.fn(async () => undefined),
   restoreSandboxSnapshotAction: vi.fn(async () => undefined),
   updateSandboxEnvAction: vi.fn(async () => undefined),
+  updateSandboxSudoAction: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/sandboxes/actions', () => actions);
@@ -18,6 +19,7 @@ import { HermesRuntimeManagement } from '@/components/dashboard/agents/HermesRun
 function renderManagement(
   status = 'stopped',
   snapshots: React.ComponentProps<typeof HermesRuntimeManagement>['snapshots'] = [],
+  allowSudo = false,
 ) {
   return render(
     <HermesRuntimeManagement
@@ -25,6 +27,7 @@ function renderManagement(
       sandboxId="hermes-sandbox-1"
       sandboxName="Research Hermes"
       environment="EXISTING=value"
+      allowSudo={allowSudo}
       status={status}
       snapshots={snapshots}
     />,
@@ -75,6 +78,24 @@ describe('HermesRuntimeManagement', () => {
     expect(submittedFormData(actions.updateSandboxEnvAction)?.get('env')).toBe('API_KEY=secret');
   });
 
+  it('submits the sudo opt-in scoped to the managed sandbox', async () => {
+    const user = userEvent.setup();
+    renderManagement('stopped', [], true);
+
+    const toggle = screen.getByRole('checkbox', { name: 'Allow the agent to use sudo' });
+    expect(toggle).toBeChecked();
+    expect(toggle.closest('form')?.elements.namedItem('workspace')).toHaveValue('acme');
+    expect(toggle.closest('form')?.elements.namedItem('sandboxId')).toHaveValue('hermes-sandbox-1');
+
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Save sudo setting' }));
+
+    await waitFor(() => expect(actions.updateSandboxSudoAction).toHaveBeenCalledOnce());
+    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('workspace')).toBe('acme');
+    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('sandboxId')).toBe('hermes-sandbox-1');
+    expect(submittedFormData(actions.updateSandboxSudoAction)?.get('allowSudo')).toBeNull();
+  });
+
   it('blocks mutations and snapshot creation while the Hermes runtime has a lifecycle operation', () => {
     renderManagement('copying');
 
@@ -82,6 +103,8 @@ describe('HermesRuntimeManagement', () => {
     expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Hermes environment variables' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save environment' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Allow the agent to use sudo' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save sudo setting' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Snapshot name' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Create snapshot' })).toBeDisabled();
   });

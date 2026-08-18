@@ -34,6 +34,7 @@ const managedRuntime = {
     sandboxId: 'sandbox-1',
     sandboxName: 'Research Hermes',
     environment: 'EXISTING=value',
+    allowSudo: false,
     status: 'stopped',
     snapshots: [],
   },

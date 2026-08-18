@@ -20,7 +20,7 @@ import {
   findSandboxImageOption,
 } from '@/lib/sandboxes/images';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
-import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
+import { readSandboxAllowSudo, readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -170,6 +170,7 @@ export default async function SandboxesPage({
       sandboxId: runtime.sandbox.id,
       sandboxName: runtime.sandbox.name,
       environment: sandboxEnvToText(readSandboxEnv(runtime.sandbox.config)),
+      allowSudo: readSandboxAllowSudo(runtime.sandbox.config),
       status,
       snapshots: runtime.sandbox.snapshots.map((snapshot) => ({
         id: snapshot.id,
