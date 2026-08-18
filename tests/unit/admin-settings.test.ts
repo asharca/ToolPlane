@@ -4,6 +4,10 @@ import {
   DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
 } from '@/lib/agents/hermes/archive-limits';
+import {
+  DEFAULT_SKILL_IMPORT_SKILLS,
+  MAX_SKILL_IMPORT_SKILLS,
+} from '@/lib/skills/limits';
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -25,10 +29,13 @@ import {
   getHermesArchiveSettings,
   HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+  getSkillImportSettings,
   resolveMcpStartupTimeoutSettings,
   resetMcpStartupTimeoutSettings,
+  SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
   updateHermesArchiveSettings,
   updateMcpStartupTimeoutSettings,
+  updateSkillImportSettings,
 } from '@/lib/admin/settings';
 
 describe('system settings storage', () => {
@@ -74,6 +81,36 @@ describe('system settings storage', () => {
     await expect(getHermesArchiveSettings()).resolves.toEqual({
       hermesArchiveMaxUploadMiB: DEFAULT_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
     });
+  });
+
+  it('uses the default skill import limit until a valid administrator override exists', async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    await expect(getSkillImportSettings()).resolves.toEqual({
+      maxSkills: DEFAULT_SKILL_IMPORT_SKILLS,
+    });
+
+    mocks.findUnique.mockResolvedValue({ value: '80' });
+    await expect(getSkillImportSettings()).resolves.toEqual({ maxSkills: 80 });
+
+    mocks.findUnique.mockResolvedValue({ value: String(MAX_SKILL_IMPORT_SKILLS + 1) });
+    await expect(getSkillImportSettings()).resolves.toEqual({
+      maxSkills: DEFAULT_SKILL_IMPORT_SKILLS,
+    });
+  });
+
+  it('writes a bounded skill import limit', async () => {
+    mocks.upsert.mockResolvedValue(undefined);
+
+    await expect(updateSkillImportSettings(80)).resolves.toEqual({ maxSkills: 80 });
+    expect(mocks.upsert).toHaveBeenCalledWith({
+      where: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY },
+      create: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, value: '80' },
+      update: { value: '80' },
+    });
+
+    await expect(updateSkillImportSettings(MAX_SKILL_IMPORT_SKILLS + 1)).rejects.toThrow(
+      'Invalid skill import maximum.',
+    );
   });
 
   it('uses the Compose environment values until an administrator saves an MCP timeout override', async () => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/asharca/ToolPlane/releases/tag/v0.22.0) (2026-08-18)
+
+### What's Changed
+* feat(admin): make skill import size configurable by @renhedata
+
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.6...v0.22.0
+
 ## [0.21.6](https://github.com/asharca/ToolPlane/releases/tag/v0.21.6) (2026-08-17)
 
 ### What's Changed

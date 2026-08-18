@@ -6,9 +6,14 @@ import {
   isValidHermesArchiveMaxUploadMiB,
   normalizeHermesArchiveMaxUploadMiB,
 } from '@/lib/agents/hermes/archive-limits';
+import {
+  DEFAULT_SKILL_IMPORT_SKILLS,
+  isValidSkillImportMaxSkills,
+} from '@/lib/skills/limits';
 
 export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY = 'hermes.maxArchiveUploadMiB';
 export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = 'mcp.startupTimeouts';
+export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = 'skills.maxImportSkills';
 
 export const DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS = 90_000;
 export const DEFAULT_MCP_STARTUP_MAX_TIMEOUT_MS = 5 * 60_000;
@@ -23,6 +28,10 @@ export type McpStartupTimeoutSettings = {
   idleTimeoutMs: number;
   maxTimeoutMs: number;
   source: 'database' | 'environment' | 'default';
+};
+
+export type SkillImportSettings = {
+  maxSkills: number;
 };
 
 function toSystemSettings(value?: string | null): SystemSettings {
@@ -134,6 +143,38 @@ export async function updateHermesArchiveSettings(
     update: { value: String(value) },
   });
   return toSystemSettings(String(value));
+}
+
+// Read through to Postgres so a saved administrator override applies to the
+// next import on every app instance.
+export async function getSkillImportSettings(): Promise<SkillImportSettings> {
+  try {
+    const setting = await db.systemSetting.findUnique({
+      where: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY },
+      select: { value: true },
+    });
+    const maxSkills = Number(setting?.value);
+    return {
+      maxSkills: isValidSkillImportMaxSkills(maxSkills)
+        ? maxSkills
+        : DEFAULT_SKILL_IMPORT_SKILLS,
+    };
+  } catch {
+    // A rolling deploy may briefly run before the shared settings table exists.
+    return { maxSkills: DEFAULT_SKILL_IMPORT_SKILLS };
+  }
+}
+
+export async function updateSkillImportSettings(maxSkills: number): Promise<SkillImportSettings> {
+  if (!isValidSkillImportMaxSkills(maxSkills)) {
+    throw new Error('Invalid skill import maximum.');
+  }
+  await db.systemSetting.upsert({
+    where: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY },
+    create: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, value: String(maxSkills) },
+    update: { value: String(maxSkills) },
+  });
+  return { maxSkills };
 }
 
 // Resolve this for every MCP bridge launch so a newly saved admin override

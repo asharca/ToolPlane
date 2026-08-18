@@ -1,21 +1,22 @@
 import {
+  DEFAULT_SKILL_IMPORT_SKILLS,
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_FILES,
   MAX_SKILL_IMPORT_BYTES,
   MAX_SKILL_IMPORT_FILES,
-  MAX_SKILL_IMPORT_SKILLS,
   TEXT_SKILL_EXTENSION_SET,
 } from './limits';
 import { parseSkillFrontmatter } from './frontmatter';
 export {
+  DEFAULT_SKILL_IMPORT_SKILLS,
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_FILES,
   MAX_SKILL_IMPORT_BYTES,
   MAX_SKILL_IMPORT_FILES,
-  MAX_SKILL_IMPORT_SKILLS,
 } from './limits';
+export { MAX_SKILL_IMPORT_SKILLS } from './limits';
 
 export type SkillBundleFile = { path: string; content: string; encoding?: 'base64' };
 
@@ -221,6 +222,7 @@ function buildUploadedSkillBundle(
 export function parseUploadedSkillBundles(
   rawFiles: SkillBundleFile[],
   fallbackName = '',
+  maxSkills = DEFAULT_SKILL_IMPORT_SKILLS,
 ): UploadedSkillBundle[] {
   const safeFiles = safeUploadedSkillFiles(rawFiles);
   if (safeFiles.length === 0) throw new Error('Skill folder is empty.');
@@ -233,8 +235,8 @@ export function parseUploadedSkillBundles(
   ).sort((a, b) => rootDepth(a) - rootDepth(b) || String(a ?? '').localeCompare(String(b ?? '')));
 
   if (roots.length === 0) throw new Error('SKILL.md not found in the uploaded folder.');
-  if (roots.length > MAX_SKILL_IMPORT_SKILLS) {
-    throw new Error(`Skill import has too many skills; max ${MAX_SKILL_IMPORT_SKILLS}.`);
+  if (roots.length > maxSkills) {
+    throw new Error(`Skill import has too many skills; max ${maxSkills}.`);
   }
 
   return roots.map((rootPath) => buildUploadedSkillBundle(safeFiles, rootPath, roots, roots.length === 1 ? fallbackName : ''));
@@ -243,8 +245,9 @@ export function parseUploadedSkillBundles(
 export function parseUploadedSkillBundle(
   rawFiles: SkillBundleFile[],
   fallbackName = '',
+  maxSkills = DEFAULT_SKILL_IMPORT_SKILLS,
 ): UploadedSkillBundle {
-  return parseUploadedSkillBundles(rawFiles, fallbackName)[0];
+  return parseUploadedSkillBundles(rawFiles, fallbackName, maxSkills)[0];
 }
 
 type GithubTreeEntry = {
@@ -331,7 +334,10 @@ function githubSourceAtRoot(
   return { ...source, path, normalized };
 }
 
-export async function fetchGithubSkillBundles(rawSource: string): Promise<SkillBundle[]> {
+export async function fetchGithubSkillBundles(
+  rawSource: string,
+  maxSkills = DEFAULT_SKILL_IMPORT_SKILLS,
+): Promise<SkillBundle[]> {
   const source = parseGithubSkillSource(rawSource);
   const data = (await fetchJson(githubTreeUrl(source))) as GithubTreeResponse;
   if (!Array.isArray(data.tree)) throw new Error('GitHub returned an invalid repository tree.');
@@ -355,8 +361,8 @@ export async function fetchGithubSkillBundles(rawSource: string): Promise<SkillB
     ),
   ).sort((a, b) => rootDepth(a) - rootDepth(b) || String(a ?? '').localeCompare(String(b ?? '')));
   if (roots.length === 0) throw new Error('SKILL.md not found in that GitHub folder.');
-  if (roots.length > MAX_SKILL_IMPORT_SKILLS) {
-    throw new Error(`Skill import has too many skills; max ${MAX_SKILL_IMPORT_SKILLS}.`);
+  if (roots.length > maxSkills) {
+    throw new Error(`Skill import has too many skills; max ${maxSkills}.`);
   }
 
   const selected = candidates.filter(({ path }) => nearestSkillRoot(path, roots) !== undefined);
@@ -391,7 +397,7 @@ export async function fetchGithubSkillBundles(rawSource: string): Promise<SkillB
     }
   }
 
-  return parseUploadedSkillBundles(files).map((bundle) => ({
+  return parseUploadedSkillBundles(files, '', maxSkills).map((bundle) => ({
     slugHint: bundle.slugHint,
     name: bundle.name,
     description: bundle.description,
@@ -402,8 +408,11 @@ export async function fetchGithubSkillBundles(rawSource: string): Promise<SkillB
   }));
 }
 
-export async function fetchGithubSkillBundle(rawSource: string): Promise<SkillBundle> {
-  const bundles = await fetchGithubSkillBundles(rawSource);
+export async function fetchGithubSkillBundle(
+  rawSource: string,
+  maxSkills = DEFAULT_SKILL_IMPORT_SKILLS,
+): Promise<SkillBundle> {
+  const bundles = await fetchGithubSkillBundles(rawSource, maxSkills);
   if (bundles.length > 1) {
     throw new Error('Multiple skills found. Select a GitHub folder that contains one SKILL.md.');
   }
