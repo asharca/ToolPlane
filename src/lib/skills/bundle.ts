@@ -122,7 +122,9 @@ export function normalizeSkillFiles(files: SkillBundleFile[]): SkillBundleFile[]
     }
 
     seen.add(portableKey);
-    out.push({ path, content: file.content, ...(encoding ? { encoding } : {}) });
+    // Postgres jsonb rejects NUL characters, which can appear in text payloads.
+    const content = encoding === 'base64' ? file.content : file.content.replace(/\u0000/g, '');
+    out.push({ path, content, ...(encoding ? { encoding } : {}) });
     if (out.length > MAX_SKILL_FILES - 1) {
       throw new Error(`Skill bundle has too many files; max ${MAX_SKILL_FILES}.`);
     }
@@ -262,18 +264,33 @@ type GithubTreeResponse = {
 };
 
 const GITHUB_REQUEST_TIMEOUT_MS = 15_000;
+const GITHUB_FETCH_ATTEMPTS = 3;
+
+async function githubFetch(url: string, extraHeaders: Record<string, string>): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= GITHUB_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
+      return await fetch(url, {
+        headers: {
+          'user-agent': 'toolplane-skill-import',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...extraHeaders,
+        },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt === GITHUB_FETCH_ATTEMPTS) break;
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+  }
+  throw lastError;
+}
 
 async function fetchJson(url: string): Promise<unknown> {
-  const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
-  const res = await fetch(url, {
-    headers: {
-      accept: 'application/vnd.github+json',
-      'user-agent': 'toolplane-skill-import',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-  });
+  const res = await githubFetch(url, { accept: 'application/vnd.github+json' });
   if (!res.ok) {
     const rateLimited = res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0';
     throw new Error(`GitHub request failed (${res.status})${rateLimited ? ': API rate limit exceeded' : ''}.`);
@@ -282,15 +299,7 @@ async function fetchJson(url: string): Promise<unknown> {
 }
 
 async function fetchFile(url: string, filePath: string): Promise<Pick<SkillBundleFile, 'content' | 'encoding'>> {
-  const token = process.env.GITHUB_TOKEN || process.env.TOOLPLANE_GITHUB_TOKEN;
-  const res = await fetch(url, {
-    headers: {
-      'user-agent': 'toolplane-skill-import',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
-  });
+  const res = await githubFetch(url, {});
   if (!res.ok) throw new Error(`GitHub file download failed (${res.status}).`);
   const buffer = Buffer.from(await res.arrayBuffer());
   const contentType = res.headers.get('content-type') ?? '';
