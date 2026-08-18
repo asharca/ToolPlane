@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import {
   renameSandboxAction,
   updateSandboxEnvAction,
+  updateSandboxSudoAction,
 } from '@/lib/sandboxes/actions';
 import {
   SandboxDataManagement,
@@ -16,6 +17,7 @@ export type HermesRuntimeManagementData = {
   sandboxId: string;
   sandboxName: string;
   environment: string;
+  allowSudo: boolean;
   status: string;
   snapshots: SandboxSnapshotItem[];
 };
@@ -35,6 +37,7 @@ export function HermesRuntimeManagement({
   sandboxId,
   sandboxName,
   environment,
+  allowSudo,
   status,
   snapshots,
 }: HermesRuntimeManagementData) {
@@ -86,6 +89,31 @@ export function HermesRuntimeManagement({
             <div className="flex flex-wrap items-center justify-end gap-3">
               <SubmitButton pendingLabel={agents('savingAndSyncingEnvironment')} className="ui-button-secondary h-8 text-xs">
                 {agents('saveEnvironment')}
+              </SubmitButton>
+            </div>
+          </fieldset>
+        </form>
+      </section>
+
+      <section className="py-5">
+        <h3 className="text-sm font-semibold text-foreground">{t('allowSudoTitle')}</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t('allowSudoDescription')}</p>
+        <form action={updateSandboxSudoAction} className="mt-3">
+          <input type="hidden" name="workspace" value={workspace} />
+          <input type="hidden" name="sandboxId" value={sandboxId} />
+          <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
+            <label className="flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
+              <input
+                type="checkbox"
+                name="allowSudo"
+                defaultChecked={allowSudo}
+                className="mt-0.5 size-3.5 shrink-0 accent-brand"
+              />
+              {t('allowSudo')}
+            </label>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+                {t('saveAllowSudo')}
               </SubmitButton>
             </div>
           </fieldset>

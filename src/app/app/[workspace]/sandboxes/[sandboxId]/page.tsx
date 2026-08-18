@@ -23,9 +23,8 @@ import {
   startSandboxAction,
   stopSandboxAction,
   updateSandboxEnvAction,
-  updateSandboxSudoAction,
 } from '@/lib/sandboxes/actions';
-import { readSandboxAllowSudo, readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
+import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { mcpRpc } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -137,7 +136,6 @@ export default async function SandboxDetailPage({
   const connectorWaiting = Boolean(connector && running && !connectorLive?.connected);
   const connectorRoot = connectorLive?.root ?? connector?.remoteRoot;
   const envText = sandboxEnvToText(readSandboxEnv(sandbox.config));
-  const allowSudo = readSandboxAllowSudo(sandbox.config);
   const disabledLegacy = sandbox.kind === 'host' || sandbox.kind === 'ssh' || (sandbox.kind === 'connector' && !connector);
   const canUseConsole = status === 'running'
     && !disabledLegacy
@@ -350,31 +348,6 @@ export default async function SandboxDetailPage({
                       </fieldset>
                     </form>
                   </section>
-
-                  {sandbox.kind === 'hermes' ? (
-                    <section className="py-5">
-                      <h3 className="text-sm font-semibold text-foreground">{t('allowSudoTitle')}</h3>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{t('allowSudoDescription')}</p>
-                      <form action={updateSandboxSudoAction} className="mt-3">
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="sandboxId" value={sandbox.id} />
-                        <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
-                          <label className="flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
-                            <input
-                              type="checkbox"
-                              name="allowSudo"
-                              defaultChecked={allowSudo}
-                              className="mt-0.5 size-3.5 shrink-0 accent-brand"
-                            />
-                            {t('allowSudo')}
-                          </label>
-                          <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
-                            {t('saveAllowSudo')}
-                          </SubmitButton>
-                        </fieldset>
-                      </form>
-                    </section>
-                  ) : null}
 
                   {sandbox.kind === 'docker' && status !== 'copy_failed' && status !== 'deleting' ? (
                     <SandboxDataManagement
