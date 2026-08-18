@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { getSkillImportSettings } from '@/lib/admin/settings';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { parseCreateSkill, isGithubUrl, slugify } from './custom-skill';
 import {
@@ -174,7 +175,8 @@ export async function importSkillFromGithubAction(
   if (!isGithubUrl(repo)) return { error: 'Enter a valid github.com repository or folder URL.' };
   let bundles;
   try {
-    bundles = await fetchGithubSkillBundles(repo);
+    const { maxSkills } = await getSkillImportSettings();
+    bundles = await fetchGithubSkillBundles(repo, maxSkills);
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Failed to fetch skills from GitHub.' };
   }
@@ -223,7 +225,8 @@ export async function uploadSkillFolderAction(formData: FormData) {
   let bundles;
   try {
     const files = await readUploadedSkillFiles(formData);
-    bundles = parseUploadedSkillBundles(files, name);
+    const { maxSkills } = await getSkillImportSettings();
+    bundles = parseUploadedSkillBundles(files, name, maxSkills);
   } catch {
     return;
   }

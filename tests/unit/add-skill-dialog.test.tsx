@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AddSkillDialog } from '@/components/dashboard/AddSkillDialog';
 
@@ -30,5 +30,21 @@ describe('AddSkillDialog', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it('uses the administrator-provided folder import limit', async () => {
+    render(<AddSkillDialog slug="acme" maxSkillImportSkills={1} />);
+    await userEvent.click(screen.getByRole('button', { name: /add skill/i }));
+    await userEvent.click(screen.getByText('Upload a folder'));
+
+    const files = [
+      new File(['# One'], 'SKILL.md', { type: 'text/markdown' }),
+      new File(['# Two'], 'SKILL.md', { type: 'text/markdown' }),
+    ];
+    Object.defineProperty(files[0], 'webkitRelativePath', { value: 'one/SKILL.md' });
+    Object.defineProperty(files[1], 'webkitRelativePath', { value: 'two/SKILL.md' });
+    fireEvent.change(document.querySelector('input[name="folderFiles"]')!, { target: { files } });
+
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
   });
 });

@@ -4,10 +4,12 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   fetchBundles: vi.fn(),
   findMany: vi.fn(),
+  getSkillImportSettings: vi.fn(),
   getCurrentUser: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   redirect: vi.fn(),
   revalidatePath: vi.fn(),
+  parseUploadedBundles: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -15,6 +17,7 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
+vi.mock('@/lib/admin/settings', () => ({ getSkillImportSettings: mocks.getSkillImportSettings }));
 vi.mock('@/lib/db', () => ({
   db: {
     installedSkill: { create: mocks.create, findMany: mocks.findMany },
@@ -24,14 +27,22 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/skills/bundle', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/skills/bundle')>()),
   fetchGithubSkillBundles: mocks.fetchBundles,
+  parseUploadedSkillBundles: mocks.parseUploadedBundles,
 }));
 
-import { importSkillFromGithubAction } from '@/lib/skills/actions';
+import { importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
 
 function githubForm(): FormData {
   const form = new FormData();
   form.set('workspace', 'acme');
   form.set('repo', 'https://github.com/tikoci/routeros-skills');
+  return form;
+}
+
+function uploadForm(): FormData {
+  const form = new FormData();
+  form.set('workspace', 'acme');
+  form.set('files', JSON.stringify([{ path: 'routeros-firewall/SKILL.md', content: '# Firewall' }]));
   return form;
 }
 
@@ -41,6 +52,7 @@ describe('importSkillFromGithubAction', () => {
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
     mocks.findMany.mockResolvedValue([{ slug: 'routeros-firewall', skill: null }]);
+    mocks.getSkillImportSettings.mockResolvedValue({ maxSkills: 80 });
     mocks.create.mockImplementation(async ({ data }) => ({
       id: `created-${data.name}`,
       ...data,
@@ -90,6 +102,7 @@ describe('importSkillFromGithubAction', () => {
     );
 
     expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.fetchBundles).toHaveBeenCalledWith('https://github.com/tikoci/routeros-skills', 80);
     expect(mocks.create).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({
         workspaceId: 'workspace-1',
@@ -121,5 +134,25 @@ describe('importSkillFromGithubAction', () => {
     });
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured limit for uploaded folders', async () => {
+    mocks.parseUploadedBundles.mockReturnValue([
+      {
+        rootPath: 'routeros-firewall',
+        name: 'routeros-firewall',
+        description: null,
+        content: '# Firewall',
+        files: [],
+      },
+    ]);
+
+    await expect(uploadSkillFolderAction(uploadForm())).rejects.toThrow(
+      'REDIRECT:/app/acme/skills?imported=created-routeros-firewall',
+    );
+
+    expect(mocks.parseUploadedBundles).toHaveBeenCalledWith([
+      { path: 'routeros-firewall/SKILL.md', content: '# Firewall' },
+    ], '', 80);
   });
 });

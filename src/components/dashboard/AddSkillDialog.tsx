@@ -14,10 +14,10 @@ import {
 } from '@/components/ui/Dialog';
 import { createCustomSkillAction, importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
 import {
+  DEFAULT_SKILL_IMPORT_SKILLS,
   MAX_SKILL_FILE_BYTES,
   MAX_SKILL_IMPORT_BYTES,
   MAX_SKILL_IMPORT_FILES,
-  MAX_SKILL_IMPORT_SKILLS,
 } from '@/lib/skills/limits';
 
 type Mode = 'menu' | 'create' | 'github' | 'upload';
@@ -83,7 +83,13 @@ function GithubImportForm({ slug }: { slug: string }) {
   );
 }
 
-export function AddSkillDialog({ slug }: { slug: string }) {
+export function AddSkillDialog({
+  slug,
+  maxSkillImportSkills = DEFAULT_SKILL_IMPORT_SKILLS,
+}: {
+  slug: string;
+  maxSkillImportSkills?: number;
+}) {
   const t = useTranslations('console.skills');
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('menu');
@@ -102,7 +108,7 @@ export function AddSkillDialog({ slug }: { slug: string }) {
       error = t('selectedFolderTooLarge');
     } else if (bytes > MAX_SKILL_IMPORT_BYTES) {
       error = t('selectedFolderTooLarge');
-    } else if (skillRoots.length > MAX_SKILL_IMPORT_SKILLS) {
+    } else if (skillRoots.length > maxSkillImportSkills) {
       error = t('selectedFolderTooLarge');
     } else if (list.length > 0 && skillRoots.length === 0) {
       error = t('folderMustContainSkillmd');

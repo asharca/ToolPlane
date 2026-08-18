@@ -157,6 +157,13 @@ describe('parseUploadedSkillBundle', () => {
     expect(bundles[0].files).toEqual([{ path: 'scripts/read.py', content: 'print(1)' }]);
     expect(bundles[1].files).toEqual([{ path: 'reference.md', content: 'rules' }]);
   });
+
+  it('honors the caller-provided skill count limit', () => {
+    expect(() => parseUploadedSkillBundles([
+      { path: 'one/SKILL.md', content: '# One' },
+      { path: 'two/SKILL.md', content: '# Two' },
+    ], '', 1)).toThrow('Skill import has too many skills; max 1.');
+  });
 });
 
 describe('fetchGithubSkillBundle', () => {
@@ -252,5 +259,22 @@ describe('fetchGithubSkillBundle', () => {
     ]);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/README.md'))).toBe(false);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('api.github.com'))).toHaveLength(1);
+  });
+
+  it('honors the caller-provided GitHub skill count limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({
+        truncated: false,
+        tree: [
+          { type: 'blob', path: 'one/SKILL.md', size: 8 },
+          { type: 'blob', path: 'two/SKILL.md', size: 8 },
+        ],
+      })),
+    );
+
+    await expect(fetchGithubSkillBundles('example/skills', 1)).rejects.toThrow(
+      'Skill import has too many skills; max 1.',
+    );
   });
 });
