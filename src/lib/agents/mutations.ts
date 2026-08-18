@@ -48,6 +48,7 @@ async function uniqueAgentSlug(
 export type CreateAgentOptions = {
   runtime?: 'native' | 'hermes';
   hermesImage?: string;
+  allowSudo?: boolean;
 };
 
 export type AgentCloneOptions = {
@@ -129,7 +130,7 @@ export async function createAgentRecords(
       kind: HERMES_RUNTIME_KIND,
       image,
       network: 'isolated',
-      config: { managedBy: 'agent-runtime' },
+      config: { managedBy: 'agent-runtime', ...(options.allowSudo ? { allowSudo: true } : {}) },
     },
   });
   const runtime = await tx.agentRuntime.create({
@@ -154,6 +155,7 @@ export async function createAgentRecords(
         runtimeId: runtime.id,
         runtimeModelName: slug,
         env: {},
+        ...(options.allowSudo ? { allowSudo: true } : {}),
       },
     },
   });

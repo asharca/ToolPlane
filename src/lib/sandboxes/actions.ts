@@ -28,7 +28,13 @@ import {
   sandboxVolumeName,
   stopDockerSandboxContainer,
 } from './runtime';
-import { parseSandboxEnvText, readSandboxEnv, sandboxConfigWithEnv } from './env';
+import {
+  parseSandboxEnvText,
+  readSandboxAllowSudo,
+  readSandboxEnv,
+  sandboxConfigWithAllowSudo,
+  sandboxConfigWithEnv,
+} from './env';
 import { resolveSandboxImage } from './images';
 import {
   connectorFromConfig,
@@ -298,6 +304,7 @@ function installCfgForSandbox(sandbox: {
     volumeName: sandboxVolumeName(sandbox.id),
     connector: connector ?? undefined,
     env,
+    allowSudo: readSandboxAllowSudo(sandbox.config),
   };
 }
 
@@ -787,6 +794,56 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
   });
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
+}
+
+function installCfgWithAllowSudo(config: Prisma.JsonValue | null, allowSudo: boolean): Prisma.InputJsonValue {
+  const base = config && typeof config === 'object' && !Array.isArray(config)
+    ? { ...(config as Record<string, unknown>) }
+    : {};
+  if (allowSudo) {
+    base.allowSudo = true;
+  } else {
+    delete base.allowSudo;
+  }
+  return base as Prisma.InputJsonValue;
+}
+
+export async function updateSandboxSudoAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const sandboxId = String(formData.get('sandboxId') ?? '');
+  const allowSudo = formData.get('allowSudo') === 'on';
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !sandboxId) return;
+
+  await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
+    const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
+    if (!sandbox || sandbox.kind !== 'hermes') return;
+    if (sandboxLifecycleBlocked(sandbox)) return;
+    if (readSandboxAllowSudo(sandbox.config) === allowSudo) return;
+
+    const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
+    if (!agentId) return;
+
+    await db.$transaction([
+      db.sandbox.update({
+        where: { id: sandbox.id },
+        data: { config: sandboxConfigWithAllowSudo(sandbox.config, allowSudo) ?? {} },
+      }),
+      db.deployment.update({
+        where: { id: sandbox.deploymentId },
+        data: { installCfg: installCfgWithAllowSudo(sandbox.deployment.installCfg, allowSudo) },
+      }),
+    ]);
+
+    // The container flag and sudo provisioning are read on process start, so a
+    // forced sync recreates the container (volume data is preserved) and applies
+    // the new privilege mode.
+    const synced = await syncHermesRuntime(ctx.ws.id, agentId, { force: true });
+    if (synced.error) throw new Error(`Saved, but Hermes sync failed: ${synced.error}`);
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    revalidatePath(`/app/${slug}/sandboxes`);
+    revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);
+  });
 }
 
 export async function updateSandboxEnvAction(formData: FormData) {

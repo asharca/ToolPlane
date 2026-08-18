@@ -10,7 +10,13 @@ import {
   resolveSandboxImage,
 } from '@/lib/sandboxes/images';
 import { parseSandboxDirectoryText } from '@/lib/sandboxes/file-list';
-import { parseSandboxEnvText, readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
+import {
+  parseSandboxEnvText,
+  readSandboxAllowSudo,
+  readSandboxEnv,
+  sandboxConfigWithAllowSudo,
+  sandboxEnvToText,
+} from '@/lib/sandboxes/env';
 import {
   dockerVolumeCopyArgs,
   sandboxSnapshotVolumeName,
@@ -65,6 +71,17 @@ describe('sandbox env config', () => {
     expect(env).toEqual({ A: 'first', ZED: 'last' });
     expect(sandboxEnvToText(env)).toBe('A=first\nZED=last');
   });
+
+  it('treats a missing sudo setting as disabled and toggles other keys intact', () => {
+    expect(readSandboxAllowSudo(null)).toBe(false);
+    expect(readSandboxAllowSudo({ allowSudo: 'true' })).toBe(false);
+    expect(readSandboxAllowSudo({ allowSudo: true })).toBe(true);
+
+    const enabled = sandboxConfigWithAllowSudo({ managedBy: 'agent-runtime' }, true);
+    expect(enabled).toEqual({ managedBy: 'agent-runtime', allowSudo: true });
+    expect(sandboxConfigWithAllowSudo(enabled, false)).toEqual({ managedBy: 'agent-runtime' });
+    expect(sandboxConfigWithAllowSudo(null, true)).toEqual({ allowSudo: true });
+  });
 });
 
 describe('persistent Docker sandbox runtime', () => {
@@ -93,6 +110,22 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain("'--cap-drop'");
     expect(script).toContain("'ALL'");
     expect(script).toContain("DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap])");
+  });
+
+  it('lets an opted-in Hermes service user use classic sudo for agent shell commands', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("const ALLOW_SUDO = process.env.SANDBOX_ALLOW_SUDO === 'true'");
+    expect(script).toContain('async function ensureHermesSudo()');
+    expect(script).toContain("if (KIND !== 'hermes' || !ALLOW_SUDO) return;");
+    expect(script).toContain('hermes ALL=(ALL) NOPASSWD:ALL');
+    expect(script).toContain('/etc/sudoers.d/99-toolplane');
+    expect(script).toContain('await ensureHermesSudo()');
+    // setuid sudo is dead under no-new-privileges, so the flag only comes off
+    // for opted-in Hermes sandboxes; a flipped container must be recreated.
+    expect(script).toContain("const expectsNoNewPrivileges = !(KIND === 'hermes' && ALLOW_SUDO)");
+    expect(script).toContain("securityOpts.has('no-new-privileges') === expectsNoNewPrivileges");
+    expect(script).toContain("...(KIND === 'hermes' && ALLOW_SUDO ? [] : ['--security-opt', 'no-new-privileges'])");
   });
 
   it('allows enough time for first-run Dev Container image pulls', () => {

@@ -361,6 +361,10 @@ export function SandboxCreateForm({
         if (hermesImage) {
           request.setRequestHeader('x-toolplane-hermes-image', encodeURIComponent(hermesImage));
         }
+        const allowSudoInput = form.elements.namedItem('allowSudo');
+        if (allowSudoInput instanceof HTMLInputElement && allowSudoInput.checked) {
+          request.setRequestHeader('x-toolplane-hermes-allow-sudo', '1');
+        }
         request.upload.addEventListener('progress', (progress) => {
           setImportState({
             pending: true,
@@ -539,6 +543,15 @@ export function SandboxCreateForm({
                         <label className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-xs leading-5 text-foreground">
                           <input name="trustArchive" type="checkbox" required className="mt-0.5 size-3.5 shrink-0 accent-brand" />
                           <span>{t('trustHermesArchive')}</span>
+                        </label>
+                        <label className="mt-3 flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
+                          <input name="allowSudo" type="checkbox" className="mt-0.5 size-3.5 shrink-0 accent-brand" />
+                          <span>
+                            {t('allowSudo')}
+                            <span className="mt-0.5 block text-[11px] font-normal leading-4 text-muted-foreground">
+                              {t('allowSudoHint')}
+                            </span>
+                          </span>
                         </label>
                         {importState.error ? (
                           <p className="mt-3 text-xs leading-5 text-red-700 dark:text-red-300" role="alert">{importState.error}</p>

@@ -38,6 +38,7 @@ export type SpawnSpec =
       connector?: SandboxConnectorConfig;
       runtimeId?: string;
       runtimeModelName?: string;
+      allowSudo?: boolean;
     };
 
 export type DeploymentForSpawn = {
@@ -203,6 +204,7 @@ function readSandboxCfg(installCfg: unknown): {
   connector?: SandboxConnectorConfig;
   runtimeId?: string;
   runtimeModelName?: string;
+  allowSudo: boolean;
 } {
   const c = (installCfg ?? {}) as {
     sandboxId?: string;
@@ -213,6 +215,7 @@ function readSandboxCfg(installCfg: unknown): {
     env?: Record<string, string>;
     runtimeId?: string;
     runtimeModelName?: string;
+    allowSudo?: boolean;
   };
   const connector = connectorFromConfig(installCfg);
   const kind = c.kind === 'hermes' && c.runtimeId
@@ -230,6 +233,7 @@ function readSandboxCfg(installCfg: unknown): {
     connector: connector ?? undefined,
     runtimeId: c.runtimeId,
     runtimeModelName: c.runtimeModelName,
+    allowSudo: c.allowSudo === true,
   };
 }
 
@@ -248,6 +252,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       ...(cfg.connector ? { connector: cfg.connector } : {}),
       ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
       ...(cfg.runtimeModelName ? { runtimeModelName: cfg.runtimeModelName } : {}),
+      ...(cfg.allowSudo ? { allowSudo: true } : {}),
     };
   }
 

@@ -46,7 +46,8 @@ describe('SandboxCreateForm', () => {
     expect(archive).toHaveAttribute('type', 'file');
     expect(archive).toHaveAttribute('accept', '.zip,application/zip');
     expect(screen.getByText(/up to 17 MiB/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox')).toBeRequired();
+    expect(screen.getByRole('checkbox', { name: /I trust this archive/ })).toBeRequired();
+    expect(screen.getByRole('checkbox', { name: /Allow the agent to use sudo/ })).not.toBeRequired();
     expect(screen.getByRole('combobox', { name: 'Hermes version' })).toHaveValue(
       'nousresearch/hermes-agent:latest',
     );
@@ -97,7 +98,8 @@ describe('SandboxCreateForm', () => {
     );
     const archive = new File(['zip'], 'backup.zip', { type: 'application/zip' });
     await user.upload(screen.getByLabelText('Hermes archive'), archive);
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('checkbox', { name: /I trust this archive/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Allow the agent to use sudo/ }));
     fireEvent.submit(screen.getByRole('button', { name: 'Import and create Hermes sandbox' }).closest('form')!);
 
     await waitFor(() => expect(MockXmlHttpRequest.instances).toHaveLength(1));
@@ -109,6 +111,10 @@ describe('SandboxCreateForm', () => {
     expect(request.setRequestHeader).toHaveBeenCalledWith(
       'x-toolplane-hermes-image',
       encodeURIComponent('nousresearch/hermes-agent:v2026.8.3'),
+    );
+    expect(request.setRequestHeader).toHaveBeenCalledWith(
+      'x-toolplane-hermes-allow-sudo',
+      '1',
     );
     expect(request.send).toHaveBeenCalledWith(archive);
   });
