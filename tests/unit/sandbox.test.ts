@@ -89,7 +89,7 @@ describe('persistent Docker sandbox runtime', () => {
   it('keeps the minimal capabilities apt needs inside user sandboxes', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 
-    expect(script).toContain("const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID']");
+    expect(script).toContain("const DOCKER_SANDBOX_CAPS = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SETGID', 'SETUID', 'KILL']");
     expect(script).toContain("'--cap-drop'");
     expect(script).toContain("'ALL'");
     expect(script).toContain("DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap])");
@@ -130,7 +130,7 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toMatch(
       /'GATEWAY_MULTIPLEX_PROFILES=1',\r?\n\s+HERMES_TTS_WRITE_SAFE_ROOT_ENV/,
     );
-    expect(script.match(/HERMES_HOME=\/opt\/data/g)).toHaveLength(3);
+    expect(script.match(/HERMES_HOME=\/opt\/data/g)).toHaveLength(4);
   });
 
   it('can restore the multiplexed default gateway when upstream restart targets a down s6 slot', () => {
@@ -155,10 +155,10 @@ describe('persistent Docker sandbox runtime', () => {
     );
   });
 
-  it('runs interactive Hermes terminal sessions as the Hermes service user', () => {
+  it('runs interactive Hermes terminal sessions as the image default user', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 
-    expect(script).toContain("...(KIND === 'hermes' ? ['--user', 'hermes'] : [])");
+    expect(script).not.toContain("...(KIND === 'hermes' ? ['--user', 'hermes'] : [])");
     expect(script).toContain("HERMES_TERMINAL_PATH = '/opt/hermes/.venv/bin:");
     expect(script).toContain('export VIRTUAL_ENV=/opt/hermes/.venv');
     expect(script).toContain('export PATH=${HERMES_TERMINAL_PATH}');
@@ -166,10 +166,19 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain("chown \"$(id -u hermes):$(id -g hermes)\"");
   });
 
+  it('keeps Hermes CLI state on the service user in the root terminal', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain('setpriv --reuid=hermes --regid=hermes --init-groups');
+    expect(script).toContain('env HERMES_HOME=/opt/data HOME=/opt/data');
+    expect(script).toContain('id hermes >/dev/null 2>&1');
+    expect(script).toContain('export -f hermes_cli');
+  });
+
   it('makes a bare terminal gateway restart wait for the real gateway to recover', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
 
-    expect(script).toContain('command hermes gateway start >/dev/null');
+    expect(script).toContain('hermes_cli gateway start >/dev/null');
     expect(script).toContain('http://127.0.0.1:9119/api/status');
     expect(script).toContain('http://127.0.0.1:8642/health/detailed');
     expect(script).toContain('previous_gateway_pid');
