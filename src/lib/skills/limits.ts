@@ -4,7 +4,7 @@ export const MAX_SKILL_BUNDLE_BYTES = 12_000_000;
 export const MAX_SKILL_IMPORT_FILES = 512;
 export const MAX_SKILL_IMPORT_BYTES = 48_000_000;
 export const MIN_SKILL_IMPORT_SKILLS = 1;
-export const DEFAULT_SKILL_IMPORT_SKILLS = 40;
+export const DEFAULT_SKILL_IMPORT_SKILLS = 64;
 export const MAX_SKILL_IMPORT_SKILLS = MAX_SKILL_IMPORT_FILES;
 
 export function isValidSkillImportMaxSkills(value: unknown): value is number {

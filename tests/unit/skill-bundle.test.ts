@@ -72,6 +72,19 @@ describe('skill bundle path guards', () => {
       { path: 'scripts/run.js', content: 'second' },
     ])).toEqual([{ path: 'scripts/Run.js', content: 'first' }]);
   });
+
+  it('strips NUL bytes from text content so jsonb storage stays valid', () => {
+    expect(normalizeSkillFiles([
+      { path: 'reference.md', content: 'filename="shell.php\u0000.jpg"\n' },
+      { path: 'assets/blob.bin', content: Buffer.from('a\0b').toString('base64'), encoding: 'base64' },
+    ])).toEqual([
+      { path: 'reference.md', content: 'filename="shell.php.jpg"\n' },
+      { path: 'assets/blob.bin', content: Buffer.from('a\0b').toString('base64'), encoding: 'base64' },
+    ]);
+    const json = JSON.stringify(normalizeSkillFiles([{ path: 'reference.md', content: 'a\u0000b\u0000c' }]));
+    expect(json).not.toContain('\\u0000');
+    expect(JSON.parse(json)).toEqual([{ path: 'reference.md', content: 'abc' }]);
+  });
 });
 
 describe('parseSkillFrontmatter', () => {
