@@ -165,6 +165,7 @@ export async function POST(
       staged: stagedForImport,
       importId,
       ...(requestedImage ? { image: requestedImage } : {}),
+      ...(req.headers.get('x-toolplane-hermes-allow-sudo') === '1' ? { allowSudo: true } : {}),
     });
     return response(imported, 201);
   } catch (error) {

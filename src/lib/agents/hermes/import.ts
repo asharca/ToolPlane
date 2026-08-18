@@ -107,6 +107,7 @@ export async function importStagedHermesArchive(params: {
   staged: StagedHermesArchive;
   image?: string;
   importId?: string;
+  allowSudo?: boolean;
 }): Promise<HermesArchiveImportResult> {
   const releaseWorkspaceOperation = beginWorkspaceOperation(params.workspaceId);
   if (!releaseWorkspaceOperation) {
@@ -131,6 +132,7 @@ export async function importStagedHermesArchive(params: {
     const createdAgent = await createAgent(params.workspaceId, importedName(params.name), {
       runtime: 'hermes',
       hermesImage: image,
+      ...(params.allowSudo ? { allowSudo: true } : {}),
     });
     agent = createdAgent;
     const runtime = await db.agentRuntime.findFirst({
@@ -146,6 +148,7 @@ export async function importStagedHermesArchive(params: {
         config: {
           managedBy: 'agent-runtime',
           importSource: 'hermes-archive',
+          ...(params.allowSudo ? { allowSudo: true } : {}),
           ...(params.importId ? { [HERMES_ARCHIVE_IMPORT_REQUEST_CONFIG_KEY]: params.importId } : {}),
         },
       },

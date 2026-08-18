@@ -123,6 +123,7 @@ import {
   startSandboxAction,
   stopSandboxAction,
   updateSandboxEnvAction,
+  updateSandboxSudoAction,
 } from '@/lib/sandboxes/actions';
 
 function renameForm(name: string): FormData {
@@ -1171,6 +1172,85 @@ describe('renameSandboxAction', () => {
     expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
     expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
     expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
+  });
+
+  it('enables the Hermes sudo opt-in on config, installCfg, and forces a runtime resync', async () => {
+    const sudoForm = renameForm('Ignored');
+    sudoForm.set('allowSudo', 'on');
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
+      config: { managedBy: 'agent-runtime' },
+      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1' } },
+    }));
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ id: 'runtime-1', agentId: 'agent-1' });
+
+    await updateSandboxSudoAction(sudoForm);
+
+    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
+      where: { id: 'sb1' },
+      data: { config: { managedBy: 'agent-runtime', allowSudo: true } },
+    });
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: {
+        installCfg: expect.objectContaining({ runtimeId: 'runtime-1', allowSudo: true }),
+      },
+    });
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.removeDockerSandboxContainer).not.toHaveBeenCalled();
+  });
+
+  it('skips the Hermes sudo opt-in change when the setting is unchanged', async () => {
+    const sudoForm = new FormData();
+    sudoForm.set('workspace', 'mine');
+    sudoForm.set('sandboxId', 'sb1');
+    sudoForm.set('allowSudo', 'on');
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
+      config: { managedBy: 'agent-runtime', allowSudo: true },
+      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1', allowSudo: true } },
+    }));
+
+    await updateSandboxSudoAction(sudoForm);
+
+    expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
+    expect(mocks.deploymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+  });
+
+  it('disables the Hermes sudo opt-in and drops the key from both records', async () => {
+    const sudoForm = new FormData();
+    sudoForm.set('workspace', 'mine');
+    sudoForm.set('sandboxId', 'sb1');
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox({
+      config: { managedBy: 'agent-runtime', allowSudo: true },
+      deployment: { id: 'dep1', status: 'running', installCfg: { runtimeId: 'runtime-1', allowSudo: true } },
+    }));
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ id: 'runtime-1', agentId: 'agent-1' });
+
+    await updateSandboxSudoAction(sudoForm);
+
+    expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
+      where: { id: 'sb1' },
+      data: { config: { managedBy: 'agent-runtime' } },
+    });
+    expect(mocks.deploymentUpdate).toHaveBeenCalledWith({
+      where: { id: 'dep1' },
+      data: {
+        installCfg: expect.objectContaining({ runtimeId: 'runtime-1' }),
+      },
+    });
+    expect((mocks.deploymentUpdate.mock.calls[0][0].data.installCfg as Record<string, unknown>).allowSudo).toBeUndefined();
+    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1', { force: true });
+  });
+
+  it('ignores the sudo opt-in for non-Hermes sandboxes', async () => {
+    const sudoForm = renameForm('Ignored');
+    sudoForm.set('allowSudo', 'on');
+
+    await updateSandboxSudoAction(sudoForm);
+
+    expect(mocks.sandboxUpdate).not.toHaveBeenCalled();
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
   });
 
   it('deletes every Docker snapshot volume before removing the sandbox runtime', async () => {

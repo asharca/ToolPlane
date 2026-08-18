@@ -17,6 +17,7 @@ const SANDBOX_ID = process.env.SANDBOX_ID || 'sandbox';
 const IMAGE = process.env.SANDBOX_IMAGE || 'mcr.microsoft.com/devcontainers/javascript-node:24-bookworm';
 const VOLUME = process.env.SANDBOX_VOLUME || `toolplane_sandbox_${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 const NETWORK = process.env.SANDBOX_NETWORK === 'none' ? 'none' : 'mcp-sandbox';
+const ALLOW_SUDO = process.env.SANDBOX_ALLOW_SUDO === 'true';
 const CONNECTOR_REMOTE_ROOT = (process.env.SANDBOX_CONNECTOR_REMOTE_ROOT || '/tmp/toolplane-sandbox').replace(/\/+$/, '') || '.';
 const CONNECTOR_BROKER_URL = (process.env.SANDBOX_CONNECTOR_BROKER_URL || 'http://127.0.0.1:9321').replace(/\/+$/, '');
 const CONNECTOR_BROKER_TOKEN = process.env.SANDBOX_CONNECTOR_BROKER_TOKEN || '';
@@ -443,6 +444,10 @@ function hasExpectedDockerSandboxCaps(info) {
   const hostConfig = info?.HostConfig ?? {};
   const capDrop = new Set((hostConfig.CapDrop ?? []).map((cap) => String(cap).toUpperCase()));
   const capAdd = new Set((hostConfig.CapAdd ?? []).map((cap) => String(cap).toUpperCase()));
+  // The no-new-privileges opt must match ALLOW_SUDO: sudo needs setuid when
+  // allowed, and disallowed sandboxes keep the stricter legacy flag. A flip
+  // recreates the container on next start.
+  const securityOpts = new Set((hostConfig.SecurityOpt ?? []).map((opt) => String(opt)));
   const mountTarget = KIND === 'hermes' ? '/opt/data' : '/workspace';
   const expectedMount = (info?.Mounts ?? []).some(
     (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
@@ -456,8 +461,10 @@ function hasExpectedDockerSandboxCaps(info) {
     'GATEWAY_MULTIPLEX_PROFILES=1',
     HERMES_TTS_WRITE_SAFE_ROOT_ENV,
   ].every((entry) => containerEnv.has(entry));
+  const expectsNoNewPrivileges = !(KIND === 'hermes' && ALLOW_SUDO);
   return capDrop.has('ALL')
     && DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap))
+    && securityOpts.has('no-new-privileges') === expectsNoNewPrivileges
     && info?.Config?.Image === IMAGE
     && expectedMount
     && hermesRuntimeConfigured;
@@ -481,8 +488,10 @@ function dockerCreateArgs() {
     '2',
     '--pids-limit',
     '512',
-    '--security-opt',
-    'no-new-privileges',
+    // no-new-privileges stays on unless this Hermes sandbox opts into sudo:
+    // the service user's setuid sudo needs it lifted, and the interactive
+    // terminal plus the MCP shell/file tools already run as root.
+    ...(KIND === 'hermes' && ALLOW_SUDO ? [] : ['--security-opt', 'no-new-privileges']),
     '--cap-drop',
     'ALL',
     ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ['--cap-add', cap]),
@@ -551,6 +560,42 @@ async function createDockerContainer() {
   if (created.exitCode !== 0) throw new Error(created.stderr || `docker run failed (${created.exitCode})`);
 }
 
+// Opt-in per sandbox via the allowSudo setting: agent shell commands run as
+// the non-root service user and rely on classic sudo. Install it once (best
+// effort when the image lacks apt or egress) and grant the service user
+// passwordless rights so sudo works without a TTY.
+async function ensureHermesSudo() {
+  if (KIND !== 'hermes' || !ALLOW_SUDO) return;
+  const probe = await run(
+    'docker',
+    ['exec', CONTAINER, 'sh', '-c',
+      'command -v sudo >/dev/null 2>&1 && grep -qs "NOPASSWD:ALL" /etc/sudoers.d/99-toolplane 2>/dev/null && echo ready'],
+    { env: dockerEnv(), timeoutMs: 15_000 },
+  );
+  if (probe.stdout.includes('ready')) return;
+  const setup = await run(
+    'docker',
+    ['exec', CONTAINER, 'sh', '-c', [
+      'id hermes >/dev/null 2>&1 || exit 0',
+      'if ! command -v sudo >/dev/null 2>&1; then',
+      '  if command -v apt-get >/dev/null 2>&1; then',
+      '    apt-get update -qq >/dev/null 2>&1 || true',
+      '    apt-get install -y -qq sudo >/dev/null 2>&1 || exit 0',
+      '  else',
+      '    exit 0',
+      '  fi',
+      'fi',
+      'tmp=$(mktemp /etc/sudoers.d/99-toolplane.XXXXXX)',
+      'printf \'hermes ALL=(ALL) NOPASSWD:ALL\\n\' > "$tmp"',
+      'chmod 0440 "$tmp" && mv -f "$tmp" /etc/sudoers.d/99-toolplane',
+    ].join('\n')],
+    { env: dockerEnv(), timeoutMs: 5 * 60_000 },
+  );
+  if (setup.exitCode !== 0) {
+    process.stderr.write(`Hermes sudo setup skipped: ${truncate(setup.stderr, 2_000)}\n`);
+  }
+}
+
 async function ensureDockerContainer() {
   const info = await dockerInspectJson();
   if (info) {
@@ -558,15 +603,16 @@ async function ensureDockerContainer() {
       const removed = await run('docker', ['rm', '-f', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 });
       if (removed.exitCode !== 0) throw new Error(removed.stderr || `docker rm failed (${removed.exitCode})`);
       await createDockerContainer();
-      return;
+      return ensureHermesSudo();
     }
-    if (info.State?.Running === true) return;
+    if (info.State?.Running === true) return ensureHermesSudo();
     const started = await run('docker', ['start', CONTAINER], { env: dockerEnv(), timeoutMs: 30_000 });
     if (started.exitCode !== 0) throw new Error(started.stderr || `docker start failed (${started.exitCode})`);
-    return;
+    return ensureHermesSudo();
   }
 
   await createDockerContainer();
+  await ensureHermesSudo();
 }
 
 async function ensureRuntime() {

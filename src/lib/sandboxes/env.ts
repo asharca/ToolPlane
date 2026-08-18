@@ -58,6 +58,20 @@ export function parseSandboxEnvText(input: FormDataEntryValue | string | null): 
   return env;
 }
 
+export function readSandboxAllowSudo(config: unknown): boolean {
+  return isRecord(config) && config.allowSudo === true;
+}
+
+export function sandboxConfigWithAllowSudo(config: unknown, allowSudo: boolean): Prisma.InputJsonValue | undefined {
+  const base = isRecord(config) ? { ...config } : {};
+  if (allowSudo) {
+    base.allowSudo = true;
+  } else {
+    delete base.allowSudo;
+  }
+  return Object.keys(base).length ? (base as Prisma.InputJsonValue) : undefined;
+}
+
 export function sandboxConfigWithEnv(config: unknown, env: SandboxEnv): Prisma.InputJsonValue | undefined {
   const base = isRecord(config) ? { ...config } : {};
   if (Object.keys(env).length) {

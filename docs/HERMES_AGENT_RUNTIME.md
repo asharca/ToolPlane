@@ -189,7 +189,7 @@ Hermes 容器：
 - 不发布 `8642` 或 dashboard 端口。
 - Dashboard 在容器内启用，但只绑定 `127.0.0.1:9119`。
 - root capabilities 全部移除，只恢复容器启动和文件所有权所需的最小集合。
-- 启用 `no-new-privileges`、CPU、内存和 PID 限制。
+- 默认启用 `no-new-privileges`、CPU、内存和 PID 限制（开启 `Allow sudo` 选项时解除 `no-new-privileges`，见 Hermes Terminal）。
 - `/opt/data` 使用每个 Agent 独立的 Docker named volume。
 - API Server 只绑定容器内 `127.0.0.1:8642`。
 - 托管 runtime Sandbox 不出现在通用 Sandbox 列表，也不能绑定给其他 Agent。其独立的托管运行时面板可管理名称、环境变量和 `/opt/data` 数据卷快照；启动、停止、删除和 Agent 配置仍经 Agent runtime 生命周期执行。
@@ -267,7 +267,16 @@ HTTP + SSE API 连接到 supervisor：
 终端 session 只能在 URL 中该 Agent 的容器内解析，不能拿一个 Agent 的 session ID 访问另一个
 runtime。Shell 以镜像默认用户（root）运行，与 MCP 的 shell/文件工具一致，可以直接 apt-get、
 chown 等；wrapper 中的 `hermes` CLI 通过 `setpriv` 降回 `hermes` 服务用户执行，`/opt/data` 下的
-服务状态文件保持服务用户可维护。ToolPlane 同步目录和上传附件仍会修正为该用户可读写。
+服务用户可维护。ToolPlane 同步目录和上传附件仍会修正为该用户可读写。
+
+Chat 里 Agent 的原生 shell 工具以 `hermes` 服务用户运行，默认不能提权。沙箱设置里开启
+`Allow sudo`（配置存于 `Sandbox.config.allowSudo` 并投影到 deployment `installCfg`）后，
+容器启动时（`ensureHermesSudo`）会安装 `sudo` 并写入 `/etc/sudoers.d/99-toolplane`
+（`hermes ALL=(ALL) NOPASSWD:ALL`），Agent 即可直接执行 `sudo` 提权的命令（Hermes 的 sudo
+处理同时支持 `SUDO_PASSWORD` 自动注入）。开启时容器不再设置 `no-new-privileges`——setuid
+sudo 依赖无该限制；终端与 MCP shell/文件工具本来就运行在 root，实际防护水平不变。开关会随
+下一次容器重建生效（强制 runtime resync，volume 保留）；关闭后恢复 `no-new-privileges`。
+创建 Hermes 沙箱（archive 导入）时也可以直接勾选该选项。
 
 ## 5. Chat、记忆与附件
 

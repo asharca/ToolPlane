@@ -1343,6 +1343,7 @@ async function launchProcess(
             SANDBOX_IMAGE: managedSpec.image ?? '',
             SANDBOX_VOLUME: managedSpec.volumeName ?? '',
             SANDBOX_NETWORK: managedSpec.network,
+            SANDBOX_ALLOW_SUDO: String(managedSpec.allowSudo === true),
             SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
             SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? '',
             SANDBOX_CONNECTOR_BROKER_TOKEN: connectorBroker?.internalToken ?? '',
