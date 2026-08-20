@@ -206,6 +206,15 @@ describe('AgentChat', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses a compact composer that grows from one line', () => {
+    renderChat();
+
+    const input = screen.getByPlaceholderText('Message this agent');
+    expect(input).toHaveAttribute('rows', '1');
+    expect(input).toHaveClass('min-h-11', 'max-h-40');
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('ui-icon-button', 'size-10');
+  });
+
   it('re-syncs local chat state when the selected conversation changes', () => {
     const firstMessages: HermesUIMessage[] = [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first' }] }];
     const secondMessages: HermesUIMessage[] = [{ id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'second' }] }];
