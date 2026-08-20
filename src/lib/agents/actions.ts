@@ -603,12 +603,17 @@ export async function stopAgentRuntimeAction(
 export async function createConversationAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
+  const standaloneChat = formData.get('destination') === 'chat';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   if (!await isManageableAgent(ctx.ws.id, agentId)) return;
   const conv = await createConversation(ctx.ws.id, agentId);
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
+  if (standaloneChat) {
+    revalidatePath(`/app/${slug}/chat`);
+    redirect(`/app/${slug}/chat?agent=${agentId}&c=${conv.id}`);
+  }
   redirect(`/app/${slug}/agents/${agentId}?tab=chat&c=${conv.id}`);
 }
 

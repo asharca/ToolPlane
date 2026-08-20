@@ -18,6 +18,7 @@ import {
   Code2,
   Cpu,
   LayoutDashboard,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -61,6 +62,7 @@ const SECTIONS: { titleKey?: string; items: NavItem[] }[] = [
   {
     titleKey: 'run',
     items: [
+      { labelKey: 'chat', segment: 'chat', icon: MessageSquare },
       { labelKey: 'modelProviders', segment: 'providers', icon: Cpu },
       { labelKey: 'agents', segment: 'agents', icon: Bot },
     ],
