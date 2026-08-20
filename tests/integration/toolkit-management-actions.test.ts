@@ -19,15 +19,18 @@ import {
   createToolkitAction,
   deleteToolkitAction,
   renameToolkitAction,
+  updateToolkitAvailabilityAction,
 } from '@/lib/toolkits/actions';
 
 const stamp = Date.now();
 const ownerEmail = `toolkit-management-owner-${stamp}@test.dev`;
 const foreignEmail = `toolkit-management-foreign-${stamp}@test.dev`;
+const collaboratorEmail = `toolkit-management-collaborator-${stamp}@test.dev`;
 const ownerSlug = `toolkit-management-owner-${stamp}`;
 const foreignSlug = `toolkit-management-foreign-${stamp}`;
 
 let ownerId = '';
+let collaboratorId = '';
 let ownerWorkspaceId = '';
 let foreignWorkspaceId = '';
 let deploymentId = '';
@@ -49,13 +52,27 @@ function createForm(workspace: string, name: string): FormData {
   return form;
 }
 
+function availabilityForm(
+  workspace: string,
+  toolkitSlug: string,
+  visibility: 'public' | 'private',
+  enabled: boolean,
+): FormData {
+  const form = actionForm(workspace, toolkitSlug);
+  form.set('visibility', visibility);
+  if (enabled) form.set('enabled', 'on');
+  return form;
+}
+
 describe('toolkit management actions', () => {
   beforeAll(async () => {
-    const [owner, foreign] = await Promise.all([
+    const [owner, foreign, collaborator] = await Promise.all([
       db.user.create({ data: { email: ownerEmail, passwordHash: 'x' } }),
       db.user.create({ data: { email: foreignEmail, passwordHash: 'x' } }),
+      db.user.create({ data: { email: collaboratorEmail, passwordHash: 'x' } }),
     ]);
     ownerId = owner.id;
+    collaboratorId = collaborator.id;
 
     const [ownerWorkspace, foreignWorkspace] = await Promise.all([
       db.workspace.create({
@@ -63,7 +80,12 @@ describe('toolkit management actions', () => {
           slug: ownerSlug,
           name: 'Toolkit Management Owner',
           ownerId: owner.id,
-          members: { create: { userId: owner.id, role: 'owner' } },
+          members: {
+            create: [
+              { userId: owner.id, role: 'owner' },
+              { userId: collaborator.id, role: 'member' },
+            ],
+          },
         },
       }),
       db.workspace.create({
@@ -122,7 +144,9 @@ describe('toolkit management actions', () => {
 
   afterAll(async () => {
     await db.workspace.deleteMany({ where: { id: { in: [ownerWorkspaceId, foreignWorkspaceId] } } });
-    await db.user.deleteMany({ where: { email: { in: [ownerEmail, foreignEmail] } } });
+    await db.user.deleteMany({
+      where: { email: { in: [ownerEmail, foreignEmail, collaboratorEmail] } },
+    });
     await db.$disconnect();
   });
 
@@ -141,6 +165,56 @@ describe('toolkit management actions', () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       `/app/${ownerSlug}/toolkits/${toolkit.slug}`,
     );
+  });
+
+  it('updates marketplace availability for a workspace owner or administrator only', async () => {
+    const toolkit = await db.toolkit.create({
+      data: {
+        workspaceId: ownerWorkspaceId,
+        name: 'Publishable Toolkit',
+        slug: 'publishable-toolkit',
+        visibility: 'private',
+        enabled: false,
+      },
+    });
+
+    await updateToolkitAvailabilityAction(
+      availabilityForm(ownerSlug, toolkit.slug, 'public', true),
+    );
+
+    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
+      visibility: 'public',
+      enabled: true,
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/toolkits`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/app/${ownerSlug}/toolkits/${toolkit.slug}`,
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/market/toolkits`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/app/${ownerSlug}/agents`);
+
+    mocks.revalidatePath.mockClear();
+    mocks.getCurrentUser.mockResolvedValue({ id: collaboratorId, email: collaboratorEmail });
+    await updateToolkitAvailabilityAction(
+      availabilityForm(ownerSlug, toolkit.slug, 'private', false),
+    );
+    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
+      visibility: 'public',
+      enabled: true,
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+
+    await db.membership.update({
+      where: { workspaceId_userId: { workspaceId: ownerWorkspaceId, userId: collaboratorId } },
+      data: { role: 'admin' },
+    });
+    await updateToolkitAvailabilityAction(
+      availabilityForm(ownerSlug, toolkit.slug, 'private', false),
+    );
+    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.toMatchObject({
+      visibility: 'private',
+      enabled: false,
+    });
   });
 
   it('allocates distinct slugs when toolkits with the same name are created concurrently', async () => {

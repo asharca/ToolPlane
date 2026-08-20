@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   revalidatePath: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
+  createAgent: vi.fn(),
   setAgentTools: vi.fn(),
   setHermesRuntimeEnv: vi.fn(),
   stopHermesRuntime: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/agents/mutations', () => ({
   cloneAgent: vi.fn(),
   cloneHermesVolumeData: vi.fn(),
-  createAgent: vi.fn(),
+  createAgent: mocks.createAgent,
   updateAgent: mocks.updateAgent,
   setAgentTools: mocks.setAgentTools,
   deleteAgent: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
 import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
+  createAgentAction,
   updateAgentAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
@@ -218,6 +220,31 @@ describe('Hermes runtime control actions', () => {
 
     await expect(stopAgentRuntimeAction({}, runtimeForm())).resolves.toEqual({
       error: 'Could not stop the Hermes runtime: Docker daemon unavailable',
+    });
+  });
+});
+
+describe('createAgentAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.createAgent.mockResolvedValue({ id: 'agent-1' });
+  });
+
+  it('binds selected sandboxes to a newly created native agent', async () => {
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('name', 'Harness');
+    form.append('sandboxId', 'sandbox-1');
+
+    await createAgentAction(form);
+
+    expect(mocks.setAgentTools).toHaveBeenCalledWith('workspace-1', 'agent-1', {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: ['sandbox-1'],
     });
   });
 });

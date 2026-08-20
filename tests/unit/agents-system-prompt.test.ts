@@ -16,23 +16,25 @@ const catalogSkill = (slug: string, name: string, description: string): SkillFor
 });
 
 describe('assembleSystemPrompt', () => {
-  it('combines the base prompt with each skill SKILL.md', () => {
+  it('combines the base prompt with a Pi-style skill catalog', () => {
     const out = assembleSystemPrompt('You are helpful.', [
       catalogSkill('web-scraper', 'Web Scraper', 'Scrapes pages.'),
     ]);
     expect(out).toContain('You are helpful.');
-    expect(out).toContain('<skill name="Web Scraper" slug="web-scraper">');
-    expect(out).toContain('<skill_markdown>\n---\nname: web-scraper');
-    expect(out).toContain('name: web-scraper'); // from buildSkillMarkdown frontmatter
+    expect(out).toContain('Use the skill_read_file tool to load a skill\'s SKILL.md');
+    expect(out).toContain('<available_skills>');
+    expect(out).toContain('<name>Web Scraper</name>');
+    expect(out).toContain('<description>Scrapes pages.</description>');
+    expect(out).toContain('<location>toolplane://skills/web-scraper/SKILL.md</location>');
+    expect(out).not.toContain('name: web-scraper');
   });
 
   it('omits the base section when no system prompt is set', () => {
     const out = assembleSystemPrompt(null, [
       catalogSkill('s', 'Thing', ''),
     ]);
-    expect(out).toContain('# Attached Skill Runtime');
-    expect(out).toContain('<attached_skills>');
-    expect(out).toContain('<skill name="Thing" slug="s">');
+    expect(out).toContain('<available_skills>');
+    expect(out).toContain('<name>Thing</name>');
     expect(out).not.toContain('You are helpful.');
   });
 
@@ -40,31 +42,32 @@ describe('assembleSystemPrompt', () => {
     expect(assembleSystemPrompt('   ', [])).toBe('');
   });
 
-  it('includes custom skill content directly', () => {
+  it('lists custom skill metadata without eagerly including its content', () => {
     const custom: SkillForPrompt = {
       skillId: null,
       skill: null,
       name: 'My Custom Skill',
       slug: 'my-custom-skill',
       description: 'Does something custom.',
-      content: '# My Custom Skill\n\nDo the custom thing.',
+      content: '# My Custom Skill\n\nSECRET_NEVER_EAGER',
       userInvocable: true,
       agentInvocable: true,
       effort: 'default',
     };
     const out = assembleSystemPrompt(null, [custom]);
-    expect(out).toContain('<skill name="My Custom Skill" slug="my-custom-skill">');
-    expect(out).toContain('Do the custom thing.');
+    expect(out).toContain('<name>My Custom Skill</name>');
+    expect(out).toContain('<description>Does something custom.</description>');
+    expect(out).not.toContain('SECRET_NEVER_EAGER');
+    expect(out).not.toContain('<skill_markdown>');
   });
 
-  it('keeps skill markdown frontmatter inside an explicit skill boundary', () => {
+  it('escapes skill catalog fields', () => {
     const out = assembleSystemPrompt(null, [
-      catalogSkill('quoted', 'Quoted "Skill"', 'Escapes labels.'),
+      catalogSkill('quoted', 'Quoted "Skill"', "Escapes </skill> & 'values'."),
     ]);
 
-    expect(out).toContain('<skill name="Quoted &quot;Skill&quot;" slug="quoted">');
-    expect(out).toContain('<skill_markdown>\n---\nname: quoted');
-    expect(out).not.toContain('# Skill: Quoted "Skill"\n\n---');
+    expect(out).toContain('<name>Quoted &quot;Skill&quot;</name>');
+    expect(out).toContain('<description>Escapes &lt;/skill&gt; &amp; &apos;values&apos;.</description>');
   });
 });
 

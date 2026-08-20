@@ -22,6 +22,22 @@ async function authorizedWorkspace(slug: string) {
   return { user, ws };
 }
 
+// A public toolkit is visible to every workspace in the market, so keep that
+// decision with the same owner/admin boundary used for public Agent APIs.
+async function publishingWorkspace(slug: string) {
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return null;
+  if (ctx.ws.ownerId === ctx.user.id) return ctx;
+
+  const membership = await db.membership.findUnique({
+    where: {
+      workspaceId_userId: { workspaceId: ctx.ws.id, userId: ctx.user.id },
+    },
+    select: { role: true },
+  });
+  return membership?.role === 'admin' ? ctx : null;
+}
+
 async function toolkitInWorkspace(toolkitSlug: string, workspaceId: string) {
   return db.toolkit.findFirst({ where: { slug: toolkitSlug, workspaceId } });
 }
@@ -289,6 +305,31 @@ export async function renameToolkitAction(formData: FormData) {
   await db.toolkit.update({ where: { id: toolkit.id }, data: { name } });
   revalidatePath(`/app/${workspaceSlug}/toolkits`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
+}
+
+export async function updateToolkitAvailabilityAction(formData: FormData) {
+  const workspaceSlug = String(formData.get('workspace') ?? '');
+  const toolkitSlug = String(formData.get('toolkitSlug') ?? '');
+  const visibility = formData.get('visibility');
+  if (
+    !workspaceSlug
+    || !toolkitSlug
+    || (visibility !== 'public' && visibility !== 'private')
+  ) return;
+
+  const ctx = await publishingWorkspace(workspaceSlug);
+  if (!ctx) return;
+  const toolkit = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
+  if (!toolkit) return;
+
+  await db.toolkit.update({
+    where: { id: toolkit.id },
+    data: { visibility, enabled: formData.get('enabled') === 'on' },
+  });
+  revalidatePath(`/app/${workspaceSlug}/toolkits`);
+  revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
+  revalidatePath(`/app/${workspaceSlug}/market/toolkits`);
+  revalidatePath(`/app/${workspaceSlug}/agents`);
 }
 
 export async function cloneToolkitAction(formData: FormData) {

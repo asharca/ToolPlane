@@ -1,15 +1,15 @@
 import 'server-only';
 import type { ModelMessage } from 'ai';
-import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import type { SkillForPrompt } from './resolve';
 
-function xmlAttr(value: string): string {
+function xmlText(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/'/g, '&apos;');
 }
 
 export function assembleSystemPrompt(systemPrompt: string | null | undefined, skills: SkillForPrompt[]): string {
@@ -19,26 +19,24 @@ export function assembleSystemPrompt(systemPrompt: string | null | undefined, sk
   if (skills.length > 0) {
     const skillSections = skills.map((s) => {
       const label = skillLabel({ skillId: s.skillId, skill: s.skill, name: s.name ?? null, slug: s.slug ?? null, source: null });
-      const markdown = buildInstalledSkillMarkdown(s).trimEnd();
+      const description = s.skill?.description ?? s.description ?? '';
       return [
-        `<skill name="${xmlAttr(label.name)}" slug="${xmlAttr(label.slug)}">`,
-        '<skill_markdown>',
-        markdown,
-        '</skill_markdown>',
+        ' <skill>',
+        `  <name>${xmlText(label.name)}</name>`,
+        `  <description>${xmlText(description)}</description>`,
+        `  <location>toolplane://skills/${encodeURIComponent(label.slug)}/SKILL.md</location>`,
         '</skill>',
       ].join('\n');
     });
     sections.push([
-      '# Attached Skill Runtime',
+      'The following skills provide specialized instructions for specific tasks.',
+      'Use the skill_read_file tool to load a skill\'s SKILL.md when the task matches its description. Pass the skill name and path "SKILL.md".',
+      'Locations are ToolPlane skill identifiers, not host filesystem paths.',
+      'When a skill file references a relative path, resolve it relative to its skill directory and pass that relative path to skill_read_file or skill_run_script.',
       '',
-      'The skills below are active instructions for this agent. Apply them when relevant.',
-      'If a skill references bundled files or scripts, use the skill tools to inspect or run those resources.',
-      'Do not say an attached skill is unavailable merely because it is not an MCP tool.',
-      'If a skill requires an external MCP server, CLI, package, or API that is not available, explain that missing dependency precisely and continue with the available skill instructions.',
-      '',
-      '<attached_skills>',
+      '<available_skills>',
       ...skillSections,
-      '</attached_skills>',
+      '</available_skills>',
     ].join('\n'));
   }
   return sections.join('\n\n---\n\n');

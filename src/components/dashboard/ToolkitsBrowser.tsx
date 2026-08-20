@@ -4,7 +4,10 @@ import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Lock, Globe, Settings, Store, Wrench, X } from 'lucide-react';
-import { createToolkitAction } from '@/lib/toolkits/actions';
+import {
+  createToolkitAction,
+  updateToolkitAvailabilityAction,
+} from '@/lib/toolkits/actions';
 import {
   DashboardEmptyState,
   DashboardFilterInput,
@@ -46,12 +49,72 @@ function CreateToolkitToggle({
   );
 }
 
+function ToolkitAvailabilityPill({
+  workspaceSlug,
+  toolkit,
+  kind,
+  canManage,
+}: {
+  workspaceSlug: string;
+  toolkit: ToolkitRow;
+  kind: 'visibility' | 'enabled';
+  canManage: boolean;
+}) {
+  const t = useTranslations('console.toolkits');
+  const isVisibility = kind === 'visibility';
+  const isPublic = toolkit.visibility === 'public';
+  const enabled = toolkit.enabled;
+  const label = isVisibility
+    ? isPublic ? t('public') : t('private')
+    : enabled ? t('enabled') : t('disabled');
+  const nextVisibility = isVisibility ? (isPublic ? 'private' : 'public') : toolkit.visibility;
+  const nextEnabled = isVisibility ? enabled : !enabled;
+  const actionLabel = isVisibility
+    ? isPublic ? t('makeToolkitPrivate', { name: toolkit.name }) : t('publishToolkit', { name: toolkit.name })
+    : enabled ? t('disableToolkit', { name: toolkit.name }) : t('enableToolkit', { name: toolkit.name });
+  const className = isVisibility
+    ? 'inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium capitalize text-muted-foreground'
+    : 'inline-flex items-center gap-1.5 text-foreground';
+  const content = isVisibility ? (
+    <>
+      {isPublic ? <Globe className="size-3" /> : <Lock className="size-3" />}
+      {label}
+    </>
+  ) : (
+    <>
+      <span className={`size-2 rounded-full ${enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
+      {label}
+    </>
+  );
+
+  if (!canManage) return <span className={className}>{content}</span>;
+
+  return (
+    <form action={updateToolkitAvailabilityAction} className="inline-flex">
+      <input type="hidden" name="workspace" value={workspaceSlug} />
+      <input type="hidden" name="toolkitSlug" value={toolkit.slug} />
+      <input type="hidden" name="visibility" value={nextVisibility} />
+      {nextEnabled ? <input type="hidden" name="enabled" value="on" /> : null}
+      <button
+        type="submit"
+        aria-label={actionLabel}
+        title={actionLabel}
+        className={`${className} transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+      >
+        {content}
+      </button>
+    </form>
+  );
+}
+
 export function ToolkitsBrowser({
   slug,
   toolkits,
+  canManagePublishing = false,
 }: {
   slug: string;
   toolkits: ToolkitRow[];
+  canManagePublishing?: boolean;
 }) {
   const t = useTranslations('console.toolkits');
   const [query, setQuery] = useState('');
@@ -161,25 +224,21 @@ export function ToolkitsBrowser({
                       >
                         {toolkit.name}
                       </Link>
-                      <span className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
-                        {toolkit.visibility === 'public' ? (
-                          <Globe className="size-3" />
-                        ) : (
-                          <Lock className="size-3" />
-                        )}
-                        {toolkit.visibility === 'public' ? t('public') : t('private')}
-                      </span>
+                      <ToolkitAvailabilityPill
+                        workspaceSlug={slug}
+                        toolkit={toolkit}
+                        kind="visibility"
+                        canManage={canManagePublishing}
+                      />
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 text-foreground">
-                      <span
-                        className={`size-2 rounded-full ${
-                          toolkit.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
-                        }`}
-                      />
-                      {toolkit.enabled ? t('enabled') : t('disabled')}
-                    </span>
+                    <ToolkitAvailabilityPill
+                      workspaceSlug={slug}
+                      toolkit={toolkit}
+                      kind="enabled"
+                      canManage={canManagePublishing}
+                    />
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {toolkit.toolCount}

@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { getLocale, getTranslations } from 'next-intl/server';
-import Link from 'next/link';
-import { Bot, Cpu } from 'lucide-react';
+import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import {
@@ -12,12 +10,11 @@ import {
   listProviders,
 } from '@/lib/agents/queries';
 import { AgentsBrowser } from '@/components/dashboard/agents/AgentsBrowser';
-import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 import { listToolkits } from '@/lib/toolkits/queries';
+import { listSandboxes } from '@/lib/sandboxes/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { originFromHeaders } from '@/lib/http/origin';
 
 export const dynamic = 'force-dynamic';
@@ -31,115 +28,68 @@ export default async function AgentsPage({
 }) {
   const { workspace: slug } = await params;
   const { tab } = await searchParams;
-  const [t, locale] = await Promise.all([
-    getTranslations('console.agents'),
-    getLocale(),
-  ]);
-  const TABS = [
-    { key: 'agents', label: t('agent'), icon: Bot },
-    { key: 'providers', label: t('model'), icon: Cpu },
-  ];
-  const current = TABS.some((t) => t.key === tab) ? tab! : 'agents';
+  if (tab === 'providers') redirect(`/app/${encodeURIComponent(slug)}/providers`);
+  const t = await getTranslations('console.agents');
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
-  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [agents, providers, deployments, skills, toolkits] = await Promise.all([
-    current === 'agents' ? listAgents(ws.id) : Promise.resolve([]),
+  const [agents, providers, deployments, skills, toolkits, sandboxes] = await Promise.all([
+    listAgents(ws.id),
     listProviders(ws.id),
-    current === 'agents' ? listAgentDeploymentOptions(ws.id) : Promise.resolve([]),
-    current === 'agents' ? listAgentSkillOptions(ws.id) : Promise.resolve([]),
-    current === 'agents' ? listToolkits(ws.id) : Promise.resolve([]),
+    listAgentDeploymentOptions(ws.id),
+    listAgentSkillOptions(ws.id),
+    listToolkits(ws.id),
+    listSandboxes(ws.id),
   ]);
 
   return (
     <>
       <DashboardHeader title={t('title')} />
-      <div className="px-4 pt-5 sm:px-6 lg:px-8">
-        <nav className="inline-flex rounded-md border border-border bg-card p-1" aria-label={t('agent')}>
-          {TABS.map((item) => {
-            const Icon = item.icon;
-            const active = item.key === current;
-            const href = item.key === 'agents' ? `/app/${slug}/agents` : `/app/${slug}/agents?tab=${item.key}`;
-            return (
-              <Link
-                key={item.key}
-                href={href}
-                className={`inline-flex h-10 items-center gap-2.5 rounded-md px-4 text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-accent text-accent-foreground'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                }`}
-              >
-                <Icon className="size-[18px] shrink-0" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-      </div>
-      {current === 'agents' ? (
-        <AgentsBrowser
-          slug={slug}
-          agentControlEndpoint={agentControlEndpoint}
-          agents={agents.map((a) => ({
-            id: a.id,
-            name: a.name,
-            providerName: a.provider?.name ?? null,
-            providerNames: a.modelProviders.map((link) => link.provider.name),
-            model: a.model,
-            toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
-            subAgentCount: a._count.subAgents,
-            conversationCount: a._count.conversations,
-            runtimeKind: a.runtime?.kind ?? 'native',
-            runtimeStatus: a.runtime
-              ? ['error', 'setup_required'].includes(a.runtime.status)
-                ? a.runtime.status
-                : effectiveStatus(a.runtime.sandbox.deploymentId, a.runtime.sandbox.deployment.status)
-              : null,
-          }))}
-          hermesImages={hermesImages}
-          createOptions={{
-            providers: providers.map((provider) => ({
-              id: provider.id,
-              name: provider.name,
-              models: provider.models,
-            })),
-            deployments,
-            skills,
-            toolkits: toolkits.map((toolkit) => ({
-              id: toolkit.id,
-              label: toolkit.name,
-              status: toolkit.enabled ? 'enabled' : 'disabled',
-            })),
-          }}
-        />
-      ) : (
-        <ProvidersPanel
-          slug={slug}
-          providers={providers.map((p) => ({
-            id: p.id,
-            name: p.name,
-            format: p.format,
-            baseUrl: p.baseUrl,
-            modelCount: p.models.length,
-            models: p.models,
-            modelsFetchedAt: p.modelsFetchedAt
-              ? formatInTimeZone(
-                  p.modelsFetchedAt,
-                  timeZone,
-                  { dateStyle: 'medium', timeStyle: 'short' },
-                  locale,
-                )
-              : null,
-          }))}
-        />
-      )}
+      <AgentsBrowser
+        slug={slug}
+        agentControlEndpoint={agentControlEndpoint}
+        agents={agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          providerName: a.provider?.name ?? null,
+          providerNames: a.modelProviders.map((link) => link.provider.name),
+          model: a.model,
+          toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
+          subAgentCount: a._count.subAgents,
+          conversationCount: a._count.conversations,
+          runtimeKind: a.runtime?.kind ?? 'native',
+          runtimeStatus: a.runtime
+            ? ['error', 'setup_required'].includes(a.runtime.status)
+              ? a.runtime.status
+              : effectiveStatus(a.runtime.sandbox.deploymentId, a.runtime.sandbox.deployment.status)
+            : null,
+        }))}
+        hermesImages={hermesImages}
+        createOptions={{
+          providers: providers.map((provider) => ({
+            id: provider.id,
+            name: provider.name,
+            models: provider.models,
+          })),
+          deployments,
+          skills,
+          toolkits: toolkits.map((toolkit) => ({
+            id: toolkit.id,
+            label: toolkit.name,
+            status: toolkit.enabled ? 'enabled' : 'disabled',
+          })),
+          sandboxes: sandboxes.map((sandbox) => ({
+            id: sandbox.id,
+            label: sandbox.name,
+            status: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status),
+          })),
+        }}
+      />
     </>
   );
 }

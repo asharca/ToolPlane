@@ -5,6 +5,7 @@ import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/smoke/agents',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/lib/workspace/actions', () => ({
@@ -87,6 +88,12 @@ describe('DashboardChrome sidebar', () => {
 
     const sidebar = screen.getByRole('complementary');
     expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/app/smoke/overview');
+    expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
+    expect(screen.getByText('Discover', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Build', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Run', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Operate', { exact: true })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
 
@@ -108,7 +115,7 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.getByRole('dialog', { name: 'Workspaces' })).toHaveAttribute('data-side', 'right');
     expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
       'href',
-      '/app/staging/mcp',
+      '/app/staging/overview',
     );
   });
 

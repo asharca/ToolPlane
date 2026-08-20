@@ -102,7 +102,6 @@ export default async function AgentDetailPage({
     channelConnections,
     providers,
     deployments,
-    publicDeploymentRows,
     skills,
     toolkits,
     sandboxes,
@@ -117,14 +116,6 @@ export default async function AgentDetailPage({
       : listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id, selectedDeps),
-    db.deployment.findMany({
-      where: {
-        workspaceId: ws.id,
-        publicInvocable: true,
-        OR: [{ source: null }, { source: { not: 'sandbox' } }],
-      },
-      select: { id: true },
-    }),
     listAgentSkillOptions(ws.id, selectedSkills),
     listToolkits(ws.id),
     listSandboxes(ws.id),
@@ -281,9 +272,6 @@ export default async function AgentDetailPage({
             };
           })() : null,
         } : undefined}
-        publicApiDeployments={deployments.filter((deployment) => (
-          publicDeploymentRows.some((row) => row.id === deployment.id)
-        ))}
         ready={ready}
         agentName={agent.name}
         providerLabel={providerLabel}

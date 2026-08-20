@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { AgentChat } from '@/components/dashboard/agents/AgentChat';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
@@ -80,7 +81,9 @@ vi.mock('@/lib/agents/public-api/actions', () => ({
   createAgentClientTokenAction: vi.fn(),
 }));
 
-const settings = {
+type ChatSettings = ComponentProps<typeof AgentChat>['settings'];
+
+const settings: ChatSettings = {
   name: 'Test agent',
   systemPrompt: '',
   providerId: null,
@@ -122,12 +125,14 @@ function renderChat({
   initialSettingsTab = null,
   runtime = null,
   api = undefined,
+  settingsOverride = {},
 }: {
   conversationId?: string | null;
   initialMessages?: HermesUIMessage[];
   initialSettingsTab?: 'agent' | 'channels' | 'api' | 'hermes' | 'terminal' | null;
   runtime?: typeof hermesRuntime | null;
   api?: typeof apiSettings;
+  settingsOverride?: Partial<ChatSettings>;
 } = {}) {
   return render(
     <AgentChat
@@ -153,7 +158,7 @@ function renderChat({
           source: null,
         },
       ]}
-      settings={{ ...settings, runtime }}
+      settings={{ ...settings, ...settingsOverride, runtime }}
       channelSettings={channelSettings}
       apiSettings={api}
       ready
@@ -659,6 +664,35 @@ describe('AgentChat', () => {
     expect(screen.getByText('First chat')).toBeInTheDocument();
   });
 
+  it('filters the local conversation list without changing the active chat', async () => {
+    renderChat();
+
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search conversations...' }), 'second');
+
+    expect(screen.queryByText('First chat')).not.toBeInTheDocument();
+    expect(screen.getByText('Second chat')).toBeInTheDocument();
+  });
+
+  it('keeps private MCP bindings available in Agent settings', async () => {
+    renderChat({
+      settingsOverride: {
+        deployments: [{
+          id: 'private-mcp',
+          label: 'Private MCP',
+          description: 'Not public',
+          source: 'custom',
+          status: 'running',
+          checked: true,
+        }],
+      },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
+
+    expect(await screen.findByRole('checkbox', { name: 'Select Private MCP' })).toBeChecked();
+  });
+
   it('collapses the conversation sidebar when the viewport becomes narrow', () => {
     let narrowViewport = false;
     let handleViewportChange: (() => void) | undefined;
@@ -742,12 +776,14 @@ describe('AgentChat', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const dialog = screen.getByRole('dialog', { name: 'Settings' });
     const frameClassName = dialog.className;
+    expect(screen.getAllByRole('navigation', { name: 'Agent configuration' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Hermes' }));
     expect(dialog.className).toBe(frameClassName);
     await userEvent.click(screen.getByRole('button', { name: 'Terminal' }));
     expect(dialog.className).toBe(frameClassName);
-    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
+    await userEvent.click(screen.getByRole('button', { name: 'General' }));
     expect(dialog.className).toBe(frameClassName);
   });
 
@@ -778,7 +814,7 @@ describe('AgentChat', () => {
 
     expect(screen.queryByRole('button', { name: 'Channels' })).not.toBeInTheDocument();
     expect(screen.queryByText('Add channel')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Agent' })).toHaveClass('bg-accent');
+    expect(screen.getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('can open channel settings from the initial settings tab', async () => {
@@ -792,7 +828,7 @@ describe('AgentChat', () => {
     renderChat({ initialSettingsTab: 'api', runtime: hermesRuntime, api: apiSettings });
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'API' })).toHaveClass('bg-accent');
+    expect(screen.getByRole('button', { name: 'API' })).toHaveAttribute('aria-current', 'page');
     expect(await screen.findByRole('heading', { name: 'Agent API' })).toBeInTheDocument();
     expect(screen.getByText(/stable HTTPS API/)).toBeInTheDocument();
   });

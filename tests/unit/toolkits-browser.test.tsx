@@ -3,7 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolkitsBrowser, type ToolkitRow } from '@/components/dashboard/ToolkitsBrowser';
 
-vi.mock('@/lib/toolkits/actions', () => ({ createToolkitAction: vi.fn() }));
+vi.mock('@/lib/toolkits/actions', () => ({
+  createToolkitAction: vi.fn(),
+  updateToolkitAvailabilityAction: vi.fn(),
+}));
 
 const toolkits: ToolkitRow[] = [
   {
@@ -74,5 +77,14 @@ describe('ToolkitsBrowser', () => {
     await user.type(screen.getByPlaceholderText('Search toolkits...'), 'missing');
 
     expect(screen.getByText('No toolkits match "missing".')).toBeInTheDocument();
+  });
+
+  it('gives workspace managers direct, labelled availability controls', () => {
+    render(<ToolkitsBrowser slug="acme" toolkits={toolkits} canManagePublishing />);
+
+    expect(screen.getByRole('button', { name: 'Publish Research stack' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disable Research stack' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Make Public utilities private' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Enable Public utilities' })).toBeInTheDocument();
   });
 });

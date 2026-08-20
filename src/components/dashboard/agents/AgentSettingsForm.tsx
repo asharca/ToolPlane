@@ -40,6 +40,7 @@ import { NativeSelect } from '@/components/ui/NativeSelect';
 
 type Provider = { id: string; name: string; models: string[] };
 type SaveStatus = 'idle' | 'dirty';
+export type AgentSettingsSection = 'general' | 'instructions' | 'mcp' | 'skills' | 'toolkits' | 'sandboxes' | 'subAgents' | 'advanced';
 
 function checkedIds(options: AgentResourceOption[]) {
   return new Set(options.filter((option) => option.checked).map((option) => option.id));
@@ -63,6 +64,9 @@ export function AgentSettingsForm({
   runtime = null,
   hermesImages,
   className = 'max-w-2xl space-y-5 px-8 py-6',
+  activeSection: controlledActiveSection,
+  onSectionChange,
+  showNavigation = true,
 }: {
   slug: string;
   agentId: string;
@@ -89,6 +93,9 @@ export function AgentSettingsForm({
   } | null;
   hermesImages?: string[];
   className?: string;
+  activeSection?: AgentSettingsSection;
+  onSectionChange?: (section: AgentSettingsSection) => void;
+  showNavigation?: boolean;
 }) {
   const t = useTranslations('console.agents');
   const locale = useLocale();
@@ -124,6 +131,7 @@ export function AgentSettingsForm({
   const [selectedToolkitIds, setSelectedToolkitIds] = useState(() => checkedIds(toolkits));
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => checkedIds(sandboxes));
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
+  const [uncontrolledActiveSection, setUncontrolledActiveSection] = useState<AgentSettingsSection>('general');
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | 'upgrade' | null>(null);
   const models = useMemo(
@@ -140,6 +148,56 @@ export function AgentSettingsForm({
     description: t('providerModelCount', { count: provider.models.length }),
     keywords: provider.models,
   })), [providers, t]);
+  const isHermes = runtime?.kind === 'hermes';
+  const selectedProviderNames = providers
+    .filter((provider) => selectedProviderIds.has(provider.id))
+    .map((provider) => provider.name);
+  const selectedCapabilityCount = selectedDeploymentIds.size
+    + selectedSkillIds.size
+    + selectedToolkitIds.size
+    + selectedSandboxIds.size
+    + selectedSubAgentIds.size;
+  const modelSummary = isHermes
+    ? selectedProviderNames.length > 0
+      ? t('providerSummary', { count: selectedProviderNames.length, names: selectedProviderNames.join(', ') })
+      : t('noModelProvidersSelected')
+    : selectedProvider && selectedModel
+      ? `${providers.find((provider) => provider.id === selectedProvider)?.name ?? selectedProvider} · ${selectedModel}`
+      : selectedProvider
+        ? t('needsModel')
+        : t('needsProvider');
+  const navigationGroups: Array<{
+    label: string;
+    items: Array<{ id: AgentSettingsSection; label: string; count?: number; icon: typeof Bot }>;
+  }> = [
+    {
+      label: t('basic'),
+      items: [
+        { id: 'general', label: t('general'), icon: Bot },
+        { id: 'instructions', label: t('instructions'), icon: FileText },
+      ],
+    },
+    {
+      label: t('tools'),
+      items: [
+        { id: 'mcp', label: t('mcp'), count: selectedDeploymentIds.size, icon: Server },
+        { id: 'skills', label: t('skills'), count: selectedSkillIds.size, icon: PackageCheck },
+        { id: 'toolkits', label: t('toolkits'), count: selectedToolkitIds.size, icon: Blocks },
+        { id: 'sandboxes', label: t('sandboxes'), count: selectedSandboxIds.size, icon: Box },
+        { id: 'subAgents', label: t('subAgents'), count: selectedSubAgentIds.size, icon: Users },
+      ],
+    },
+    {
+      label: t('advanced'),
+      items: [{ id: 'advanced', label: t('advanced'), icon: BrainCircuit }],
+    },
+  ];
+  const activeSection = controlledActiveSection ?? uncontrolledActiveSection;
+
+  function selectSection(section: AgentSettingsSection) {
+    if (controlledActiveSection === undefined) setUncontrolledActiveSection(section);
+    onSectionChange?.(section);
+  }
 
   useEffect(() => {
     if (!state.savedAt) return;
@@ -176,15 +234,6 @@ export function AgentSettingsForm({
     setSaveStatus('idle');
   }
 
-  const saveMessage = state.error
-    ? state.error
-    : isPending
-      ? runtime?.kind === 'hermes' ? t('savingAndSyncingRuntime') : t('saving')
-      : saveStatus === 'dirty'
-        ? t('unsavedChanges')
-        : state.savedAt
-          ? t('saved')
-          : t('autoSaveOn');
   const activeRuntimeState = lastRuntimeAction === 'sync'
     ? syncState
     : lastRuntimeAction === 'stop'
@@ -235,12 +284,89 @@ export function AgentSettingsForm({
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="agentId" value={agentId} />
 
-      <section className="rounded-md border border-border bg-background">
+      <div className={showNavigation
+        ? 'overflow-hidden rounded-xl border border-border bg-background lg:grid lg:grid-cols-[11.5rem_minmax(0,1fr)]'
+        : 'min-w-0'}>
+        {showNavigation ? (
+          <nav
+            aria-label={t('configurationNavigation')}
+            className="border-b border-border bg-muted/20 p-2 lg:border-b-0 lg:border-r lg:p-3"
+          >
+            <div className="flex min-w-max gap-4 overflow-x-auto px-1 py-1 lg:block lg:min-w-0 lg:space-y-5 lg:overflow-visible">
+              {navigationGroups.map((group) => (
+                <div key={group.label} className="flex shrink-0 items-center gap-1.5 lg:block lg:space-y-1">
+                  <p className="hidden px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground lg:block">
+                    {group.label}
+                  </p>
+                  {group.items.map(({ id, label, count, icon: Icon }) => {
+                    const active = activeSection === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => selectSection(id)}
+                        className={`inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm transition-colors lg:flex lg:w-full ${active
+                          ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
+                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        <span className="whitespace-nowrap">{label}</span>
+                        {typeof count === 'number' ? (
+                          <span className={`ml-auto rounded-md px-1.5 py-0.5 text-[11px] tabular-nums ${active ? 'bg-muted text-foreground' : 'bg-background/80 text-muted-foreground'}`}>
+                            {count}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </nav>
+        ) : null}
+
+        <div className={`min-w-0 space-y-5 ${showNavigation ? 'p-4 sm:p-5' : ''}`}>
+          {state.error ? (
+            <p role="alert" className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+              {state.error}
+            </p>
+          ) : null}
+      <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
           <Bot className="size-[18px] shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-semibold text-foreground">{t('agent')}</h3>
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('general')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('generalSettingsDescription')}</p>
+          </div>
         </div>
         <div className="space-y-4 px-4 py-4">
+          <div className="rounded-lg border border-border bg-muted/25 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                {isHermes ? <Container className="size-4 shrink-0 text-muted-foreground" /> : <Bot className="size-4 shrink-0 text-muted-foreground" />}
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('runtimeSummary')}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="rounded-md bg-background px-2 py-1 text-xs font-medium text-foreground ring-1 ring-border">
+                  {isHermes ? 'Hermes' : t('nativeRuntime')}
+                </span>
+                {isHermes && runtime?.status ? (
+                  <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{runtime.status}</span>
+                ) : null}
+              </div>
+            </div>
+            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">{t('model')}</dt>
+                <dd className="mt-0.5 truncate font-medium text-foreground" title={modelSummary}>{modelSummary}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">{t('tools')}</dt>
+                <dd className="mt-0.5 font-medium text-foreground">{t('attachedCapabilities', { count: selectedCapabilityCount })}</dd>
+              </div>
+            </dl>
+          </div>
           <label className="block">
             <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <Bot className="size-4 shrink-0" />
@@ -254,8 +380,23 @@ export function AgentSettingsForm({
               className="ui-input h-10 w-full"
             />
           </label>
+        </div>
+      </section>
 
-          {runtime?.kind !== 'hermes' ? (
+      <section hidden={activeSection !== 'instructions'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <FileText className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('instructions')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('instructionsSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          {isHermes ? (
+            <p className="rounded-lg border border-border bg-muted/25 px-3 py-3 text-sm leading-6 text-muted-foreground">
+              {t('hermesPromptManaged')}
+            </p>
+          ) : (
             <label className="block">
               <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 <FileText className="size-4 shrink-0" />
@@ -265,17 +406,45 @@ export function AgentSettingsForm({
                 name="systemPrompt"
                 value={systemPromptValue}
                 onChange={(event) => setSystemPromptValue(event.target.value)}
-                rows={5}
+                rows={9}
                 placeholder={t('youAreAHelpfulAssistant')}
-                className="ui-input min-h-32 w-full resize-y py-3"
+                className="ui-input min-h-52 w-full resize-y py-3"
               />
             </label>
-          ) : null}
+          )}
         </div>
       </section>
 
-      {runtime?.kind === 'hermes' ? (
-        <section className="rounded-md border border-border bg-background">
+      <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('advanced')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('advancedSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <label className="block max-w-xs">
+            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <Blocks className="size-4 shrink-0" />
+              {t('maxToolSteps')}
+            </span>
+            <input
+              name="maxSteps"
+              type="number"
+              min={AGENT_STEP_BOUNDS.min}
+              max={AGENT_STEP_BOUNDS.max}
+              value={maxStepsValue}
+              onChange={(event) => setMaxStepsValue(event.target.value)}
+              className="ui-input h-10 w-full"
+            />
+            <span className="mt-1 block text-xs font-normal text-muted-foreground">{t('0NoLimit')}</span>
+          </label>
+        </div>
+      </section>
+
+      {isHermes ? (
+        <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <Container className="size-[18px] shrink-0 text-muted-foreground" />
@@ -442,15 +611,132 @@ export function AgentSettingsForm({
         </section>
       ) : null}
 
-      <section className="rounded-md border border-border bg-background">
+      <section hidden={activeSection !== 'mcp'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Server className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('mcp')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <AgentResourceSelect
+            icon={Server}
+            label={t('mcp')}
+            name="deploymentId"
+            options={deployments}
+            selectedIds={selectedDeploymentIds}
+            onSelectionChange={(next) => {
+              setSelectedDeploymentIds(next);
+              scheduleAutoSave();
+            }}
+          />
+        </div>
+      </section>
+
+      <section hidden={activeSection !== 'skills'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <PackageCheck className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('skills')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <AgentResourceSelect
+            icon={PackageCheck}
+            label={t('skills')}
+            name="installedSkillId"
+            options={skills}
+            selectedIds={selectedSkillIds}
+            onSelectionChange={(next) => {
+              setSelectedSkillIds(next);
+              scheduleAutoSave();
+            }}
+          />
+        </div>
+      </section>
+
+      <section hidden={activeSection !== 'toolkits'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('toolkits')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <AgentResourceSelect
+            icon={Blocks}
+            label={t('toolkits')}
+            name="toolkitId"
+            options={toolkits}
+            selectedIds={selectedToolkitIds}
+            onSelectionChange={(next) => {
+              setSelectedToolkitIds(next);
+              scheduleAutoSave();
+            }}
+          />
+        </div>
+      </section>
+
+      <section hidden={activeSection !== 'sandboxes'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Box className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('sandboxes')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <AgentResourceSelect
+            icon={Box}
+            label={t('sandboxes')}
+            name="sandboxId"
+            options={sandboxes}
+            selectedIds={selectedSandboxIds}
+            onSelectionChange={(next) => {
+              setSelectedSandboxIds(next);
+              scheduleAutoSave();
+            }}
+          />
+          {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
+        </div>
+      </section>
+
+      <section hidden={activeSection !== 'subAgents'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Users className="size-[18px] shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('subAgents')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <AgentResourceSelect
+            icon={Users}
+            label={t('subAgents')}
+            name="subAgentId"
+            options={subAgents}
+            selectedIds={selectedSubAgentIds}
+            onSelectionChange={(next) => {
+              setSelectedSubAgentIds(next);
+              scheduleAutoSave();
+            }}
+          />
+        </div>
+      </section>
+
+      <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
           <BrainCircuit className="size-[18px] shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-semibold text-foreground">
-            {runtime?.kind === 'hermes' ? t('modelProviders') : t('model')}
-          </h3>
+          <div>
+            <p className="text-sm font-semibold text-foreground">{isHermes ? t('modelProviders') : t('model')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('generalSettingsDescription')}</p>
+          </div>
         </div>
-        <div className="grid items-start gap-3 px-4 py-4 sm:grid-cols-3">
-          {runtime?.kind === 'hermes' ? (
+        <div className="grid items-start gap-3 px-4 py-4 sm:grid-cols-2">
+          {isHermes ? (
             <div className="space-y-2 sm:col-span-2">
               <AgentResourceSelect
                 icon={Cpu}
@@ -506,120 +792,15 @@ export function AgentSettingsForm({
               </label>
             </>
           )}
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <Blocks className="size-4 shrink-0" />
-              {t('maxToolSteps')}
-            </span>
-            <input
-              name="maxSteps"
-              type="number"
-              min={AGENT_STEP_BOUNDS.min}
-              max={AGENT_STEP_BOUNDS.max}
-              value={maxStepsValue}
-              onChange={(event) => setMaxStepsValue(event.target.value)}
-              className="ui-input h-10 w-full"
-            />
-            <span className="mt-1 block text-xs font-normal text-muted-foreground">{t('0NoLimit')}</span>
-          </label>
-          {runtime?.kind !== 'hermes' && selectedProvider && models.length === 0 ? (
-            <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-3">
+          {!isHermes && selectedProvider && models.length === 0 ? (
+            <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">
               {t('thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab')}
             </p>
           ) : null}
         </div>
       </section>
 
-      <section className="rounded-md border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-          <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-semibold text-foreground">{t('tools')}</h3>
         </div>
-        <div className="grid items-start gap-3 px-4 py-4 lg:grid-cols-2">
-          <AgentResourceSelect
-            icon={Server}
-            label={t('mcp')}
-            name="deploymentId"
-            options={deployments}
-            selectedIds={selectedDeploymentIds}
-            onSelectionChange={(next) => {
-              setSelectedDeploymentIds(next);
-              scheduleAutoSave();
-            }}
-          />
-          <AgentResourceSelect
-            icon={PackageCheck}
-            label={t('skills')}
-            name="installedSkillId"
-            options={skills}
-            selectedIds={selectedSkillIds}
-            onSelectionChange={(next) => {
-              setSelectedSkillIds(next);
-              scheduleAutoSave();
-            }}
-          />
-          <AgentResourceSelect
-            icon={Blocks}
-            label={t('toolkits')}
-            name="toolkitId"
-            options={toolkits}
-            selectedIds={selectedToolkitIds}
-            onSelectionChange={(next) => {
-              setSelectedToolkitIds(next);
-              scheduleAutoSave();
-            }}
-          />
-          <AgentResourceSelect
-            icon={Box}
-            label={t('sandboxes')}
-            name="sandboxId"
-            options={sandboxes}
-            selectedIds={selectedSandboxIds}
-            onSelectionChange={(next) => {
-              setSelectedSandboxIds(next);
-              scheduleAutoSave();
-            }}
-          />
-          <AgentResourceSelect
-            icon={Users}
-            label={t('subAgents')}
-            name="subAgentId"
-            options={subAgents}
-            selectedIds={selectedSubAgentIds}
-            onSelectionChange={(next) => {
-              setSelectedSubAgentIds(next);
-              scheduleAutoSave();
-            }}
-          />
-        </div>
-      </section>
-
-      <div className="sticky bottom-0 z-10 -mx-5 -mb-5 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background/95 px-5 py-3 backdrop-blur">
-        <div
-          className={`flex min-w-0 items-center gap-2 text-sm ${state.error ? 'text-red-600' : 'text-muted-foreground'}`}
-          role={state.error ? 'alert' : 'status'}
-        >
-          {isPending ? (
-            <Loader2 className="size-4 shrink-0 animate-spin" />
-          ) : state.savedAt && saveStatus !== 'dirty' ? (
-            <Check className="size-4 shrink-0 text-emerald-600" />
-          ) : null}
-          <span className="truncate">{saveMessage}</span>
-        </div>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="ui-button-secondary h-10 gap-2 px-4 disabled:cursor-wait disabled:opacity-70"
-        >
-          {isPending ? (
-            <Loader2 className="size-4 shrink-0 animate-spin" />
-          ) : state.savedAt && saveStatus !== 'dirty' ? (
-            <Check className="size-4 shrink-0" />
-          ) : (
-            <Save className="size-4 shrink-0" />
-          )}
-          {isPending && runtime?.kind === 'hermes' ? t('savingAndSyncingRuntime') : isPending ? t('saving') : t('saveNow')}
-        </button>
       </div>
     </form>
   );

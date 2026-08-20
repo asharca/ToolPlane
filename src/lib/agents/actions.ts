@@ -272,6 +272,7 @@ export async function createAgentAction(formData: FormData) {
     deploymentIds: formData.getAll('deploymentId').map(String),
     installedSkillIds: formData.getAll('installedSkillId').map(String),
     toolkitIds: formData.getAll('toolkitId').map(String),
+    sandboxIds: formData.getAll('sandboxId').map(String),
   });
   if (runtime === 'hermes') await syncHermesRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);

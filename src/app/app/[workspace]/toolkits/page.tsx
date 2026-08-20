@@ -1,6 +1,7 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { db } from '@/lib/db';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import {
   listToolkits,
@@ -35,6 +36,13 @@ export default async function ToolkitsPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const managerMembership = ws.ownerId === user.id
+    ? null
+    : await db.membership.findUnique({
+      where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
+      select: { role: true },
+    });
+  const canManagePublishing = ws.ownerId === user.id || managerMembership?.role === 'admin';
 
   await getOrCreateDefaultToolkit(ws.id);
   const toolkits = await listToolkits(ws.id);
@@ -44,6 +52,7 @@ export default async function ToolkitsPage({
       <DashboardHeader title={t('toolkits')} />
       <ToolkitsBrowser
         slug={slug}
+        canManagePublishing={canManagePublishing}
         toolkits={toolkits.map((t) => ({
           id: t.id,
           name: t.name,
