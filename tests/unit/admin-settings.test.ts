@@ -135,6 +135,8 @@ describe('system settings storage', () => {
   });
 
   it('rejects malformed persisted MCP timeouts and falls back to the compatible environment alias', async () => {
+    vi.stubEnv('TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS', '');
+    vi.stubEnv('TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS', '');
     vi.stubEnv('MCP_STARTUP_IDLE_TIMEOUT_MS', '180000');
     vi.stubEnv('MCP_STARTUP_MAX_TIMEOUT_MS', '540000');
     mocks.findUnique.mockResolvedValue({ value: '{not-json' });
