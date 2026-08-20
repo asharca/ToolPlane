@@ -13,6 +13,11 @@ import { useTranslations } from 'next-intl';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardLogo } from './DashboardLogo';
 import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
+import {
+  DashboardTabBar,
+  DashboardTabContent,
+  DashboardTabsProvider,
+} from './DashboardTabs';
 
 type Workspace = { id: string; slug: string; name: string };
 
@@ -105,46 +110,49 @@ export function DashboardChrome({
 
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
-      <div className="flex min-h-dvh bg-background text-foreground">
-      {open ? (
-        <button
-          type="button"
-          aria-label={t('closeMenu')}
-          onClick={closeMenu}
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-        />
-      ) : null}
+      <DashboardTabsProvider key={slug} slug={slug}>
+        <div className="flex h-dvh min-h-dvh bg-background text-foreground [--dashboard-page-header-height:4rem] [--dashboard-tabbar-height:2.75rem]">
+            {open ? (
+              <button
+                type="button"
+                aria-label={t('closeMenu')}
+                onClick={closeMenu}
+                className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+              />
+            ) : null}
 
-      <DashboardSidebar
-        slug={slug}
-        workspaceName={workspaceName}
-        userLabel={userLabel}
-        workspaces={workspaces}
-        isAdmin={isAdmin}
-        mobileOpen={open}
-        onClose={closeMenu}
-        collapsed={collapsed}
-        onToggleCollapsed={toggleCollapsed}
-      />
+            <DashboardSidebar
+              slug={slug}
+              workspaceName={workspaceName}
+              userLabel={userLabel}
+              workspaces={workspaces}
+              isAdmin={isAdmin}
+              mobileOpen={open}
+              onClose={closeMenu}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+            />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur lg:hidden">
-          <button
-            ref={menuButtonRef}
-            type="button"
-            aria-label={t('openMenu')}
-            aria-expanded={open}
-            aria-controls="dashboard-sidebar"
-            onClick={() => setOpen(true)}
-            className="ui-button-ghost ui-icon-button"
-          >
-            <Menu className="size-5" />
-          </button>
-          <DashboardLogo />
-        </div>
-        {children}
-      </div>
-      </div>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur lg:hidden">
+                <button
+                  ref={menuButtonRef}
+                  type="button"
+                  aria-label={t('openMenu')}
+                  aria-expanded={open}
+                  aria-controls="dashboard-sidebar"
+                  onClick={() => setOpen(true)}
+                  className="ui-button-ghost ui-icon-button"
+                >
+                  <Menu className="size-5" />
+                </button>
+                <DashboardLogo />
+              </div>
+              <DashboardTabBar />
+              <DashboardTabContent>{children}</DashboardTabContent>
+            </div>
+          </div>
+        </DashboardTabsProvider>
     </DashboardRuntimeConfigProvider>
   );
 }

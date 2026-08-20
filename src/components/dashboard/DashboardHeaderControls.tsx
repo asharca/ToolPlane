@@ -2,7 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import { type ComponentType, useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
   Search,
@@ -21,7 +21,6 @@ import {
   Home,
   LayoutDashboard,
 } from 'lucide-react';
-import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +49,9 @@ export function DashboardHeaderControls() {
   const t = useTranslations('console.header');
   const router = useRouter();
   const pathname = usePathname() ?? '';
+  const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
+  const returnTo = `${pathname}${queryString ? `?${queryString}` : ''}`;
   const { resolvedTheme, setTheme } = useTheme();
   const { supportEmail } = useDashboardRuntimeConfig();
   const [open, setOpen] = useState(false);
@@ -97,7 +99,7 @@ export function DashboardHeaderControls() {
         { id: 'agents', label: t('agents'), group: t('groupRun'), icon: Bot, run: go(`${b}/agents`) },
         { id: 'obs', label: t('logs'), group: t('groupOperate'), icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: t('members'), group: t('groupWorkspace'), icon: Users, run: go(`${b}/members`) },
-        { id: 'settings', label: t('settings'), group: t('groupWorkspace'), icon: Settings, run: go(`${b}/settings`) },
+        { id: 'settings', label: t('settings'), group: t('groupWorkspace'), icon: Settings, run: go(`${b}/settings?returnTo=${encodeURIComponent(returnTo)}`) },
         { id: 'browse-mcp', label: t('browseMcp'), group: t('groupDiscover'), icon: Plug, run: go(`${b}/market/mcp`) },
         { id: 'browse-skills', label: t('browseSkills'), group: t('groupDiscover'), icon: Brain, run: go(`${b}/market/skills`) },
         { id: 'browse-agents', label: t('browseAgents'), group: t('groupDiscover'), icon: Bot, run: go(`${b}/market/agents`) },
@@ -119,7 +121,7 @@ export function DashboardHeaderControls() {
       },
     );
     return list;
-  }, [closePalette, pathname, resolvedTheme, router, t, toggleTheme]);
+  }, [closePalette, pathname, resolvedTheme, returnTo, router, t, toggleTheme]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -158,13 +160,11 @@ export function DashboardHeaderControls() {
         <DialogTrigger asChild>
           <button
             type="button"
-            className="relative hidden h-9 w-56 items-center rounded-md border border-border bg-muted/60 pl-8 pr-10 text-left text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex"
+            aria-label={t('quickNavigation')}
+            title={t('quickNavigation')}
+            className="ui-button-ghost ui-icon-button"
           >
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            {t('quickNavigation')}
-            <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground">
-              ⌘K
-            </kbd>
+            <Search className="size-4" />
           </button>
         </DialogTrigger>
 
@@ -233,17 +233,16 @@ export function DashboardHeaderControls() {
 
       <button
         type="button"
-        aria-label={t('toggleTheme')}
-        onClick={toggleTheme}
+        aria-label={t('settings')}
+        title={t('settings')}
+        onClick={() => {
+          const base = pathname.split('/').slice(0, 3).join('/');
+          router.push(`${base}/settings?returnTo=${encodeURIComponent(returnTo)}`);
+        }}
         className="ui-button-ghost ui-icon-button"
       >
-        <span aria-hidden="true">
-          <Sun className="hidden size-4 dark:block" />
-          <Moon className="size-4 dark:hidden" />
-        </span>
+        <Settings className="size-4" />
       </button>
-
-      <LocaleSwitcher />
     </>
   );
 }

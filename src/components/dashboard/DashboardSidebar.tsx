@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { type MouseEvent, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -12,7 +12,6 @@ import {
   Boxes,
   BarChart3,
   Users,
-  Settings,
   Store,
   Shield,
   Code2,
@@ -27,6 +26,7 @@ import { SITE } from '@/lib/site';
 import { DashboardLogo } from './DashboardLogo';
 import { SystemUpdateButton } from './SystemUpdateButton';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { useDashboardTabs } from './DashboardTabs';
 
 type NavItem = {
   labelKey: string;
@@ -75,7 +75,6 @@ const SECTIONS: { titleKey?: string; items: NavItem[] }[] = [
     titleKey: 'workspace',
     items: [
       { labelKey: 'members', segment: 'members', icon: Users },
-      { labelKey: 'settings', segment: 'settings', icon: Settings },
     ],
   },
 ];
@@ -104,8 +103,25 @@ export function DashboardSidebar({
   const pathname = usePathname() ?? '';
   const base = `/app/${slug}`;
   const t = useTranslations('console.sidebar');
+  const { openRoute } = useDashboardTabs();
   const sidebarRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  function handleWorkspaceRoute(event: MouseEvent<HTMLAnchorElement>, href: string) {
+    if (
+      event.defaultPrevented
+      || event.button !== 0
+      || event.metaKey
+      || event.ctrlKey
+      || event.shiftKey
+      || event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    openRoute(href);
+    onClose?.();
+  }
 
   useEffect(() => {
     const sidebar = sidebarRef.current;
@@ -170,7 +186,7 @@ export function DashboardSidebar({
         <div className={`flex items-center justify-between gap-2 ${collapsed ? 'lg:justify-center' : ''}`}>
           <Link
             href={base + '/overview'}
-            onClick={onClose}
+            onClick={(event) => handleWorkspaceRoute(event, `${base}/overview`)}
             aria-label="ToolPlane"
             className={collapsed ? 'lg:hidden' : undefined}
           >
@@ -223,7 +239,7 @@ export function DashboardSidebar({
                   <li key={item.segment}>
                     <Link
                       href={href}
-                      onClick={onClose}
+                      onClick={(event) => handleWorkspaceRoute(event, href)}
                       aria-current={active ? 'page' : undefined}
                       aria-label={collapsed ? t(item.labelKey) : undefined}
                       title={collapsed ? t(item.labelKey) : undefined}

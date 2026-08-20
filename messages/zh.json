@@ -371,6 +371,14 @@
       "sellSkills": "出售技能",
       "sourceCode": "源码仓库"
     },
+    "tabs": {
+      "navigation": "已打开页面",
+      "close": "关闭 {label}",
+      "new": "新建标签",
+      "pin": "固定 {label}",
+      "unpin": "取消固定 {label}",
+      "openInNewWindow": "在新窗口打开 {label}"
+    },
     "overview": {
       "title": "概览",
       "description": "快速了解 {workspace} 的当前状态。",

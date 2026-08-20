@@ -6,6 +6,7 @@ import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/smoke/agents',
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock('@/lib/workspace/actions', () => ({
@@ -80,6 +81,8 @@ describe('DashboardChrome sidebar', () => {
       value: localStorageMock,
     });
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    Element.prototype.scrollIntoView = vi.fn();
     setDesktopViewport(true);
   });
 

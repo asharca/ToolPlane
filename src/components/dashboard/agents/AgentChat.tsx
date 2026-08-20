@@ -432,7 +432,7 @@ export function AgentChat({
   }, [agentId]);
 
   return (
-    <div className="box-border flex h-[calc(100dvh-7.5rem-1px)] min-h-0 p-3 sm:p-4 lg:h-[calc(100dvh-4rem-1px)] lg:p-3">
+    <div className="box-border flex h-[calc(100dvh-var(--dashboard-page-header-height)-1px)] min-h-0 p-3 sm:p-4 lg:p-3">
       <div
         className={cx(
           'grid min-h-0 flex-1 gap-3',
