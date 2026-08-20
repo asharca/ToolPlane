@@ -129,8 +129,8 @@ describe('AgentSettingsForm', () => {
     expect(environment).toHaveValue('EXISTING=value');
     await userEvent.clear(environment);
     await userEvent.type(environment, 'API_KEY=secret');
-    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save environment' }));
     await waitFor(() => expect(actions.updateHermesRuntimeEnvAction).toHaveBeenCalled());
     const formData = actions.updateHermesRuntimeEnvAction.mock.calls.at(-1)?.[1];
@@ -169,6 +169,7 @@ describe('AgentSettingsForm', () => {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
     expect(actions.updateAgentAction).not.toHaveBeenCalled();
 
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     await userEvent.click(screen.getByRole('button', { name: 'Upgrade & restart' }));
     await waitFor(() => expect(actions.upgradeHermesRuntimeAction).toHaveBeenCalled());
     const formData = actions.upgradeHermesRuntimeAction.mock.calls.at(-1)?.[1];
@@ -202,6 +203,7 @@ describe('AgentSettingsForm', () => {
       />,
     );
 
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     await userEvent.click(screen.getByRole('button', { name: 'Sync / start' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Syncing...' })).toBeDisabled());
     finishSync?.({ savedAt: 1 });
@@ -213,8 +215,9 @@ describe('AgentSettingsForm', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Stopped' })).toBeEnabled());
   });
 
-  it('does not mark search changes dirty but schedules a save for resource changes', async () => {
+  it('does not save searches but saves resource changes', async () => {
     const user = userEvent.setup();
+    actions.updateAgentAction.mockClear();
     render(
       <AgentSettingsForm
         {...baseProps}
@@ -231,11 +234,84 @@ describe('AgentSettingsForm', () => {
       />,
     );
 
-    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^MCP/ }));
     await user.type(screen.getByRole('searchbox', { name: 'Search MCP...' }), 'router');
-    expect(screen.getByText('Auto-save is on')).toBeInTheDocument();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
+    expect(actions.updateAgentAction).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('checkbox', { name: 'Select RouterOS MCP' }));
-    expect(screen.getByText('Saving shortly...')).toBeInTheDocument();
+    await waitFor(() => expect(actions.updateAgentAction).toHaveBeenCalled(), { timeout: 1_500 });
+  });
+
+  it('supports a controlled section with its internal navigation hidden', () => {
+    const props = {
+      ...baseProps,
+      systemPrompt: 'Use the workspace tools carefully.',
+      deployments: [{ id: 'deployment-1', label: 'RouterOS MCP', checked: true }],
+      skills: [{ id: 'skill-1', label: 'Network skill', checked: true }],
+      activeSection: 'mcp' as const,
+      showNavigation: false,
+    };
+    const view = render(<AgentSettingsForm {...props} />);
+
+    expect(screen.queryByRole('navigation', { name: 'Configuration navigation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select RouterOS MCP' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save now' })).not.toBeInTheDocument();
+
+    const form = document.querySelector('form');
+    if (!form) throw new Error('Expected settings form.');
+    expect(new FormData(form).getAll('installedSkillId')).toEqual(['skill-1']);
+
+    view.rerender(<AgentSettingsForm {...props} activeSection="skills" />);
+    expect(screen.getByRole('checkbox', { name: 'Select Network skill' })).toBeVisible();
+  });
+
+  it('notifies the parent when a controlled section is selected', async () => {
+    const onSectionChange = vi.fn();
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        activeSection="mcp"
+        onSectionChange={onSectionChange}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /^Skills/ }));
+    expect(onSectionChange).toHaveBeenCalledWith('skills');
+  });
+
+  it('keeps form values and resource bindings mounted while navigating settings sections', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        systemPrompt="Use the workspace tools carefully."
+        providerId="provider-1"
+        model="gpt-4.1"
+        deployments={[{ id: 'deployment-1', label: 'RouterOS MCP', checked: true }]}
+        skills={[{ id: 'skill-1', label: 'Network skill', checked: true }]}
+        toolkits={[{ id: 'toolkit-1', label: 'Ops toolkit', checked: true }]}
+        sandboxes={[{ id: 'sandbox-1', label: 'Workspace', checked: true }]}
+        subAgents={[{ id: 'agent-2', label: 'Reviewer', checked: true }]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /^MCP/ }));
+    await user.click(screen.getByRole('button', { name: /^Skills/ }));
+    await user.click(screen.getByRole('button', { name: /^Advanced$/ }));
+
+    const form = document.querySelector('form');
+    if (!form) throw new Error('Expected settings form.');
+    const formData = new FormData(form);
+    expect(formData.get('name')).toBe('Test agent');
+    expect(formData.get('systemPrompt')).toBe('Use the workspace tools carefully.');
+    expect(formData.get('providerId')).toBe('provider-1');
+    expect(formData.get('model')).toBe('gpt-4.1');
+    expect(formData.get('maxSteps')).toBe('8');
+    expect(formData.getAll('deploymentId')).toEqual(['deployment-1']);
+    expect(formData.getAll('installedSkillId')).toEqual(['skill-1']);
+    expect(formData.getAll('toolkitId')).toEqual(['toolkit-1']);
+    expect(formData.getAll('sandboxId')).toEqual(['sandbox-1']);
+    expect(formData.getAll('subAgentId')).toEqual(['agent-2']);
   });
 });

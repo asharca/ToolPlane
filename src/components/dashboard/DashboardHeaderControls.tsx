@@ -19,6 +19,7 @@ import {
   Users,
   Settings,
   Home,
+  LayoutDashboard,
 } from 'lucide-react';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import {
@@ -88,18 +89,19 @@ export function DashboardHeaderControls() {
     if (slug) {
       const b = `/app/${slug}`;
       list.push(
-        { id: 'mcp', label: t('mcp'), group: t('groupManage'), icon: Plug, run: go(`${b}/mcp`) },
-        { id: 'skills', label: t('skills'), group: t('groupManage'), icon: Brain, run: go(`${b}/skills`) },
-        { id: 'toolkits', label: t('toolkits'), group: t('groupManage'), icon: Wrench, run: go(`${b}/toolkits`) },
-        { id: 'sandboxes', label: t('sandboxes'), group: t('groupManage'), icon: Boxes, run: go(`${b}/sandboxes`) },
-        { id: 'agents', label: t('agents'), group: t('groupManage'), icon: Bot, run: go(`${b}/agents`) },
-        { id: 'obs', label: t('logs'), group: t('groupMonitor'), icon: BarChart3, run: go(`${b}/observability`) },
+        { id: 'overview', label: t('overview'), group: t('groupWorkspace'), icon: LayoutDashboard, run: go(`${b}/overview`) },
+        { id: 'mcp', label: t('mcp'), group: t('groupBuild'), icon: Plug, run: go(`${b}/mcp`) },
+        { id: 'skills', label: t('skills'), group: t('groupBuild'), icon: Brain, run: go(`${b}/skills`) },
+        { id: 'toolkits', label: t('toolkits'), group: t('groupBuild'), icon: Wrench, run: go(`${b}/toolkits`) },
+        { id: 'sandboxes', label: t('sandboxes'), group: t('groupBuild'), icon: Boxes, run: go(`${b}/sandboxes`) },
+        { id: 'agents', label: t('agents'), group: t('groupRun'), icon: Bot, run: go(`${b}/agents`) },
+        { id: 'obs', label: t('logs'), group: t('groupOperate'), icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: t('members'), group: t('groupWorkspace'), icon: Users, run: go(`${b}/members`) },
         { id: 'settings', label: t('settings'), group: t('groupWorkspace'), icon: Settings, run: go(`${b}/settings`) },
-        { id: 'browse-mcp', label: t('browseMcp'), group: t('groupActions'), icon: Plug, run: go(`${b}/market/mcp`) },
-        { id: 'browse-skills', label: t('browseSkills'), group: t('groupActions'), icon: Brain, run: go(`${b}/market/skills`) },
-        { id: 'browse-agents', label: t('browseAgents'), group: t('groupActions'), icon: Bot, run: go(`${b}/market/agents`) },
-        { id: 'browse-toolkits', label: t('browseToolkits'), group: t('groupActions'), icon: Wrench, run: go(`${b}/market/toolkits`) },
+        { id: 'browse-mcp', label: t('browseMcp'), group: t('groupDiscover'), icon: Plug, run: go(`${b}/market/mcp`) },
+        { id: 'browse-skills', label: t('browseSkills'), group: t('groupDiscover'), icon: Brain, run: go(`${b}/market/skills`) },
+        { id: 'browse-agents', label: t('browseAgents'), group: t('groupDiscover'), icon: Bot, run: go(`${b}/market/agents`) },
+        { id: 'browse-toolkits', label: t('browseToolkits'), group: t('groupDiscover'), icon: Wrench, run: go(`${b}/market/toolkits`) },
       );
     }
     list.push(

@@ -6,6 +6,7 @@ import {
   Brain,
   CopyPlus,
   Download,
+  Globe,
   Pencil,
   Server as ServerIcon,
   Settings,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { db } from '@/lib/db';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import {
   getToolkitBySlug,
@@ -41,6 +43,7 @@ import {
   renameToolkitAction,
   removeServerFromToolkitAction,
   removeSkillFromToolkitAction,
+  updateToolkitAvailabilityAction,
 } from '@/lib/toolkits/actions';
 
 export const dynamic = 'force-dynamic';
@@ -62,6 +65,13 @@ export default async function ToolkitDetailPage({
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(wsSlug, user.id);
   if (!ws) redirect('/app');
+  const managerMembership = ws.ownerId === user.id
+    ? null
+    : await db.membership.findUnique({
+      where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
+      select: { role: true },
+    });
+  const canManagePublishing = ws.ownerId === user.id || managerMembership?.role === 'admin';
 
   if (toolkitSlug === 'me') await getOrCreateDefaultToolkit(ws.id);
   const toolkit = await getToolkitBySlug(ws.id, toolkitSlug);
@@ -362,6 +372,60 @@ export default async function ToolkitDetailPage({
         {current === 'settings' ? (
           <div className="max-w-3xl divide-y divide-border">
             <section className="pb-6">
+              <div className="flex items-center gap-2">
+                <Globe className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">
+                  {t('availability')}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('availabilityDescription')}
+              </p>
+              {canManagePublishing ? (
+                <form action={updateToolkitAvailabilityAction} className="mt-4 flex max-w-xl flex-col gap-3">
+                  <input type="hidden" name="workspace" value={wsSlug} />
+                  <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                    {t('visibility')}
+                    <select
+                      name="visibility"
+                      defaultValue={toolkit.visibility}
+                      className="ui-input h-9 w-full text-sm"
+                    >
+                      <option value="private">{t('private')}</option>
+                      <option value="public">{t('public')}</option>
+                    </select>
+                  </label>
+                  <label className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      name="enabled"
+                      defaultChecked={toolkit.enabled}
+                      className="mt-0.5 size-3.5 accent-brand"
+                    />
+                    <span>
+                      <span className="block font-medium">{t('enabled')}</span>
+                      <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
+                        {t('enabledDescription')}
+                      </span>
+                    </span>
+                  </label>
+                  <SubmitButton
+                    pendingLabel={t('savingAvailability')}
+                    savedLabel={t('availabilitySaved')}
+                    className="ui-button-secondary h-9 w-full text-xs sm:w-fit"
+                  >
+                    {t('saveAvailability')}
+                  </SubmitButton>
+                </form>
+              ) : (
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">
+                  {t('onlyWorkspaceManagersCanUpdateAvailability')}
+                </p>
+              )}
+            </section>
+
+            <section className="py-6">
               <div className="flex items-center gap-2">
                 <Settings className="size-4 text-muted-foreground" />
                 <h2 className="text-sm font-semibold text-foreground">

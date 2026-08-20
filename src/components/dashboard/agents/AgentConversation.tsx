@@ -23,10 +23,17 @@ import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown';
 import { code } from '@streamdown/code';
 import { DefaultChatTransport, generateId } from 'ai';
 import {
+  Box,
   Bot,
+  Brain,
   ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  CircleAlert,
   Clock3,
+  Loader2,
   Paperclip,
+  Plug,
   Send,
   Square,
   Wrench,
@@ -67,6 +74,32 @@ function formatToolResult(result: unknown) {
   } catch {
     return String(result);
   }
+}
+
+type ToolKind = 'skill' | 'sandbox' | 'mcp' | 'subagent' | 'tool';
+
+function toolKind(toolName: string): ToolKind {
+  if (toolName === 'skill_read_file' || toolName === 'skill_run_script') return 'skill';
+  if (/sandbox|terminal|shell|process|filesystem/i.test(toolName)) return 'sandbox';
+  if (/sub.?agent|delegate/i.test(toolName)) return 'subagent';
+  if (toolName.includes('__')) return 'mcp';
+  return 'tool';
+}
+
+function toolKindLabel(kind: ToolKind, t: ReturnType<typeof useTranslations>) {
+  const labels: Record<ToolKind, string> = {
+    skill: t('toolKindSkill'),
+    sandbox: t('toolKindSandbox'),
+    mcp: t('toolKindMcp'),
+    subagent: t('toolKindSubagent'),
+    tool: t('toolKindTool'),
+  };
+  return labels[kind];
+}
+
+function formatToolArgs(args: unknown, argsText: string) {
+  if (argsText.trim()) return argsText;
+  return formatToolResult(args);
 }
 
 function mergeDraftText(current: string, restored: string) {
@@ -174,20 +207,115 @@ function FilePart({ data, filename }: FileMessagePartProps) {
   );
 }
 
-function ToolPart({ toolName, status, result, isError }: ToolCallMessagePartProps) {
+function ToolPart({
+  toolName,
+  status,
+  result,
+  isError,
+  args,
+  argsText,
+  approval,
+  respondToApproval,
+}: ToolCallMessagePartProps) {
+  const t = useTranslations('console.agents');
+  const kind = toolKind(toolName);
+  const Icon = kind === 'skill'
+    ? Brain
+    : kind === 'sandbox'
+      ? Box
+      : kind === 'mcp'
+        ? Plug
+        : kind === 'subagent'
+          ? Bot
+          : Wrench;
+  const waitingForApproval = approval
+    && approval.approved === undefined
+    && !approval.resolution;
+  const isRunning = status.type === 'running';
+  const stateLabel = waitingForApproval
+    ? t('toolAwaitingApproval')
+    : isRunning
+      ? t('toolRunning')
+      : isError
+        ? t('toolFailed')
+        : t('toolCompleted');
+  const StateIcon = waitingForApproval || isError
+    ? CircleAlert
+    : isRunning
+      ? Loader2
+      : CheckCircle2;
+
   return (
-    <div className="my-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
-      <div className={cx('flex items-center gap-2 font-medium', isError ? 'text-red-600 dark:text-red-300' : 'text-foreground')}>
-        <Wrench className="size-4 shrink-0" />
-        <span className="break-all">{toolName}</span>
-        <span className="font-normal text-muted-foreground">({status.type})</span>
+    <details
+      open={isRunning || Boolean(isError) || Boolean(waitingForApproval)}
+      className={cx(
+        'group my-2 overflow-hidden rounded-md border bg-muted/20 text-xs',
+        isError || waitingForApproval ? 'border-amber-500/30' : 'border-border',
+      )}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 marker:content-none hover:bg-muted/40">
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
+          <Icon className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-foreground">{toolName}</span>
+          <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {toolKindLabel(kind, t)}
+          </span>
+        </span>
+        <span className={cx(
+          'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium',
+          isError ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+            : waitingForApproval ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+              : isRunning ? 'bg-brand-soft text-accent-foreground'
+                : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+        )}>
+          <StateIcon className={cx('size-3', isRunning && 'animate-spin')} />
+          {stateLabel}
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-border bg-background/50 px-3 py-3">
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('toolInput')}</p>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">
+            {formatToolArgs(args, argsText)}
+          </pre>
+        </div>
+        {waitingForApproval ? (
+          <div className="rounded-md border border-amber-500/25 bg-amber-500/10 p-2.5">
+            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{t('toolApprovalDescription')}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => respondToApproval({ approved: true })}
+                className="ui-button-primary h-8 px-3 text-xs"
+              >
+                {t('toolAllow')}
+              </button>
+              <button
+                type="button"
+                onClick={() => respondToApproval({ approved: false })}
+                className="ui-button-secondary h-8 px-3 text-xs"
+              >
+                {t('toolReject')}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {result !== undefined ? (
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('toolOutput')}</p>
+            <pre className={cx(
+              'max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border p-2 text-[11px] leading-relaxed',
+              isError ? 'border-red-500/20 bg-red-500/5 text-red-800 dark:text-red-200' : 'border-border bg-muted/30 text-foreground',
+            )}>
+              {formatToolResult(result)}
+            </pre>
+          </div>
+        ) : null}
       </div>
-      {result !== undefined ? (
-        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background p-2 text-[11px] leading-relaxed">
-          {formatToolResult(result)}
-        </pre>
-      ) : null}
-    </div>
+    </details>
   );
 }
 

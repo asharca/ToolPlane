@@ -148,6 +148,52 @@ describe('AgentsBrowser', () => {
     expect(formData.get('hermesImage')).toBe('registry.example/hermes:v2026.8.1');
   });
 
+  it('binds a sandbox when creating a native harness agent', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+          sandboxes: [{ id: 'sandbox-1', label: 'Coding workspace', status: 'running' }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Coding workspace' }));
+    await user.type(screen.getByLabelText('Name'), 'Harness');
+    await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
+
+    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.getAll('sandboxId')).toEqual(['sandbox-1']);
+  });
+
+  it('includes an optional system prompt for a native agent', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.type(screen.getByLabelText('Name'), 'Researcher');
+    await user.type(screen.getByLabelText('System prompt'), 'Use sources carefully.');
+    await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
+
+    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.get('systemPrompt')).toBe('Use sources carefully.');
+  });
+
   it('submits the selected pinned Hermes version when creating an agent', async () => {
     const user = userEvent.setup();
     actions.createAgentAction.mockClear();

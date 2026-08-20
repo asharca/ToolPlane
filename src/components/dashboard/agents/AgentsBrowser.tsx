@@ -5,11 +5,13 @@ import { useState } from 'react';
 import Link from 'next/link';
 import {
   Blocks,
+  Box,
   Bot,
   CheckCircle2,
   CircleAlert,
   Container,
   Cpu,
+  FileText,
   MessageCircle,
   PackageCheck,
   Plus,
@@ -53,6 +55,7 @@ type CreateOptions = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
+  sandboxes?: AgentResourceOption[];
 };
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -105,6 +108,7 @@ export function AgentsBrowser({
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
+  const [selectedSandboxIds, setSelectedSandboxIds] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
   const creatingDraft = runtime === 'hermes'
@@ -127,6 +131,7 @@ export function AgentsBrowser({
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
+    setSelectedSandboxIds(new Set());
   }
 
   return (
@@ -174,7 +179,7 @@ export function AgentsBrowser({
               <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('modelProviderRequiredDescription')}</p>
             </div>
           </div>
-          <Link href={`/app/${encodeURIComponent(slug)}/agents?tab=providers`} className="ui-button-secondary shrink-0">
+          <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-secondary shrink-0">
             <Cpu className="size-4" />
             {t('addModelProvider')}
           </Link>
@@ -289,6 +294,20 @@ export function AgentsBrowser({
             </div>
           )}
 
+          {runtime === 'native' ? (
+            <label className="block">
+              <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                <FileText className="size-4 text-muted-foreground" /> {t('systemPrompt')}
+              </span>
+              <textarea
+                name="systemPrompt"
+                rows={3}
+                placeholder={t('youAreAHelpfulAssistant')}
+                className="ui-input min-h-24 w-full resize-y py-2.5"
+              />
+            </label>
+          ) : null}
+
           <div className="grid items-start gap-3 lg:grid-cols-2">
             <AgentResourceSelect
               icon={Server}
@@ -314,6 +333,19 @@ export function AgentsBrowser({
               selectedIds={selectedToolkitIds}
               onSelectionChange={setSelectedToolkitIds}
             />
+            {runtime === 'native' ? (
+              <div className="space-y-1.5">
+                <AgentResourceSelect
+                  icon={Box}
+                  label={t('sandboxes')}
+                  name="sandboxId"
+                  options={createOptions.sandboxes ?? []}
+                  selectedIds={selectedSandboxIds}
+                  onSelectionChange={setSelectedSandboxIds}
+                />
+                <p className="text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
@@ -341,7 +373,7 @@ export function AgentsBrowser({
             ? t('createAnAgentThenConnectItToToolsAndExternalMessagingAdapters')
             : t('addAModelProviderCreateAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
           actions={!hasProviders ? (
-            <Link href={`/app/${encodeURIComponent(slug)}/agents?tab=providers`} className="ui-button-primary">
+            <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-primary">
               <Cpu className="size-4" />
               {t('addModelProvider')}
             </Link>

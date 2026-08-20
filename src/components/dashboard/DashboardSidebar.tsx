@@ -16,6 +16,8 @@ import {
   Store,
   Shield,
   Code2,
+  Cpu,
+  LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -35,12 +37,21 @@ type NavItem = {
 
 type Workspace = { id: string; slug: string; name: string };
 
-const SECTIONS: { titleKey: string; items: NavItem[] }[] = [
+const SECTIONS: { titleKey?: string; items: NavItem[] }[] = [
   {
-    titleKey: 'manage',
+    items: [
+      { labelKey: 'overview', segment: 'overview', icon: LayoutDashboard },
+    ],
+  },
+  {
+    titleKey: 'discover',
     items: [
       { labelKey: 'market', segment: 'market', icon: Store },
-      { labelKey: 'agents', segment: 'agents', icon: Bot },
+    ],
+  },
+  {
+    titleKey: 'build',
+    items: [
       { labelKey: 'mcpServers', segment: 'mcp', icon: Plug },
       { labelKey: 'skills', segment: 'skills', icon: Brain },
       { labelKey: 'toolkits', segment: 'toolkits', icon: Wrench },
@@ -48,7 +59,14 @@ const SECTIONS: { titleKey: string; items: NavItem[] }[] = [
     ],
   },
   {
-    titleKey: 'monitor',
+    titleKey: 'run',
+    items: [
+      { labelKey: 'modelProviders', segment: 'providers', icon: Cpu },
+      { labelKey: 'agents', segment: 'agents', icon: Bot },
+    ],
+  },
+  {
+    titleKey: 'operate',
     items: [
       { labelKey: 'observability', segment: 'observability', icon: BarChart3 },
     ],
@@ -151,7 +169,7 @@ export function DashboardSidebar({
       <div className={collapsed ? 'px-5 py-5 lg:px-2 lg:py-4' : 'px-5 py-5'}>
         <div className={`flex items-center justify-between gap-2 ${collapsed ? 'lg:justify-center' : ''}`}>
           <Link
-            href={base + '/mcp'}
+            href={base + '/overview'}
             onClick={onClose}
             aria-label="ToolPlane"
             className={collapsed ? 'lg:hidden' : undefined}
@@ -190,15 +208,16 @@ export function DashboardSidebar({
 
       <nav className={`flex-1 space-y-6 overflow-y-auto py-2 ${collapsed ? 'px-3 lg:px-2' : 'px-3'}`}>
         {SECTIONS.map((section) => (
-          <div key={section.titleKey}>
-            <p className={`px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground ${collapsed ? 'lg:hidden' : ''}`}>
-              {t(section.titleKey)}
-            </p>
+          <div key={section.titleKey ?? 'overview'}>
+            {section.titleKey ? (
+              <p className={`px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground ${collapsed ? 'lg:hidden' : ''}`}>
+                {t(section.titleKey)}
+              </p>
+            ) : null}
             <ul className="space-y-0.5">
               {section.items.map((item) => {
                 const href = `${base}/${item.segment}`;
-                const active =
-                  pathname === href || pathname.startsWith(href + '/');
+                const active = pathname === href || pathname.startsWith(href + '/');
                 const Icon = item.icon;
                 return (
                   <li key={item.segment}>

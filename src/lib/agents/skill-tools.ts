@@ -234,7 +234,7 @@ export function buildSkillToolSet(
 
     skill_read_file: tool({
       description:
-        'Read SKILL.md or a bundled file from an attached agent skill. Use this when a skill references extra docs, examples, or scripts.',
+        'Read SKILL.md or a bundled file from an attached agent skill. Read SKILL.md before applying a matching skill, then use this for extra docs, examples, or scripts.',
       inputSchema: jsonSchema({
         type: 'object',
         properties: {

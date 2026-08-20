@@ -92,7 +92,7 @@ export function WorkspaceSwitcher({
               return (
                 <Popover.Close key={w.id} asChild>
                   <Link
-                    href={`/app/${w.slug}/mcp`}
+                    href={`/app/${w.slug}/overview`}
                     aria-current={active ? 'page' : undefined}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
                   >
