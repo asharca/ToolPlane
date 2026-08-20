@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.22.0](https://github.com/asharca/ToolPlane/releases/tag/v0.22.0) (2026-08-20)
+
+### What's Changed
+* feat: allow admin-configured skill import limits
+* fix(skills): make large GitHub skill imports reliable
+* feat(sandboxes): run interactive terminals as root with service-user Hermes CLI
+* feat(sandboxes): make Hermes agent sudo an opt-in sandbox setting
+* fix(sandboxes): surface the Hermes sudo opt-in in the managed runtime settings
+
+**Full Changelog**: https://github.com/asharca/ToolPlane/compare/v0.21.7...v0.22.0
+
 ## [0.21.7](https://github.com/asharca/ToolPlane/releases/tag/v0.21.7) (2026-08-17)
 
 ### What's Changed
