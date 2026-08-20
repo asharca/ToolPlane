@@ -14,7 +14,7 @@ export function DashboardHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+    <header className="sticky top-[var(--dashboard-tabs-height)] z-20 border-b border-border bg-card/95 backdrop-blur">
       <div className="flex h-16 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-8">
         {breadcrumb ? (
           <nav className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
