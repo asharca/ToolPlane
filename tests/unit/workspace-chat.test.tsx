@@ -114,4 +114,28 @@ describe('WorkspaceChat', () => {
     await act(async () => { resolveSecond!(new Response(JSON.stringify({ conversationId: 'conversation-2' }))); });
     expect(window.location.search).toBe('?agent=agent-2&c=conversation-2');
   });
+
+  it('shows the conversation picker without compressing the chat on narrow screens', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+
+    render(
+      <WorkspaceChat
+        slug="acme"
+        agentId="agent-1"
+        conversationId="conversation-1"
+        initialMessages={[]}
+        agents={[{ id: 'agent-1', name: 'Research agent', providerLabel: 'OpenAI · gpt-5', ready: true, runtimeKind: 'native' }]}
+        conversations={[{ id: 'conversation-1', title: 'Plan the launch', createdAt: 'Jul 11', lastMessageAt: 'Jul 12', source: null }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversations' }));
+
+    expect(screen.getByRole('link', { name: /Plan the launch/ })).toBeInTheDocument();
+    expect(screen.queryByText('agent-1:conversation-1')).not.toBeInTheDocument();
+  });
 });

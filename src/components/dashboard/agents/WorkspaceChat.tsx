@@ -92,6 +92,8 @@ export function WorkspaceChat({
   const viewportMode = narrowViewport ? 'narrow' : 'wide';
   const [sidebarOverrides, setSidebarOverrides] = useState<Partial<Record<'narrow' | 'wide', boolean>>>({});
   const sidebarCollapsed = sidebarOverrides[viewportMode] ?? narrowViewport;
+  const showConversationPane = !sidebarCollapsed;
+  const showChat = sidebarCollapsed || !narrowViewport;
   const setSidebarCollapsed = useCallback((collapsed: boolean) => {
     setSidebarOverrides((current) => ({ ...current, [viewportMode]: collapsed }));
   }, [viewportMode]);
@@ -174,7 +176,7 @@ export function WorkspaceChat({
         'grid min-h-0 flex-1 gap-3',
         sidebarCollapsed ? 'grid-cols-1' : 'lg:grid-cols-[17rem_minmax(0,1fr)]',
       )}>
-        {!sidebarCollapsed ? (
+        {showConversationPane ? (
           <aside aria-label={t('conversations')} className="ui-panel flex min-h-0 flex-col overflow-hidden">
             <div className="border-b border-border p-3">
               <div className="flex gap-2">
@@ -258,6 +260,7 @@ export function WorkspaceChat({
           </aside>
         ) : null}
 
+        {showChat ? (
         <section className="ui-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="shrink-0 border-b border-border px-4 py-3 sm:px-5">
             <div className="flex items-center justify-between gap-3">
@@ -312,6 +315,7 @@ export function WorkspaceChat({
             runtimeKind={activeAgent.runtimeKind}
           />
         </section>
+        ) : null}
       </div>
     </div>
   );
