@@ -1,52 +1,61 @@
-name: release
+name: release-please
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing vX.Y.Z tag to publish again
+      target_branch:
+        description: Branch to release from
         required: true
+        default: main
         type: string
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
   packages: write
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-please-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  release-pr:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Resolve release tag
+      - name: Open or update release PR
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: ${{ inputs.target_branch }}
+          skip-github-release: true
+
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please
         id: release
-        env:
-          TAG_NAME: ${{ inputs.tag || github.ref_name }}
-        run: |
-          if [[ ! "$TAG_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "Release tags must use the vX.Y.Z format; received: $TAG_NAME" >&2
-            exit 1
-          fi
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
 
-          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
-          echo "major=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          echo "major_minor=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release tag
+      - name: Check out released commit
+        if: steps.release.outputs.release_created == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ steps.release.outputs.sha }}
 
       - name: Log in to GHCR
+        if: steps.release.outputs.release_created == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -54,20 +63,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
+        if: steps.release.outputs.release_created == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ steps.release.outputs.version }}
-            type=raw,value=${{ steps.release.outputs.major_minor }}
+            type=raw,value=${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}
             type=raw,value=${{ steps.release.outputs.major }}
             type=raw,value=latest
 
       - name: Set up Buildx
+        if: steps.release.outputs.release_created == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Export runtime release artifact
+        if: steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -76,10 +88,11 @@ jobs:
           outputs: type=local,dest=dist/release/app
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
-            TOOLPLANE_VERSION=${{ steps.release.outputs.tag }}
+            TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
           cache-from: type=gha
 
       - name: Package runtime release artifact
+        if: steps.release.outputs.release_created == 'true'
         run: |
           tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
           artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
@@ -87,6 +100,7 @@ jobs:
           shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
 
       - name: Build and push release image
+        if: steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -96,103 +110,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
-            TOOLPLANE_VERSION=${{ steps.release.outputs.tag }}
+            TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Create or update GitHub Release
+      - name: Upload release assets
+        if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.release.outputs.tag }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
         run: |
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" \
-              toolplane-runtime-linux-amd64.tar.gz \
-              toolplane-runtime-linux-amd64.tar.gz.sha256 \
-              --clobber
-          else
-            gh release create "$TAG_NAME" \
-              toolplane-runtime-linux-amd64.tar.gz \
-              toolplane-runtime-linux-amd64.tar.gz.sha256 \
-              --generate-notes
-          fi
-
-  sync-release-metadata:
-    needs: publish
-    if: needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: release-metadata-${{ github.event.repository.default_branch }}
-      cancel-in-progress: false
-    steps:
-      - name: Check out default branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          fetch-depth: 0
-
-      - name: Download generated release notes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ needs.publish.outputs.tag }}
-        run: gh release view "$TAG_NAME" --json body --jq .body > /tmp/release-notes.md
-
-      - name: Sync package version and changelog
-        env:
-          VERSION: ${{ needs.publish.outputs.version }}
-          TAG_NAME: ${{ needs.publish.outputs.tag }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          node - /tmp/release-notes.md <<'NODE'
-          const fs = require('node:fs');
-
-          const notesFile = process.argv[2];
-          const { VERSION: version, TAG_NAME: tagName, REPOSITORY: repository } = process.env;
-          if (!version || !tagName || !repository) {
-            throw new Error('Missing release metadata.');
-          }
-
-          const packageJsonPath = 'package.json';
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-          packageJson.version = version;
-          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
-
-          const changelogPath = 'CHANGELOG.md';
-          const changelog = fs.readFileSync(changelogPath, 'utf8');
-          if (!changelog.startsWith('# Changelog\n')) {
-            throw new Error('CHANGELOG.md must start with a # Changelog heading.');
-          }
-
-          const releaseHeading = `## [${version}]`;
-          if (!changelog.includes(releaseHeading)) {
-            const notes = fs
-              .readFileSync(notesFile, 'utf8')
-              .trim()
-              .replace(/^#{1,5}(?=\s)/gm, (heading) => `${heading}#`);
-            const releaseUrl = `https://github.com/${repository}/releases/tag/${tagName}`;
-            const date = new Date().toISOString().slice(0, 10);
-            const entry = `${releaseHeading}(${releaseUrl}) (${date})\n\n${notes || 'No release notes were generated.'}\n\n`;
-            const titleEnd = changelog.indexOf('\n') + 1;
-            fs.writeFileSync(
-              changelogPath,
-              `${changelog.slice(0, titleEnd)}\n${entry}${changelog.slice(titleEnd).replace(/^\n+/, '')}`,
-            );
-          }
-          NODE
-
-      - name: Commit release metadata to the default branch
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          TAG_NAME: ${{ needs.publish.outputs.tag }}
-        run: |
-          if git diff --quiet -- package.json CHANGELOG.md; then
-            echo "Release metadata is already in sync."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json CHANGELOG.md
-          git commit -m "chore: sync release metadata for ${TAG_NAME} [skip ci]"
-          git pull --rebase origin "$DEFAULT_BRANCH"
-          git push origin "HEAD:${DEFAULT_BRANCH}"
+          gh release upload "$TAG_NAME" \
+            toolplane-runtime-linux-amd64.tar.gz \
+            toolplane-runtime-linux-amd64.tar.gz.sha256 \
+            --clobber
