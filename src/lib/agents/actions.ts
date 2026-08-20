@@ -609,7 +609,8 @@ export async function createConversationAction(formData: FormData) {
   const conv = await createConversation(ctx.ws.id, agentId);
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  redirect(`/app/${slug}/agents/${agentId}?tab=chat&c=${conv.id}`);
+  revalidatePath(`/app/${slug}/chat`);
+  redirect(`/app/${slug}/chat?agent=${agentId}&c=${conv.id}`);
 }
 
 export async function createAgentChannelConnectionAction(formData: FormData) {

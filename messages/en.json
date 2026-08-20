@@ -352,6 +352,7 @@
       "workspace": "Workspace",
       "market": "Market",
       "modelProviders": "Model Providers",
+      "chat": "Chat",
       "agents": "Agents",
       "mcpServers": "MCP",
       "skills": "Skills",

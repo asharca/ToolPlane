@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   updateAgent: vi.fn(),
   upgradeHermesRuntime: vi.fn(),
   agentFindFirst: vi.fn(),
+  createConversation: vi.fn(),
+  redirect: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('@/lib/agents/queries', () => ({ getProvider: vi.fn() }));
 vi.mock('@/lib/db', () => ({
   db: { agent: { findFirst: mocks.agentFindFirst } },
@@ -34,7 +36,7 @@ vi.mock('@/lib/agents/mutations', () => ({
   updateProvider: vi.fn(),
   deleteProvider: vi.fn(),
   setProviderModels: vi.fn(),
-  createConversation: vi.fn(),
+  createConversation: mocks.createConversation,
   setHermesRuntimeEnv: mocks.setHermesRuntimeEnv,
 }));
 vi.mock('@/lib/agents/channel-connections', () => ({
@@ -70,6 +72,7 @@ import {
   updateAgentAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
+  createConversationAction,
 } from '@/lib/agents/actions';
 
 function upgradeForm(image = 'nousresearch/hermes-agent:v2026.8.3') {
@@ -246,5 +249,27 @@ describe('createAgentAction', () => {
       toolkitIds: [],
       sandboxIds: ['sandbox-1'],
     });
+  });
+});
+
+describe('createConversationAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.createConversation.mockResolvedValue({ id: 'conversation-1' });
+  });
+
+  it('redirects a newly created conversation to the standalone chat workspace', async () => {
+    const form = runtimeForm();
+    mocks.redirect.mockImplementation((path: string) => {
+      throw new Error(`redirect:${path}`);
+    });
+
+    await expect(createConversationAction(form)).rejects.toThrow(
+      'redirect:/app/acme/chat?agent=agent-1&c=conversation-1',
+    );
+
+    expect(mocks.createConversation).toHaveBeenCalledWith('workspace-1', 'agent-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
   });
 });

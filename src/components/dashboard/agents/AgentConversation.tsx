@@ -398,7 +398,7 @@ function AttachmentPickerButton({
       onClick={openPicker}
       aria-label={t('addAttachment')}
       title={t('addAttachment')}
-      className="ui-button-secondary flex size-10 shrink-0 items-center justify-center px-0"
+      className="ui-button-ghost flex size-10 shrink-0 items-center justify-center px-0"
     >
       <Paperclip className="size-[18px]" />
     </button>
@@ -409,12 +409,12 @@ function UserMessage() {
   const t = useTranslations('console.agents');
   return (
     <MessagePrimitive.Root asChild>
-      <article className="flex justify-end gap-3">
-        <div className="order-first min-w-0 max-w-[min(72rem,94%)]">
-          <div className="mb-1 text-right text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      <article className="flex justify-end">
+        <div className="order-first min-w-0 max-w-[min(38rem,90%)]">
+          <div className="mb-1 text-right text-[11px] font-medium text-muted-foreground">
             {t('user')}
           </div>
-          <div className="min-w-0 break-words rounded-md border border-primary bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground">
+          <div className="min-w-0 break-words rounded-lg bg-muted px-4 py-2.5 text-sm leading-relaxed text-foreground">
             <MessagePrimitive.Parts components={{ Text: UserText }} />
             <MessagePrimitive.Attachments>
               {({ attachment }) => <SentAttachment attachment={attachment} />}
@@ -430,14 +430,14 @@ function AssistantMessage({ agentName }: { agentName: string }) {
   return (
     <MessagePrimitive.Root asChild>
       <article className="flex justify-start gap-3">
-        <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-          <Bot className="size-[18px]" />
+        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <Bot className="size-4" />
         </div>
-        <div className="min-w-0 max-w-[min(72rem,94%)]">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="min-w-0 max-w-[min(46rem,92%)]">
+          <div className="mb-1 text-[11px] font-medium text-muted-foreground">
             {agentName}
           </div>
-          <div className="min-w-0 break-words rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground">
+          <div className="min-w-0 break-words py-0.5 text-sm leading-relaxed text-foreground">
             <MessagePrimitive.Parts
               components={{
                 Text: AssistantText,
@@ -477,12 +477,12 @@ function AgentThread({
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
       <ThreadPrimitive.Viewport className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
-        <div className="flex-1 px-4 py-5 sm:px-5">
+        <div className="flex-1 px-4 py-6 sm:px-6">
           <ThreadPrimitive.Empty>
             <div className="flex min-h-full items-center justify-center">
               <div className="max-w-md px-5 py-6 text-center">
-                <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-                  <Bot className="size-6" />
+                <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Bot className="size-5" />
                 </div>
                 <h3 className="text-sm font-semibold text-foreground">{t('startAConversation')}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -492,7 +492,7 @@ function AgentThread({
             </div>
           </ThreadPrimitive.Empty>
 
-          <div className="mx-auto flex w-full max-w-[76rem] flex-col gap-5">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
             <ThreadPrimitive.Messages>
               {({ message }) => message.role === 'user'
                 ? <UserMessage />
@@ -510,21 +510,21 @@ function AgentThread({
         <ThreadPrimitive.ScrollToBottom
           aria-label={t('scrollToLatestMessage')}
           title={t('scrollToLatestMessage')}
-          className="sticky bottom-3 z-10 mx-auto mb-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground disabled:invisible"
+          className="sticky bottom-3 z-10 mx-auto mb-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground disabled:invisible"
         >
           <ChevronDown className="size-4" />
         </ThreadPrimitive.ScrollToBottom>
       </ThreadPrimitive.Viewport>
 
-      <div className="shrink-0 border-t border-border bg-card px-4 py-4">
+      <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-6">
         {error || submitError ? (
-          <p role="alert" className="mx-auto mb-3 max-w-[76rem] rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+          <p role="alert" className="mx-auto mb-2 max-w-3xl rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             {submitError || error?.message}
           </p>
         ) : null}
 
-        <ComposerPrimitive.Root className="mx-auto max-w-[76rem] rounded-md border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
-          <div className="flex flex-wrap gap-2 px-2 empty:hidden">
+        <ComposerPrimitive.Root className="mx-auto max-w-3xl rounded-lg border border-input bg-card p-1.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/20">
+          <div className="flex flex-wrap gap-1.5 px-1.5 empty:hidden">
             <ComposerPrimitive.Attachments>
               {({ attachment }) => <ComposerAttachment attachment={attachment} />}
             </ComposerPrimitive.Attachments>
@@ -532,17 +532,17 @@ function AgentThread({
           <ComposerPrimitive.Input
             placeholder={t('messageThisAgent')}
             disabled={!ready || creatingConversation || uploadingAttachments}
-            rows={3}
+            rows={1}
             submitMode="enter"
-            className="max-h-56 min-h-24 w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            className="max-h-36 min-h-10 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
           />
-          <div className="flex items-center justify-between gap-3 border-t border-border/70 px-2 pt-2">
+          <div className="flex h-10 items-center justify-between gap-2 border-t border-border/70 px-1.5">
             <div className="flex min-w-0 items-center gap-2">
               <AttachmentPickerButton
                 disabled={!ready || !supportsAttachments || creatingConversation || uploadingAttachments}
                 onClearError={onClearAttachmentError}
               />
-              <div className="min-w-0 truncate text-xs text-muted-foreground">
+              <div className="min-w-0 truncate text-[11px] text-muted-foreground">
                 {!ready
                   ? t('chooseAModelBeforeSending')
                   : uploadingAttachments
@@ -555,22 +555,20 @@ function AgentThread({
 
             <ThreadPrimitive.If running={false}>
               <ComposerPrimitive.Send
-                aria-label={t('send')}
-                title={t('send')}
-                className="ui-button-primary h-10 gap-2 px-4 disabled:opacity-60"
+                aria-label={creatingConversation ? t('creating') : t('send')}
+                title={creatingConversation ? t('creating') : t('send')}
+                className="ui-button-primary ui-icon-button size-10 shrink-0 px-0 disabled:opacity-60"
               >
-                <Send className="size-[18px] shrink-0" />
-                {creatingConversation ? t('creating') : t('send')}
+                {creatingConversation ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[18px]" />}
               </ComposerPrimitive.Send>
             </ThreadPrimitive.If>
             <ThreadPrimitive.If running>
               <ComposerPrimitive.Cancel
                 aria-label={t('stop')}
                 title={t('stop')}
-                className="ui-button-secondary h-10 gap-2 px-4"
+                className="ui-button-secondary ui-icon-button size-10 shrink-0 px-0"
               >
-                <Square className="size-4 fill-current" />
-                {t('stop')}
+                <Square className="size-3.5 fill-current" />
               </ComposerPrimitive.Cancel>
             </ThreadPrimitive.If>
           </div>
