@@ -12,7 +12,6 @@ import {
   Boxes,
   BarChart3,
   Users,
-  Settings,
   Store,
   Shield,
   Code2,
@@ -76,7 +75,6 @@ const SECTIONS: { titleKey?: string; items: NavItem[] }[] = [
     titleKey: 'workspace',
     items: [
       { labelKey: 'members', segment: 'members', icon: Users },
-      { labelKey: 'settings', segment: 'settings', icon: Settings },
     ],
   },
 ];

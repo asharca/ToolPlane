@@ -10,6 +10,7 @@ const { pushMock, setThemeMock } = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
   usePathname: () => '/app/acme/mcp',
+  useSearchParams: () => new URLSearchParams('__dashboardTab=tab-1'),
 }));
 vi.mock('next-themes', () => ({
   useTheme: () => ({ resolvedTheme: 'light', setTheme: setThemeMock }),
@@ -77,9 +78,18 @@ describe('DashboardHeaderControls (command palette)', () => {
     expect(pushMock).toHaveBeenCalledWith('/app/acme/market/toolkits');
   });
 
-  it('toggles the theme from the header button', async () => {
+  it('opens the full settings modal route from the settings button', async () => {
     render(<DashboardHeaderControls />);
-    await userEvent.click(screen.getByRole('button', { name: /toggle theme/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Settings$/i }));
+
+    expect(pushMock).toHaveBeenCalledWith('/app/acme/settings?returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1');
+  });
+
+  it('toggles the theme from quick navigation', async () => {
+    render(<DashboardHeaderControls />);
+    await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
+    await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Toggle dark mode');
+    await userEvent.click(screen.getByRole('button', { name: /^Toggle dark mode/i }));
     expect(setThemeMock).toHaveBeenCalledWith('dark');
   });
 });

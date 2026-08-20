@@ -9,18 +9,14 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { Menu } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardLogo } from './DashboardLogo';
 import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
 import {
-  DASHBOARD_TAB_FRAME_NAME_PREFIX,
-  DASHBOARD_FRAME_QUERY_PARAM,
   DashboardTabBar,
   DashboardTabContent,
   DashboardTabsProvider,
-  EmbeddedDashboardFrame,
 } from './DashboardTabs';
 
 type Workspace = { id: string; slug: string; name: string };
@@ -60,19 +56,6 @@ function writeSidebarCollapsed(next: boolean) {
   sidebarListeners.forEach((listener) => listener());
 }
 
-function embeddedTabId(searchParams: URLSearchParams): string | null {
-  if (typeof window === 'undefined' || window.parent === window) return null;
-  const fromQuery = searchParams.get(DASHBOARD_FRAME_QUERY_PARAM);
-  if (fromQuery) return fromQuery;
-  return window.name.startsWith(DASHBOARD_TAB_FRAME_NAME_PREFIX)
-    ? window.name.slice(DASHBOARD_TAB_FRAME_NAME_PREFIX.length)
-    : null;
-}
-
-function subscribeToEmbeddedTab() {
-  return () => undefined;
-}
-
 export function DashboardChrome({
   slug,
   workspaceName,
@@ -80,7 +63,6 @@ export function DashboardChrome({
   workspaces,
   supportEmail,
   isAdmin = false,
-  embedded = false,
   children,
 }: {
   slug: string;
@@ -89,15 +71,8 @@ export function DashboardChrome({
   workspaces: Workspace[];
   supportEmail: string;
   isAdmin?: boolean;
-  embedded?: boolean;
   children: ReactNode;
 }) {
-  const searchParams = useSearchParams();
-  const frameTabId = useSyncExternalStore(
-    subscribeToEmbeddedTab,
-    () => embeddedTabId(new URLSearchParams(searchParams.toString())),
-    () => embedded ? searchParams.get(DASHBOARD_FRAME_QUERY_PARAM) : null,
-  );
   const [open, setOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const collapsed = useSyncExternalStore(
@@ -135,13 +110,8 @@ export function DashboardChrome({
 
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
-      {embedded || frameTabId ? (
-        <EmbeddedDashboardFrame slug={slug} tabId={frameTabId}>
-          {children}
-        </EmbeddedDashboardFrame>
-      ) : (
-        <DashboardTabsProvider key={slug} slug={slug}>
-          <div className="flex h-dvh min-h-dvh bg-background text-foreground [--dashboard-page-header-height:4rem] [--dashboard-tabbar-height:2.75rem]">
+      <DashboardTabsProvider key={slug} slug={slug}>
+        <div className="flex h-dvh min-h-dvh bg-background text-foreground [--dashboard-page-header-height:4rem] [--dashboard-tabbar-height:2.75rem]">
             {open ? (
               <button
                 type="button"
@@ -179,11 +149,10 @@ export function DashboardChrome({
                 <DashboardLogo />
               </div>
               <DashboardTabBar />
-              <DashboardTabContent />
+              <DashboardTabContent>{children}</DashboardTabContent>
             </div>
           </div>
         </DashboardTabsProvider>
-      )}
     </DashboardRuntimeConfigProvider>
   );
 }

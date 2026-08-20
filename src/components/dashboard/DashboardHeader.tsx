@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { DashboardHeaderControls } from './DashboardHeaderControls';
 
 export type Crumb = { label: string; href?: string };
 
@@ -13,6 +12,10 @@ export function DashboardHeader({
   breadcrumb?: Crumb[];
   actions?: ReactNode;
 }) {
+  if (title && !breadcrumb && !actions) {
+    return <h1 className="sr-only">{title}</h1>;
+  }
+
   return (
     <header className="sticky top-[var(--dashboard-tabbar-height)] z-10 border-b border-border bg-card/95 backdrop-blur">
       <div className="flex h-16 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-8">
@@ -52,10 +55,7 @@ export function DashboardHeader({
             {title}
           </h1>
         )}
-        <div className="flex shrink-0 items-center gap-2">
-          <DashboardHeaderControls />
-          {actions}
-        </div>
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
       </div>
     </header>
   );

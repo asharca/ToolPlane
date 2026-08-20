@@ -92,19 +92,16 @@ describe('DashboardTabsProvider', () => {
     expect(within(tabForLabel('Agents')).getByRole('button', { name: 'Pin Agents' })).toBeInTheDocument();
   });
 
-  it('lets a reused tab keep its embedded document instead of replacing its iframe source', async () => {
+  it('navigates a reused tab without creating an iframe', async () => {
     const user = userEvent.setup();
     renderTabs(<RouteOpener />);
-    const frame = document.querySelector('iframe');
-    expect(frame).not.toBeNull();
-    const iframe = frame as HTMLIFrameElement;
-    const initialSrc = iframe.getAttribute('src');
-    expect(initialSrc).not.toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Open skills' }));
 
     await waitFor(() => expect(activeTab()).toHaveTextContent('Skills'));
-    expect(iframe).toHaveAttribute('src', initialSrc!);
+    expect(document.querySelector('iframe')).toBeNull();
+    const destination = navigation.push.mock.calls.at(-1)?.[0];
+    expect(new URL(destination, 'https://toolplane.local').pathname).toBe('/app/smoke/skills');
   });
 
   it('closes the active tab and navigates to its fallback', async () => {

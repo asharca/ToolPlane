@@ -3,10 +3,9 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listApiTokens } from '@/lib/auth/tokens';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { SettingsModal } from '@/components/dashboard/SettingsModal';
 import { SettingsTabs } from '@/components/dashboard/SettingsTabs';
 import { TokenManager, type TokenView } from '@/components/dashboard/TokenManager';
-import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -47,12 +46,13 @@ export default async function TokensPage({
   }));
 
   return (
-    <>
-      <DashboardHeader title={t('settings')} />
-      <DashboardPage className="max-w-2xl">
+    <SettingsModal title={t('settings')} fallbackHref={`/app/${slug}/overview`}>
+      <div className="flex flex-col gap-6 md:flex-row md:gap-8">
         <SettingsTabs slug={slug} />
-        <TokenManager tokens={view} workspaceSlug={slug} />
-      </DashboardPage>
-    </>
+        <div className="min-w-0 flex-1">
+          <TokenManager tokens={view} workspaceSlug={slug} />
+        </div>
+      </div>
+    </SettingsModal>
   );
 }

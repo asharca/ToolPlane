@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { headers } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
   getWorkspaceForUser,
@@ -21,9 +20,6 @@ export default async function WorkspaceLayout({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
-  const requestHeaders = await headers();
-  // Fetch metadata stays "iframe" across server redirects that drop the query marker.
-  const embedded = requestHeaders.get('sec-fetch-dest') === 'iframe';
   const user = await getCurrentUser();
   if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
@@ -51,7 +47,6 @@ export default async function WorkspaceLayout({
           workspaces={workspaces}
           supportEmail={runtimeSupportEmail()}
           isAdmin={user.role === 'admin'}
-          embedded={embedded}
         >
           {children}
         </DashboardChrome>
