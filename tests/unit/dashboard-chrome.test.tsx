@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/smoke/agents',
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock('@/lib/workspace/actions', () => ({
@@ -20,6 +22,44 @@ const workspaces = [
   { id: 'workspace-2', slug: 'staging', name: 'Staging' },
 ];
 
+const storageValues = new Map<string, string>();
+const localStorageMock: Storage = {
+  get length() {
+    return storageValues.size;
+  },
+  clear() {
+    storageValues.clear();
+  },
+  getItem(key) {
+    return storageValues.get(key) ?? null;
+  },
+  key(index) {
+    return Array.from(storageValues.keys())[index] ?? null;
+  },
+  removeItem(key) {
+    storageValues.delete(key);
+  },
+  setItem(key, value) {
+    storageValues.set(key, String(value));
+  },
+};
+
+function setDesktopViewport(matches: boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }) as MediaQueryList),
+  });
+}
+
 function renderChrome() {
   return render(
     <DashboardChrome
@@ -34,26 +74,73 @@ function renderChrome() {
   );
 }
 
-describe('DashboardChrome tabs', () => {
-  it('uses a route-driven top tab rail for workspace navigation', () => {
+describe('DashboardChrome sidebar', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: localStorageMock,
+    });
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    Element.prototype.scrollIntoView = vi.fn();
+    setDesktopViewport(true);
+  });
+
+  it('collapses to an icon rail and persists the desktop preference', async () => {
     renderChrome();
 
-    const navigation = screen.getByRole('navigation', { name: 'Workspace navigation' });
-    expect(within(navigation).getByRole('link', { name: 'Overview' })).toHaveAttribute(
+    const sidebar = screen.getByRole('complementary');
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/app/smoke/overview');
+    expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
+    expect(screen.getByText('Discover', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Build', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Run', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Operate', { exact: true })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    expect(sidebar.className).toContain('lg:w-16');
+    expect(window.localStorage.getItem('toolplane:dashboard-sidebar-collapsed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('title', 'Agents');
+  });
+
+  it('restores a saved collapsed preference and opens the workspace popover beside the rail', async () => {
+    window.localStorage.setItem('toolplane:dashboard-sidebar-collapsed', 'true');
+    renderChrome();
+
+    const sidebar = screen.getByRole('complementary');
+    await waitFor(() => expect(sidebar).toHaveAttribute('data-collapsed', 'true'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
+    expect(screen.getByRole('dialog', { name: 'Workspaces' })).toHaveAttribute('data-side', 'right');
+    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
       'href',
-      '/app/smoke/overview',
+      '/app/staging/overview',
     );
-    expect(within(navigation).getByRole('link', { name: 'Model Providers' })).toHaveAttribute(
-      'href',
-      '/app/smoke/providers',
-    );
-    expect(within(navigation).getByRole('link', { name: 'Agents' })).toHaveAttribute(
-      'href',
-      '/app/smoke/agents',
-    );
-    expect(within(navigation).getByRole('link', { name: 'Agents' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
+  });
+
+  it('keeps the closed mobile drawer inert and restores focus after Escape', async () => {
+    setDesktopViewport(false);
+    renderChrome();
+
+    const menuButton = screen.getByRole('button', { name: 'Open menu' });
+    const sidebar = document.getElementById('dashboard-sidebar');
+    await waitFor(() => expect(sidebar).toHaveAttribute('inert'));
+
+    await userEvent.click(menuButton);
+
+    const dialog = screen.getByRole('dialog', { name: 'Workspace navigation' });
+    expect(menuButton).toHaveAttribute('aria-expanded', 'true');
+    expect(dialog).not.toHaveAttribute('inert');
+    expect(within(dialog).getByRole('button', { name: 'Close menu' })).toHaveFocus();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(menuButton).toHaveAttribute('aria-expanded', 'false');
+    expect(menuButton).toHaveFocus();
+    await waitFor(() => expect(sidebar).toHaveAttribute('inert'));
   });
 });

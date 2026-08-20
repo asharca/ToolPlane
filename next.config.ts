@@ -3,7 +3,7 @@ import createNextIntlPlugin from 'next-intl/plugin';
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
-function securityHeaders(environment = process.env.NODE_ENV) {
+function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFrames = false) {
   const isProduction = environment === 'production';
   const scriptPolicy = isProduction
     ? "script-src 'self' 'unsafe-inline'"
@@ -13,7 +13,7 @@ function securityHeaders(environment = process.env.NODE_ENV) {
     "default-src 'self'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${allowSameOriginFrames ? "'self'" : "'none'"}`,
     "object-src 'none'",
     scriptPolicy,
     connectPolicy,
@@ -32,7 +32,7 @@ function securityHeaders(environment = process.env.NODE_ENV) {
       value: contentSecurityPolicy,
     },
     { key: 'X-Content-Type-Options', value: 'nosniff' },
-    { key: 'X-Frame-Options', value: 'DENY' },
+    { key: 'X-Frame-Options', value: allowSameOriginFrames ? 'SAMEORIGIN' : 'DENY' },
     { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
     {
       key: 'Permissions-Policy',
@@ -45,7 +45,13 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   poweredByHeader: false,
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders() }];
+    return [
+      { source: '/:path*', headers: securityHeaders() },
+      {
+        source: '/app/:workspace/:path+',
+        headers: securityHeaders(process.env.NODE_ENV, true),
+      },
+    ];
   },
   outputFileTracingIncludes: {
     '/*': [

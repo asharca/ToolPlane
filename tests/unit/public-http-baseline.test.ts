@@ -10,23 +10,29 @@ describe('public HTTP baseline', () => {
     vi.unstubAllEnvs();
   });
 
-  it('applies the production security headers to every route', async () => {
+  it('keeps global framing blocked while allowing workspace tabs to frame themselves', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     const rules = await nextConfig.headers?.();
-    expect(rules).toHaveLength(1);
-    expect(rules?.[0]?.source).toBe('/:path*');
-    const headers = Object.fromEntries(
-      (rules?.[0]?.headers ?? []).map(({ key, value }) => [key, value]),
+    expect(rules).toHaveLength(2);
+    const globalRule = rules?.find((rule) => rule.source === '/:path*');
+    const workspaceRule = rules?.find((rule) => rule.source === '/app/:workspace/:path+');
+    const globalHeaders = Object.fromEntries(
+      (globalRule?.headers ?? []).map(({ key, value }) => [key, value]),
+    );
+    const workspaceHeaders = Object.fromEntries(
+      (workspaceRule?.headers ?? []).map(({ key, value }) => [key, value]),
     );
 
-    expect(headers['Content-Security-Policy']).toContain("default-src 'self'");
-    expect(headers['Content-Security-Policy']).toContain("script-src 'self' 'unsafe-inline'");
-    expect(headers['Content-Security-Policy']).toContain("frame-ancestors 'none'");
-    expect(headers['Strict-Transport-Security']).toBeUndefined();
-    expect(headers['X-Content-Type-Options']).toBe('nosniff');
-    expect(headers['X-Frame-Options']).toBe('DENY');
-    expect(headers['Referrer-Policy']).toBe('strict-origin-when-cross-origin');
-    expect(headers['Permissions-Policy']).toContain('camera=()');
+    expect(globalHeaders['Content-Security-Policy']).toContain("default-src 'self'");
+    expect(globalHeaders['Content-Security-Policy']).toContain("script-src 'self' 'unsafe-inline'");
+    expect(globalHeaders['Content-Security-Policy']).toContain("frame-ancestors 'none'");
+    expect(globalHeaders['Strict-Transport-Security']).toBeUndefined();
+    expect(globalHeaders['X-Content-Type-Options']).toBe('nosniff');
+    expect(globalHeaders['X-Frame-Options']).toBe('DENY');
+    expect(globalHeaders['Referrer-Policy']).toBe('strict-origin-when-cross-origin');
+    expect(globalHeaders['Permissions-Policy']).toContain('camera=()');
+    expect(workspaceHeaders['Content-Security-Policy']).toContain("frame-ancestors 'self'");
+    expect(workspaceHeaders['X-Frame-Options']).toBe('SAMEORIGIN');
   });
 
   it('does not pin HSTS or require HTTPS in local development', async () => {

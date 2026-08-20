@@ -139,7 +139,7 @@ export async function waitForSystemUpdateReady(
   return { status: 'timeout' };
 }
 
-export function SystemUpdateButton({ compact = false }: { compact?: boolean }) {
+export function SystemUpdateButton() {
   const t = useTranslations('console.systemUpdate');
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [uiState, setUiState] = useState<UiState>('checking');
@@ -284,25 +284,6 @@ export function SystemUpdateButton({ compact = false }: { compact?: boolean }) {
     status?.latestVersion,
   );
   const detail = message || versionDetail || status?.artifactName || t('targetReleaseUnknown');
-
-  if (compact) {
-    return (
-      <button
-        type="button"
-        onClick={runUpdate}
-        disabled={disabled}
-        aria-label={label}
-        title={detail}
-        className="ui-button-ghost ui-icon-button"
-      >
-        <Icon
-          className={`size-4 ${
-            uiState === 'checking' || uiState === 'updating' || uiState === 'restarting' ? 'animate-spin' : ''
-          }`}
-        />
-      </button>
-    );
-  }
 
   return (
     <div className="mt-3">

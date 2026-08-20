@@ -371,6 +371,14 @@
       "sellSkills": "Sell Skills",
       "sourceCode": "Source code"
     },
+    "tabs": {
+      "navigation": "Open pages",
+      "close": "Close {label}",
+      "new": "New tab",
+      "pin": "Pin {label}",
+      "unpin": "Unpin {label}",
+      "openInNewWindow": "Open {label} in new window"
+    },
     "overview": {
       "title": "Overview",
       "description": "{workspace} at a glance.",
