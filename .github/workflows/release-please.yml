@@ -3,6 +3,8 @@ name: release-please
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       target_branch:
@@ -40,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run release-please
+        if: github.ref_type == 'branch'
         id: release
         uses: googleapis/release-please-action@v4
         with:
@@ -48,14 +51,36 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
 
+      - name: Resolve tag release
+        if: github.ref_type == 'tag'
+        id: tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Release tags must use the vX.Y.Z format; received: $TAG_NAME" >&2
+            exit 1
+          fi
+          IFS=. read -r major minor patch <<< "${TAG_NAME#v}"
+          echo "name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "minor=$minor" >> "$GITHUB_OUTPUT"
+
       - name: Check out released commit
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.release.outputs.sha }}
+          ref: ${{ github.ref_type == 'tag' && github.ref || steps.release.outputs.sha }}
+
+      - name: Verify tag release metadata
+        if: github.ref_type == 'tag'
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: test "$TAG_NAME" = "v$(node -p "require('./package.json').version")"
 
       - name: Log in to GHCR
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -63,23 +88,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=${{ steps.release.outputs.version }}
-            type=raw,value=${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}
-            type=raw,value=${{ steps.release.outputs.major }}
+            type=raw,value=${{ steps.tag.outputs.version || steps.release.outputs.version }}
+            type=raw,value=${{ steps.tag.outputs.major || steps.release.outputs.major }}.${{ steps.tag.outputs.minor || steps.release.outputs.minor }}
+            type=raw,value=${{ steps.tag.outputs.major || steps.release.outputs.major }}
             type=raw,value=latest
 
       - name: Set up Buildx
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Export runtime release artifact
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -88,11 +113,11 @@ jobs:
           outputs: type=local,dest=dist/release/app
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
-            TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
+            TOOLPLANE_VERSION=${{ steps.tag.outputs.name || steps.release.outputs.tag_name }}
           cache-from: type=gha
 
       - name: Package runtime release artifact
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         run: |
           tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
           artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
@@ -100,7 +125,7 @@ jobs:
           shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
 
       - name: Build and push release image
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -110,12 +135,30 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
-            TOOLPLANE_VERSION=${{ steps.release.outputs.tag_name }}
+            TOOLPLANE_VERSION=${{ steps.tag.outputs.name || steps.release.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Create or update tagged GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" \
+              toolplane-runtime-linux-amd64.tar.gz \
+              toolplane-runtime-linux-amd64.tar.gz.sha256 \
+              --clobber
+          else
+            gh release create "$TAG_NAME" \
+              toolplane-runtime-linux-amd64.tar.gz \
+              toolplane-runtime-linux-amd64.tar.gz.sha256 \
+              --generate-notes
+          fi
+
       - name: Upload release assets
-        if: steps.release.outputs.release_created == 'true'
+        if: github.ref_type == 'branch' && steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.release.outputs.tag_name }}
