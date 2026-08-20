@@ -321,7 +321,6 @@ export async function listAgents(workspaceId: string) {
           toolkits: true,
           sandboxes: true,
           subAgents: true,
-          conversations: true,
         },
       },
     },

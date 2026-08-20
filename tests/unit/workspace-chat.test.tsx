@@ -49,7 +49,6 @@ describe('WorkspaceChat', () => {
     expect(screen.getByRole('button', { name: 'New chat' }).closest('form')).toHaveFormValues({
       workspace: 'acme',
       agentId: 'agent-1',
-      destination: 'chat',
     });
     expect(screen.getByRole('link', { name: /Support agent/ })).toHaveAttribute(
       'href',
@@ -62,6 +61,29 @@ describe('WorkspaceChat', () => {
     expect(screen.getByRole('link', { name: /Research agent/ })).not.toHaveAttribute('aria-current');
     expect(screen.getByRole('link', { name: /Plan the launch/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByText('agent-1:conversation-1')).toBeInTheDocument();
+  });
+
+  it('filters the conversation list in the sidebar', () => {
+    render(
+      <WorkspaceChat
+        slug="acme"
+        agentId="agent-1"
+        conversationId="conversation-1"
+        initialMessages={[]}
+        agents={[{ id: 'agent-1', name: 'Research agent', providerLabel: 'OpenAI · gpt-5', ready: true, runtimeKind: 'native' }]}
+        conversations={[
+          { id: 'conversation-1', title: 'Plan the launch', createdAt: 'Jul 11', lastMessageAt: 'Jul 12', source: null },
+          { id: 'conversation-2', title: 'Research notes', createdAt: 'Jul 10', lastMessageAt: 'Jul 11', source: null },
+        ]}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search conversations/ }), {
+      target: { value: 'research' },
+    });
+
+    expect(screen.queryByRole('link', { name: /Plan the launch/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Research notes/ })).toBeInTheDocument();
   });
 
   it('does not reuse a pending conversation from another agent', async () => {

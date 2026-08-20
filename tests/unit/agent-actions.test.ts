@@ -259,9 +259,8 @@ describe('createConversationAction', () => {
     mocks.createConversation.mockResolvedValue({ id: 'conversation-1' });
   });
 
-  it('redirects a standalone-chat form to its newly created conversation', async () => {
+  it('redirects a newly created conversation to the standalone chat workspace', async () => {
     const form = runtimeForm();
-    form.set('destination', 'chat');
     mocks.redirect.mockImplementation((path: string) => {
       throw new Error(`redirect:${path}`);
     });

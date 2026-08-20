@@ -61,7 +61,6 @@ export default async function AgentsPage({
           model: a.model,
           toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
           subAgentCount: a._count.subAgents,
-          conversationCount: a._count.conversations,
           runtimeKind: a.runtime?.kind ?? 'native',
           runtimeStatus: a.runtime
             ? ['error', 'setup_required'].includes(a.runtime.status)
