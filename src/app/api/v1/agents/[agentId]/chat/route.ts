@@ -2,9 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
-  streamText,
-  convertToModelMessages,
-  stepCountIs,
   type UIMessage,
 } from 'ai';
 import { db } from '@/lib/db';
@@ -15,10 +12,9 @@ import {
   ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
-import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
+import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
-import { buildModel } from '@/lib/agents/model';
-import { resolveMaxSteps } from '@/lib/agents/constants';
+import { uiMessagesToPi, runNativeAgent } from '@/lib/agents/native';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
 import { writeHermesChatStream } from '@/lib/agents/hermes/client';
 import {
@@ -146,24 +142,59 @@ export async function POST(
       visited: new Set([agentId]),
     });
     const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
-    const model = buildModel(agent.provider, agent.model);
-
-    // v6: convertToModelMessages is async (returns Promise<ModelMessage[]>)
-    const modelMessages = prependSystemModelMessage(system, await convertToModelMessages(messages));
-
-    const result = streamText({
-      model,
-      allowSystemInMessages: true,
-      messages: modelMessages,
-      tools,
-      stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),
-    });
-
-    return result.toUIMessageStreamResponse({
+    const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
+      execute: async ({ writer }) => {
+        const textPartIds = new Map<number, string>();
+        await runNativeAgent({
+          provider: agent.provider!,
+          modelId: agent.model!,
+          systemPrompt: system,
+          messages: uiMessagesToPi(messages),
+          tools,
+          maxSteps: agent.maxSteps,
+          signal: req.signal,
+          onEvent: (event) => {
+            if (event.type === 'text_start') {
+              const id = `native-${agent.id}-${event.contentIndex}`;
+              textPartIds.set(event.contentIndex, id);
+              writer.write({ type: 'text-start', id });
+            } else if (event.type === 'text_delta') {
+              let id = textPartIds.get(event.contentIndex);
+              if (!id) {
+                id = `native-${agent.id}-${event.contentIndex}`;
+                textPartIds.set(event.contentIndex, id);
+                writer.write({ type: 'text-start', id });
+              }
+              writer.write({ type: 'text-delta', id, delta: event.delta });
+            } else if (event.type === 'text_end') {
+              const id = textPartIds.get(event.contentIndex);
+              if (id) writer.write({ type: 'text-end', id });
+            } else if (event.type === 'toolcall_end') {
+              writer.write({ type: 'tool-input-start', toolCallId: event.toolCall.id, toolName: event.toolCall.name });
+              writer.write({
+                type: 'tool-input-available',
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                input: event.toolCall.arguments,
+              });
+            }
+          },
+          onToolResult: (toolCall, output, isError) => {
+            if (isError) {
+              writer.write({
+                type: 'tool-output-error',
+                toolCallId: toolCall.id,
+                errorText: output instanceof Error ? output.message : JSON.stringify(output),
+              });
+              return;
+            }
+            writer.write({ type: 'tool-output-available', toolCallId: toolCall.id, output });
+          },
+        });
+      },
+      onError: (error) => error instanceof Error ? error.message : 'Agent request failed.',
       onFinish: async ({ responseMessage, isAborted }) => {
-        // Persist the exchange only on a completed turn, so a failed/aborted
-        // stream never leaves an orphaned user message with no reply.
         if (!conversationId || isAborted) return;
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
@@ -171,6 +202,7 @@ export async function POST(
         await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
       },
     });
+    return createUIMessageStreamResponse({ stream });
   } finally {
     if (!streamOwnsHermesWriteLease) hermesWriteLease?.release();
   }

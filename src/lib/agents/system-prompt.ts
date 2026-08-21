@@ -1,5 +1,4 @@
 import 'server-only';
-import type { ModelMessage } from 'ai';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import type { SkillForPrompt } from './resolve';
 
@@ -40,16 +39,4 @@ export function assembleSystemPrompt(systemPrompt: string | null | undefined, sk
     ].join('\n'));
   }
   return sections.join('\n\n---\n\n');
-}
-
-export function prependSystemModelMessage(
-  systemPrompt: string | null | undefined,
-  messages: ModelMessage[],
-): ModelMessage[] {
-  const content = systemPrompt?.trim();
-  if (!content) return messages;
-  return [
-    { role: 'system', content },
-    ...messages.filter((message) => message.role !== 'system'),
-  ];
 }

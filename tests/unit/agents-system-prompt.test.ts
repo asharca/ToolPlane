@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
-import type { ModelMessage } from 'ai';
+import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import type { SkillForPrompt } from '@/lib/agents/resolve';
 
 const catalogSkill = (slug: string, name: string, description: string): SkillForPrompt => ({
@@ -68,22 +67,5 @@ describe('assembleSystemPrompt', () => {
 
     expect(out).toContain('<name>Quoted &quot;Skill&quot;</name>');
     expect(out).toContain('<description>Escapes &lt;/skill&gt; &amp; &apos;values&apos;.</description>');
-  });
-});
-
-describe('prependSystemModelMessage', () => {
-  it('puts the assembled system prompt in the first model message', () => {
-    const messages: ModelMessage[] = [{ role: 'user', content: 'hello' }];
-
-    expect(prependSystemModelMessage('Use tools carefully.', messages)).toEqual([
-      { role: 'system', content: 'Use tools carefully.' },
-      { role: 'user', content: 'hello' },
-    ]);
-  });
-
-  it('does not add an empty system message', () => {
-    const messages: ModelMessage[] = [{ role: 'user', content: 'hello' }];
-
-    expect(prependSystemModelMessage('   ', messages)).toBe(messages);
   });
 });

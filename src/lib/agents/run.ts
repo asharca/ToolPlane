@@ -1,17 +1,12 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import {
-  generateText,
-  jsonSchema,
-  tool,
-  stepCountIs,
-  type LanguageModel,
-  type ToolSet,
-} from 'ai';
+import { Type } from '@earendil-works/pi-ai';
 import { AGENT_MAX_DEPTH, resolveMaxSteps } from './constants';
+import { agentTool, type AgentToolSet } from './agent-tool';
+import { runNativeAgent } from './native';
 import { resolveAgentTools, type LoadedAgentTools, type SkillForPrompt, type SubAgentRef } from './resolve';
-import { assembleSystemPrompt, prependSystemModelMessage } from './system-prompt';
-import { buildModel, type ProviderConfig } from './model';
+import { assembleSystemPrompt } from './system-prompt';
+import type { ProviderConfig } from './model';
 import { buildToolSet } from './tools';
 import { buildSkillToolSet } from './skill-tools';
 import { getAgentForRun } from './queries';
@@ -47,27 +42,25 @@ export type RunAgent = LoadedAgentTools & {
 export type RunDeps = {
   loadAgent: (agentId: string, workspaceId: string) => Promise<RunAgent | null>;
   runModel: (args: {
-    model: LanguageModel;
+    model: ProviderConfig;
+    modelId: string;
     system: string;
     prompt: string;
-    tools: ToolSet;
+    tools: AgentToolSet;
     maxSteps: number;
   }) => Promise<string>;
 };
 
 const defaultDeps: RunDeps = {
   loadAgent: (id, workspaceId) => getAgentForRun(id, workspaceId),
-  runModel: async ({ model, system, prompt, tools, maxSteps }) => {
-    const messages = prependSystemModelMessage(system, [{ role: 'user', content: prompt }]);
-    const { text } = await generateText({
-      model,
-      allowSystemInMessages: true,
-      messages,
-      tools,
-      stopWhen: stepCountIs(resolveMaxSteps(maxSteps)),
-    });
-    return text;
-  },
+  runModel: async ({ model, modelId, system, prompt, tools, maxSteps }) => runNativeAgent({
+    provider: model,
+    modelId,
+    systemPrompt: system,
+    messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+    tools,
+    maxSteps: resolveMaxSteps(maxSteps),
+  }),
 };
 
 export function subAgentToolKey(slug: string): string {
@@ -81,18 +74,15 @@ export async function buildAgentToolSet(
   resolved: { deploymentIds: string[]; sandboxDeploymentIds?: string[]; skills?: SkillForPrompt[]; subAgents: SubAgentRef[] },
   ctx: AgentRunContext,
   deps: RunDeps = defaultDeps,
-): Promise<ToolSet> {
+): Promise<AgentToolSet> {
   const set = await buildToolSet(resolved.deploymentIds, ctx.workspaceId);
   Object.assign(set, buildSkillToolSet(resolved.skills ?? [], { sandboxDeploymentIds: resolved.sandboxDeploymentIds ?? [] }));
   for (const sub of resolved.subAgents) {
-    set[subAgentToolKey(sub.slug)] = tool({
+    set[subAgentToolKey(sub.slug)] = agentTool({
+      name: subAgentToolKey(sub.slug),
       description: `Delegate a task to the "${sub.name}" sub-agent. ${sub.description ?? ''}`.trim(),
-      inputSchema: jsonSchema({
-        type: 'object',
-        properties: {
-          prompt: { type: 'string', description: 'The task or question for the sub-agent.' },
-        },
-        required: ['prompt'],
+      parameters: Type.Object({
+        prompt: Type.String({ description: 'The task or question for the sub-agent.' }),
       }),
       execute: async ({ prompt }: { prompt: string }) => ({
         text: await runAgentTurn(sub.id, String(prompt), ctx, deps),
@@ -162,7 +152,7 @@ export async function runAgentTurn(
   };
   const tools = await buildAgentToolSet(resolved, childCtx, deps);
   const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
-  const model = buildModel(agent.provider, agent.model);
+  const model = agent.provider;
 
-  return deps.runModel({ model, system, prompt, tools, maxSteps: agent.maxSteps });
+  return deps.runModel({ model, modelId: agent.model, system, prompt, tools, maxSteps: agent.maxSteps });
 }
