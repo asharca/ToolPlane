@@ -33,6 +33,23 @@ describe('ProvidersPanel', () => {
     });
   });
 
+  it('shows Base URL only for custom providers', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProvidersPanel
+        slug="acme"
+        providers={[]}
+        piProviderPresets={[{ format: 'pi:google', name: 'Google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add provider' }));
+    expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Format' }), 'openai');
+    expect(screen.getByRole('textbox', { name: 'Base URL' })).toBeRequired();
+  });
+
   it('requires confirmation before deleting a provider', async () => {
     const user = userEvent.setup();
     render(

@@ -1,6 +1,6 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import { jsonSchema, tool, type JSONSchema7, type ToolSet } from 'ai';
+import { jsonSchema, agentTool, type AgentToolSet } from './agent-tool';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc, type McpTool } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
@@ -60,8 +60,8 @@ export async function buildToolSet(
   deploymentIds: string[],
   workspaceId: string,
   deps: ToolDeps = defaultDeps,
-): Promise<ToolSet> {
-  const set: ToolSet = {};
+): Promise<AgentToolSet> {
+  const set: AgentToolSet = {};
   const policies = await deps.loadMcpToolPolicies(deploymentIds, workspaceId);
   for (const deploymentId of deploymentIds) {
     const policy = policies.get(deploymentId);
@@ -69,9 +69,10 @@ export async function buildToolSet(
     if (deps.liveStatus(deploymentId) !== 'running') continue;
     const tools = filterMcpToolsForAi(await deps.listMcpTools(deploymentId), policy);
     for (const t of tools) {
-      set[toolKey(deploymentId, t.name)] = tool({
+      set[toolKey(deploymentId, t.name)] = agentTool({
+        name: toolKey(deploymentId, t.name),
         description: t.description ?? t.name,
-        inputSchema: jsonSchema((t.inputSchema ?? { type: 'object', properties: {} }) as JSONSchema7),
+        parameters: jsonSchema((t.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>),
         execute: async (args: Record<string, unknown>) => {
           // Agent tool calls go straight to the MCP process (not through the
           // gateway route), so record them here too — otherwise agent-driven

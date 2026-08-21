@@ -1,6 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import { convertToModelMessages, generateText, stepCountIs, type UIMessage } from 'ai';
+import type { UIMessage } from 'ai';
 import { db } from '@/lib/db';
 import { getAgent, getAgentForRequest } from '@/lib/agents/queries';
 import {
@@ -9,10 +9,9 @@ import {
   ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
-import { assembleSystemPrompt, prependSystemModelMessage } from '@/lib/agents/system-prompt';
+import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
-import { buildModel } from '@/lib/agents/model';
-import { resolveMaxSteps } from '@/lib/agents/constants';
+import { uiMessagesToPi, runNativeAgent } from '@/lib/agents/native';
 import { parseAgentMessageBody, type AgentMessageBody } from '@/lib/agents/chat-body';
 import { isSilentAgentReply, normalizeAgentMessageEvent } from '@/lib/agents/messaging';
 import { touchAgentChannelEvent } from '@/lib/agents/channel-connections';
@@ -191,20 +190,14 @@ async function runLoadedAgentMessage(params: {
       visited: new Set([agent.id]),
     });
     const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
-    const model = buildModel(agent.provider, agent.model);
-    const modelMessages = prependSystemModelMessage(
-      system,
-      await convertToModelMessages([...priorMessages, userMessage]),
-    );
-
-    const result = await generateText({
-      model,
-      allowSystemInMessages: true,
-      messages: modelMessages,
+    text = await runNativeAgent({
+      provider: agent.provider,
+      modelId: agent.model,
+      systemPrompt: system,
+      messages: uiMessagesToPi([...priorMessages, userMessage]),
       tools,
-      stopWhen: stepCountIs(resolveMaxSteps(agent.maxSteps)),
+      maxSteps: agent.maxSteps,
     });
-    text = result.text;
   }
   const silent = isSilentAgentReply(text);
 

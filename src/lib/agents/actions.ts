@@ -1,12 +1,12 @@
 'use server';
 
-import { generateText } from 'ai';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getProvider } from '@/lib/agents/queries';
-import { buildModel } from '@/lib/agents/model';
+import { buildModel, providerModelIds } from '@/lib/agents/model';
+import { providerPreset } from '@/lib/agents/provider-catalog';
 import {
   cloneAgent,
   cloneHermesVolumeData,
@@ -83,7 +83,10 @@ async function isManageableAgent(workspaceId: string, agentId: string): Promise<
 
 export type ActionState = { error?: string; warning?: string; savedAt?: number };
 
-const PROVIDER_FORMATS = new Set(['openai', 'openai-responses', 'anthropic']);
+function providerFormValue(format: string, baseUrl: string) {
+  const selectedFormat = providerPreset(format) ? format : 'openai';
+  return { format: selectedFormat, baseUrl };
+}
 
 function cloneOptionsFromFormData(formData: FormData) {
   // Existing integrations can keep posting the old minimal form. Only forms
@@ -111,8 +114,13 @@ function modelFetchError(result: Exclude<Awaited<ReturnType<typeof fetchProvider
 async function refreshProviderModels(
   workspaceId: string,
   providerId: string,
-  provider: ProviderModelFetchConfig,
+  provider: ProviderModelFetchConfig & { name: string },
 ): Promise<string | null> {
+  const builtinModels = providerModelIds(provider);
+  if (builtinModels) {
+    await setProviderModels(workspaceId, providerId, builtinModels);
+    return null;
+  }
   const result = await fetchProviderModels(provider);
   if (!result.ok) return modelFetchError(result);
   await setProviderModels(workspaceId, providerId, result.models);
@@ -126,10 +134,14 @@ export async function createProviderAction(
   const slug = String(formData.get('workspace') ?? '');
   const name = String(formData.get('name') ?? '').trim();
   const requestedFormat = String(formData.get('format') ?? '');
-  const format = PROVIDER_FORMATS.has(requestedFormat) ? requestedFormat : 'openai';
-  const baseUrl = String(formData.get('baseUrl') ?? '').trim();
+  const { format, baseUrl } = providerFormValue(
+    requestedFormat,
+    String(formData.get('baseUrl') ?? '').trim(),
+  );
   const apiKey = String(formData.get('apiKey') ?? '').trim();
-  if (!name || !baseUrl || !apiKey) return { error: 'Name, base URL and API key are required.' };
+  if (!name || (!providerPreset(format)?.format.startsWith('pi:') && (!baseUrl || !apiKey))) {
+    return { error: 'Name, base URL and API key are required for custom providers.' };
+  }
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
   let provider: { id: string };
@@ -138,7 +150,7 @@ export async function createProviderAction(
   } catch {
     return { error: 'A provider with that name already exists.' };
   }
-  const refreshError = await refreshProviderModels(ctx.ws.id, provider.id, { format, baseUrl, apiKey });
+  const refreshError = await refreshProviderModels(ctx.ws.id, provider.id, { name, format, baseUrl, apiKey });
   revalidatePath(`/app/${slug}/agents`);
   if (refreshError) {
     return { warning: `Provider added, but models were not refreshed: ${refreshError}`, savedAt: Date.now() };
@@ -154,10 +166,14 @@ export async function updateProviderAction(
   const providerId = String(formData.get('providerId') ?? '');
   const name = String(formData.get('name') ?? '').trim();
   const requestedFormat = String(formData.get('format') ?? '');
-  const format = PROVIDER_FORMATS.has(requestedFormat) ? requestedFormat : 'openai';
-  const baseUrl = String(formData.get('baseUrl') ?? '').trim();
+  const { format, baseUrl } = providerFormValue(
+    requestedFormat,
+    String(formData.get('baseUrl') ?? '').trim(),
+  );
   const apiKey = String(formData.get('apiKey') ?? '').trim();
-  if (!providerId || !name || !baseUrl) return { error: 'Provider, name and base URL are required.' };
+  if (!providerId || !name || (!providerPreset(format)?.format.startsWith('pi:') && !baseUrl)) {
+    return { error: 'Provider, name and base URL are required for custom providers.' };
+  }
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
   const existing = await getProvider(ctx.ws.id, providerId);
@@ -178,6 +194,7 @@ export async function updateProviderAction(
   let warning: string | undefined;
   if (shouldRefreshModels) {
     const refreshError = await refreshProviderModels(ctx.ws.id, providerId, {
+      name,
       format,
       baseUrl,
       apiKey: apiKey || existing.apiKey,
@@ -233,13 +250,17 @@ export async function testProviderModelAction(
   if (!provider) return { error: 'Provider not found.' };
 
   try {
-    await generateText({
-      model: buildModel(provider, modelId),
-      prompt: 'Reply with exactly: ok',
-      maxOutputTokens: 8,
+    const { models, model } = buildModel(provider, modelId);
+    const result = await models.completeSimple(model, {
+      messages: [{ role: 'user', content: 'Reply with exactly: ok', timestamp: Date.now() }],
+    }, {
+      maxTokens: 8,
       maxRetries: 0,
-      timeout: 10000,
+      timeoutMs: 10000,
     });
+    if (result.stopReason === 'error' || result.stopReason === 'aborted') {
+      throw new Error(result.errorMessage || 'Model test failed.');
+    }
   } catch (error) {
     return { error: sanitizeProviderError(error, provider.apiKey) };
   }

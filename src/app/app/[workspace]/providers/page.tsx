@@ -4,6 +4,7 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { listProviders } from '@/lib/agents/queries';
+import { piProviderPresets } from '@/lib/agents/provider-catalog';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 
@@ -27,12 +28,14 @@ export default async function ProvidersPage({
 
   const timeZone = resolveUserTimeZone(user);
   const providers = await listProviders(ws.id);
+  const presets = piProviderPresets();
 
   return (
     <>
       <DashboardHeader title={t('modelProviders')} />
       <ProvidersPanel
         slug={slug}
+        piProviderPresets={presets}
         providers={providers.map((provider) => ({
           id: provider.id,
           name: provider.name,

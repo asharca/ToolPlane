@@ -48,6 +48,14 @@ export type ProviderRow = {
   modelsFetchedAt: string | null;
 };
 
+type ProviderPreset = { format: string; name: string; baseUrl: string };
+
+const customProviderPresets: ProviderPreset[] = [
+  { format: 'openai', name: 'OpenAI-compatible', baseUrl: '' },
+  { format: 'openai-responses', name: 'OpenAI Responses-compatible', baseUrl: '' },
+  { format: 'anthropic', name: 'Anthropic-compatible', baseUrl: '' },
+];
+
 function Field({
   icon: Icon,
   label,
@@ -132,9 +140,28 @@ function ProviderDialog({
   );
 }
 
-function AddProviderDialog({ slug }: { slug: string }) {
+function ProviderFormatOptions({ piProviderPresets }: { piProviderPresets: ProviderPreset[] }) {
+  return (
+    <>
+      <optgroup label="Pi providers">
+        {piProviderPresets.map((preset) => <option key={preset.format} value={preset.format}>{preset.name}</option>)}
+      </optgroup>
+      <optgroup label="Custom">
+        {customProviderPresets.map((preset) => <option key={preset.format} value={preset.format}>{preset.name}</option>)}
+      </optgroup>
+    </>
+  );
+}
+
+function AddProviderDialog({ slug, piProviderPresets }: { slug: string; piProviderPresets: ProviderPreset[] }) {
+  const initialPreset = piProviderPresets[0] ?? customProviderPresets[0];
+  const presets = [...piProviderPresets, ...customProviderPresets];
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
+  const [format, setFormat] = useState(initialPreset.format);
+  const [name, setName] = useState(initialPreset.name);
+  const [baseUrl, setBaseUrl] = useState('');
+  const isCustomProvider = !format.startsWith('pi:');
   const [state, formAction] = useActionState<ActionState, FormData>(createProviderAction, {});
 
   return (
@@ -152,25 +179,36 @@ function AddProviderDialog({ slug }: { slug: string }) {
         <form action={formAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
           <input type="hidden" name="workspace" value={slug} />
           <Field icon={Cpu} label={t('name')}>
-            <input name="name" required placeholder={t('openai')} className="ui-input h-10 w-full" />
+            <input name="name" required value={name} onChange={(event) => setName(event.target.value)} className="ui-input h-10 w-full" />
           </Field>
           <Field icon={Braces} label={t('format')}>
-            <NativeSelect name="format" className="ui-input h-10 w-full" defaultValue="openai">
-              <option value="openai">{t('openai')}</option>
-              <option value="openai-responses">{t('openaiResponses')}</option>
-              <option value="anthropic">{t('anthropic')}</option>
+            <NativeSelect
+              name="format"
+              className="ui-input h-10 w-full"
+              value={format}
+              onChange={(event) => {
+                const preset = presets.find((candidate) => candidate.format === event.target.value);
+                setFormat(event.target.value);
+                if (preset) {
+                  setName(preset.name);
+                  setBaseUrl('');
+                }
+              }}
+            >
+              <ProviderFormatOptions piProviderPresets={piProviderPresets} />
             </NativeSelect>
           </Field>
-          <Field icon={Link2} label={t('baseUrl')}>
-            <input name="baseUrl" required placeholder="https://api.openai.com/v1" className="ui-input h-10 w-full" />
-          </Field>
-          <Field icon={KeyRound} label={t('apiKey')}>
-            <input name="apiKey" required type="password" placeholder="sk-..." className="ui-input h-10 w-full" />
-          </Field>
+          {isCustomProvider ? (
+            <Field icon={Link2} label={t('baseUrl')}>
+              <input name="baseUrl" required value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} className="ui-input h-10 w-full" />
+            </Field>
+          ) : null}
+          <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
+            <Field icon={KeyRound} label={t('apiKey')}>
+              <input name="apiKey" type="password" placeholder="API key or token" className="ui-input h-10 w-full" />
+            </Field>
+          </div>
           <div className="xl:col-span-2">
-            <p className="text-xs text-muted-foreground">
-              {t('baseUrlMustIncludeTheVersionSegmentEg')} <code>/v1</code>{t('modelsAreFetchedFrom')} <code>{'{baseUrl}/models'}</code>.
-            </p>
             <ActionMessage state={state} />
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4 text-sm">
@@ -265,9 +303,19 @@ function ViewModelsDialog({ slug, provider }: { slug: string; provider: Provider
   );
 }
 
-function EditProviderDialog({ slug, provider }: { slug: string; provider: ProviderRow }) {
+function EditProviderDialog({
+  slug,
+  provider,
+  piProviderPresets,
+}: {
+  slug: string;
+  provider: ProviderRow;
+  piProviderPresets: ProviderPreset[];
+}) {
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
+  const [format, setFormat] = useState(provider.format);
+  const isCustomProvider = !format.startsWith('pi:');
   const [updateState, updateAction] = useActionState<ActionState, FormData>(updateProviderAction, {});
 
   return (
@@ -290,23 +338,25 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
             <input name="name" required defaultValue={provider.name} className="ui-input h-10 w-full" />
           </Field>
           <Field icon={Braces} label={t('format')}>
-            <NativeSelect name="format" className="ui-input h-10 w-full" defaultValue={provider.format}>
-              <option value="openai">{t('openai')}</option>
-              <option value="openai-responses">{t('openaiResponses')}</option>
-              <option value="anthropic">{t('anthropic')}</option>
+            <NativeSelect name="format" className="ui-input h-10 w-full" value={format} onChange={(event) => setFormat(event.target.value)}>
+              <ProviderFormatOptions piProviderPresets={piProviderPresets} />
             </NativeSelect>
           </Field>
-          <Field icon={Link2} label={t('baseUrl')}>
-            <input name="baseUrl" required defaultValue={provider.baseUrl} className="ui-input h-10 w-full" />
-          </Field>
-          <Field icon={KeyRound} label={t('apiKey')}>
-            <input
-              name="apiKey"
-              type="password"
-              placeholder={t('leaveBlankToKeepCurrentKey')}
-              className="ui-input h-10 w-full"
-            />
-          </Field>
+          {isCustomProvider ? (
+            <Field icon={Link2} label={t('baseUrl')}>
+              <input name="baseUrl" required defaultValue={provider.baseUrl} className="ui-input h-10 w-full" />
+            </Field>
+          ) : null}
+          <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
+            <Field icon={KeyRound} label={t('apiKey')}>
+              <input
+                name="apiKey"
+                type="password"
+                placeholder={t('leaveBlankToKeepCurrentKey')}
+                className="ui-input h-10 w-full"
+              />
+            </Field>
+          </div>
           <div className="xl:col-span-2">
             <ActionMessage state={updateState} />
             <div className="mt-5 flex justify-end gap-2">
@@ -329,7 +379,15 @@ function EditProviderDialog({ slug, provider }: { slug: string; provider: Provid
   );
 }
 
-function ProviderCard({ slug, provider }: { slug: string; provider: ProviderRow }) {
+function ProviderCard({
+  slug,
+  provider,
+  piProviderPresets,
+}: {
+  slug: string;
+  provider: ProviderRow;
+  piProviderPresets: ProviderPreset[];
+}) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
   const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
@@ -356,7 +414,7 @@ function ProviderCard({ slug, provider }: { slug: string; provider: ProviderRow 
         </div>
         <div className="flex flex-wrap gap-2.5 lg:justify-end">
           <ViewModelsDialog slug={slug} provider={provider} />
-          <EditProviderDialog slug={slug} provider={provider} />
+          <EditProviderDialog slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
           <form action={refreshAction}>
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="providerId" value={provider.id} />
@@ -398,7 +456,15 @@ function ProviderCard({ slug, provider }: { slug: string; provider: ProviderRow 
   );
 }
 
-export function ProvidersPanel({ slug, providers }: { slug: string; providers: ProviderRow[] }) {
+export function ProvidersPanel({
+  slug,
+  providers,
+  piProviderPresets = [],
+}: {
+  slug: string;
+  providers: ProviderRow[];
+  piProviderPresets?: ProviderPreset[];
+}) {
   const t = useTranslations('console.agents');
 
   return (
@@ -408,7 +474,7 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('model')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t('modelDescription')}</p>
         </div>
-        <AddProviderDialog slug={slug} />
+        <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} />
       </div>
 
       <section className="ui-panel overflow-hidden">
@@ -427,7 +493,7 @@ export function ProvidersPanel({ slug, providers }: { slug: string; providers: P
         ) : (
           <ul className="divide-y divide-border">
             {providers.map((provider) => (
-              <ProviderCard key={provider.id} slug={slug} provider={provider} />
+              <ProviderCard key={provider.id} slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
             ))}
           </ul>
         )}

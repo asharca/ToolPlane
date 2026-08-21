@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { jsonSchema, tool, type ToolSet } from 'ai';
+import { jsonSchema, agentTool, type AgentToolSet } from './agent-tool';
 import { mcpRpc } from '@/lib/process/mcp-client';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { safeSkillFilePath, type SkillBundleFile } from '@/lib/skills/bundle';
@@ -209,7 +209,7 @@ async function writeSkillToSandbox(
 export function buildSkillToolSet(
   skillsForPrompt: SkillForPrompt[],
   opts: { sandboxDeploymentIds?: string[]; rpc?: typeof mcpRpc } = {},
-): ToolSet {
+): AgentToolSet {
   const skills = buildSkillIndex(skillsForPrompt);
   if (skills.length === 0) return {};
   const skillNames = skills.map((s) => `${s.slug} (${s.name})`).join(', ');
@@ -217,9 +217,10 @@ export function buildSkillToolSet(
   const rpc = opts.rpc ?? mcpRpc;
 
   return {
-    skill_list_attached: tool({
+    skill_list_attached: agentTool({
+      name: 'skill_list_attached',
       description: `List the active attached agent skills and their bundled files. Available skills: ${skillNames}`,
-      inputSchema: jsonSchema({ type: 'object', properties: {} }),
+      parameters: jsonSchema({ type: 'object', properties: {} }),
       execute: async () => ({
         skills: skills.map((s) => ({
           slug: s.slug,
@@ -232,10 +233,11 @@ export function buildSkillToolSet(
       }),
     }),
 
-    skill_read_file: tool({
+    skill_read_file: agentTool({
+      name: 'skill_read_file',
       description:
         'Read SKILL.md or a bundled file from an attached agent skill. Read SKILL.md before applying a matching skill, then use this for extra docs, examples, or scripts.',
-      inputSchema: jsonSchema({
+      parameters: jsonSchema({
         type: 'object',
         properties: {
           skill: { type: 'string', description: `Attached skill slug or name. Available: ${skillNames}` },
@@ -252,10 +254,11 @@ export function buildSkillToolSet(
       },
     }),
 
-    skill_run_script: tool({
+    skill_run_script: agentTool({
+      name: 'skill_run_script',
       description:
         'Run a bundled script from an attached skill. Only scripts/* files ending in .js, .mjs, .cjs, .py, or .sh are allowed. The script runs in a temporary skill folder with a minimal environment and no app secrets.',
-      inputSchema: jsonSchema({
+      parameters: jsonSchema({
         type: 'object',
         properties: {
           skill: { type: 'string', description: `Attached skill slug or name. Available: ${skillNames}` },
