@@ -25,7 +25,6 @@ describe('getSystemOverview', () => {
     expect(o.counts.workspaces).toBeGreaterThan(0);
     expect(o.requests.total).toBeGreaterThanOrEqual(2);
     expect(o.requests.errors).toBeGreaterThanOrEqual(1);
-    expect(Array.isArray(o.scraper)).toBe(true);
     expect(Array.isArray(o.recentUsers)).toBe(true);
   });
 });

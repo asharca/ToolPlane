@@ -9,7 +9,7 @@ export async function getSystemOverview() {
     users, admins, suspended, newUsers7d,
     workspaces, memberships, agents, toolkits, installedSkills, providers,
     servers, skills, clients, agentListings, categories,
-    deploymentGroups, logs, scraper, recentUsers,
+    deploymentGroups, logs, recentUsers,
   ] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { role: 'admin' } }),
@@ -31,7 +31,6 @@ export async function getSystemOverview() {
       where: { createdAt: { gte: since24h } },
       select: { statusCode: true, durationMs: true },
     }),
-    db.scrapeCheckpoint.findMany({ orderBy: { updatedAt: 'desc' } }),
     db.user.findMany({
       orderBy: { createdAt: 'desc' },
       take: 8,
@@ -55,7 +54,6 @@ export async function getSystemOverview() {
       servers, skills, clients, agentListings, categories, deployments,
     },
     requests: { total, errors, avgMs, p95Ms },
-    scraper,
     recentUsers,
   };
 }

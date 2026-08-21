@@ -207,30 +207,6 @@ export default async function AdminOverviewPage() {
           )}
         </AdminPanel>
 
-        <AdminPanel
-          title={t('scraperJobs')}
-          description={t('sourceCount', { count: o.scraper.length })}
-          padded={false}
-        >
-          {o.scraper.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-muted-foreground">{t('noScraperRunsRecorded')}</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {o.scraper.map((s) => (
-                <li key={s.id} className="px-5 py-4">
-                  <p className="break-words font-mono text-xs text-foreground">{s.job}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t('itemsCompleted', { count: s.doneCount })} ·{' '}
-                    {formatInTimeZone(s.updatedAt, timeZone, {
-                      dateStyle: 'short',
-                      timeStyle: 'short',
-                    }, locale)}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </AdminPanel>
       </div>
     </AdminPage>
   );

@@ -154,14 +154,6 @@ model DailySnapshot {
   @@unique([entityType, entityId, date])
 }
 
-model ScrapeCheckpoint {
-  id        String   @id @default(cuid())
-  job       String   @unique
-  lastSlug  String?
-  doneCount Int      @default(0)
-  updatedAt DateTime @updatedAt
-}
-
 model Workspace {
   id               String                   @id @default(cuid())
   slug             String                   @unique

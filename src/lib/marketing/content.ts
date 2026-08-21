@@ -43,26 +43,7 @@ export type MarketingContent = {
   };
   home: {
     eyebrow: string;
-    title: string;
     description: string;
-    primaryAction: string;
-    secondaryAction: string;
-    trustPoints: string[];
-    valueEyebrow: string;
-    valueTitle: string;
-    values: Array<{
-      title: string;
-      description: string;
-    }>;
-    capabilityEyebrow: string;
-    capabilityTitle: string;
-    architectureEyebrow: string;
-    architectureTitle: string;
-    architectureDescription: string;
-    architecturePoints: string[];
-    closingTitle: string;
-    closingDescription: string;
-    closingAction: string;
   };
   capabilityCommon: {
     overview: string;
@@ -103,52 +84,8 @@ const CONTENT = {
     },
     home: {
       eyebrow: 'Self-hosted agent infrastructure',
-      title: 'One control plane for every tool your agents depend on.',
       description:
         'Deploy MCP runtimes, package durable skills, compose production agents, and observe every call from a workspace your team controls.',
-      primaryAction: 'Open your workspace',
-      secondaryAction: 'Explore the architecture',
-      trustPoints: ['Your infrastructure', 'Real MCP processes', 'Workspace isolation'],
-      valueEyebrow: 'Built for operational clarity',
-      valueTitle: 'Move from scattered integrations to one governed system.',
-      values: [
-        {
-          title: 'Own the runtime',
-          description:
-            'Run the control plane and its tool processes on infrastructure you choose, with secrets kept inside your workspace.',
-        },
-        {
-          title: 'Compose without lock-in',
-          description:
-            'Combine MCP servers, skills, toolkits, and model providers into agents without coupling everything to one vendor.',
-        },
-        {
-          title: 'See every request',
-          description:
-            'Trace tool traffic, latency, errors, and deployment health from the same place your team manages resources.',
-        },
-        {
-          title: 'Govern as a team',
-          description:
-            'Use workspaces, membership, scoped tokens, and managed catalogs to keep access intentional as adoption grows.',
-        },
-      ],
-      capabilityEyebrow: 'A complete agent toolchain',
-      capabilityTitle: 'Each layer works alone. Together, they become an operating plane.',
-      architectureEyebrow: 'Designed for real workloads',
-      architectureTitle: 'The console is the source of truth.',
-      architectureDescription:
-        'Public pages explain the product. Your authenticated workspace contains the live catalog, configuration, versions, and actions that belong to your team.',
-      architecturePoints: [
-        'Live Node subprocesses for deployed MCP servers',
-        'JSON-RPC gateway with token and workspace authorization',
-        'Versioned skills and reusable toolkit manifests',
-        'Streaming agents backed by your chosen model providers',
-      ],
-      closingTitle: 'Give your agents an infrastructure layer you can operate.',
-      closingDescription:
-        'Sign in to see the real workspace catalog, inspect resources, and deploy what your team needs.',
-      closingAction: 'Go to console',
     },
     capabilityCommon: {
       overview: 'Back to overview',
@@ -292,47 +229,8 @@ const CONTENT = {
     },
     home: {
       eyebrow: '自托管智能体基础设施',
-      title: '用一个控制平面，管理智能体依赖的所有工具。',
       description:
         '部署 MCP 运行时、沉淀可复用技能、编排生产级智能体，并在团队自主掌控的工作空间中观测每一次调用。',
-      primaryAction: '进入工作空间',
-      secondaryAction: '了解产品架构',
-      trustPoints: ['部署在你的基础设施', '真实 MCP 进程', '工作空间隔离'],
-      valueEyebrow: '为清晰运维而构建',
-      valueTitle: '把分散的智能体集成，收敛成一个可治理的系统。',
-      values: [
-        {
-          title: '掌控运行环境',
-          description: '在你选择的基础设施上运行控制平面和工具进程，密钥始终保留在工作空间内。',
-        },
-        {
-          title: '自由组合能力',
-          description: '将 MCP、技能、工具包和模型供应商组合成智能体，不必把整个技术栈绑定到单一厂商。',
-        },
-        {
-          title: '看见每次调用',
-          description: '在管理资源的同一处查看工具流量、延迟、错误和部署健康度。',
-        },
-        {
-          title: '面向团队治理',
-          description: '通过工作空间、成员、受限令牌和受管目录，让权限随着团队规模增长仍然清晰。',
-        },
-      ],
-      capabilityEyebrow: '完整的智能体工具链',
-      capabilityTitle: '每一层都可以独立使用，组合后成为统一的智能体操作平面。',
-      architectureEyebrow: '为真实工作负载设计',
-      architectureTitle: '控制台才是真实数据源。',
-      architectureDescription:
-        '公开页面只介绍产品。登录后的工作空间才包含属于团队的实时市场、配置、版本和操作，二者不会同步数据。',
-      architecturePoints: [
-        '每个 MCP 部署都运行真实 Node 子进程',
-        '带令牌与工作空间鉴权的 JSON-RPC 网关',
-        '版本化技能和可复用工具包清单',
-        '由团队自选模型供应商驱动的流式智能体',
-      ],
-      closingTitle: '为智能体提供一个真正可运营的基础设施层。',
-      closingDescription: '登录后查看真实工作空间市场、检查资源，并部署团队需要的能力。',
-      closingAction: '进入控制台',
     },
     capabilityCommon: {
       overview: '返回产品概览',

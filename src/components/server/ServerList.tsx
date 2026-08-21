@@ -35,7 +35,7 @@ export async function ServerList({ page }: { page: number }) {
       <div className="pb-14">
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {t('noServersYetRunTheScraperToPopulateTheCatalog')}
+            {t('noServersYet')}
           </p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

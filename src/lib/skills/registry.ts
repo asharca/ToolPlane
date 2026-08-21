@@ -274,19 +274,6 @@ export async function syncGithubSkillRegistry(
     }
   }
 
-  await db.scrapeCheckpoint.upsert({
-    where: { job: `skill-registry:${registry}:${source.rootPath}` },
-    update: {
-      lastSlug: commitSha,
-      doneCount: created + updated,
-    },
-    create: {
-      job: `skill-registry:${registry}:${source.rootPath}`,
-      lastSlug: commitSha,
-      doneCount: created + updated,
-    },
-  });
-
   return {
     registry,
     ref: source.ref,

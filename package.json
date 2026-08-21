@@ -34,7 +34,6 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "ai": "^6.0.209",
-    "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.3",
     "lucide-react": "^1.21.0",

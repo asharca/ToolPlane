@@ -36,7 +36,7 @@ pnpm db:studio                 # prisma studio
 
 Database is Postgres via `docker-compose.yml` plus the dev override (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres`, port **5433**, user/pass/db all `mcp`/`mcp`/`toolplane`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
 
-Seed a test account: run `scripts/smoke-seed.ts` with tsx (`pnpm tsx scripts/smoke-seed.ts`) → `smoke@example.com` / `password123`. Scrapers in `scraper/*.ts` and the seed are standalone tsx scripts (they `import 'dotenv/config'` and use the `@/` path alias).
+Seed a test account: run `scripts/smoke-seed.ts` with tsx (`pnpm tsx scripts/smoke-seed.ts`) → `smoke@example.com` / `password123`. The seed is a standalone tsx script (it imports `dotenv/config` and uses the `@/` path alias).
 
 ## Critical gotchas
 
@@ -75,7 +75,7 @@ An `Agent` belongs to a workspace and binds: a `ModelProvider` + model id, an op
 - The route uses `streamText` + `convertToModelMessages` (async in v6) + `stepCountIs(agent.maxSteps)`, and persists user/assistant turns to `Conversation`/`Message` only when `conversationId` belongs to that agent. Messages store AI-SDK `parts` as JSON; the UI renders assistant replies as markdown via Streamdown.
 
 ### Data model
-Prisma schema (`prisma/schema.prisma`) splits into directory content (`Server`, `Client`, `Skill`, `Category`, `DailySnapshot`, `ScrapeCheckpoint`) and runtime/account state (`User`, `ApiToken`, `Workspace`, `Membership`, `Deployment`, `InstalledSkill`, `RequestLog`, `Toolkit*`, `ModelProvider`, `Agent*`, `Conversation`, `Message`). Note: the legacy `User.hubServers` Hub-favorites relation was removed in code but may linger in schema — the Hub feature is gone; toolkits replaced it.
+Prisma schema (`prisma/schema.prisma`) splits into directory content (`Server`, `Client`, `Skill`, `Category`, `DailySnapshot`) and runtime/account state (`User`, `ApiToken`, `Workspace`, `Membership`, `Deployment`, `InstalledSkill`, `RequestLog`, `Toolkit*`, `ModelProvider`, `Agent*`, `Conversation`, `Message`). Note: the legacy `User.hubServers` Hub-favorites relation was removed in code but may linger in schema — the Hub feature is gone; toolkits replaced it.
 
 ## Security invariants to preserve
 

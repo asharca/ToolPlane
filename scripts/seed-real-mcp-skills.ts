@@ -261,9 +261,6 @@ async function clearMcpAndSkillData() {
     db.deployment.deleteMany(),
     db.installedSkill.deleteMany(),
     db.dailySnapshot.deleteMany({ where: { entityType: { in: ['server', 'skill'] } } }),
-    db.scrapeCheckpoint.deleteMany({
-      where: { job: { in: ['servers', 'server-details', 'home-flags', 'skills'] } },
-    }),
     db.server.deleteMany(),
     db.skill.deleteMany(),
   ]);

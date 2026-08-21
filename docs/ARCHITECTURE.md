@@ -32,7 +32,6 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
 | 数据库 | PostgreSQL |
 | 认证 | jose（签发/校验 JWT 会话 Cookie）+ 哈希 API Token |
 | 图标 | lucide-react |
-| 采集 | Playwright + cheerio（`scraper/`）|
 | 测试 | Vitest 4（单元/集成，53 用例）、Playwright 裸库做 e2e |
 
 环境变量（`.env.example`）：`DATABASE_URL`、`AUTH_SECRET`（会话签名）、`NEXT_PUBLIC_APP_URL`。
@@ -102,7 +101,7 @@ src/
 │  ├─ cards/    EntityCard, ServerCard, ClientCard, SkillCard
 │  ├─ dashboard/  Chrome, Sidebar, Header(+Controls), TabBar,
 │  │             ConnectDialog, ReadyToConnectBanner, ToolPlayground,
-│  │             ToolkitsBrowser, FeatureGateCard, WorkspaceSwitcher,
+│  │             ToolkitsBrowser, WorkspaceSwitcher,
 │  │             StatusBadge, CopyButton, BrowseGrid, DashboardLogo
 │  ├─ server/   ServerList     (dashboard/ also has TokenManager, SettingsTabs)
 │  └─ theme/    ThemeProvider, ThemeToggle
@@ -120,7 +119,6 @@ scripts/
 │  ├─ mcp-server.mjs   JSON-RPC HTTP server for one MCP
 │  ├─ mcp-tools.mjs    5 built-in tools + RPC handler
 │  └─ smoke-seed.ts    Test account/workspace seed
-scraper/              Playwright+cheerio crawler
 prisma/
 │  ├─ schema.prisma
 │  └─ migrations/  0_init, 20260624122620_add_toolkits
@@ -133,14 +131,13 @@ tests/, e2e/
 
 共 16 个模型。目录侧与 Hub 侧两块。
 
-**目录（采集得到的内容）**
+**目录内容**
 
 - `Server` —— MCP 服务器（slug、name、author、stars、isOfficial/Featured、installCfg、readme）。多对多 `Category`、多对多 `User`（Hub 收藏）、一对多 `Deployment`。
 - `Client` —— MCP 客户端。
 - `Skill` —— 技能（score、多对多 `Category`、一对多 `InstalledSkill`）。
 - `Category` —— 与 Server/Client/Skill 多对多。
 - `DailySnapshot` —— 每日排名快照（entityType/entityId/date/rank/score）。
-- `ScrapeCheckpoint` —— 采集断点续传。
 
 **账户与 Hub（运行时状态）**
 
@@ -269,20 +266,14 @@ Deployment、Skill、Toolkit、Sandbox 与 Sub-agent，任何外部 ID 都使事
 
 ---
 
-## 11. 数据采集 `scraper/`
+## 11. 测试
 
-Playwright + cheerio 用于导入公开 MCP/Skill 目录数据，落库到 `Server/Client/Skill/Category`：`browser.ts`（受控浏览器）、`enumerate.ts`、`fetch-detail.ts`、`parse.ts`、`rate-limit.ts`、`scrape-servers/clients/skills/server-details/home-flags.ts`。`ScrapeCheckpoint` 支持断点续传。采集器仅用于导入公开元数据，不复制受版权保护的页面资产。
-
----
-
-## 12. 测试
-
-- **单元/集成**（Vitest 4，53 用例）：`tests/unit/*`（auth、命令面板、卡片、mcp-tools、安全回跳、SKILL.md 工件、工具台、工作区切换、限流、解析…）、`tests/integration/*`（db、home、ingest、queries）。`server-only` 用 `tests/stubs` 替身。
+- **单元/集成**（Vitest 4，53 用例）：`tests/unit/*`（auth、命令面板、卡片、mcp-tools、安全回跳、SKILL.md 工件、工具台、工作区切换…）、`tests/integration/*`（db、home、queries）。`server-only` 用 `tests/stubs` 替身。
 - **e2e**（`e2e/dashboard.e2e.mjs`，裸 `playwright` 库）：signup → deploy → running → stop → start → install → download 全链路。`npm run test:e2e`（需 dev server 在跑）。
 
 ---
 
-## 13. 本地开发 & 运维注意
+## 12. 本地开发 & 运维注意
 
 ```bash
 npm run dev          # next dev (:3000)
@@ -298,7 +289,7 @@ npm run test:e2e     # playwright e2e
 
 ---
 
-## 14. 未完成项
+## 13. 未完成项
 
 - Observability/Members/Seller 的部分商业化流程仍是引导卡或占位。
 - Settings 的 Integrations/Billing 子页未建（占位）；时区为只读展示。
