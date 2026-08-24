@@ -68,7 +68,22 @@ const TOOL_INCLUDE = {
   },
   sandboxes: {
     select: {
+      sandboxId: true,
+      isDefault: true,
       sandbox: { select: { id: true, name: true, slug: true, deploymentId: true } },
+    },
+  },
+  knowledgeBases: {
+    select: {
+      knowledgeBase: {
+        select: {
+          id: true,
+          embeddingModel: true,
+          topK: true,
+          threshold: true,
+          provider: { select: { format: true, baseUrl: true, apiKey: true } },
+        },
+      },
     },
   },
   runtime: {
@@ -226,7 +241,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
-      sandboxes: { select: { sandboxId: true } },
+      sandboxes: { select: { sandboxId: true, isDefault: true } },
       subAgents: { select: { childId: true } },
       marketInstall: {
         select: {
@@ -311,7 +326,14 @@ export async function listAgents(workspaceId: string) {
           image: true,
           status: true,
           lastError: true,
-          sandbox: { select: { deploymentId: true, deployment: { select: { status: true } } } },
+          sandbox: { select: { id: true, deploymentId: true, deployment: { select: { status: true } } } },
+        },
+      },
+      sandboxes: {
+        select: {
+          sandboxId: true,
+          isDefault: true,
+          sandbox: { select: { id: true, name: true, deploymentId: true, deployment: { select: { status: true } } } },
         },
       },
       _count: {
@@ -321,7 +343,6 @@ export async function listAgents(workspaceId: string) {
           toolkits: true,
           sandboxes: true,
           subAgents: true,
-          conversations: true,
         },
       },
     },
@@ -412,16 +433,16 @@ export async function getAgentEndpointRuntimeForExecution(
   });
 }
 
-export async function listConversations(agentId: string) {
+export async function listConversations(workspaceId: string, agentIds: string[]) {
   return db.conversation.findMany({
-    where: { agentId },
+    where: { agentId: { in: agentIds }, agent: { workspaceId }, workSession: null },
     orderBy: { createdAt: 'desc' },
     include: {
-      _count: { select: { messages: true } },
+      publicApiConversation: { select: { id: true } },
       messages: {
         orderBy: { createdAt: 'desc' },
         take: 1,
-        select: { createdAt: true, role: true, parts: true },
+        select: { createdAt: true },
       },
     },
   });
@@ -430,6 +451,6 @@ export async function listConversations(agentId: string) {
 export async function getConversation(conversationId: string, workspaceId: string) {
   return db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
-    include: { messages: { orderBy: { createdAt: 'asc' } } },
+    include: { messages: { orderBy: { createdAt: 'asc' } }, workSession: { select: { id: true } } },
   });
 }

@@ -9,6 +9,7 @@ import { assembleSystemPrompt } from './system-prompt';
 import type { ProviderConfig } from './model';
 import { buildToolSet } from './tools';
 import { buildSkillToolSet } from './skill-tools';
+import { buildKnowledgeTool } from '@/lib/knowledge';
 import { getAgentForRun } from './queries';
 import { runHermesText } from './hermes/client';
 import {
@@ -71,12 +72,19 @@ export function subAgentToolKey(slug: string): string {
 // buildToolSet) plus one `agent_<slug>` tool per attached sub-agent. Calling a
 // sub-agent tool runs that agent's own loop and returns its final text.
 export async function buildAgentToolSet(
-  resolved: { deploymentIds: string[]; sandboxDeploymentIds?: string[]; skills?: SkillForPrompt[]; subAgents: SubAgentRef[] },
+  resolved: {
+    deploymentIds: string[];
+    sandboxDeploymentIds?: string[];
+    skills?: SkillForPrompt[];
+    subAgents: SubAgentRef[];
+    knowledgeBases?: Array<{ knowledgeBase: { id: string; embeddingModel: string; topK: number; threshold: number; provider: { format: string; baseUrl: string; apiKey: string } | null } }>;
+  },
   ctx: AgentRunContext,
   deps: RunDeps = defaultDeps,
 ): Promise<AgentToolSet> {
   const set = await buildToolSet(resolved.deploymentIds, ctx.workspaceId);
   Object.assign(set, buildSkillToolSet(resolved.skills ?? [], { sandboxDeploymentIds: resolved.sandboxDeploymentIds ?? [] }));
+  Object.assign(set, buildKnowledgeTool((resolved.knowledgeBases ?? []).map((link) => link.knowledgeBase)));
   for (const sub of resolved.subAgents) {
     set[subAgentToolKey(sub.slug)] = agentTool({
       name: subAgentToolKey(sub.slug),
@@ -151,7 +159,7 @@ export async function runAgentTurn(
     visited: new Set([...ctx.visited, agentId]),
   };
   const tools = await buildAgentToolSet(resolved, childCtx, deps);
-  const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
+  const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
   const model = agent.provider;
 
   return deps.runModel({ model, modelId: agent.model, system, prompt, tools, maxSteps: agent.maxSteps });

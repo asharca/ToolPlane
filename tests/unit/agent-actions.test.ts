@@ -13,12 +13,17 @@ const mocks = vi.hoisted(() => ({
   updateAgent: vi.fn(),
   upgradeHermesRuntime: vi.fn(),
   agentFindFirst: vi.fn(),
+  createConversation: vi.fn(),
+  renameConsoleConversation: vi.fn(),
+  deleteConsoleConversation: vi.fn(),
+  updateAgentModelSelection: vi.fn(),
+  redirect: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('@/lib/agents/queries', () => ({ getProvider: vi.fn() }));
 vi.mock('@/lib/db', () => ({
   db: { agent: { findFirst: mocks.agentFindFirst } },
@@ -34,7 +39,10 @@ vi.mock('@/lib/agents/mutations', () => ({
   updateProvider: vi.fn(),
   deleteProvider: vi.fn(),
   setProviderModels: vi.fn(),
-  createConversation: vi.fn(),
+  createConversation: mocks.createConversation,
+  renameConsoleConversation: mocks.renameConsoleConversation,
+  deleteConsoleConversation: mocks.deleteConsoleConversation,
+  updateAgentModelSelection: mocks.updateAgentModelSelection,
   setHermesRuntimeEnv: mocks.setHermesRuntimeEnv,
 }));
 vi.mock('@/lib/agents/channel-connections', () => ({
@@ -68,8 +76,12 @@ import {
   syncAgentRuntimeAction,
   createAgentAction,
   updateAgentAction,
+  updateAgentModelAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
+  createConversationAction,
+  renameConversationAction,
+  deleteConversationAction,
 } from '@/lib/agents/actions';
 
 function upgradeForm(image = 'nousresearch/hermes-agent:v2026.8.3') {
@@ -246,5 +258,81 @@ describe('createAgentAction', () => {
       toolkitIds: [],
       sandboxIds: ['sandbox-1'],
     });
+  });
+});
+
+describe('model configuration action', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+  });
+
+  it('updates only the selected model binding and refreshes the chat workspace', async () => {
+    const form = runtimeForm();
+    form.set('providerId', 'provider-1');
+    form.set('model', 'gpt-5');
+
+    await expect(updateAgentModelAction({}, form)).resolves.toEqual({ savedAt: expect.any(Number) });
+
+    expect(mocks.updateAgentModelSelection).toHaveBeenCalledWith('workspace-1', 'agent-1', ['provider-1'], 'gpt-5');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+  });
+});
+
+describe('conversation management actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.renameConsoleConversation.mockResolvedValue(true);
+    mocks.deleteConsoleConversation.mockResolvedValue(true);
+  });
+
+  it('renames only a workspace-owned console conversation', async () => {
+    const form = runtimeForm();
+    form.set('conversationId', 'conversation-1');
+    form.set('title', '  Project brief  ');
+
+    await renameConversationAction(form);
+
+    expect(mocks.renameConsoleConversation).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'conversation-1',
+      'Project brief',
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+  });
+
+  it('returns to the agent chat root after deleting a conversation', async () => {
+    const form = runtimeForm();
+    form.set('conversationId', 'conversation-1');
+    mocks.redirect.mockImplementation((path: string) => { throw new Error(`redirect:${path}`); });
+
+    await expect(deleteConversationAction(form)).rejects.toThrow('redirect:/app/acme/chat?agent=agent-1');
+
+    expect(mocks.deleteConsoleConversation).toHaveBeenCalledWith('workspace-1', 'agent-1', 'conversation-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+  });
+});
+
+describe('createConversationAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.createConversation.mockResolvedValue({ id: 'conversation-1' });
+  });
+
+  it('redirects a newly created conversation to the standalone chat workspace', async () => {
+    const form = runtimeForm();
+    mocks.redirect.mockImplementation((path: string) => {
+      throw new Error(`redirect:${path}`);
+    });
+
+    await expect(createConversationAction(form)).rejects.toThrow(
+      'redirect:/app/acme/chat?agent=agent-1&c=conversation-1',
+    );
+
+    expect(mocks.createConversation).toHaveBeenCalledWith('workspace-1', 'agent-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
   });
 });

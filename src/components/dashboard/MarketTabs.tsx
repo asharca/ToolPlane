@@ -18,7 +18,7 @@ export function MarketTabs({ slug }: { slug: string }) {
   const base = `/app/${encodeURIComponent(slug)}/market`;
 
   return (
-    <nav aria-label={t('navigation')} className="flex max-w-full items-center gap-6 overflow-x-auto">
+    <nav aria-label={t('navigation')} className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-muted p-1 ring-1 ring-border/60">
       {TABS.map((tab) => {
         const href = `${base}/${tab.key}`;
         const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -28,10 +28,10 @@ export function MarketTabs({ slug }: { slug: string }) {
             key={tab.key}
             href={href}
             aria-current={active ? 'page' : undefined}
-            className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 py-3 text-sm transition-colors ${
+            className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
               active
-                ? 'border-foreground font-medium text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
+                ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border/60'
+                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
             }`}
           >
             <Icon className="size-4" />

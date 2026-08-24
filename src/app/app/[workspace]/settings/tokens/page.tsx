@@ -46,10 +46,10 @@ export default async function TokensPage({
   }));
 
   return (
-    <SettingsModal title={t('settings')} fallbackHref={`/app/${slug}/overview`}>
-      <div className="flex flex-col gap-6 md:flex-row md:gap-8">
+    <SettingsModal title={t('settings')} fallbackHref={`/app/${slug}/chat`}>
+      <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SettingsTabs slug={slug} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:p-8">
           <TokenManager tokens={view} workspaceSlug={slug} />
         </div>
       </div>

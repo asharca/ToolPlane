@@ -171,6 +171,8 @@ model Workspace {
   agentRuntimes    AgentRuntime[]
   agentAttachments AgentAttachment[]
   agentChannels    AgentChannelConnection[]
+  workSessions     WorkSession[]
+  knowledgeBases   KnowledgeBase[]
   agentListings    AgentListing[]           @relation("AgentListingWorkspace")
   agentInstalls    AgentInstall[]           @relation("AgentInstallWorkspace")
   agentEndpoints   AgentEndpoint[]
@@ -251,6 +253,8 @@ model Sandbox {
   agentLinks   AgentSandbox[]
   agentRuntime AgentRuntime?
   snapshots    SandboxSnapshot[]
+  workSessions WorkSession[]
+  knowledgeDocuments KnowledgeDocument[]
 
   @@unique([workspaceId, slug])
 }
@@ -380,6 +384,7 @@ model ModelProvider {
   createdAt       DateTime             @default(now())
   agents          Agent[]
   agentLinks      AgentModelProvider[]
+  knowledgeBases  KnowledgeBase[]
 
   @@unique([workspaceId, name])
 }
@@ -404,6 +409,8 @@ model Agent {
   subAgents               AgentSubAgent[]          @relation("AgentParent")
   parentLinks             AgentSubAgent[]          @relation("AgentChild")
   conversations           Conversation[]
+  workSessions            WorkSession[]
+  knowledgeBases          AgentKnowledgeBase[]
   channels                AgentChannelConnection[]
   runtime                 AgentRuntime?
   attachments             AgentAttachment[]
@@ -634,11 +641,101 @@ model AgentToolkit {
 model AgentSandbox {
   agentId   String
   sandboxId String
+  isDefault Boolean @default(false)
   agent     Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
   sandbox   Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
 
   @@id([agentId, sandboxId])
+  @@index([agentId, isDefault])
 }
+
+model WorkSession {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId      String?
+  sandbox        Sandbox?     @relation(fields: [sandboxId], references: [id], onDelete: SetNull)
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  title          String?
+  task           String?
+  status         String       @default("active")
+  result         String?
+  error          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([workspaceId, agentId, updatedAt])
+  @@index([sandboxId])
+}
+
+model KnowledgeBase {
+  id               String               @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name             String
+  providerId       String?
+  provider         ModelProvider?       @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  embeddingModel   String
+  dimensions       Int?
+  chunkSize        Int                  @default(1200)
+  chunkOverlap     Int                  @default(200)
+  topK             Int                  @default(6)
+  threshold        Float                @default(0.2)
+  documents        KnowledgeDocument[]
+  agentLinks       AgentKnowledgeBase[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, updatedAt])
+}
+
+model KnowledgeDocument {
+  id              String           @id @default(cuid())
+  knowledgeBaseId String
+  knowledgeBase   KnowledgeBase    @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  sandboxId       String?
+  sandbox         Sandbox?         @relation(fields: [sandboxId], references: [id], onDelete: SetNull)
+  sourcePath      String
+  filename        String
+  mimeType        String
+  size            Int
+  status          String           @default("pending")
+  error           String?
+  chunks          KnowledgeChunk[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([knowledgeBaseId, updatedAt])
+  @@index([sandboxId])
+}
+
+model KnowledgeChunk {
+  id         String            @id @default(cuid())
+  documentId String
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ordinal    Int
+  content    String
+  embedding  Unsupported("vector")?
+  createdAt  DateTime          @default(now())
+
+  @@unique([documentId, ordinal])
+  @@index([documentId])
+}
+
+model AgentKnowledgeBase {
+  agentId         String
+  knowledgeBaseId String
+  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, knowledgeBaseId])
+  @@index([knowledgeBaseId])
+}
+
 
 model Conversation {
   id                    String                   @id @default(cuid())
@@ -654,6 +751,7 @@ model Conversation {
   messages              Message[]
   attachments           AgentAttachment[]
   publicApiConversation AgentPublicConversation?
+  workSession           WorkSession?
 }
 
 model Message {

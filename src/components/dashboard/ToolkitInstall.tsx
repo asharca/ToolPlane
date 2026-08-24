@@ -23,13 +23,13 @@ const INSTALLERS = INSTALL_CLIENTS.map((key) => ({ key, label: installClientLabe
 
 const pillBase =
   'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition-colors';
-const pillActive = 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100';
+const pillActive = 'bg-background text-foreground shadow-sm ring-1 ring-border/60';
 const pillIdle =
-  'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
+  'text-muted-foreground hover:bg-accent/60 hover:text-foreground';
 const pillGroup =
-  'inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white/60 p-1 dark:border-zinc-700 dark:bg-zinc-900/60';
+  'inline-flex items-center gap-1 rounded-full border border-border bg-muted p-1';
 const codeBlock =
-  'overflow-x-auto whitespace-pre rounded-md border border-zinc-200 bg-white p-3 font-mono text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200';
+  'overflow-x-auto whitespace-pre rounded-md border border-border bg-background p-3 font-mono text-xs text-foreground';
 
 function Pill({
   active,
@@ -101,7 +101,7 @@ export function ToolkitInstall({
         </div>
         {tab === 'auto-sync' ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t('client')}
             </span>
             <div className={pillGroup}>
@@ -118,7 +118,7 @@ export function ToolkitInstall({
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t('client')}
             </span>
             <div className={pillGroup}>
@@ -135,8 +135,8 @@ export function ToolkitInstall({
       {tab === 'auto-sync' ? (
         <div>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-zinc-700 dark:text-zinc-200">
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">
                 {t('autosyncFor')} {installClientLabel(autoClient)}.
               </span>{' '}
               {autoDescription} {t('containsSummary', { serverCount, skillCount })}
@@ -144,7 +144,7 @@ export function ToolkitInstall({
             <CopyButton text={autoSyncCmd} label={t('copy')} />
           </div>
           <pre className={codeBlock}>{autoSyncCmd}</pre>
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="mt-2 text-xs text-muted-foreground">
             {t('pasteThisInYourTerminalToInstallNoTokenNeededTheLinkMintsAPrivateApiTokenFor')} {installClientLabel(autoClient)}{t('soKeepItSecret')}{' '}
             <a
               href={installUrl}
@@ -159,8 +159,8 @@ export function ToolkitInstall({
       ) : (
         <div>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-zinc-700 dark:text-zinc-200">
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">
                 {t('directConnection1')}
               </span>{' '}
               {t('addTheToolkitapossMcpEndpointTo')} {directClientLabel(client)} {t('manually')}
@@ -171,7 +171,7 @@ export function ToolkitInstall({
             {t('directConnectionsExposeMcpToolsOnlyUseAutosyncToSyncSkillsToo')}
           </p>
           <pre className={codeBlock}>{directSnippet}</pre>
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="mt-2 text-xs text-muted-foreground">
             {t('endpoint')} <code className="font-mono break-all">{mcpUrl}</code>{t('replace')}{' '}
             <code className="font-mono">YOUR_TOKEN</code> {t('withAnApiTokenMcpMustBeRunningToExposeTheirTools')}
           </p>
@@ -179,11 +179,11 @@ export function ToolkitInstall({
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-3 dark:border-sky-500/20">
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">{t('uninstall')}</span> {t('removesManagedClientConfigLocalSyncedSkillsAndAllInstallKeysForThisToolkit')}
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{t('uninstall')}</span> {t('removesManagedClientConfigLocalSyncedSkillsAndAllInstallKeysForThisToolkit')}
         </p>
         <div className="flex items-center gap-2">
-          <code className="rounded bg-white/70 px-2 py-1 font-mono text-[11px] text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+          <code className="rounded bg-background/80 px-2 py-1 font-mono text-[11px] text-foreground">
             {uninstallCmd}
           </code>
           <CopyButton text={uninstallCmd} label={t('copy')} />

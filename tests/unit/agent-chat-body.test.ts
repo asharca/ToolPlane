@@ -12,10 +12,12 @@ describe('parseAgentChatBody', () => {
   it('accepts a normal UI message payload', () => {
     const parsed = parseAgentChatBody({
       conversationId: 'conv1',
+      workSessionId: 'work1',
       messages: [{ id: 'msg1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
     });
 
     expect(parsed?.conversationId).toBe('conv1');
+    expect(parsed?.workSessionId).toBe('work1');
     expect(parsed?.messages).toHaveLength(1);
   });
 

@@ -144,14 +144,14 @@ export function ToolkitResourcePicker({
 
   if (items.length === 0) {
     return (
-      <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
+      <section className="ui-panel overflow-hidden">
+        <header className="flex items-center gap-2 border-b border-border bg-muted/25 px-4 py-3">
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
           <span className="text-sm text-muted-foreground">0</span>
         </header>
-        <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
           {kind === 'mcp' ? t('everyDeployedServerIsAlreadyInThisToolkit') : t('everyInstalledSkillIsAlreadyInThisToolkit')}{' '}
-          <Link href={emptyHref} className="text-zinc-700 underline dark:text-zinc-300">
+          <Link href={emptyHref} className="font-medium text-foreground underline">
             {kind === 'mcp' ? t('deployMore') : t('installMore')}
           </Link>
           .
@@ -161,10 +161,10 @@ export function ToolkitResourcePicker({
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+    <section className="ui-panel overflow-hidden">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
           <span className="text-sm text-muted-foreground">{items.length}</span>
         </div>
         <span className="text-xs text-muted-foreground">
@@ -209,16 +209,16 @@ export function ToolkitResourcePicker({
         <input type="hidden" name="workspace" value={workspaceSlug} />
         <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
         {[...activeSelected].map((id) => <input key={id} type="hidden" name="resourceId" value={id} />)}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-y border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-y border-border bg-muted/35 px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
               <input
                 ref={selectAllRef}
                 type="checkbox"
                 checked={allFilteredSelected}
                 disabled={!allFilteredSelected && selectingAllWouldExceedLimit}
                 onChange={toggleFiltered}
-                className="size-4 accent-zinc-900 disabled:cursor-not-allowed disabled:opacity-50 dark:accent-zinc-100"
+                className="size-4 accent-brand disabled:cursor-not-allowed disabled:opacity-50"
               />
               {t('selectVisible', { count: filteredItems.length })}
             </label>
@@ -260,40 +260,40 @@ export function ToolkitResourcePicker({
       ) : (
         <>
           {filteredItems.length > renderedItems.length ? (
-            <p className="border-b border-zinc-100 bg-zinc-50/70 px-4 py-2 text-xs text-muted-foreground dark:border-zinc-800 dark:bg-zinc-900/40">
+            <p className="border-b border-border bg-muted/25 px-4 py-2 text-xs text-muted-foreground">
               {t('showingFirstResources', {
                 shown: renderedItems.length,
                 count: filteredItems.length,
               })}
             </p>
           ) : null}
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <ul className="divide-y divide-border">
             {renderedItems.map((item) => {
               const isSelected = activeSelected.has(item.id);
               const Icon = kind === 'mcp' ? Server : Brain;
               return (
                 <li key={item.id}>
-                  <label className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900 ${isSelected ? 'bg-zinc-50 dark:bg-zinc-900/70' : ''}`}>
+                  <label className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/50 ${isSelected ? 'bg-muted' : ''}`}>
                     <input
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleItem(item.id)}
                       aria-label={t('selectResource', { name: item.name })}
-                      className="mt-1 size-4 shrink-0 accent-zinc-900 dark:accent-zinc-100"
+                      className="mt-1 size-4 shrink-0 accent-brand"
                     />
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
                       <Icon className="size-4 text-muted-foreground" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.name}</span>
+                      <span className="block truncate text-sm font-medium text-foreground">{item.name}</span>
                       {item.description ? <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">{item.description}</span> : null}
                     </span>
                     <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                         {sourceLabel(item.source, t)}
                       </span>
                       {item.status ? (
-                        <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+                        <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
                           {statusLabel(item.status, t)}
                         </span>
                       ) : null}

@@ -8,7 +8,10 @@ const actions = vi.hoisted(() => ({
   deleteProviderAction: vi.fn(async (formData: FormData) => {
     formData.get('providerId');
   }),
-  refreshModelsAction: vi.fn(async () => ({})),
+  refreshModelsAction: vi.fn(async (_state: unknown, formData: FormData) => {
+    formData.get('providerId');
+    return {};
+  }),
   testProviderModelAction: vi.fn(async () => ({})),
   updateProviderAction: vi.fn(async () => ({})),
 }));
@@ -33,7 +36,7 @@ describe('ProvidersPanel', () => {
     });
   });
 
-  it('shows Base URL only for custom providers', async () => {
+  it('allows a Pi provider endpoint override while requiring one for custom providers', async () => {
     const user = userEvent.setup();
     render(
       <ProvidersPanel
@@ -44,10 +47,60 @@ describe('ProvidersPanel', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Add provider' }));
-    expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
+    const baseUrl = screen.getByRole('textbox', { name: /^Base URL/ });
+    expect(baseUrl).not.toBeRequired();
+    expect(baseUrl).toHaveAttribute('placeholder', 'https://generativelanguage.googleapis.com/v1beta');
+    expect(screen.getByText('Leave blank to use the built-in endpoint: https://generativelanguage.googleapis.com/v1beta')).toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Format' }), 'openai');
-    expect(screen.getByRole('textbox', { name: 'Base URL' })).toBeRequired();
+    expect(baseUrl).toBeRequired();
+  });
+
+  it('shows the built-in endpoint when a Pi provider has no override', () => {
+    render(
+      <ProvidersPanel
+        slug="acme"
+        providers={[{
+          id: 'provider-1',
+          name: 'Google',
+          format: 'pi:google',
+          baseUrl: '',
+          modelCount: 1,
+          models: ['gemini-2.5-pro'],
+          modelsFetchedAt: null,
+        }]}
+        piProviderPresets={[{ format: 'pi:google', name: 'Google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }]}
+      />,
+    );
+
+    expect(screen.getByText('https://generativelanguage.googleapis.com/v1beta')).toBeInTheDocument();
+  });
+
+  it('puts model refresh inside the model list dialog', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProvidersPanel
+        slug="acme"
+        providers={[{
+          id: 'provider-1',
+          name: 'OpenAI production',
+          format: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          modelCount: 1,
+          models: ['gpt-4.1'],
+          modelsFetchedAt: null,
+        }]}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Refresh models' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'View models' }));
+    await user.click(screen.getByRole('button', { name: 'Refresh models' }));
+
+    await waitFor(() => expect(actions.refreshModelsAction).toHaveBeenCalledTimes(1));
+    const formData = actions.refreshModelsAction.mock.calls[0][1] as FormData;
+    expect(formData.get('workspace')).toBe('acme');
+    expect(formData.get('providerId')).toBe('provider-1');
   });
 
   it('requires confirmation before deleting a provider', async () => {

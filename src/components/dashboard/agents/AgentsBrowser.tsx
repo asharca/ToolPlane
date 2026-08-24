@@ -3,6 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
 import {
   Blocks,
   Box,
@@ -12,10 +13,10 @@ import {
   Container,
   Cpu,
   FileText,
-  MessageCircle,
   PackageCheck,
   Plus,
   Server,
+  Settings2,
   Store,
   Wrench,
   Users,
@@ -45,7 +46,6 @@ export type AgentRow = {
   model: string | null;
   toolCount: number;
   subAgentCount: number;
-  conversationCount: number;
   runtimeKind: string;
   runtimeStatus: string | null;
 };
@@ -78,10 +78,10 @@ function CountPill({
   value: number;
 }) {
   return (
-    <span className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-xs text-muted-foreground">
-      <Icon className="size-4 shrink-0" />
+    <span className="inline-flex h-6 items-center gap-1.5 text-[11px] text-muted-foreground">
+      <Icon className="size-3.5 shrink-0" />
       <span>{label}</span>
-      <span className="font-semibold tabular-nums text-foreground">{value}</span>
+      <span className="font-medium tabular-nums text-foreground">{value}</span>
     </span>
   );
 }
@@ -100,6 +100,10 @@ export function AgentsBrowser({
   hermesImages?: string[];
 }) {
   const t = useTranslations('console.agents');
+  const pathname = usePathname() ?? `/app/${encodeURIComponent(slug)}/agents`;
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const returnTo = `${pathname}${query ? `?${query}` : ''}`;
   const [creating, setCreating] = useState(false);
   const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
   const [providerId, setProviderId] = useState('');
@@ -138,7 +142,7 @@ export function AgentsBrowser({
     <DashboardPage className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('agent')}</h2>
+          <h2 className="text-2xl font-semibold text-foreground">{t('agent')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -380,7 +384,7 @@ export function AgentsBrowser({
           ) : undefined}
         />
       ) : (
-        <section className="ui-panel overflow-hidden">
+        <section className="overflow-hidden border-y border-border bg-background lg:border">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div>
               <h2 className="text-sm font-semibold text-foreground">{t('agents')}</h2>
@@ -395,7 +399,8 @@ export function AgentsBrowser({
           <ul className="divide-y divide-border">
             {agents.map((agent) => {
               const ready = isAgentReady(agent);
-              const detailsHref = `/app/${slug}/agents/${agent.id}`;
+              const agentsHref = `/app/${encodeURIComponent(slug)}/agents`;
+              const detailsHref = `${agentsHref}/${encodeURIComponent(agent.id)}?returnTo=${encodeURIComponent(returnTo)}`;
               const model = agent.runtimeKind === 'hermes'
                 ? agent.providerNames.length > 0
                   ? t('providerSummary', {
@@ -408,15 +413,15 @@ export function AgentsBrowser({
                 : t('noProviderSelected');
 
               return (
-                <li key={agent.id} className="transition-colors hover:bg-accent/25">
-                  <div className="grid gap-4 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <li key={agent.id} className="transition-colors hover:bg-muted/40">
+                  <div className="grid gap-4 px-4 py-3.5 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                     <div className="flex min-w-0 items-start gap-3">
                       <div
                         className={cx(
-                          'flex size-10 shrink-0 items-center justify-center rounded-md border',
+                          'flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted',
                           ready
-                            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                            : 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+                            ? 'text-muted-foreground'
+                            : 'text-amber-700 dark:text-amber-300',
                         )}
                       >
                         {ready ? <Bot className="size-[18px]" /> : <CircleAlert className="size-[18px]" />}
@@ -431,7 +436,7 @@ export function AgentsBrowser({
                           </Link>
                           <span
                             className={cx(
-                              'inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-xs font-medium',
+                              'inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium',
                               ready
                                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                                 : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
@@ -444,7 +449,7 @@ export function AgentsBrowser({
                                 ? t('needsProvider')
                                 : t('needsModel')}
                           </span>
-                          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
+                          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-[11px] font-medium text-muted-foreground">
                             {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}
                             {agent.runtimeKind === 'hermes' ? 'Hermes' : t('nativeRuntime')}
                             {agent.runtimeStatus ? ` · ${agent.runtimeStatus}` : ''}
@@ -453,18 +458,17 @@ export function AgentsBrowser({
                         <p className="mt-1 truncate text-sm text-muted-foreground">
                           {agent.runtimeKind === 'hermes' ? t('modelProviders') : t('model')}: {model}
                         </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2 flex flex-wrap gap-3">
                           <CountPill icon={Wrench} label={t('tools')} value={agent.toolCount} />
                           <CountPill icon={Users} label={t('subagents')} value={agent.subAgentCount} />
-                          <CountPill icon={MessageCircle} label={t('conversations')} value={agent.conversationCount} />
                         </div>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2.5 lg:justify-end">
-                      <Link href={detailsHref} className="ui-button-primary h-10 gap-2 px-4 text-sm">
-                        <MessageCircle className="size-[18px] shrink-0" />
-                        {t('chat')}
+                      <Link href={detailsHref} className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+                        <Settings2 className="size-[18px] shrink-0" />
+                        {t('settings')}
                       </Link>
                       <CloneAgentButton
                         slug={slug}

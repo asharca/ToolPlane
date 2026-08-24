@@ -189,7 +189,7 @@ async function runLoadedAgentMessage(params: {
       depth: 0,
       visited: new Set([agent.id]),
     });
-    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
+    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
     text = await runNativeAgent({
       provider: agent.provider,
       modelId: agent.model,

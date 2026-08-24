@@ -16,7 +16,9 @@ import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { uiMessagesToPi, runNativeAgent } from '@/lib/agents/native';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
+import { getWorkSession } from '@/lib/work/sessions';
 import { writeHermesChatStream } from '@/lib/agents/hermes/client';
+import { liveStatus } from '@/lib/process/supervisor';
 import {
   acquireHermesRuntimeWriteLease,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
@@ -60,7 +62,7 @@ export async function POST(
   let streamOwnsHermesWriteLease = false;
 
   try {
-    let body: { messages: UIMessage[]; conversationId?: string };
+    let body: { messages: UIMessage[]; conversationId?: string; workSessionId?: string };
     try {
       const parsed = parseAgentChatBody(await req.json());
       if (!parsed) return new Response('Bad request', { status: 400 });
@@ -75,16 +77,34 @@ export async function POST(
       ? (
           await db.conversation.findFirst({
             where: { id: body.conversationId, agentId },
-            select: { id: true },
+            select: { id: true, workSession: { select: { id: true } } },
           })
         ) ?? null
       : null;
     const conversationId = conversation?.id ?? null;
+    if (conversation?.workSession && conversation.workSession.id !== body.workSessionId) {
+      return new Response('Work session required', { status: 400 });
+    }
+    const workSession = body.workSessionId && conversationId
+      ? await getWorkSession(agent.workspaceId, body.workSessionId, agentId, conversationId)
+      : null;
+    if (body.workSessionId && (!workSession || !workSession.sandboxId || !agent.sandboxes.some((link) => link.sandboxId === workSession.sandboxId))) {
+      return new Response('Work session not found', { status: 404 });
+    }
+    if (body.workSessionId && liveStatus(workSession!.sandbox!.deploymentId) !== 'running') {
+      return new Response('Work sandbox is not running', { status: 503 });
+    }
+    if (body.workSessionId && isHermes) {
+      return new Response('Hermes agents cannot run external work sandboxes.', { status: 400 });
+    }
     const runtimeSession = isHermes && conversationId
       ? await ensureConversationRuntimeSession(agent.workspaceId, agent.id, conversationId)
       : null;
 
     const last = messages[messages.length - 1];
+    if (workSession) {
+      await db.workSession.update({ where: { id: workSession.id }, data: { status: 'running', error: null } });
+    }
 
     if (isHermes) {
       const writeLease = hermesWriteLease!;
@@ -135,13 +155,13 @@ export async function POST(
       return new Response('This agent has no model configured.', { status: 400 });
     }
 
-    const resolved = resolveAgentTools(agent);
+    const resolved = resolveAgentTools(agent, workSession?.sandboxId);
     const tools = await buildAgentToolSet(resolved, {
       workspaceId: agent.workspaceId,
       depth: 0,
       visited: new Set([agentId]),
     });
-    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills);
+    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
     const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
       execute: async ({ writer }) => {
@@ -193,13 +213,21 @@ export async function POST(
           },
         });
       },
-      onError: (error) => error instanceof Error ? error.message : 'Agent request failed.',
+      onError: (error) => {
+        if (workSession) void db.workSession.update({ where: { id: workSession.id }, data: { status: 'failed', error: error instanceof Error ? error.message.slice(0, 500) : 'Agent request failed.' } });
+        return error instanceof Error ? error.message : 'Agent request failed.';
+      },
       onFinish: async ({ responseMessage, isAborted }) => {
-        if (!conversationId || isAborted) return;
+        if (isAborted) {
+          if (workSession) await db.workSession.update({ where: { id: workSession.id }, data: { status: 'active' } });
+          return;
+        }
+        if (!conversationId) return;
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
         }
         await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+        if (workSession) await db.workSession.update({ where: { id: workSession.id }, data: { status: 'completed', error: null } });
       },
     });
     return createUIMessageStreamResponse({ stream });

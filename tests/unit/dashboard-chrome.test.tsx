@@ -9,40 +9,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
-vi.mock('@/lib/workspace/actions', () => ({
-  createWorkspaceAction: vi.fn(),
-}));
-
-vi.mock('@/lib/auth/actions', () => ({
-  logoutAction: vi.fn(),
-}));
+vi.mock('@/lib/workspace/actions', () => ({ createWorkspaceAction: vi.fn() }));
+vi.mock('@/lib/auth/actions', () => ({ logoutAction: vi.fn() }));
 
 const workspaces = [
   { id: 'workspace-1', slug: 'smoke', name: 'Smoke Workspace' },
   { id: 'workspace-2', slug: 'staging', name: 'Staging' },
 ];
-
-const storageValues = new Map<string, string>();
-const localStorageMock: Storage = {
-  get length() {
-    return storageValues.size;
-  },
-  clear() {
-    storageValues.clear();
-  },
-  getItem(key) {
-    return storageValues.get(key) ?? null;
-  },
-  key(index) {
-    return Array.from(storageValues.keys())[index] ?? null;
-  },
-  removeItem(key) {
-    storageValues.delete(key);
-  },
-  setItem(key, value) {
-    storageValues.set(key, String(value));
-  },
-};
 
 function setDesktopViewport(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
@@ -60,13 +33,14 @@ function setDesktopViewport(matches: boolean) {
   });
 }
 
-function renderChrome() {
+function renderChrome(isAdmin = false) {
   return render(
     <DashboardChrome
       slug="smoke"
       workspaceName="Smoke Workspace"
       userLabel="smoke@example.com"
       supportEmail="support@example.com"
+      isAdmin={isAdmin}
       workspaces={workspaces}
     >
       <main>Workspace content</main>
@@ -76,50 +50,33 @@ function renderChrome() {
 
 describe('DashboardChrome sidebar', () => {
   beforeEach(() => {
-    Object.defineProperty(window, 'localStorage', {
-      configurable: true,
-      value: localStorageMock,
-    });
-    window.localStorage.clear();
     window.sessionStorage.clear();
     Element.prototype.scrollIntoView = vi.fn();
     setDesktopViewport(true);
   });
 
-  it('collapses to an icon rail and persists the desktop preference', async () => {
+  it('renders the fixed compact workspace rail', () => {
     renderChrome();
 
     const sidebar = screen.getByRole('complementary');
-    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
-    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/app/smoke/overview');
-    expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
-    expect(screen.getByText('Discover', { exact: true })).toBeInTheDocument();
-    expect(screen.getByText('Build', { exact: true })).toBeInTheDocument();
-    expect(screen.getByText('Run', { exact: true })).toBeInTheDocument();
-    expect(screen.getByText('Operate', { exact: true })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
-
-    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-    expect(sidebar.className).toContain('lg:w-16');
-    expect(window.localStorage.getItem('toolplane:dashboard-sidebar-collapsed')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('title', 'Agents');
+    expect(sidebar.className).toContain('w-16');
+    expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
+    expect(screen.queryByText('Discover', { exact: true })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/smoke/chat');
+    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/app/smoke/agents');
+    expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/smoke/skills');
   });
 
-  it('restores a saved collapsed preference and opens the workspace popover beside the rail', async () => {
-    window.localStorage.setItem('toolplane:dashboard-sidebar-collapsed', 'true');
+  it('shows the admin console above the account avatar only for administrators', () => {
+    renderChrome(true);
+
+    expect(screen.getByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
+  });
+  it('opens settings as a modal route', () => {
     renderChrome();
 
-    const sidebar = screen.getByRole('complementary');
-    await waitFor(() => expect(sidebar).toHaveAttribute('data-collapsed', 'true'));
-
-    await userEvent.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
-    expect(screen.getByRole('dialog', { name: 'Workspaces' })).toHaveAttribute('data-side', 'right');
-    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
-      'href',
-      '/app/staging/overview',
-    );
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/app/smoke/settings?returnTo=%2Fapp%2Fsmoke%2Fagents');
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
   it('keeps the closed mobile drawer inert and restores focus after Escape', async () => {
@@ -131,14 +88,12 @@ describe('DashboardChrome sidebar', () => {
     await waitFor(() => expect(sidebar).toHaveAttribute('inert'));
 
     await userEvent.click(menuButton);
-
     const dialog = screen.getByRole('dialog', { name: 'Workspace navigation' });
     expect(menuButton).toHaveAttribute('aria-expanded', 'true');
     expect(dialog).not.toHaveAttribute('inert');
     expect(within(dialog).getByRole('button', { name: 'Close menu' })).toHaveFocus();
 
     await userEvent.keyboard('{Escape}');
-
     expect(menuButton).toHaveAttribute('aria-expanded', 'false');
     expect(menuButton).toHaveFocus();
     await waitFor(() => expect(sidebar).toHaveAttribute('inert'));

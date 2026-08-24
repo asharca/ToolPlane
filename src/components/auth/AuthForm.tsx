@@ -40,9 +40,9 @@ export function AuthForm({
   const detectedTimeZone = useDetectedClientTimeZone();
 
   return (
-    <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="ui-panel p-5 sm:p-6">
-        <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
+    <div className="mx-auto w-full max-w-sm px-4 py-10">
+      <div className="ui-panel rounded-2xl p-6 shadow-xl shadow-black/5 sm:p-7 dark:shadow-black/20">
+        <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {isSignup ? t('signupTitle') : t('loginTitle')}
         </h1>
         <p className="mb-6 text-sm text-muted-foreground">

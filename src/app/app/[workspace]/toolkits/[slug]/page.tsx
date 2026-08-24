@@ -128,7 +128,7 @@ export default async function ToolkitDetailPage({
   });
 
   const cardHeader =
-    'flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800';
+    'flex items-center gap-2 border-b border-border bg-muted/25 px-4 py-3';
   const defaultCloneName = t('copyNameDefault', { name: toolkit.name.slice(0, 55).trimEnd() });
   return (
     <>
@@ -142,29 +142,29 @@ export default async function ToolkitDetailPage({
             href={installUrl}
             aria-label={t('installScript')}
             title={t('installScript')}
-            className="inline-flex size-9 items-center justify-center rounded-md bg-zinc-900 text-sm font-medium text-white transition-colors hover:bg-zinc-800 sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            className="ui-button-primary ui-icon-button sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
           >
             <Download className="size-4" />
             <span className="hidden sm:inline">{t('installScript')}</span>
           </a>
         }
       />
-      <div className="space-y-6 px-8 py-6">
+      <div className="ui-page space-y-5">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
               {toolkit.name}
             </h1>
-            <span className="inline-flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-300">
+            <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
               <span
                 className={`size-2 rounded-full ${
-                  toolkit.enabled ? 'bg-emerald-500' : 'bg-zinc-400'
+                  toolkit.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/60'
                 }`}
               />
               {toolkit.enabled ? t('enabled') : t('disabled')}
             </span>
           </div>
-          <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-zinc-400 dark:text-zinc-500">
+          <code className="block w-full max-w-full overflow-x-auto whitespace-nowrap pb-1 font-mono text-xs text-muted-foreground">
             {installUrl}
           </code>
         </div>
@@ -182,9 +182,9 @@ export default async function ToolkitDetailPage({
               skillCount={toolkit.skills.length}
             />
 
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <section className="ui-panel overflow-hidden">
               <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                <h2 className="text-sm font-semibold text-foreground">
                   {t('connectedMcp')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
@@ -192,11 +192,11 @@ export default async function ToolkitDetailPage({
                 </span>
               </header>
               {toolkit.servers.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {t('noServersAttachedYetAddSomeFromTheMcpsTab')}
                 </p>
               ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <ul className="divide-y divide-border">
                   {toolkit.servers.map((s, i) => (
                     <li
                       key={s.id}
@@ -204,9 +204,9 @@ export default async function ToolkitDetailPage({
                     >
                       <Link
                         href={`/app/${wsSlug}/mcp/${s.deployment.id}`}
-                        className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                        className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
                       >
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
+                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
                           <ServerIcon className="size-4 text-muted-foreground" />
                         </span>
                         {deploymentLabel(s.deployment).name}
@@ -222,9 +222,9 @@ export default async function ToolkitDetailPage({
               )}
             </section>
 
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <section className="ui-panel overflow-hidden">
               <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                <h2 className="text-sm font-semibold text-foreground">
                   {t('skills')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
@@ -232,11 +232,11 @@ export default async function ToolkitDetailPage({
                 </span>
               </header>
               {toolkit.skills.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {t('noSkillsAttachedYet')}
                 </p>
               ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <ul className="divide-y divide-border">
                   {toolkit.skills.map((s) => (
                     <li
                       key={s.id}
@@ -244,9 +244,9 @@ export default async function ToolkitDetailPage({
                     >
                       <Link
                         href={`/app/${wsSlug}/skills/${s.installedSkill.id}`}
-                        className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 hover:underline dark:text-zinc-100"
+                        className="flex items-center gap-2.5 text-sm font-medium text-foreground hover:underline"
                       >
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
+                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
                           <Brain className="size-4 text-muted-foreground" />
                         </span>
                         {skillLabel(s.installedSkill).name}
@@ -261,9 +261,9 @@ export default async function ToolkitDetailPage({
 
         {current === 'mcps' ? (
           <div className="space-y-5">
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <section className="ui-panel overflow-hidden">
               <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                <h2 className="text-sm font-semibold text-foreground">
                   {t('inThisToolkit')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
@@ -271,18 +271,18 @@ export default async function ToolkitDetailPage({
                 </span>
               </header>
               {toolkit.servers.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {t('noServersInThisToolkitYet')}
                 </p>
               ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <ul className="divide-y divide-border">
                   {toolkit.servers.map((s) => (
                     <li
                       key={s.id}
                       className="flex items-center justify-between gap-3 px-4 py-3"
                     >
-                      <span className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
+                      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
                           <ServerIcon className="size-4 text-muted-foreground" />
                         </span>
                         {deploymentLabel(s.deployment).name}
@@ -291,7 +291,7 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="workspace" value={wsSlug} />
                         <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                         <input type="hidden" name="deploymentId" value={s.deployment.id} />
-                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
+                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
                           <X className="size-3.5" />
                           {t('remove')}
                         </button>
@@ -314,9 +314,9 @@ export default async function ToolkitDetailPage({
 
         {current === 'skills' ? (
           <div className="space-y-5">
-            <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <section className="ui-panel overflow-hidden">
               <header className={cardHeader}>
-                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                <h2 className="text-sm font-semibold text-foreground">
                   {t('inThisToolkit')}
                 </h2>
                 <span className="text-sm text-muted-foreground">
@@ -324,18 +324,18 @@ export default async function ToolkitDetailPage({
                 </span>
               </header>
               {toolkit.skills.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {t('noSkillsInThisToolkitYet')}
                 </p>
               ) : (
-                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <ul className="divide-y divide-border">
                   {toolkit.skills.map((s) => (
                     <li
                       key={s.id}
                       className="flex items-center justify-between gap-3 px-4 py-3"
                     >
-                      <span className="flex items-center gap-2.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                        <span className="flex size-7 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
+                      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+                        <span className="flex size-7 items-center justify-center rounded-md bg-muted">
                           <Brain className="size-4 text-muted-foreground" />
                         </span>
                         {skillLabel(s.installedSkill).name}
@@ -348,7 +348,7 @@ export default async function ToolkitDetailPage({
                           name="installedSkillId"
                           value={s.installedSkill.id}
                         />
-                        <button className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-red-600">
+                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
                           <X className="size-3.5" />
                           {t('remove')}
                         </button>
@@ -533,8 +533,8 @@ export default async function ToolkitDetailPage({
                       prompt={t('deleteToolkitPrompt', { name: toolkit.name })}
                       pendingLabel={t('deleting')}
                       className="max-w-xl items-center justify-end"
-                      triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
-                      confirmClassName="inline-flex h-9 items-center rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                      triggerClassName="ui-button-secondary ui-button-danger-secondary h-9"
+                      confirmClassName="ui-button-primary ui-button-danger h-9"
                       cancelClassName="ui-button-secondary h-9"
                       promptClassName="text-xs text-muted-foreground"
                     />

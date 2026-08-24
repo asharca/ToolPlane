@@ -12,6 +12,7 @@ import {
 
 const navigation = vi.hoisted(() => ({
   pathname: '/app/smoke/agents',
+  search: '',
   push: vi.fn(),
   replace: vi.fn(),
 }));
@@ -19,7 +20,7 @@ const navigation = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({
   usePathname: () => navigation.pathname,
   useRouter: () => ({ push: navigation.push, replace: navigation.replace }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 function RouteOpener() {
@@ -62,6 +63,7 @@ function tabForLabel(label: string) {
 describe('DashboardTabsProvider', () => {
   beforeEach(() => {
     navigation.pathname = '/app/smoke/agents';
+    navigation.search = '';
     navigation.push.mockClear();
     navigation.replace.mockClear();
     Element.prototype.scrollIntoView = vi.fn();
@@ -74,6 +76,38 @@ describe('DashboardTabsProvider', () => {
     expect(activeTab()).toHaveTextContent('Agents');
     expect(activeTab()).toHaveAttribute('data-tab-id', 'initial');
     expect(activeTab().querySelector('button')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it.each([
+    ['work', 'Work'],
+    ['knowledge', 'Knowledge'],
+  ])('uses the sidebar name for the %s tab', (segment, label) => {
+    navigation.pathname = `/app/smoke/${segment}`;
+
+    renderTabs();
+
+    expect(activeTab()).toHaveTextContent(label);
+  });
+
+  it('keeps the originating tab while settings is open', () => {
+    navigation.pathname = '/app/smoke/settings/providers';
+    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fagents%3F__dashboardTab%3Dagents-tab';
+
+    renderTabs();
+
+    expect(activeTab()).toHaveTextContent('Agents');
+    expect(activeTab()).toHaveAttribute('data-tab-id', 'agents-tab');
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+  });
+
+  it('keeps the originating tab while agent settings is open', () => {
+    navigation.pathname = '/app/smoke/agents/agent-1';
+    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fchat%3Fagent%3Dagent-1%26c%3Dchat-1%26__dashboardTab%3Dchat-tab';
+
+    renderTabs();
+
+    expect(activeTab()).toHaveTextContent('Chat');
+    expect(activeTab()).toHaveAttribute('data-tab-id', 'chat-tab');
   });
 
   it('keeps a pinned route open when sidebar navigation opens another route', async () => {
@@ -109,9 +143,9 @@ describe('DashboardTabsProvider', () => {
     renderTabs();
 
     await user.click(screen.getByRole('button', { name: 'New tab' }));
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Overview'));
+    await waitFor(() => expect(activeTab()).toHaveTextContent('Chat'));
 
-    await user.click(screen.getByRole('button', { name: 'Close Overview' }));
+    await user.click(screen.getByRole('button', { name: 'Close Chat' }));
 
     const fallbackHref = navigation.replace.mock.calls.at(-1)?.[0];
     expect(new URL(fallbackHref, 'https://toolplane.local').pathname).toBe('/app/smoke/agents');
@@ -132,14 +166,30 @@ describe('DashboardTabsProvider', () => {
       '_blank',
       'popup,noopener',
     );
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Overview'));
+    await waitFor(() => expect(activeTab()).toHaveTextContent('Chat'));
+  });
+
+  it('drops saved overview tabs', () => {
+    window.sessionStorage.setItem('toolplane:dashboard-tabs:smoke', JSON.stringify({
+      tabs: [
+        { id: 'old-overview', href: '/app/smoke/overview', pinned: true },
+        { id: 'agents', href: '/app/smoke/agents', pinned: false },
+      ],
+      activeTabId: 'old-overview',
+    }));
+
+    renderTabs();
+
+    expect(openTabs()).toHaveLength(1);
+    expect(activeTab()).toHaveTextContent('Agents');
+    expect(screen.queryByText('Overview')).not.toBeInTheDocument();
   });
 });
 
 describe('reorderDashboardTabs', () => {
   it('reorders only within the pinned or regular tab zone', () => {
     const tabs = [
-      { id: 'pinned', href: '/app/smoke/overview', pinned: true },
+      { id: 'pinned', href: '/app/smoke/chat', pinned: true },
       { id: 'agents', href: '/app/smoke/agents', pinned: false },
       { id: 'skills', href: '/app/smoke/skills', pinned: false },
     ] as Parameters<typeof reorderDashboardTabs>[0];

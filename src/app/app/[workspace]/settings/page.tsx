@@ -38,10 +38,11 @@ export default async function SettingsPage({
   const workspaceUrlPrefix = new URL('/app/', originFromHeaders(await headers())).toString();
 
   return (
-    <SettingsModal title={t('title')} fallbackHref={`/app/${slug}/overview`}>
-      <div className="flex flex-col gap-6 md:flex-row md:gap-8">
+    <SettingsModal title={t('title')} fallbackHref={`/app/${slug}/chat`}>
+      <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SettingsTabs slug={slug} />
-        <div className="min-w-0 flex-1 space-y-6">
+        <div className="min-w-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:p-8">
+          <div className="space-y-6">
 
         <DashboardPanel title={t('general')}>
           <form action={renameWorkspaceAction} className="space-y-4">
@@ -142,6 +143,7 @@ export default async function SettingsPage({
             </form>
           </DashboardPanel>
         ) : null}
+        </div>
         </div>
       </div>
     </SettingsModal>

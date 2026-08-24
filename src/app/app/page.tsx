@@ -47,5 +47,5 @@ export default async function AppIndexPage({
     const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/${market}`;
     redirect(`${marketPath}${term ? `?q=${encodeURIComponent(term)}` : ''}`);
   }
-  redirect(`/app/${encodeURIComponent(ws.slug)}/overview`);
+  redirect(`/app/${encodeURIComponent(ws.slug)}/chat`);
 }

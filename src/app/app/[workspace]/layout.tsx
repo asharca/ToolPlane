@@ -14,9 +14,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function WorkspaceLayout({
   children,
+  modal,
   params,
 }: {
   children: React.ReactNode;
+  modal: React.ReactNode;
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace: slug } = await params;
@@ -49,6 +51,7 @@ export default async function WorkspaceLayout({
           isAdmin={user.role === 'admin'}
         >
           {children}
+          {modal}
         </DashboardChrome>
       </UserTimeZoneProvider>
     </NextIntlClientProvider>

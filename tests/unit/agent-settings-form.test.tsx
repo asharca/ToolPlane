@@ -243,6 +243,22 @@ describe('AgentSettingsForm', () => {
     await waitFor(() => expect(actions.updateAgentAction).toHaveBeenCalled(), { timeout: 1_500 });
   });
 
+  it('flushes a pending autosave before focus leaves the settings form', async () => {
+    actions.updateAgentAction.mockClear();
+    render(
+      <div>
+        <AgentSettingsForm {...baseProps} />
+        <button type="button">Close settings</button>
+      </div>,
+    );
+
+    await userEvent.type(screen.getByLabelText('Name'), ' updated');
+    expect(actions.updateAgentAction).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+
+    await waitFor(() => expect(actions.updateAgentAction).toHaveBeenCalledOnce());
+  });
+
   it('supports a controlled section with its internal navigation hidden', () => {
     const props = {
       ...baseProps,

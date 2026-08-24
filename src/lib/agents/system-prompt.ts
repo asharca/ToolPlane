@@ -11,10 +11,17 @@ function xmlText(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-export function assembleSystemPrompt(systemPrompt: string | null | undefined, skills: SkillForPrompt[]): string {
+export function assembleSystemPrompt(
+  systemPrompt: string | null | undefined,
+  skills: SkillForPrompt[],
+  hasKnowledge = false,
+): string {
   const sections: string[] = [];
   const base = systemPrompt?.trim();
   if (base) sections.push(base);
+  if (hasKnowledge) {
+    sections.push('Use knowledge_search when an answer depends on the Agent\'s authorized workspace sources. Cite the returned filenames and paths in your answer.');
+  }
   if (skills.length > 0) {
     const skillSections = skills.map((s) => {
       const label = skillLabel({ skillId: s.skillId, skill: s.skill, name: s.name ?? null, slug: s.slug ?? null, source: null });

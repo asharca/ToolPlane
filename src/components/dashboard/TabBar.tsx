@@ -24,7 +24,7 @@ export function TabBar({
 
   return (
     <div className="max-w-full overflow-x-auto pb-1">
-      <div className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="inline-flex items-center gap-1 rounded-xl bg-muted p-1 ring-1 ring-border/70">
         {tabs.map((tab) => {
           const active = tab.key === current;
           const params = new URLSearchParams();
@@ -39,15 +39,15 @@ export function TabBar({
               ref={active ? activeRef : undefined}
               href={href}
               aria-current={active ? 'page' : undefined}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
                 active
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
+                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
               }`}
             >
               {tab.label}
               {typeof tab.count === 'number' ? (
-                <span className="text-zinc-400 dark:text-zinc-500">
+                <span className="text-muted-foreground/70">
                   {tab.count}
                 </span>
               ) : null}

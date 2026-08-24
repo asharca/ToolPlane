@@ -60,10 +60,12 @@ function Field({
   icon: Icon,
   label,
   children,
+  hint,
 }: {
   icon: typeof Cpu;
   label: string;
   children: ReactNode;
+  hint?: ReactNode;
 }) {
   return (
     <label className="block">
@@ -72,8 +74,13 @@ function Field({
         {label}
       </span>
       {children}
+      {hint ? <span className="mt-1 block text-xs leading-5 text-muted-foreground">{hint}</span> : null}
     </label>
   );
+}
+
+function providerEndpoint(provider: ProviderRow, presets: ProviderPreset[], fallback: string) {
+  return provider.baseUrl || presets.find((preset) => preset.format === provider.format)?.baseUrl || fallback;
 }
 
 function ActionMessage({ state }: { state: ActionState }) {
@@ -153,7 +160,15 @@ function ProviderFormatOptions({ piProviderPresets }: { piProviderPresets: Provi
   );
 }
 
-function AddProviderDialog({ slug, piProviderPresets }: { slug: string; piProviderPresets: ProviderPreset[] }) {
+function AddProviderDialog({
+  slug,
+  piProviderPresets,
+  iconOnly = false,
+}: {
+  slug: string;
+  piProviderPresets: ProviderPreset[];
+  iconOnly?: boolean;
+}) {
   const initialPreset = piProviderPresets[0] ?? customProviderPresets[0];
   const presets = [...piProviderPresets, ...customProviderPresets];
   const t = useTranslations('console.agents');
@@ -161,6 +176,7 @@ function AddProviderDialog({ slug, piProviderPresets }: { slug: string; piProvid
   const [format, setFormat] = useState(initialPreset.format);
   const [name, setName] = useState(initialPreset.name);
   const [baseUrl, setBaseUrl] = useState('');
+  const selectedPreset = presets.find((preset) => preset.format === format);
   const isCustomProvider = !format.startsWith('pi:');
   const [state, formAction] = useActionState<ActionState, FormData>(createProviderAction, {});
 
@@ -170,9 +186,14 @@ function AddProviderDialog({ slug, piProviderPresets }: { slug: string; piProvid
       onOpenChange={setOpen}
       title={t('addModelProvider')}
       trigger={(
-        <button type="button" className="ui-button-primary h-10 gap-2 px-4">
+        <button
+          type="button"
+          aria-label={t('addProvider')}
+          title={t('addProvider')}
+          className={iconOnly ? 'ui-button-ghost ui-icon-button' : 'ui-button-primary h-10 gap-2 px-4'}
+        >
           <Plus className="size-[18px] shrink-0" />
-          {t('addProvider')}
+          {iconOnly ? null : t('addProvider')}
         </button>
       )}
     >
@@ -198,11 +219,22 @@ function AddProviderDialog({ slug, piProviderPresets }: { slug: string; piProvid
               <ProviderFormatOptions piProviderPresets={piProviderPresets} />
             </NativeSelect>
           </Field>
-          {isCustomProvider ? (
-            <Field icon={Link2} label={t('baseUrl')}>
-              <input name="baseUrl" required value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} className="ui-input h-10 w-full" />
-            </Field>
-          ) : null}
+              <Field
+                icon={Link2}
+                label={t('baseUrl')}
+                hint={!isCustomProvider && selectedPreset?.baseUrl
+                  ? t('leaveBlankToUseDefaultEndpoint', { endpoint: selectedPreset.baseUrl })
+                  : undefined}
+              >
+                <input
+                  name="baseUrl"
+                  required={isCustomProvider}
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined}
+                  className="ui-input h-10 w-full"
+                />
+              </Field>
           <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
             <Field icon={KeyRound} label={t('apiKey')}>
               <input name="apiKey" type="password" placeholder="API key or token" className="ui-input h-10 w-full" />
@@ -246,10 +278,11 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
             error={state.error}
             pendingLabel={t('testing')}
             savedLabel={t('available')}
-            className="ui-button-secondary h-8 gap-1.5 px-2.5 text-xs"
+            ariaLabel={t('testModel')}
+            title={t('testModel')}
+            className="ui-button-ghost h-8 min-h-8 w-8 px-0 text-muted-foreground"
           >
-            <FlaskConical className="size-3.5 shrink-0" />
-            {t('testModel')}
+            <FlaskConical className="size-3.5" />
           </SubmitButton>
         </form>
       </div>
@@ -262,9 +295,19 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
   );
 }
 
-function ViewModelsDialog({ slug, provider }: { slug: string; provider: ProviderRow }) {
+function ViewModelsDialog({
+  slug,
+  provider,
+  piProviderPresets,
+}: {
+  slug: string;
+  provider: ProviderRow;
+  piProviderPresets: ProviderPreset[];
+}) {
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
+  const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
+  const endpoint = providerEndpoint(provider, piProviderPresets, t('builtInConnection'));
 
   return (
     <ProviderDialog
@@ -273,22 +316,44 @@ function ViewModelsDialog({ slug, provider }: { slug: string; provider: Provider
       title={t('viewModels')}
       maxWidth="max-w-4xl"
       trigger={(
-        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
-          <Eye className="size-[18px] shrink-0" />
-          {t('viewModels')}
+        <button
+          type="button"
+          aria-label={t('viewModels')}
+          title={t('viewModels')}
+          className="ui-button-ghost ui-icon-button"
+        >
+          <Eye className="size-[18px]" />
         </button>
       )}
     >
         <div className="space-y-4 px-5 py-5">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
-            <p className="mt-1 truncate text-xs text-muted-foreground">{provider.baseUrl}</p>
-            {provider.modelsFetchedAt ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t('lastRefreshedAt', { date: provider.modelsFetchedAt })}
-              </p>
-            ) : null}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{endpoint}</p>
+              {provider.modelsFetchedAt ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('lastRefreshedAt', { date: provider.modelsFetchedAt })}
+                </p>
+              ) : null}
+            </div>
+            <form action={refreshAction}>
+              <input type="hidden" name="workspace" value={slug} />
+              <input type="hidden" name="providerId" value={provider.id} />
+              <SubmitButton
+                error={refreshState.error}
+                pendingLabel={t('refreshing')}
+                savedLabel={t('refreshed')}
+                ariaLabel={t('refreshModels')}
+                title={t('refreshModels')}
+                className="ui-button-secondary h-9 shrink-0 gap-2 px-3"
+              >
+                <RefreshCw className="size-4" />
+                {t('refreshModels')}
+              </SubmitButton>
+            </form>
           </div>
+          <ActionMessage state={refreshState} />
           {provider.models.length > 0 ? (
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {provider.models.map((model) => (
@@ -315,6 +380,8 @@ function EditProviderDialog({
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState(provider.format);
+  const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
+  const selectedPreset = piProviderPresets.find((preset) => preset.format === format);
   const isCustomProvider = !format.startsWith('pi:');
   const [updateState, updateAction] = useActionState<ActionState, FormData>(updateProviderAction, {});
 
@@ -325,9 +392,13 @@ function EditProviderDialog({
       title={t('editProvider')}
       maxWidth="max-w-2xl"
       trigger={(
-        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
-          <Pencil className="size-[18px] shrink-0" />
-          {t('editProvider')}
+        <button
+          type="button"
+          aria-label={t('editProvider')}
+          title={t('editProvider')}
+          className="ui-button-ghost ui-icon-button"
+        >
+          <Pencil className="size-[18px]" />
         </button>
       )}
     >
@@ -337,16 +408,33 @@ function EditProviderDialog({
           <Field icon={Cpu} label={t('name')}>
             <input name="name" required defaultValue={provider.name} className="ui-input h-10 w-full" />
           </Field>
-          <Field icon={Braces} label={t('format')}>
-            <NativeSelect name="format" className="ui-input h-10 w-full" value={format} onChange={(event) => setFormat(event.target.value)}>
+          <Field
+            icon={Braces}
+            label={t('format')}
+          >
+            <NativeSelect name="format" className="ui-input h-10 w-full" value={format} onChange={(event) => {
+              setFormat(event.target.value);
+              setBaseUrl('');
+            }}>
               <ProviderFormatOptions piProviderPresets={piProviderPresets} />
             </NativeSelect>
           </Field>
-          {isCustomProvider ? (
-            <Field icon={Link2} label={t('baseUrl')}>
-              <input name="baseUrl" required defaultValue={provider.baseUrl} className="ui-input h-10 w-full" />
-            </Field>
-          ) : null}
+          <Field
+            icon={Link2}
+            label={t('baseUrl')}
+            hint={!isCustomProvider && selectedPreset?.baseUrl
+              ? t('leaveBlankToUseDefaultEndpoint', { endpoint: selectedPreset.baseUrl })
+              : undefined}
+          >
+            <input
+              name="baseUrl"
+              required={isCustomProvider}
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined}
+              className="ui-input h-10 w-full"
+            />
+          </Field>
           <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
             <Field icon={KeyRound} label={t('apiKey')}>
               <input
@@ -390,19 +478,17 @@ function ProviderCard({
 }) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
-  const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
+  const endpoint = providerEndpoint(provider, piProviderPresets, t('builtInConnection'));
 
   return (
     <li className="grid gap-3 px-5 py-4">
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex size-10 items-center justify-center rounded-md border border-border bg-muted/25 text-muted-foreground">
-              <Cpu className="size-[18px]" />
-            </div>
+            <Cpu className="size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{provider.baseUrl}</p>
+              <p className="truncate text-xs text-muted-foreground">{endpoint}</p>
             </div>
             <span className="inline-flex h-6 items-center rounded-md border border-border bg-background px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               {provider.format}
@@ -412,38 +498,22 @@ function ProviderCard({
             </span>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2.5 lg:justify-end">
-          <ViewModelsDialog slug={slug} provider={provider} />
+        <div className="flex flex-wrap gap-1 lg:justify-end">
+          <ViewModelsDialog slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
           <EditProviderDialog slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
-          <form action={refreshAction}>
-            <input type="hidden" name="workspace" value={slug} />
-            <input type="hidden" name="providerId" value={provider.id} />
-            <SubmitButton
-              error={refreshState.error}
-              pendingLabel={t('refreshing')}
-              savedLabel={t('refreshed')}
-              className="ui-button-secondary h-10 gap-2 px-4 text-sm"
-            >
-              <RefreshCw className="size-[18px] shrink-0" />
-              {t('refreshModels')}
-            </SubmitButton>
-          </form>
           <form action={deleteProviderAction}>
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="providerId" value={provider.id} />
             <ConfirmSubmitButton
-              triggerLabel={
-                <>
-                  <Trash2 className="size-[18px] shrink-0" />
-                  {common('remove')}
-                </>
-              }
+              triggerLabel={<Trash2 className="size-[18px]" />}
+              triggerAriaLabel={common('remove')}
+              triggerTitle={common('remove')}
               confirmLabel={common('confirm')}
               cancelLabel={common('cancel')}
               prompt={t('removeProviderPrompt', { name: provider.name })}
               pendingLabel={t('removingProvider')}
               className="items-center justify-end"
-              triggerClassName="ui-button-secondary h-10 gap-2 px-4 text-sm text-red-600 dark:text-red-300"
+              triggerClassName="ui-button-ghost ui-icon-button text-red-600 dark:text-red-300"
               confirmClassName="inline-flex h-10 items-center rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700"
               cancelClassName="ui-button-secondary h-10 px-4 text-sm"
               promptClassName="max-w-sm text-xs text-muted-foreground"
@@ -451,7 +521,6 @@ function ProviderCard({
           </form>
         </div>
       </div>
-      <ActionMessage state={refreshState} />
     </li>
   );
 }
@@ -460,29 +529,26 @@ export function ProvidersPanel({
   slug,
   providers,
   piProviderPresets = [],
+  embedded = false,
 }: {
   slug: string;
   providers: ProviderRow[];
   piProviderPresets?: ProviderPreset[];
+  embedded?: boolean;
 }) {
   const t = useTranslations('console.agents');
 
   return (
-    <div className="space-y-5 px-4 py-5 sm:px-6 lg:px-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('model')}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t('modelDescription')}</p>
-        </div>
-        <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} />
-      </div>
-
+    <div className={embedded ? 'space-y-5' : 'space-y-5 px-4 py-5 sm:px-6 lg:px-8'}>
       <section className="ui-panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 className="text-sm font-semibold text-foreground">{t('modelProviders')}</h2>
-          <span className="inline-flex h-7 items-center rounded-md border border-border bg-muted/25 px-2.5 text-xs font-medium text-muted-foreground">
-            {providers.length} {t('providers')}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-7 items-center rounded-md border border-border bg-muted/25 px-2.5 text-xs font-medium text-muted-foreground">
+              {providers.length} {t('providers')}
+            </span>
+            <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} iconOnly />
+          </div>
         </div>
         {providers.length === 0 ? (
           <div className="px-5 py-10 text-center">

@@ -97,8 +97,8 @@ export function RuntimeFileDraftsInput({
   };
 
   return (
-    <section className="rounded-lg border border-zinc-200 dark:border-zinc-800" aria-labelledby={`${id}-heading`}>
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+    <section className="rounded-lg border border-border" aria-labelledby={`${id}-heading`}>
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FileText className="size-4 text-muted-foreground" />
@@ -158,7 +158,7 @@ export function RuntimeFileDraftsInput({
           {t('noRuntimeFilesToCreate')}
         </p>
       ) : (
-        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <div className="divide-y divide-border">
           {value.map((file, index) => (
             <div key={index} className="space-y-3 px-4 py-4">
               <div className="flex flex-wrap items-end justify-between gap-3">
@@ -170,7 +170,7 @@ export function RuntimeFileDraftsInput({
                     disabled={disabled}
                     placeholder="ssh-config.json"
                     spellCheck={false}
-                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 font-mono text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    className="ui-input font-mono text-xs disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </label>
                 <button
@@ -190,7 +190,7 @@ export function RuntimeFileDraftsInput({
                   onChange={(event) => updateFile(index, { content: event.target.value })}
                   disabled={disabled}
                   spellCheck={false}
-                  className="min-h-44 w-full resize-y rounded-md border border-zinc-200 bg-white p-3 font-mono text-xs leading-5 text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  className="ui-input h-auto min-h-44 resize-y p-3 font-mono text-xs leading-5 disabled:cursor-not-allowed disabled:opacity-70"
                 />
               </label>
             </div>
@@ -199,7 +199,7 @@ export function RuntimeFileDraftsInput({
       )}
 
       {uploadError ? (
-        <p className="border-t border-zinc-200 px-4 py-3 text-xs text-red-600 dark:border-zinc-800 dark:text-red-400" role="alert">
+        <p className="border-t border-border px-4 py-3 text-xs text-red-600 dark:text-red-400" role="alert">
           {uploadError}
         </p>
       ) : null}

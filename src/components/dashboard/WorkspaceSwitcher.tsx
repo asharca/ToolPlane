@@ -55,16 +55,16 @@ export function WorkspaceSwitcher({
           type="button"
           aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
           title={compact ? workspaceName : undefined}
-          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
+          className={`flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/70 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
-            {initialsOf(workspaceName)}
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-brand-foreground shadow-sm ring-1 ring-brand/20">
+            {initialsOf(compact ? userLabel : workspaceName)}
           </span>
           <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
-            <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            <span className="block truncate text-sm font-medium text-foreground">
               {workspaceName}
             </span>
-            <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="block truncate text-xs text-muted-foreground">
               {userLabel}
             </span>
           </span>
@@ -79,7 +79,7 @@ export function WorkspaceSwitcher({
           sideOffset={8}
           collisionPadding={8}
           aria-label={t('workspaces')}
-          className={`z-50 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900 lg:z-20 ${
+          className={`z-50 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl lg:z-20 ${
             compactDesktop ? 'w-64' : 'w-[var(--radix-popover-trigger-width)]'
           }`}
         >
@@ -92,16 +92,16 @@ export function WorkspaceSwitcher({
               return (
                 <Popover.Close key={w.id} asChild>
                   <Link
-                    href={`/app/${w.slug}/overview`}
+                    href={`/app/${w.slug}/chat`}
                     aria-current={active ? 'page' : undefined}
-                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
                   >
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded bg-zinc-900 text-[10px] font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900">
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[10px] font-semibold text-foreground ring-1 ring-brand/10">
                       {initialsOf(w.name)}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{w.name}</span>
                     {active ? (
-                      <Check className="size-4 shrink-0 text-zinc-900 dark:text-zinc-100" />
+                      <Check className="size-4 shrink-0 text-brand" />
                     ) : null}
                   </Link>
                 </Popover.Close>
@@ -109,7 +109,7 @@ export function WorkspaceSwitcher({
             })}
           </div>
 
-          <div className="border-t border-zinc-200 p-1 dark:border-zinc-700">
+          <div className="border-t border-border p-1">
             {creating ? (
               <form action={createWorkspaceAction} className="flex gap-1.5 p-1.5">
                 <input
@@ -118,11 +118,11 @@ export function WorkspaceSwitcher({
                   required
                   maxLength={40}
                   placeholder={t('workspaceName')}
-                  className="h-8 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="ui-input h-8 min-w-0 flex-1"
                 />
                 <button
                   type="submit"
-                  className="h-8 shrink-0 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  className="ui-button-primary h-8 shrink-0 px-3 text-xs"
                 >
                   {t('create')}
                 </button>
@@ -131,16 +131,16 @@ export function WorkspaceSwitcher({
               <button
                 type="button"
                 onClick={() => setCreating(true)}
-                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
               >
                 <Plus className="size-4 shrink-0" />
                 {t('createWorkspace')}
               </button>
             )}
-            <form action={logoutAction} className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800">
+            <form action={logoutAction} className="mt-1 border-t border-border pt-1">
               <button
                 type="submit"
-                className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
               >
                 <LogOut className="size-4 shrink-0" />
                 {t('signOut')}

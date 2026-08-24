@@ -29,8 +29,7 @@ type FolderSelection = {
   error: string | null;
 };
 
-const field =
-  'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
+const field = 'ui-input';
 const emptySelection: FolderSelection = { paths: [], skillRoots: [], count: 0, bytes: 0, error: null };
 const directoryInputProps = {
   directory: '',
@@ -76,7 +75,7 @@ function GithubImportForm({ slug }: { slug: string }) {
       <input type="hidden" name="workspace" value={slug} />
       <input name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
       {state.error ? <p className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
-      <button type="submit" disabled={isPending} className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white disabled:cursor-wait disabled:opacity-70 dark:bg-zinc-100 dark:text-zinc-900">
+      <button type="submit" disabled={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
         {isPending ? t('importing') : t('import')}
       </button>
     </form>
@@ -121,16 +120,16 @@ export function AddSkillDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
       <DialogTrigger asChild>
-        <button type="button" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200">
+        <button type="button" className="ui-button-primary">
           <Plus className="size-4" /> {t('addSkill')}
         </button>
       </DialogTrigger>
 
       <DialogPortal>
         <DialogOverlay className="!bg-black/40" />
-        <DialogContent aria-describedby={undefined} className="!block !gap-0 w-full max-w-md rounded-xl border-zinc-200 bg-white !p-6 dark:border-zinc-800 dark:bg-zinc-950">
+        <DialogContent aria-describedby={undefined} className="ui-panel !block !gap-0 w-full max-w-md !p-6">
                 <div className="mb-4 flex items-center justify-between">
-                  <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('addASkill')}</DialogTitle>
+                  <DialogTitle className="text-lg font-semibold text-foreground">{t('addASkill')}</DialogTitle>
                   <DialogClose asChild>
                     <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('close')}><X className="size-5" /></button>
                   </DialogClose>
@@ -138,13 +137,13 @@ export function AddSkillDialog({
 
                 {mode === 'menu' ? (
                   <div className="space-y-2">
-                    <button type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                    <button type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span>
                     </button>
-                    <button type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                    <button type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span>
                     </button>
-                    <button type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-3 text-left hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900">
+                    <button type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span>
                     </button>
                   </div>
@@ -155,7 +154,7 @@ export function AddSkillDialog({
                     <input type="hidden" name="workspace" value={slug} />
                     <input name="name" required placeholder={t('myAwesomeSkill')} className={field} />
                     <input name="description" placeholder={t('summarizeThisSkillsPurpose')} className={field} />
-                    <button type="submit" className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">{t('createSkill')}</button>
+                    <button type="submit" className="ui-button-primary w-full">{t('createSkill')}</button>
                   </form>
                 ) : null}
 
@@ -171,11 +170,11 @@ export function AddSkillDialog({
                       name="name"
                       disabled={folder.skillRoots.length > 1}
                       placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')}
-                      className={`${field} disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500`}
+                      className={`${field} disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground`}
                     />
-                    <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-center transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                    <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 px-4 py-5 text-center transition-colors hover:bg-muted">
                       <Upload className="size-5 text-muted-foreground" />
-                      <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{t('uploadAFolder')}</span>
+                      <span className="text-sm font-medium text-foreground">{t('uploadAFolder')}</span>
                       <span className="text-xs text-muted-foreground">{t('dragInASkillFolder')}</span>
                       <input
                         {...directoryInputProps}
@@ -190,13 +189,13 @@ export function AddSkillDialog({
                       {folder.error ?? `${folder.count} ${t('filesSelected')} · ${formatBytes(folder.bytes)}`}
                     </p>
                     {displayedSkillRoots.length > 0 ? (
-                      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
-                        <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      <div className="rounded-lg border border-border bg-muted/50 p-3">
+                        <p className="text-xs font-medium text-foreground">
                           {t('willImportSkills', { count: displayedSkillRoots.length })}
                         </p>
                         <ul className="mt-2 max-h-36 space-y-1 overflow-auto">
                           {displayedSkillRoots.slice(0, 8).map((root) => (
-                            <li key={root} className="truncate font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                            <li key={root} className="truncate font-mono text-xs text-muted-foreground">
                               {root}
                             </li>
                           ))}
@@ -208,7 +207,7 @@ export function AddSkillDialog({
                         ) : null}
                       </div>
                     ) : null}
-                    <button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="h-9 w-full rounded-md bg-zinc-900 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900">{t('upload')}</button>
+                    <button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="ui-button-primary w-full disabled:opacity-50">{t('upload')}</button>
                   </form>
                 ) : null}
         </DialogContent>

@@ -42,7 +42,7 @@ describe('WorkspaceSwitcher', () => {
     );
     expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
       'href',
-      '/app/staging/overview',
+      '/app/staging/chat',
     );
   });
 

@@ -8,59 +8,63 @@
 /* next-themes uses a `.dark` class on <html>; make Tailwind's dark: variant follow it. */
 @custom-variant dark (&:is(.dark *));
 
-/* shadcn-style HSL design tokens tuned for a dense directory + console UI. */
+/* Cherry Studio-inspired neutral surfaces with a restrained green accent. */
 :root {
-  --background: 210 20% 98%;
-  --foreground: 220 24% 10%;
+  --background: 0 0% 100%;
+  --foreground: 0 0% 17%;
   --card: 0 0% 100%;
-  --card-foreground: 220 24% 10%;
+  --card-foreground: 0 0% 12%;
   --popover: 0 0% 100%;
-  --popover-foreground: 220 24% 10%;
-  --primary: 220 24% 12%;
-  --primary-foreground: 210 30% 98%;
-  --secondary: 210 16% 93%;
-  --secondary-foreground: 220 24% 12%;
-  --muted: 210 18% 94%;
-  --muted-foreground: 217 10% 42%;
-  --accent: 172 45% 92%;
-  --accent-foreground: 187 65% 18%;
+  --popover-foreground: 0 0% 12%;
+  --primary: 0 0% 15%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 0 0% 95%;
+  --secondary-foreground: 0 0% 17%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 43%;
+  --accent: 0 0% 94%;
+  --accent-foreground: 0 0% 15%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 98%;
   --destructive-text: 0 72% 42%;
-  --border: 214 17% 86%;
-  --input: 214 17% 84%;
-  --ring: 174 78% 32%;
-  --brand: 174 78% 32%;
+  --border: 0 0% 88%;
+  --input: 0 0% 84%;
+  --ring: 142 58% 38%;
+  --brand: 142 58% 38%;
   --brand-foreground: 0 0% 100%;
-  --brand-soft: 174 55% 92%;
+  --brand-soft: 137 56% 92%;
+  --shell: 0 0% 96.7%;
+  --shell-foreground: 0 0% 17%;
   --warning: 37 92% 52%;
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 }
 
 .dark {
-  --background: 220 16% 7%;
-  --foreground: 210 18% 94%;
-  --card: 220 15% 10%;
-  --card-foreground: 210 18% 94%;
-  --popover: 220 15% 10%;
-  --popover-foreground: 210 18% 94%;
-  --primary: 210 18% 94%;
-  --primary-foreground: 220 16% 7%;
-  --secondary: 220 12% 15%;
-  --secondary-foreground: 210 18% 94%;
-  --muted: 220 12% 15%;
-  --muted-foreground: 217 10% 66%;
-  --accent: 174 50% 16%;
-  --accent-foreground: 174 55% 86%;
+  --background: 0 0% 10%;
+  --foreground: 0 0% 93%;
+  --card: 0 0% 12%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 17%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 0 0% 93%;
+  --primary-foreground: 0 0% 12%;
+  --secondary: 0 0% 18%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 0 0% 17%;
+  --muted-foreground: 0 0% 68%;
+  --accent: 0 0% 20%;
+  --accent-foreground: 0 0% 96%;
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 0 0% 98%;
   --destructive-text: 0 78% 72%;
-  --border: 220 12% 20%;
-  --input: 220 12% 22%;
-  --ring: 174 65% 48%;
-  --brand: 174 65% 48%;
-  --brand-foreground: 220 16% 7%;
-  --brand-soft: 174 48% 16%;
+  --border: 0 0% 22%;
+  --input: 0 0% 25%;
+  --ring: 128 73% 67%;
+  --brand: 128 73% 67%;
+  --brand-foreground: 0 0% 12%;
+  --brand-soft: 130 36% 18%;
+  --shell: 0 0% 14%;
+  --shell-foreground: 0 0% 96%;
   --warning: 38 90% 58%;
 }
 
@@ -88,6 +92,8 @@
   --color-brand: hsl(var(--brand));
   --color-brand-foreground: hsl(var(--brand-foreground));
   --color-brand-soft: hsl(var(--brand-soft));
+  --color-shell: hsl(var(--shell));
+  --color-shell-foreground: hsl(var(--shell-foreground));
   --color-warning: hsl(var(--warning));
 
   --radius-sm: calc(var(--radius) - 4px);
@@ -115,6 +121,9 @@
   body {
     background: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-size: 14px;
+    line-height: 1.55;
+    text-rendering: optimizeLegibility;
   }
 
   :where(a, button, input, textarea, select, summary):focus-visible {
@@ -123,8 +132,12 @@
   }
 }
 
+@layer components {
 .ui-page {
-  padding: 1.5rem 2rem;
+  margin-inline: auto;
+  width: 100%;
+  max-width: 96rem;
+  padding: 1.75rem 2rem 2.5rem;
 }
 
 @media (max-width: 640px) {
@@ -137,7 +150,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   background: hsl(var(--card));
-  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+  box-shadow: none;
 }
 
 .ui-panel-danger {
@@ -157,21 +170,18 @@
   align-items: center;
   justify-content: center;
   border: 1px dashed hsl(var(--border));
-  border-radius: var(--radius);
-  background:
-    linear-gradient(135deg, hsl(var(--muted) / 0.48), transparent 52%),
-    hsl(var(--card));
+  border-radius: calc(var(--radius) + 0.25rem);
+  background: hsl(var(--card));
   padding: 3rem 1.5rem;
   text-align: center;
 }
 
-@layer components {
-  .ui-input {
-    height: 2.5rem;
+.ui-input {
+    height: 2.25rem;
     width: 100%;
     border: 1px solid hsl(var(--input));
     border-radius: calc(var(--radius) - 2px);
-    background: hsl(var(--card));
+    background: hsl(var(--background));
     padding: 0 0.75rem;
     color: hsl(var(--foreground));
     font-size: 0.875rem;
@@ -180,17 +190,16 @@
       border-color 160ms ease,
       box-shadow 160ms ease,
       background-color 160ms ease;
-  }
+}
 
-  .ui-input::placeholder {
+.ui-input::placeholder {
     color: hsl(var(--muted-foreground));
-  }
+}
 
-  .ui-input:focus {
+.ui-input:focus {
     border-color: hsl(var(--ring));
-    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
+    box-shadow: none;
     outline: none;
-  }
 }
 
 .ui-input-search {
@@ -249,22 +258,24 @@
   border: 1px solid hsl(var(--primary));
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.08);
 }
 
 .ui-button-primary:hover {
-  background: color-mix(in hsl, hsl(var(--primary)) 88%, hsl(var(--brand)) 12%);
+  border-color: color-mix(in hsl, hsl(var(--primary)) 88%, hsl(var(--background)) 12%);
+  background: color-mix(in hsl, hsl(var(--primary)) 88%, hsl(var(--background)) 12%);
 }
 
 .ui-button-secondary {
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--card));
+  border: 1px solid transparent;
+  background: hsl(var(--secondary));
   color: hsl(var(--foreground));
 }
 
 .ui-button-secondary:hover {
-  border-color: hsl(var(--ring) / 0.55);
-  background: hsl(var(--accent));
-  color: hsl(var(--accent-foreground));
+  border-color: transparent;
+  background: color-mix(in hsl, hsl(var(--secondary)) 82%, hsl(var(--foreground)) 18%);
+  color: hsl(var(--foreground));
 }
 
 .ui-button-danger {
@@ -296,7 +307,7 @@
 }
 
 .ui-button-ghost:hover {
-  background: hsl(var(--muted));
+  background: hsl(var(--accent));
   color: hsl(var(--foreground));
 }
 
@@ -358,11 +369,10 @@
 
 .ui-table thead {
   border-bottom: 1px solid hsl(var(--border));
-  background: hsl(var(--muted) / 0.72);
+  background: hsl(var(--muted) / 0.58);
   color: hsl(var(--muted-foreground));
   font-size: 0.75rem;
   letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 .ui-table tbody tr {
@@ -370,7 +380,15 @@
 }
 
 .ui-table tbody tr:hover {
-  background: hsl(var(--accent) / 0.5);
+  background: hsl(var(--accent) / 0.62);
+}
+}
+
+@media (pointer: fine) {
+  * {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 @keyframes dashboard-enter {

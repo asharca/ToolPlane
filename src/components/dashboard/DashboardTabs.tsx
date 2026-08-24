@@ -20,7 +20,9 @@ import {
   Brain,
   Cpu,
   ExternalLink,
-  LayoutDashboard,
+  MessageSquare,
+  TerminalSquare,
+  LibraryBig,
   Pin,
   Plug,
   Plus,
@@ -57,13 +59,15 @@ type DashboardTabsContextValue = DashboardTabState & {
 };
 
 const TAB_DEFINITIONS: TabDefinition[] = [
-  { segment: 'overview', labelKey: 'overview', icon: LayoutDashboard },
   { segment: 'market', labelKey: 'market', icon: Store },
   { segment: 'mcp', labelKey: 'mcpServers', icon: Plug },
   { segment: 'skills', labelKey: 'skills', icon: Brain },
   { segment: 'toolkits', labelKey: 'toolkits', icon: Wrench },
   { segment: 'sandboxes', labelKey: 'sandboxes', icon: Boxes },
   { segment: 'providers', labelKey: 'modelProviders', icon: Cpu },
+  { segment: 'chat', labelKey: 'chat', icon: MessageSquare },
+  { segment: 'work', labelKey: 'work', icon: TerminalSquare },
+  { segment: 'knowledge', labelKey: 'knowledge', icon: LibraryBig },
   { segment: 'agents', labelKey: 'agents', icon: Bot },
   { segment: 'observability', labelKey: 'observability', icon: BarChart3 },
   { segment: 'members', labelKey: 'members', icon: Users },
@@ -71,7 +75,7 @@ const TAB_DEFINITIONS: TabDefinition[] = [
   { segment: 'seller', labelKey: 'sellSkills', icon: Store },
 ];
 
-const overviewTab = TAB_DEFINITIONS[0];
+const defaultTab = TAB_DEFINITIONS.find((tab) => tab.segment === 'chat')!;
 const DashboardTabsContext = createContext<DashboardTabsContextValue | null>(null);
 const tabStateListeners = new Map<string, Set<() => void>>();
 const tabStateMemory = new Map<string, DashboardTabState>();
@@ -109,11 +113,32 @@ function isWorkspaceHref(href: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
+function locationForTabs(pathname: string, searchParams: URLSearchParams, base: string) {
+  const settingsPath = pathname === `${base}/settings` || pathname.startsWith(`${base}/settings/`);
+  const agentPath = pathname.startsWith(`${base}/agents/`)
+    && !pathname.slice(`${base}/agents/`.length).includes('/');
+  const returnTo = settingsPath || agentPath ? searchParams.get('returnTo') : null;
+  if (returnTo && isWorkspaceHref(returnTo, base) && !parseUrl(returnTo).pathname.startsWith(`${base}/settings`)) {
+    const url = parseUrl(returnTo);
+    return {
+      href: normalizeHref(returnTo),
+      tabId: url.searchParams.get(DASHBOARD_TAB_QUERY_PARAM),
+    };
+  }
+  return {
+    href: currentHref(
+      settingsPath ? `${base}/chat` : pathname || `${base}/chat`,
+      settingsPath ? new URLSearchParams() : searchParams,
+    ),
+    tabId: searchParams.get(DASHBOARD_TAB_QUERY_PARAM),
+  };
+}
+
 function definitionForHref(href: string, base: string): TabDefinition {
   const pathname = parseUrl(href).pathname;
   return TAB_DEFINITIONS.find((tab) => (
     pathname === `${base}/${tab.segment}` || pathname.startsWith(`${base}/${tab.segment}/`)
-  )) ?? overviewTab;
+  )) ?? defaultTab;
 }
 
 function orderedTabs(tabs: DashboardWorkspaceTab[]): DashboardWorkspaceTab[] {
@@ -137,7 +162,13 @@ function storedTabState(value: unknown, base: string): DashboardTabState | null 
   const tabs = candidate.tabs.flatMap((tab): DashboardWorkspaceTab[] => {
     if (!tab || typeof tab !== 'object') return [];
     const item = tab as Partial<DashboardWorkspaceTab>;
-    if (typeof item.id !== 'string' || typeof item.href !== 'string' || typeof item.pinned !== 'boolean' || !isWorkspaceHref(item.href, base)) return [];
+    if (
+      typeof item.id !== 'string'
+      || typeof item.href !== 'string'
+      || typeof item.pinned !== 'boolean'
+      || !isWorkspaceHref(item.href, base)
+      || parseUrl(item.href).pathname === `${base}/overview`
+    ) return [];
     return [{ id: item.id, href: normalizeHref(item.href), pinned: item.pinned }];
   });
   if (!tabs.length) return null;
@@ -223,8 +254,12 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
   const searchParams = useSearchParams();
   const router = useRouter();
   const base = `/app/${slug}`;
-  const locationTabId = searchParams.get(DASHBOARD_TAB_QUERY_PARAM);
-  const locationHref = useMemo(() => currentHref(pathname || `${base}/overview`, new URLSearchParams(searchParams.toString())), [base, pathname, searchParams]);
+  const location = useMemo(
+    () => locationForTabs(pathname, new URLSearchParams(searchParams.toString()), base),
+    [base, pathname, searchParams],
+  );
+  const locationTabId = location.tabId;
+  const locationHref = location.href;
   const storageKey = `${TAB_STORAGE_PREFIX}${slug}`;
   const [initialLocation] = useState(() => ({ href: locationHref, tabId: locationTabId, detached: searchParams.get(DASHBOARD_DETACHED_QUERY_PARAM) === '1' }));
   const [initialState] = useState<DashboardTabState>(() => {
@@ -291,7 +326,7 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
   }, [base, commitState, navigate]);
 
   const newTab = useCallback(() => {
-    const tab = createTab(`${base}/${overviewTab.segment}`);
+    const tab = createTab(`${base}/${defaultTab.segment}`);
     commitState((current) => ({ tabs: [...current.tabs, tab], activeTabId: tab.id }));
     navigate(tab.id, tab.href);
   }, [base, commitState, navigate]);
@@ -317,7 +352,7 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
     const tab = stateRef.current.tabs.find((item) => item.id === id);
     if (!tab || !window.open(hrefForDetachedWindow(tab.href, tab.id), '_blank', 'popup,noopener')) return;
     if (stateRef.current.tabs.length === 1) {
-      const replacement = createTab(`${base}/${overviewTab.segment}`);
+      const replacement = createTab(`${base}/${defaultTab.segment}`);
       commitState({ tabs: [replacement], activeTabId: replacement.id });
       navigate(replacement.id, replacement.href, true);
     } else {
@@ -339,7 +374,7 @@ export function DashboardTabBar() {
   useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [activeTabId, visibleTabs.length]);
 
   return (
-    <nav aria-label={tabT('navigation')} className="flex h-11 shrink-0 border-b border-border bg-card/90 px-2 backdrop-blur">
+    <nav aria-label={tabT('navigation')} className="flex h-11 shrink-0 bg-shell px-2">
       <ol className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1 [&::-webkit-scrollbar]:hidden">
         {visibleTabs.map((tab) => {
           const definition = definitionForHref(tab.href, base);
@@ -362,7 +397,7 @@ function DashboardTabButton({ tab, active, label, Icon, canClose, draggingId, on
   const controls = active || draggingId === tab.id;
   const stop = (event: React.MouseEvent<HTMLButtonElement>) => event.stopPropagation();
   return (
-    <li data-tab-id={tab.id} data-active={active ? 'true' : undefined} draggable onDragEnd={() => onDragChange(null)} onDragStart={(event: DragEvent<HTMLLIElement>) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', tab.id); onDragChange(tab.id); }} onDragOver={(event) => { if (dragAllowed) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }} onDrop={(event) => { if (draggingId && draggingId !== tab.id) { event.preventDefault(); onReorder(draggingId, tab.id); onDragChange(null); } }} className={`group flex h-[30px] min-w-24 max-w-56 shrink-0 items-center rounded-md transition-[background-color,color,transform] duration-150 ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} ${draggingId === tab.id ? 'scale-[0.98] opacity-50' : ''}`}>
+    <li data-tab-id={tab.id} data-active={active ? 'true' : undefined} draggable onDragEnd={() => onDragChange(null)} onDragStart={(event: DragEvent<HTMLLIElement>) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', tab.id); onDragChange(tab.id); }} onDragOver={(event) => { if (dragAllowed) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }} onDrop={(event) => { if (draggingId && draggingId !== tab.id) { event.preventDefault(); onReorder(draggingId, tab.id); onDragChange(null); } }} className={`group flex h-[30px] min-w-24 max-w-56 shrink-0 items-center rounded-[10px] transition-[background-color,color,transform] duration-150 ${active ? 'bg-background text-foreground ring-1 ring-border/70' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'} ${draggingId === tab.id ? 'scale-[0.98] opacity-50' : ''}`}>
       <button ref={activeButtonRef} type="button" aria-current={active ? 'page' : undefined} title={label} onAuxClick={(event) => { if (event.button === 1) onClose(tab.id); }} onClick={() => onSelect(tab.id)} onDoubleClick={() => onClose(tab.id)} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs"><Icon className="size-3.5 shrink-0" /><span className="truncate">{label}</span></button>
       <div className="mr-1 flex shrink-0 items-center">
         <button type="button" aria-pressed={tab.pinned} aria-label={tab.pinned ? tabT('unpin', { label }) : tabT('pin', { label })} title={tab.pinned ? tabT('unpin', { label }) : tabT('pin', { label })} onClick={(event) => { stop(event); onTogglePinned(tab.id); }} className={`flex size-[18px] items-center justify-center rounded-sm transition-colors hover:bg-foreground/10 ${tab.pinned ? (controls ? 'bg-brand-soft text-accent-foreground' : 'bg-brand-soft/50 text-accent-foreground/60 group-hover:bg-brand-soft group-hover:text-accent-foreground group-focus-within:bg-brand-soft group-focus-within:text-accent-foreground') : (controls ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100')}`}><Pin className={`size-3 ${tab.pinned ? 'fill-current' : ''}`} /></button>
@@ -376,5 +411,9 @@ function DashboardTabButton({ tab, active, label, Icon, canClose, draggingId, on
 }
 
 export function DashboardTabContent({ children }: { children?: ReactNode }) {
-  return <main className="min-h-0 flex-1 overflow-auto animate-[dashboard-enter_180ms_cubic-bezier(0.22,1,0.36,1)]">{children}</main>;
+  return (
+    <main className="m-2 mt-0 flex min-h-0 flex-1 flex-col overflow-auto rounded-[12px] border border-border/80 bg-background animate-[dashboard-enter_180ms_cubic-bezier(0.22,1,0.36,1)] lg:ml-0">
+      {children}
+    </main>
+  );
 }

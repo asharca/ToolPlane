@@ -172,11 +172,11 @@ export function AdminSidebar({
       role={mobileOpen ? 'dialog' : undefined}
       aria-modal={mobileOpen ? true : undefined}
       aria-label={mobileOpen ? t('adminNavigation') : undefined}
-      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-border bg-card transition-transform duration-200 motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:bg-card/75 ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-shell text-shell-foreground shadow-2xl transition-transform duration-200 motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:shadow-none ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
-      <div className="flex h-[68px] shrink-0 items-center justify-between gap-3 border-b border-border px-5">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-5">
         <Link
           href="/admin"
           onClick={onClose}
@@ -190,15 +190,17 @@ export function AdminSidebar({
           </span>
         </Link>
 
-        <button
-          ref={closeButtonRef}
-          type="button"
-          onClick={onClose}
-          aria-label={t('adminCloseMenu')}
-          className="ui-button-ghost ui-icon-button shrink-0 lg:hidden"
-        >
-          <X className="size-5" aria-hidden="true" />
-        </button>
+        <div className="shrink-0 lg:hidden">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label={t('adminCloseMenu')}
+            className="ui-button-ghost ui-icon-button"
+          >
+            <X className="size-5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <nav
@@ -221,10 +223,10 @@ export function AdminSidebar({
                       href={item.href}
                       onClick={onClose}
                       aria-current={active ? 'page' : undefined}
-                      className={`flex h-11 items-center gap-2.5 rounded-md px-3 text-sm transition-colors lg:h-9 ${
+                      className={`flex h-11 items-center gap-2.5 rounded-xl px-3 text-sm transition-colors lg:h-9 ${
                         active
-                          ? 'bg-brand-soft font-medium text-accent-foreground'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                          ? 'bg-brand-soft font-medium text-foreground ring-1 ring-brand/10'
+                          : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
                       }`}
                     >
                       <Icon className="size-4 shrink-0" aria-hidden="true" />
@@ -238,7 +240,7 @@ export function AdminSidebar({
         ))}
       </nav>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border/70 p-3">
         <Link
           href="/app"
           onClick={onClose}

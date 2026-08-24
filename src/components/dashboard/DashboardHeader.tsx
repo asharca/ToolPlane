@@ -17,8 +17,8 @@ export function DashboardHeader({
   }
 
   return (
-    <header className="sticky top-[var(--dashboard-tabbar-height)] z-10 border-b border-border bg-card/95 backdrop-blur">
-      <div className="flex h-16 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-8">
+    <header className="sticky top-0 z-10 border-b border-border/80 bg-background/92 backdrop-blur-xl">
+      <div className="flex h-11 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
         {breadcrumb ? (
           <nav className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">
             {breadcrumb.map((crumb, i) => {
@@ -51,7 +51,7 @@ export function DashboardHeader({
             })}
           </nav>
         ) : (
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+          <h1 className="text-[15px] font-semibold text-foreground">
             {title}
           </h1>
         )}

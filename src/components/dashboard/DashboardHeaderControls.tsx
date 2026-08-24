@@ -17,9 +17,9 @@ import {
   BarChart3,
   Code2,
   Users,
-  Settings,
   Home,
-  LayoutDashboard,
+  MessageSquare,
+  Settings,
 } from 'lucide-react';
 import {
   Dialog,
@@ -91,11 +91,11 @@ export function DashboardHeaderControls() {
     if (slug) {
       const b = `/app/${slug}`;
       list.push(
-        { id: 'overview', label: t('overview'), group: t('groupWorkspace'), icon: LayoutDashboard, run: go(`${b}/overview`) },
         { id: 'mcp', label: t('mcp'), group: t('groupBuild'), icon: Plug, run: go(`${b}/mcp`) },
         { id: 'skills', label: t('skills'), group: t('groupBuild'), icon: Brain, run: go(`${b}/skills`) },
         { id: 'toolkits', label: t('toolkits'), group: t('groupBuild'), icon: Wrench, run: go(`${b}/toolkits`) },
         { id: 'sandboxes', label: t('sandboxes'), group: t('groupBuild'), icon: Boxes, run: go(`${b}/sandboxes`) },
+        { id: 'chat', label: t('chat'), group: t('groupRun'), icon: MessageSquare, run: go(`${b}/chat`) },
         { id: 'agents', label: t('agents'), group: t('groupRun'), icon: Bot, run: go(`${b}/agents`) },
         { id: 'obs', label: t('logs'), group: t('groupOperate'), icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: t('members'), group: t('groupWorkspace'), icon: Users, run: go(`${b}/members`) },
@@ -172,10 +172,10 @@ export function DashboardHeaderControls() {
           <DialogOverlay className="!bg-black/40" />
           <DialogContent
             aria-describedby={undefined}
-            className="!top-[12vh] !block !max-h-none !translate-y-0 !gap-0 !overflow-hidden !rounded-xl !border-zinc-200 !bg-white !p-0 !shadow-2xl dark:!border-zinc-700 dark:!bg-zinc-900 sm:!p-0"
+            className="!top-[12vh] !block !max-h-none !translate-y-0 !gap-0 !overflow-hidden !rounded-2xl !border-border !bg-popover !p-0 !text-popover-foreground !shadow-2xl sm:!p-0"
           >
             <DialogTitle className="sr-only">{t('commandPalette')}</DialogTitle>
-            <div className="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-700">
+            <div className="flex items-center gap-2 border-b border-border px-3">
               <Search className="size-4 text-muted-foreground" />
               <input
                 value={query}
@@ -185,7 +185,7 @@ export function DashboardHeaderControls() {
                 }}
                 onKeyDown={onListKey}
                 placeholder={t('searchNavigation')}
-                className="h-12 w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
+                className="h-12 w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
             <ul className="max-h-80 overflow-y-auto p-1.5">
@@ -202,9 +202,9 @@ export function DashboardHeaderControls() {
                         type="button"
                         onMouseEnter={() => setActive(i)}
                         onClick={() => c.run()}
-                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                           i === active
-                            ? 'bg-brand-soft text-accent-foreground'
+                            ? 'bg-brand-soft text-foreground ring-1 ring-brand/10'
                             : 'text-muted-foreground'
                         }`}
                       >
@@ -231,18 +231,6 @@ export function DashboardHeaderControls() {
         <HelpCircle className="size-4" />
       </a>
 
-      <button
-        type="button"
-        aria-label={t('settings')}
-        title={t('settings')}
-        onClick={() => {
-          const base = pathname.split('/').slice(0, 3).join('/');
-          router.push(`${base}/settings?returnTo=${encodeURIComponent(returnTo)}`);
-        }}
-        className="ui-button-ghost ui-icon-button"
-      >
-        <Settings className="size-4" />
-      </button>
     </>
   );
 }

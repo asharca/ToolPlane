@@ -227,7 +227,11 @@ export async function cloneAgent(
             },
           },
         },
-        select: { sandboxId: true },
+        select: { sandboxId: true, isDefault: true },
+      },
+      knowledgeBases: {
+        where: { knowledgeBase: { workspaceId } },
+        select: { knowledgeBaseId: true },
       },
       subAgents: {
         where: { child: { workspaceId } },
@@ -347,6 +351,13 @@ export async function cloneAgent(
         data: (effectiveCloneOptions.copySandboxes ? source.sandboxes : []).map((sandbox) => ({
           agentId: cloned.id,
           sandboxId: sandbox.sandboxId,
+          isDefault: sandbox.isDefault,
+        })),
+      }),
+      tx.agentKnowledgeBase.createMany({
+        data: source.knowledgeBases.map((link) => ({
+          agentId: cloned.id,
+          knowledgeBaseId: link.knowledgeBaseId,
         })),
       }),
       tx.agentSubAgent.createMany({
@@ -617,6 +628,7 @@ export type AgentToolSelection = {
   installedSkillIds: string[];
   toolkitIds: string[];
   sandboxIds?: string[];
+  defaultSandboxId?: string | null;
   subAgentIds?: string[];
 };
 
@@ -765,7 +777,11 @@ export async function createConfiguredAgent(
       data: toolkits.map(({ id }) => ({ agentId: agent.id, toolkitId: id })),
     });
     await tx.agentSandbox.createMany({
-      data: sandboxes.map(({ id }) => ({ agentId: agent.id, sandboxId: id })),
+      data: sandboxes.map(({ id }) => ({
+        agentId: agent.id,
+        sandboxId: id,
+        isDefault: id === tools.defaultSandboxId || (!tools.defaultSandboxId && id === sandboxes[0]?.id),
+      })),
     });
     await tx.agentSubAgent.createMany({
       data: subAgents.map(({ id }) => ({ parentId: agent.id, childId: id })),
@@ -809,6 +825,41 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
         agentId,
         providerId: modelProviderId,
       })),
+    });
+  });
+}
+
+export async function updateAgentModelSelection(
+  workspaceId: string,
+  agentId: string,
+  requestedProviderIds: string[],
+  model: string | null,
+) {
+  await db.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({
+      where: { id: agentId, workspaceId },
+      select: { id: true, runtime: { select: { kind: true } } },
+    });
+    if (!agent) return;
+
+    if (agent.runtime?.kind === HERMES_RUNTIME_KIND) {
+      const providerIds: string[] = [];
+      for (const providerId of [...new Set(requestedProviderIds.filter(Boolean))].sort()) {
+        if (await lockProvider(tx, workspaceId, providerId)) providerIds.push(providerId);
+      }
+      await tx.agent.updateMany({ where: { id: agentId, workspaceId }, data: { providerId: null, model: null } });
+      await tx.agentModelProvider.deleteMany({ where: { agentId } });
+      await tx.agentModelProvider.createMany({
+        data: providerIds.map((providerId) => ({ agentId, providerId })),
+      });
+      return;
+    }
+
+    const providerId = requestedProviderIds[0];
+    const validProviderId = providerId && await lockProvider(tx, workspaceId, providerId) ? providerId : null;
+    await tx.agent.updateMany({
+      where: { id: agentId, workspaceId },
+      data: { providerId: validProviderId, model: validProviderId ? model : null },
     });
   });
 }
@@ -900,7 +951,13 @@ export async function setAgentTools(
     db.agentServer.createMany({ data: deployments.map((d) => ({ agentId, deploymentId: d.id })) }),
     db.agentSkill.createMany({ data: skills.map((s) => ({ agentId, installedSkillId: s.id })) }),
     db.agentToolkit.createMany({ data: toolkits.map((t) => ({ agentId, toolkitId: t.id })) }),
-    db.agentSandbox.createMany({ data: sandboxes.map((s) => ({ agentId, sandboxId: s.id })) }),
+    db.agentSandbox.createMany({
+      data: sandboxes.map((s) => ({
+        agentId,
+        sandboxId: s.id,
+        isDefault: s.id === tools.defaultSandboxId || (!tools.defaultSandboxId && s.id === sandboxes[0]?.id),
+      })),
+    }),
     db.agentSubAgent.createMany({ data: subAgents.map((s) => ({ parentId: agentId, childId: s.id })) }),
   ]);
 }
@@ -995,6 +1052,40 @@ export async function createConversation(
       data: defaultConversationRuntimeSession(agent.id, conversation.id, runtimeSession),
     });
   });
+}
+
+export async function renameConsoleConversation(
+  workspaceId: string,
+  agentId: string,
+  conversationId: string,
+  title: string,
+): Promise<boolean> {
+  const conversation = await db.conversation.findFirst({
+    where: { id: conversationId, agentId, agent: { workspaceId } },
+    select: { id: true, title: true, publicApiConversation: { select: { id: true } }, workSession: { select: { id: true } } },
+  });
+  if (!conversation || conversation.title?.startsWith('msg:') || conversation.publicApiConversation || conversation.workSession) return false;
+  const updated = await db.conversation.updateMany({
+    where: { id: conversation.id, agentId, agent: { workspaceId } },
+    data: { title },
+  });
+  return updated.count === 1;
+}
+
+export async function deleteConsoleConversation(
+  workspaceId: string,
+  agentId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const conversation = await db.conversation.findFirst({
+    where: { id: conversationId, agentId, agent: { workspaceId } },
+    select: { id: true, title: true, publicApiConversation: { select: { id: true } }, workSession: { select: { id: true } } },
+  });
+  if (!conversation || conversation.title?.startsWith('msg:') || conversation.publicApiConversation || conversation.workSession) return false;
+  const deleted = await db.conversation.deleteMany({
+    where: { id: conversation.id, agentId, agent: { workspaceId } },
+  });
+  return deleted.count === 1;
 }
 
 // Conversations created before runtime session aliases existed are initialized

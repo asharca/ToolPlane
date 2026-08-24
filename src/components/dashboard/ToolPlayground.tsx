@@ -104,7 +104,7 @@ export function ToolPlayground({
 
   if (tools.length === 0) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-muted-foreground">
         {t('noToolsAvailable')}
       </p>
     );
@@ -121,8 +121,8 @@ export function ToolPlayground({
             aria-pressed={selected === t.name}
             className={`min-h-11 max-w-full break-all rounded-md border px-2.5 py-1 text-left font-mono text-xs transition-colors sm:min-h-7 ${
               selected === t.name
-                ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
-                : 'border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             {t.name}
@@ -131,7 +131,7 @@ export function ToolPlayground({
       </div>
 
       {current?.description ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-muted-foreground">
           {current.description}
         </p>
       ) : null}
@@ -146,7 +146,7 @@ export function ToolPlayground({
           onChange={(e) => setArgs(e.target.value)}
           spellCheck={false}
           rows={Math.max(3, args.split('\n').length)}
-          className="w-full rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          className="ui-input h-auto p-3 font-mono text-xs"
         />
       </div>
 
@@ -154,7 +154,7 @@ export function ToolPlayground({
         type="button"
         onClick={run}
         disabled={loading}
-        className="inline-flex h-9 items-center gap-2 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        className="ui-button-primary disabled:opacity-60"
       >
         {loading ? (
           <Loader2 className="size-4 animate-spin" />
@@ -174,7 +174,7 @@ export function ToolPlayground({
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {t('toolResult')}
           </label>
-          <pre role="status" className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
+          <pre role="status" className="overflow-x-auto rounded-md border border-border bg-muted/50 p-3 font-mono text-xs text-foreground">
             {result}
           </pre>
         </div>

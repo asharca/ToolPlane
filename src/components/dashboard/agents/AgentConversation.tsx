@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useChat } from '@ai-sdk/react';
 import {
+  ActionBarPrimitive,
   AssistantRuntimeProvider,
   AttachmentPrimitive,
   ComposerPrimitive,
@@ -22,6 +23,7 @@ import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk';
 import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown';
 import { code } from '@streamdown/code';
 import { DefaultChatTransport, generateId } from 'ai';
+import { Popover } from 'radix-ui';
 import {
   Box,
   Bot,
@@ -30,12 +32,18 @@ import {
   ChevronRight,
   CheckCircle2,
   CircleAlert,
+  CirclePause,
   Clock3,
+  Copy,
   Loader2,
+  Maximize2,
+  Minimize2,
   Paperclip,
   Plug,
+  Plus,
+  RefreshCw,
   Send,
-  Square,
+  UserRound,
   Wrench,
   X,
 } from 'lucide-react';
@@ -249,33 +257,29 @@ function ToolPart({
     <details
       open={isRunning || Boolean(isError) || Boolean(waitingForApproval)}
       className={cx(
-        'group my-2 overflow-hidden rounded-md border bg-muted/20 text-xs',
-        isError || waitingForApproval ? 'border-amber-500/30' : 'border-border',
+        'group my-1 overflow-hidden rounded-lg text-xs',
+        (isError || waitingForApproval) && 'bg-amber-500/5',
       )}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 marker:content-none hover:bg-muted/40">
+      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-lg px-1 py-0.5 marker:content-none hover:bg-muted/50">
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
-          <Icon className="size-3.5" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium text-foreground">{toolName}</span>
-          <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            {toolKindLabel(kind, t)}
-          </span>
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+          <span className="font-medium text-foreground">{toolName}</span>
+          <span className="ml-1.5 text-[11px]">{toolKindLabel(kind, t)}</span>
         </span>
         <span className={cx(
-          'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium',
-          isError ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-            : waitingForApproval ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-              : isRunning ? 'bg-brand-soft text-accent-foreground'
-                : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+          'inline-flex shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium',
+          isError ? 'text-red-700 dark:text-red-300'
+            : waitingForApproval ? 'text-amber-700 dark:text-amber-300'
+              : isRunning ? 'text-brand'
+                : 'text-muted-foreground',
         )}>
           <StateIcon className={cx('size-3', isRunning && 'animate-spin')} />
           {stateLabel}
         </span>
       </summary>
-      <div className="space-y-3 border-t border-border bg-background/50 px-3 py-3">
+      <div className="ml-5 space-y-3 border-l border-border/70 px-3 py-2">
         <div>
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('toolInput')}</p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">
@@ -345,8 +349,8 @@ function SentAttachment({ attachment }: { attachment: CompleteAttachment }) {
 function ComposerAttachment({ attachment }: { attachment: Attachment }) {
   const t = useTranslations('console.agents');
   return (
-    <AttachmentPrimitive.Root className="inline-flex h-8 max-w-full items-center gap-2 rounded-md bg-muted px-2 text-xs text-foreground">
-      <AttachmentPrimitive.unstable_Thumb className="flex size-5 shrink-0 items-center justify-center rounded bg-background text-[9px] font-semibold uppercase text-muted-foreground" />
+    <AttachmentPrimitive.Root className="mx-0.5 my-0.5 inline-flex h-6 max-w-[calc(100%_-_0.25rem)] items-center gap-1 overflow-hidden rounded-md border border-border bg-muted/50 px-1.5 text-xs font-medium text-foreground">
+      <AttachmentPrimitive.unstable_Thumb className="flex size-[18px] shrink-0 items-center justify-center rounded-[5px] bg-background text-[9px] font-semibold uppercase text-muted-foreground" />
       <span className="max-w-48 truncate"><AttachmentPrimitive.Name /></span>
       {attachment.status.type === 'running' ? (
         <span className="text-muted-foreground">{Math.round(attachment.status.progress * 100)}%</span>
@@ -354,9 +358,9 @@ function ComposerAttachment({ attachment }: { attachment: Attachment }) {
       <AttachmentPrimitive.Remove
         aria-label={t('removeAttachment', { name: attachment.name })}
         title={t('removeAttachment', { name: attachment.name })}
-        className="text-muted-foreground hover:text-foreground"
+        className="flex size-4 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground"
       >
-        <X className="size-3.5" />
+        <X className="size-3" />
       </AttachmentPrimitive.Remove>
     </AttachmentPrimitive.Root>
   );
@@ -365,9 +369,11 @@ function ComposerAttachment({ attachment }: { attachment: Attachment }) {
 function AttachmentPickerButton({
   disabled,
   onClearError,
+  supportsAttachments,
 }: {
   disabled: boolean;
   onClearError: () => void;
+  supportsAttachments: boolean;
 }) {
   const t = useTranslations('console.agents');
   const composer = useComposerRuntime();
@@ -392,34 +398,76 @@ function AttachmentPickerButton({
   }, [composer, onClearError]);
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={openPicker}
-      aria-label={t('addAttachment')}
-      title={t('addAttachment')}
-      className="ui-button-secondary flex size-10 shrink-0 items-center justify-center px-0"
-    >
-      <Paperclip className="size-[18px]" />
-    </button>
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={t('openComposerTools')}
+          title={t('openComposerTools')}
+          className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+        >
+          <Plus className="size-[18px]" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          align="start"
+          sideOffset={8}
+          collisionPadding={12}
+          aria-label={t('composerTools')}
+          className="z-50 w-64 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
+        >
+          <Popover.Close asChild>
+            <button
+              type="button"
+              disabled={!supportsAttachments}
+              onClick={openPicker}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Paperclip className="size-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="block">{t('addAttachment')}</span>
+                {!supportsAttachments ? (
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('attachmentRuntimeRequired')}</span>
+                ) : null}
+              </span>
+            </button>
+          </Popover.Close>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
 function UserMessage() {
   const t = useTranslations('console.agents');
+  const common = useTranslations('common');
   return (
     <MessagePrimitive.Root asChild>
-      <article className="flex justify-end gap-3">
-        <div className="order-first min-w-0 max-w-[min(72rem,94%)]">
-          <div className="mb-1 text-right text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {t('user')}
-          </div>
-          <div className="min-w-0 break-words rounded-md border border-primary bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground">
+      <article className="flex flex-col items-end rounded-[10px] pt-2.5">
+        <div className="flex max-w-full items-start justify-end gap-2.5">
+          <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
             <MessagePrimitive.Parts components={{ Text: UserText }} />
             <MessagePrimitive.Attachments>
               {({ attachment }) => <SentAttachment attachment={attachment} />}
             </MessagePrimitive.Attachments>
           </div>
+          <div aria-label={t('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <UserRound className="size-4" />
+          </div>
+        </div>
+        <div className="mr-10 min-h-[26px]">
+          <ActionBarPrimitive.Root autohide="always" className="flex h-[26px] items-center justify-end gap-0.5">
+            <ActionBarPrimitive.Copy
+              aria-label={common('copy')}
+              title={common('copy')}
+              className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+            >
+              <Copy className="size-[15px]" />
+            </ActionBarPrimitive.Copy>
+          </ActionBarPrimitive.Root>
         </div>
       </article>
     </MessagePrimitive.Root>
@@ -427,17 +475,18 @@ function UserMessage() {
 }
 
 function AssistantMessage({ agentName }: { agentName: string }) {
+  const common = useTranslations('common');
   return (
     <MessagePrimitive.Root asChild>
-      <article className="flex justify-start gap-3">
-        <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-          <Bot className="size-[18px]" />
+      <article className="flex items-start justify-start gap-2.5 rounded-[10px] pt-2.5">
+        <div className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Bot className="size-[15px]" />
         </div>
-        <div className="min-w-0 max-w-[min(72rem,94%)]">
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] flex-1">
+          <div className="text-sm font-semibold leading-5 text-foreground">
             {agentName}
           </div>
-          <div className="min-w-0 break-words rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground">
+          <div className="mt-2 min-w-0 break-words text-sm leading-[1.65] text-foreground">
             <MessagePrimitive.Parts
               components={{
                 Text: AssistantText,
@@ -445,6 +494,24 @@ function AssistantMessage({ agentName }: { agentName: string }) {
                 tools: { Fallback: ToolPart },
               }}
             />
+          </div>
+          <div className="mt-1 min-h-[26px]">
+            <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex h-[26px] items-center gap-0.5">
+              <ActionBarPrimitive.Copy
+                aria-label={common('copy')}
+                title={common('copy')}
+                className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <Copy className="size-[15px]" />
+              </ActionBarPrimitive.Copy>
+              <ActionBarPrimitive.Reload
+                aria-label={common('regenerate')}
+                title={common('regenerate')}
+                className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <RefreshCw className="size-[15px]" />
+              </ActionBarPrimitive.Reload>
+            </ActionBarPrimitive.Root>
           </div>
         </div>
       </article>
@@ -462,6 +529,7 @@ function AgentThread({
   supportsAttachments,
   submitError,
   uploadingAttachments,
+  workMode,
 }: {
   activeConversationId: string | null;
   agentName: string;
@@ -472,35 +540,39 @@ function AgentThread({
   supportsAttachments: boolean;
   submitError: string | null;
   uploadingAttachments: boolean;
+  workMode: boolean;
 }) {
   const t = useTranslations('console.agents');
+  const [composerMinRows, setComposerMinRows] = useState(2);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerExpanded = composerMinRows > 2;
+  const ComposerExpandIcon = composerExpanded ? Minimize2 : Maximize2;
+  const composerExpandLabel = t(composerExpanded ? 'restoreComposer' : 'expandComposer');
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
       <ThreadPrimitive.Viewport className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
-        <div className="flex-1 px-4 py-5 sm:px-5">
+        <div className="flex-1 py-1.5">
           <ThreadPrimitive.Empty>
-            <div className="flex min-h-full items-center justify-center">
-              <div className="max-w-md px-5 py-6 text-center">
-                <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+            <div className="flex min-h-full items-center justify-center px-6 pb-24">
+              <div className="max-w-md text-center">
+                <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <Bot className="size-6" />
                 </div>
-                <h3 className="text-sm font-semibold text-foreground">{t('startAConversation')}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('sendAConsoleMessageHereOrLetAConnectedChannelCreateItsOwnSessionAfterTheFirstInboundMessage')}
-                </p>
+                <h3 className="text-lg font-medium text-foreground">{workMode ? t('startWorkConversation') : t('startAConversation')}</h3>
+                {workMode ? <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('startWorkConversationDescription')}</p> : null}
               </div>
             </div>
           </ThreadPrimitive.Empty>
 
-          <div className="mx-auto flex w-full max-w-[76rem] flex-col gap-5">
+          <div className="mx-auto flex w-full max-w-[53rem] flex-col gap-0 px-6">
             <ThreadPrimitive.Messages>
               {({ message }) => message.role === 'user'
                 ? <UserMessage />
                 : <AssistantMessage agentName={agentName} />}
             </ThreadPrimitive.Messages>
             <ThreadPrimitive.If running>
-              <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-                <Clock3 className="size-[18px] shrink-0 animate-pulse" />
+              <div className="flex items-center gap-2.5 py-2.5 pl-10 text-sm text-muted-foreground">
+                <Clock3 className="size-4 shrink-0 animate-pulse" />
                 {t('agentIsResponding')}
               </div>
             </ThreadPrimitive.If>
@@ -510,71 +582,103 @@ function AgentThread({
         <ThreadPrimitive.ScrollToBottom
           aria-label={t('scrollToLatestMessage')}
           title={t('scrollToLatestMessage')}
-          className="sticky bottom-3 z-10 mx-auto mb-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground disabled:invisible"
+          className="sticky bottom-3 z-10 mx-auto mb-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground disabled:invisible"
         >
           <ChevronDown className="size-4" />
         </ThreadPrimitive.ScrollToBottom>
       </ThreadPrimitive.Viewport>
 
-      <div className="shrink-0 border-t border-border bg-card px-4 py-4">
-        {error || submitError ? (
-          <p role="alert" className="mx-auto mb-3 max-w-[76rem] rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-            {submitError || error?.message}
-          </p>
-        ) : null}
+      <div className="shrink-0 bg-background pb-3 pt-4">
+        <div className="mx-auto w-full max-w-[53rem] px-6">
+          {error || submitError ? (
+            <p role="alert" className="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+              {submitError || error?.message}
+            </p>
+          ) : null}
 
-        <ComposerPrimitive.Root className="mx-auto max-w-[76rem] rounded-md border border-input bg-background p-2 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15">
-          <div className="flex flex-wrap gap-2 px-2 empty:hidden">
-            <ComposerPrimitive.Attachments>
-              {({ attachment }) => <ComposerAttachment attachment={attachment} />}
-            </ComposerPrimitive.Attachments>
-          </div>
-          <ComposerPrimitive.Input
-            placeholder={t('messageThisAgent')}
-            disabled={!ready || creatingConversation || uploadingAttachments}
-            rows={3}
-            submitMode="enter"
-            className="max-h-56 min-h-24 w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
-          />
-          <div className="flex items-center justify-between gap-3 border-t border-border/70 px-2 pt-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <AttachmentPickerButton
-                disabled={!ready || !supportsAttachments || creatingConversation || uploadingAttachments}
-                onClearError={onClearAttachmentError}
+          <ComposerPrimitive.Root
+            data-ui="chat.composer"
+            data-composer-inputbar=""
+            data-composer-presentation="regular"
+            className="relative rounded-[20px] border-[0.5px] border-border bg-card pt-2 shadow-sm transition-all duration-200 ease-in-out"
+          >
+            <div className="group/expand-corner absolute right-px top-px z-10 size-8">
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute right-1 top-1 size-3 origin-top-right scale-100 rounded-tr-[16px] border-r-[1.5px] border-t-[1.5px] border-foreground/60 opacity-70 transition-[opacity,scale] duration-200 ease-out group-focus-within/expand-corner:scale-50 group-focus-within/expand-corner:opacity-0 group-hover/expand-corner:scale-50 group-hover/expand-corner:opacity-0"
               />
-              <div className="min-w-0 truncate text-xs text-muted-foreground">
-                {!ready
-                  ? t('chooseAModelBeforeSending')
-                  : uploadingAttachments
-                    ? t('uploadingAttachments')
-                    : activeConversationId
-                      ? t('conversationSelected')
-                      : t('conversationWillBeCreated')}
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setComposerMinRows(composerExpanded
+                    ? 2
+                    : Math.ceil((Math.max(220, window.innerHeight * 0.5) - 6) / (14 * 1.4)));
+                  composerInputRef.current?.focus();
+                }}
+                aria-label={composerExpandLabel}
+                title={composerExpandLabel}
+                aria-pressed={composerExpanded}
+                className="pointer-events-none absolute right-1 top-1 flex size-[22px] -translate-y-2.5 translate-x-2.5 rotate-[-8deg] scale-80 items-center justify-center rounded-full bg-transparent text-muted-foreground opacity-0 transition-[opacity,translate,scale,rotate,color,background-color] duration-300 ease-out hover:bg-muted hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:translate-y-0 focus-visible:rotate-0 focus-visible:scale-100 focus-visible:bg-muted focus-visible:text-foreground focus-visible:opacity-100 group-focus-within/expand-corner:pointer-events-auto group-focus-within/expand-corner:translate-x-0 group-focus-within/expand-corner:translate-y-0 group-focus-within/expand-corner:rotate-0 group-focus-within/expand-corner:scale-100 group-focus-within/expand-corner:bg-muted/80 group-focus-within/expand-corner:text-foreground group-focus-within/expand-corner:opacity-100 group-hover/expand-corner:pointer-events-auto group-hover/expand-corner:translate-x-0 group-hover/expand-corner:translate-y-0 group-hover/expand-corner:rotate-0 group-hover/expand-corner:scale-100 group-hover/expand-corner:bg-muted/80 group-hover/expand-corner:text-foreground group-hover/expand-corner:opacity-100"
+              >
+                <ComposerExpandIcon className="size-3 transition-transform duration-300 ease-out group-focus-within/expand-corner:scale-110 group-hover/expand-corner:scale-110" />
+              </button>
             </div>
+            <div className="flex flex-wrap gap-1.5 px-[15px] empty:hidden">
+              <ComposerPrimitive.Attachments>
+                {({ attachment }) => <ComposerAttachment attachment={attachment} />}
+              </ComposerPrimitive.Attachments>
+            </div>
+            <ComposerPrimitive.Input
+              ref={composerInputRef}
+              placeholder={t('messageThisAgent')}
+              disabled={!ready || creatingConversation || uploadingAttachments}
+              rows={2}
+              minRows={composerMinRows}
+              submitMode="enter"
+              className={cx(
+                'block min-h-[46px] w-full resize-none overflow-y-auto bg-transparent pb-0 pl-[15px] pr-11 pt-1.5 text-sm leading-[1.4] text-foreground outline-none transition-none placeholder:text-muted-foreground disabled:opacity-60 [&::-webkit-scrollbar]:w-[3px]',
+                composerExpanded ? 'max-h-[max(220px,50vh)]' : 'max-h-[max(220px,40vh)]',
+              )}
+            />
+            <div data-ui="part:composer-actions" data-composer-toolbar="" className="relative z-[2] flex h-10 items-center justify-between gap-4 px-2 py-[5px]">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <AttachmentPickerButton
+                  disabled={creatingConversation || uploadingAttachments}
+                  onClearError={onClearAttachmentError}
+                  supportsAttachments={supportsAttachments}
+                />
+                {!ready || uploadingAttachments || !activeConversationId ? (
+                  <div className="min-w-0 truncate text-[11px] text-muted-foreground">
+                    {!ready
+                      ? t('chooseAModelBeforeSending')
+                      : uploadingAttachments
+                        ? t('uploadingAttachments')
+                        : t('conversationWillBeCreated')}
+                  </div>
+                ) : null}
+              </div>
 
-            <ThreadPrimitive.If running={false}>
-              <ComposerPrimitive.Send
-                aria-label={t('send')}
-                title={t('send')}
-                className="ui-button-primary h-10 gap-2 px-4 disabled:opacity-60"
-              >
-                <Send className="size-[18px] shrink-0" />
-                {creatingConversation ? t('creating') : t('send')}
-              </ComposerPrimitive.Send>
-            </ThreadPrimitive.If>
-            <ThreadPrimitive.If running>
-              <ComposerPrimitive.Cancel
-                aria-label={t('stop')}
-                title={t('stop')}
-                className="ui-button-secondary h-10 gap-2 px-4"
-              >
-                <Square className="size-4 fill-current" />
-                {t('stop')}
-              </ComposerPrimitive.Cancel>
-            </ThreadPrimitive.If>
-          </div>
-        </ComposerPrimitive.Root>
+              <ThreadPrimitive.If running={false}>
+                <ComposerPrimitive.Send
+                  aria-label={creatingConversation ? t('creating') : t('send')}
+                  title={creatingConversation ? t('creating') : t('send')}
+                  className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50"
+                >
+                  {creatingConversation ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
+                </ComposerPrimitive.Send>
+              </ThreadPrimitive.If>
+              <ThreadPrimitive.If running>
+                <ComposerPrimitive.Cancel
+                  aria-label={t('stop')}
+                  title={t('stop')}
+                  className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted"
+                >
+                  <CirclePause className="size-5" />
+                </ComposerPrimitive.Cancel>
+              </ThreadPrimitive.If>
+            </div>
+          </ComposerPrimitive.Root>
+        </div>
       </div>
     </ThreadPrimitive.Root>
   );
@@ -726,6 +830,7 @@ export function AgentConversation({
   initialMessages,
   ready,
   runtimeKind,
+  workSessionId,
 }: {
   activeConversationId: string | null;
   agentId: string;
@@ -735,6 +840,7 @@ export function AgentConversation({
   initialMessages: HermesUIMessage[];
   ready: boolean;
   runtimeKind: string | null;
+  workSessionId?: string;
 }) {
   const t = useTranslations('console.agents');
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -768,6 +874,7 @@ export function AgentConversation({
     setChatMessages(initialMessages);
   }, [initialMessages, initialMessagesSignature, setChatMessages]);
   const sendChatMessage = chat.sendMessage;
+  const regenerateChat = chat.regenerate;
   const sendMessage = useCallback<typeof chat.sendMessage>(async (message, options) => {
     setSubmitError(null);
     const messageParts = message && typeof message === 'object'
@@ -804,9 +911,28 @@ export function AgentConversation({
       body: {
         ...options?.body,
         conversationId: nextConversationId,
+        ...(workSessionId ? { workSessionId } : {}),
       },
     });
-  }, [ensureConversation, sendChatMessage, t]);
+  }, [ensureConversation, sendChatMessage, t, workSessionId]);
+  const regenerate = useCallback<typeof chat.regenerate>(async (options) => {
+    setSubmitError(null);
+    let nextConversationId: string;
+    try {
+      nextConversationId = activeConversationId ?? await ensureConversation();
+    } catch {
+      setSubmitError(t('couldNotCreateConversation'));
+      return;
+    }
+    await regenerateChat({
+      ...options,
+      body: {
+        ...options?.body,
+        conversationId: nextConversationId,
+        ...(workSessionId ? { workSessionId } : {}),
+      },
+    });
+  }, [activeConversationId, ensureConversation, regenerateChat, t, workSessionId]);
   const attachmentAdapter = useAgentAttachmentAdapter({
     agentId,
     ensureConversation,
@@ -822,7 +948,8 @@ export function AgentConversation({
     ...chat,
     messages: displayMessages,
     sendMessage,
-  }), [chat, displayMessages, sendMessage]);
+    regenerate,
+  }), [chat, displayMessages, regenerate, sendMessage]);
   const runtime = useAISDKRuntime(assistantChat, {
     adapters: { attachments: attachmentAdapter },
     isSendDisabled: !ready || creatingConversation || uploadingAttachments,
@@ -847,6 +974,7 @@ export function AgentConversation({
         supportsAttachments={runtimeKind === 'hermes'}
         submitError={submitError}
         uploadingAttachments={uploadingAttachments}
+        workMode={Boolean(workSessionId)}
       />
     </AssistantRuntimeProvider>
   );

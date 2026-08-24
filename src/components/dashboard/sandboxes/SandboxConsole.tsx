@@ -87,12 +87,12 @@ function downloadBase64File(payload: DownloadPayload, fallbackName: string, inva
 }
 
 async function callTool(
-  deploymentId: string,
+  rpcApiBase: string,
   name: string,
   args: Record<string, unknown>,
   fallbackError: string,
 ): Promise<string> {
-  const res = await fetch(`/api/v1/mcp/${deploymentId}/rpc`, {
+  const res = await fetch(rpcApiBase, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -125,7 +125,9 @@ export function SandboxConsole({
   initialPath,
   initialEntries,
   terminalOnly = false,
+  compact = false,
   terminalApiBase,
+  rpcApiBase,
   terminalLabel,
   terminalSubtitle,
   workspaceRoot,
@@ -136,7 +138,9 @@ export function SandboxConsole({
   initialPath: string;
   initialEntries: SandboxFileEntry[];
   terminalOnly?: boolean;
+  compact?: boolean;
   terminalApiBase?: string;
+  rpcApiBase?: string;
   terminalLabel?: string;
   terminalSubtitle?: string;
   workspaceRoot?: string;
@@ -144,6 +148,7 @@ export function SandboxConsole({
 }) {
   const t = useTranslations('console.sandboxes');
   const terminalBase = terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
+  const rpcBase = rpcApiBase ?? `/api/v1/mcp/${deploymentId}/rpc`;
   const terminalElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<XtermFitAddon | null>(null);
@@ -160,6 +165,7 @@ export function SandboxConsole({
     running ? t('terminalConnecting') : waitingForConnector ? t('waitingForConnector') : t('terminalStopped'),
   );
   const [terminalGeneration, setTerminalGeneration] = useState(0);
+  const [compactView, setCompactView] = useState<'files' | 'terminal'>('terminal');
   const [fileStatus, setFileStatus] = useState(
     initialEntries.length
       ? t('itemCount', { count: initialEntries.length })
@@ -173,7 +179,7 @@ export function SandboxConsole({
   const loadDirectory = useCallback(
     async (nextPath: string) => {
       const normalized = normalizePath(nextPath);
-      const raw = await callTool(deploymentId, 'list_dir', { path: normalized }, t('toolCallFailed'));
+      const raw = await callTool(rpcBase, 'list_dir', { path: normalized }, t('toolCallFailed'));
       const parsed = parseSandboxDirectoryText(raw, normalized);
       if (!parsed) throw new Error(raw);
       return {
@@ -181,7 +187,7 @@ export function SandboxConsole({
         entries: sortedEntries(parsed.entries),
       };
     },
-    [deploymentId, t],
+    [rpcBase, t],
   );
 
   const refreshDir = useCallback(
@@ -340,13 +346,13 @@ export function SandboxConsole({
       terminalRef.current = null;
       terminal?.dispose();
     };
-  }, [flushInput, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, waitingForConnector]);
+  }, [compactView, compact, flushInput, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, waitingForConnector]);
 
   async function openFile(path: string) {
     setSelectedPath(path);
     setLoadingPath(path);
     try {
-      const raw = await callTool(deploymentId, 'read_file', { path }, t('toolCallFailed'));
+      const raw = await callTool(rpcBase, 'read_file', { path }, t('toolCallFailed'));
       const payload = JSON.parse(raw) as Partial<FilePreview>;
       if (typeof payload.content !== 'string') throw new Error(t('filePreviewUnavailable'));
       setPreview({ path, content: payload.content });
@@ -361,7 +367,7 @@ export function SandboxConsole({
   async function downloadFile(path: string) {
     setLoadingPath(path);
     try {
-      const raw = await callTool(deploymentId, 'download_file', { path }, t('toolCallFailed'));
+      const raw = await callTool(rpcBase, 'download_file', { path }, t('toolCallFailed'));
       downloadBase64File(
         JSON.parse(raw) as DownloadPayload,
         path.split('/').pop() || 'sandbox-file',
@@ -379,7 +385,7 @@ export function SandboxConsole({
     if (!window.confirm(t('deleteThisFile'))) return;
     setLoadingPath(path);
     try {
-      await callTool(deploymentId, 'delete_file', { path }, t('toolCallFailed'));
+      await callTool(rpcBase, 'delete_file', { path }, t('toolCallFailed'));
       if (selectedPath === path) {
         setSelectedPath('');
         setPreview(null);
@@ -394,7 +400,7 @@ export function SandboxConsole({
 
   const terminalPanel = (
     <section
-      className={terminalOnly
+      className={terminalOnly || compact
         ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#111419]'
         : 'ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-[#111419]'}
     >
@@ -426,138 +432,76 @@ export function SandboxConsole({
     </section>
   );
 
+  const filesPanel = (
+    <aside className={compact ? 'flex h-full min-h-0 flex-col overflow-hidden bg-card' : 'ui-panel order-2 flex min-h-96 flex-col overflow-hidden xl:order-1'}>
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Folder className="size-4 text-muted-foreground" />
+          {t('files')}
+        </div>
+        <button type="button" onClick={() => void refreshDir(dirPath)} disabled={!running || loadingPath !== null} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')}>
+          {loadingPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+        </button>
+      </div>
+      <div className="border-b border-border p-3">
+        <div className="mb-2 truncate font-mono text-xs text-foreground">{displayWorkspacePath(dirPath, workspaceRoot)}</div>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{fileStatus}</span>
+          <button type="button" onClick={() => void refreshDir(parentPath(dirPath))} disabled={!running || loadingPath !== null || dirPath === '.'} className="rounded px-1.5 py-1 hover:bg-muted hover:text-foreground disabled:opacity-40">{t('up')}</button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        {entries.length === 0 ? (
+          <p className="px-2 py-6 text-sm text-muted-foreground">{running ? t('noFilesInThisDirectory') : waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles')}</p>
+        ) : entries.map((entry) => {
+          const fullPath = joinPath(dirPath, entry.name);
+          const selected = selectedPath === fullPath;
+          const loading = loadingPath === fullPath;
+          return (
+            <div key={`${entry.type}:${entry.name}`} className={`group flex items-center gap-1 rounded-md transition-colors ${selected ? 'bg-brand-soft text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <button type="button" onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : void openFile(fullPath))} disabled={!running || loadingPath !== null} className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left font-mono text-xs disabled:opacity-50">
+                {loading ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : entry.type === 'dir' ? <Folder className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
+                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                {entry.type === 'dir' ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
+                {entry.type === 'file' ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
+              </button>
+              {entry.type === 'file' ? <div className="flex shrink-0 items-center pr-1">
+                <button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></button>
+                <button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></button>
+              </div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+
+  const previewPanel = preview ? (
+    <section className="absolute inset-0 flex min-h-0 flex-col overflow-hidden border border-border bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="min-w-0 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
+        <button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} className="ui-button-ghost ui-icon-button shrink-0" title={t('close')} aria-label={t('close')}><X className="size-4" /></button>
+      </div>
+      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">{preview.content}</pre>
+    </section>
+  ) : null;
+
   if (terminalOnly) return terminalPanel;
+
+  if (compact) return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <div className="grid h-10 shrink-0 grid-cols-2 border-b border-border bg-muted/30 p-1">
+        <button type="button" onClick={() => setCompactView('terminal')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'terminal' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><TerminalIcon className="size-3.5" />{t('terminal')}</button>
+        <button type="button" onClick={() => setCompactView('files')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'files' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><Folder className="size-3.5" />{t('files')}</button>
+      </div>
+      <div className="relative min-h-0 flex-1">{compactView === 'terminal' ? terminalPanel : filesPanel}{previewPanel}</div>
+    </div>
+  );
 
   return (
     <div className="grid min-h-[calc(100vh-13rem)] gap-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
-      <aside className="ui-panel order-2 flex min-h-96 flex-col overflow-hidden xl:order-1">
-        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Folder className="size-4 text-muted-foreground" />
-            {t('files')}
-          </div>
-          <button
-            type="button"
-            onClick={() => void refreshDir(dirPath)}
-            disabled={!running || loadingPath !== null}
-            className="ui-button-ghost ui-button-sm"
-            title={t('refreshDirectory')}
-          >
-            {loadingPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-          </button>
-        </div>
-
-        <div className="border-b border-border p-3">
-          <div className="mb-2 truncate font-mono text-xs text-foreground">{displayWorkspacePath(dirPath, workspaceRoot)}</div>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span className="truncate">{fileStatus}</span>
-            <button
-              type="button"
-              onClick={() => void refreshDir(parentPath(dirPath))}
-              disabled={!running || loadingPath !== null || dirPath === '.'}
-              className="rounded px-1.5 py-1 hover:bg-muted hover:text-foreground disabled:opacity-40"
-            >
-              {t('up')}
-            </button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-auto p-2">
-          {entries.length === 0 ? (
-            <p className="px-2 py-6 text-sm text-muted-foreground">
-              {running
-                ? t('noFilesInThisDirectory')
-                : waitingForConnector
-                  ? t('waitingForConnectorSession')
-                  : t('startTheSandboxToBrowseFiles')}
-            </p>
-          ) : (
-            entries.map((entry) => {
-              const fullPath = joinPath(dirPath, entry.name);
-              const selected = selectedPath === fullPath;
-              const loading = loadingPath === fullPath;
-              return (
-                <div
-                  key={`${entry.type}:${entry.name}`}
-                  className={`group flex items-center gap-1 rounded-md transition-colors ${
-                    selected ? 'bg-brand-soft text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : void openFile(fullPath))}
-                    disabled={!running || loadingPath !== null}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left font-mono text-xs disabled:opacity-50"
-                  >
-                    {loading ? (
-                      <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                    ) : entry.type === 'dir' ? (
-                      <Folder className="size-3.5 shrink-0" />
-                    ) : (
-                      <FileText className="size-3.5 shrink-0" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                    {entry.type === 'dir' ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
-                    {entry.type === 'file' ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
-                  </button>
-                  {entry.type === 'file' ? (
-                    <div className="flex shrink-0 items-center pr-1">
-                      <button
-                        type="button"
-                        onClick={() => void downloadFile(fullPath)}
-                        disabled={!running || loadingPath !== null}
-                        className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
-                        title={t('downloadFile')}
-                        aria-label={t('downloadFile')}
-                      >
-                        <Download className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void deleteFile(fullPath)}
-                        disabled={!running || loadingPath !== null}
-                        className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300"
-                        title={t('deleteFile')}
-                        aria-label={t('deleteFile')}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })
-          )}
-        </div>
-      </aside>
-
-      <div className="relative order-1 min-h-[34rem] min-w-0 xl:order-2">
-        {terminalPanel}
-        {preview ? (
-          <section className="absolute inset-0 flex min-h-0 flex-col overflow-hidden border border-border bg-card">
-            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-              <div className="min-w-0 truncate font-mono text-xs font-medium text-foreground">
-                {displayWorkspacePath(preview.path, workspaceRoot)}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setPreview(null);
-                  setSelectedPath('');
-                }}
-                className="ui-button-ghost ui-icon-button shrink-0"
-                title={t('close')}
-                aria-label={t('close')}
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">
-              {preview.content}
-            </pre>
-          </section>
-        ) : null}
-      </div>
+      {filesPanel}
+      <div className="relative order-1 min-h-[34rem] min-w-0 xl:order-2">{terminalPanel}{previewPanel}</div>
     </div>
   );
 }

@@ -10,6 +10,10 @@ const actions = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/agents/actions', () => actions);
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/app/acme/agents',
+  useSearchParams: () => new URLSearchParams('__dashboardTab=agents-tab'),
+}));
 
 describe('AgentsBrowser', () => {
   beforeEach(() => {
@@ -236,7 +240,6 @@ describe('AgentsBrowser', () => {
             model: 'gpt-4.1',
             toolCount: 0,
             subAgentCount: 0,
-            conversationCount: 0,
             runtimeKind: 'native',
             runtimeStatus: null,
           },
@@ -250,6 +253,10 @@ describe('AgentsBrowser', () => {
     expect(row).not.toBeNull();
     expect(within(row!).getByText('needs provider')).toBeInTheDocument();
     expect(within(row!).queryByText('Ready')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Orphaned model' })).toHaveAttribute(
+      'href',
+      '/app/acme/agents/agent-1?returnTo=%2Fapp%2Facme%2Fagents%3F__dashboardTab%3Dagents-tab',
+    );
   });
 
   it('marks a Hermes agent ready from its provider inventory without a fixed model', () => {
@@ -265,7 +272,6 @@ describe('AgentsBrowser', () => {
             model: null,
             toolCount: 0,
             subAgentCount: 0,
-            conversationCount: 0,
             runtimeKind: 'hermes',
             runtimeStatus: 'running',
           },
@@ -294,7 +300,6 @@ describe('AgentsBrowser', () => {
             model: 'gpt-4.1',
             toolCount: 2,
             subAgentCount: 1,
-            conversationCount: 3,
             runtimeKind: 'native',
             runtimeStatus: null,
           },
@@ -338,7 +343,6 @@ describe('AgentsBrowser', () => {
             model: null,
             toolCount: 0,
             subAgentCount: 0,
-            conversationCount: 2,
             runtimeKind: 'hermes',
             runtimeStatus: 'stopped',
           },

@@ -15,7 +15,7 @@ export function DashboardPage({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cx('ui-page space-y-6', className)}>{children}</div>;
+  return <div className={cx('ui-page space-y-5', className)}>{children}</div>;
 }
 
 export function DashboardToolbar({
@@ -154,7 +154,7 @@ export function DashboardPanel({
         className,
       )}
     >
-      <div className={cx('border-b px-5 py-4', danger ? 'border-red-100 dark:border-red-500/20' : 'border-border')}>
+      <div className={cx('border-b bg-muted/25 px-5 py-3.5', danger ? 'border-red-100 dark:border-red-500/20' : 'border-border')}>
         <h2 className={cx('text-sm font-semibold', danger ? 'text-red-700 dark:text-red-400' : 'text-foreground')}>
           {title}
         </h2>
@@ -164,7 +164,7 @@ export function DashboardPanel({
           </p>
         ) : null}
       </div>
-      <div className={cx(padded && 'px-5 py-5', bodyClassName)}>{children}</div>
+      <div className={cx(padded && 'px-5 py-4.5', bodyClassName)}>{children}</div>
     </section>
   );
 }

@@ -14,7 +14,7 @@ import { SettingsModal } from '@/components/dashboard/SettingsModal';
 describe('SettingsModal', () => {
   it('closes directly to the page that opened it', async () => {
     render(
-      <SettingsModal title="Settings" fallbackHref="/app/acme/overview">
+      <SettingsModal title="Settings" fallbackHref="/app/acme/chat">
         Content
       </SettingsModal>,
     );

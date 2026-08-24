@@ -49,7 +49,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex min-h-dvh bg-background text-foreground">
+    <div className="flex h-dvh min-h-dvh overflow-hidden bg-shell text-foreground">
       {mobileOpen ? (
         <button
           type="button"
@@ -61,20 +61,22 @@ export function AdminChrome({ children }: { children: ReactNode }) {
 
       <AdminSidebar mobileOpen={mobileOpen} onClose={closeMenu} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-[68px] shrink-0 items-center justify-between gap-3 border-b border-border bg-card/95 px-4 backdrop-blur lg:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 bg-shell px-4 lg:px-5">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              ref={menuButtonRef}
-              type="button"
-              aria-label={t('adminOpenMenu')}
-              aria-expanded={mobileOpen}
-              aria-controls="admin-sidebar"
-              onClick={() => setMobileOpen(true)}
-              className="ui-button-ghost ui-icon-button shrink-0 lg:hidden"
-            >
-              <Menu className="size-5" aria-hidden="true" />
-            </button>
+            <div className="shrink-0 lg:hidden">
+              <button
+                ref={menuButtonRef}
+                type="button"
+                aria-label={t('adminOpenMenu')}
+                aria-expanded={mobileOpen}
+                aria-controls="admin-sidebar"
+                onClick={() => setMobileOpen(true)}
+                className="ui-button-ghost ui-icon-button"
+              >
+                <Menu className="size-5" aria-hidden="true" />
+              </button>
+            </div>
             <p className="flex min-w-0 items-center gap-2 text-sm">
               <span className="hidden shrink-0 text-muted-foreground sm:inline">
                 {t('adminConsoleTitle')}
@@ -94,7 +96,9 @@ export function AdminChrome({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {children}
+        <div className="m-2 mt-0 min-h-0 flex-1 overflow-auto rounded-[14px] border border-border/80 bg-background shadow-[0_1px_2px_hsl(var(--foreground)_/_0.03)] lg:ml-0">
+          {children}
+        </div>
       </div>
     </div>
   );

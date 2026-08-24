@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file guides AI coding agents (pi, Codex, Claude Code, …) working in this repository. `CLAUDE.md` points here; `docs/` holds the deep feature references.
 
 ## What this is
 
@@ -8,12 +8,12 @@ ToolPlane is a self-hosted control plane for agent tools, MCP servers, skills,
 toolkits, and sandboxes. Three distinct zones share one Next.js app:
 
 1. **Public directory site** — `src/app/(site)/**` — browse/search MCP servers, clients, and skills. No auth, no personal data. Server Components read Prisma directly via `src/lib/queries/*`.
-2. **Console / Hub** — `src/app/app/[workspace]/**` — authenticated workspace. Deploying an MCP server **spawns a real Node subprocess** running a JSON-RPC server; the console proxies tool calls to it and records observability.
-3. **JSON API** — `src/app/api/v1/**` — MCP JSON-RPC gateway, skill downloads, toolkit/workspace manifests, and the **agent chat** endpoint.
+2. **Console** — `src/app/app/[workspace]/**` — authenticated workspace (agents, mcp, skills, toolkits, sandboxes, observability, market/seller, members, settings). Deploying an MCP server **spawns a real Node subprocess** running a JSON-RPC server; the console proxies tool calls to it and records observability.
+3. **JSON API** — `src/app/api/v1/**` — MCP JSON-RPC gateway, skill downloads, toolkit/workspace manifests, **agent chat**, public **agent endpoints**, messaging **agent channels**, and the workspace **agent-control MCP** server.
 
 The MCP runtime is real, not mocked: each `Deployment` = one live child process managed by `src/lib/process/supervisor.ts`.
 
-`docs/ARCHITECTURE.md` is the canonical deep reference (written in Chinese). **It predates the agents feature** — it still calls `/agents` a "Coming soon" placeholder, but agents are now fully implemented (see "Agent runtime" below). Trust the code over that doc where they conflict.
+`docs/ARCHITECTURE.md` is the deep reference for the core platform (written in Chinese). **It predates the agents feature** — for agents, read the feature docs instead: `docs/HERMES_AGENT_RUNTIME.md`, `docs/AGENT_MESSAGING_PLATFORMS.md`, `docs/AGENT_PUBLIC_API.md`, `docs/AGENT_CONTROL_MCP.md`, `docs/SANDBOXES.md`. Trust the code over any doc where they conflict.
 
 ## Commands
 
@@ -31,12 +31,13 @@ pnpm test:e2e                  # node e2e/dashboard.e2e.mjs — needs `pnpm dev`
 
 pnpm db:migrate                # prisma migrate dev
 pnpm db:generate               # prisma generate
+pnpm db:seed                   # tsx scripts/smoke-seed.ts
 pnpm db:studio                 # prisma studio
 ```
 
 Database is Postgres via `docker-compose.yml` plus the dev override (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres`, port **5433**, user/pass/db all `mcp`/`mcp`/`toolplane`). Copy `.env.example` → `.env`. Required vars: `DATABASE_URL`, `AUTH_SECRET` (JWT signing), `NEXT_PUBLIC_APP_URL`.
 
-Seed a test account: run `scripts/smoke-seed.ts` with tsx (`pnpm tsx scripts/smoke-seed.ts`) → `smoke@example.com` / `password123`. The seed is a standalone tsx script (it imports `dotenv/config` and uses the `@/` path alias).
+Seed a test account: `pnpm db:seed` → `smoke@example.com` / `password123`. The seed is a standalone tsx script and imports `dotenv/config`.
 
 ## Critical gotchas
 
@@ -65,20 +66,28 @@ auth → verify deployment belongs to the caller's workspace → `livePort()` �
 ### Toolkits = free assembly
 A `Toolkit` freely groups a workspace's deployed MCPs (`ToolkitServer`) and installed skills (`ToolkitSkill`). Each toolkit exports its own manifest (`/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest`); the workspace-level manifest exports everything. Backend actions in `src/lib/toolkits/actions.ts` all enforce workspace authorization — preserve that on any new mutation.
 
-### Agent runtime (newer than ARCHITECTURE.md)
-An `Agent` belongs to a workspace and binds: a `ModelProvider` + model id, an optional system prompt, `maxSteps`, and tool sources (attached `AgentServer`s, `AgentSkill`s, and whole `AgentToolkit`s). Chat lives at `POST /api/v1/agents/[agentId]/chat` (`runtime = 'nodejs'`), built on the **Vercel AI SDK v6** (`ai`, `@ai-sdk/anthropic`, `@ai-sdk/openai-compatible`, `@ai-sdk/react`):
+### Agent runtime
+An `Agent` belongs to a workspace and binds: a model (single `ModelProvider` + model id for the native runtime, multiple via `AgentModelProvider` for Hermes), an optional system prompt, `maxSteps`, and tool sources (attached `AgentServer`s, `AgentSkill`s, `AgentToolkit`s, `AgentSandbox`es, and sub-agents via `AgentSubAgent`). Two runtimes:
 
-- `src/lib/agents/resolve.ts` `resolveAgentTools()` — dedupes the agent's directly-attached + toolkit-derived deployments and skills into `{ deploymentIds, skills }`.
-- `src/lib/agents/tools.ts` `buildToolSet()` — for each **running** deployment, lists its MCP tools and wraps each as an AI-SDK `tool` whose `execute` proxies through `mcpRpc(..., 'tools/call', ...)`. Tool keys are `<dep8>__<toolName>` (sanitized).
-- `src/lib/agents/system-prompt.ts` — concatenates the agent's base prompt with each attached skill's `SKILL.md` (via `src/lib/skills/artifact.ts`).
-- `src/lib/agents/model.ts` `buildModel()` — provider `format === 'anthropic'` → `createAnthropic`, otherwise `createOpenAICompatible`. Providers store `baseUrl` + `apiKey`; `models` are fetched dynamically (`src/lib/agents/models-fetch.ts`).
-- The route uses `streamText` + `convertToModelMessages` (async in v6) + `stepCountIs(agent.maxSteps)`, and persists user/assistant turns to `Conversation`/`Message` only when `conversationId` belongs to that agent. Messages store AI-SDK `parts` as JSON; the UI renders assistant replies as markdown via Streamdown.
+- **Native** (default) — in-process, built on the **Vercel AI SDK v6** (`ai`, `@ai-sdk/anthropic`, `@ai-sdk/openai-compatible`, `@ai-sdk/react`).
+- **Hermes** (`agent.runtime?.kind === 'hermes'`) — one Docker container + persistent volume per agent (`src/lib/agents/hermes/`). ToolPlane stays the control plane; the container never sees Postgres or provider keys. Docs: `docs/HERMES_AGENT_RUNTIME.md`.
+
+Core flow:
+
+- Chat: `POST /api/v1/agents/[agentId]/chat` (`runtime = 'nodejs'`) — `streamText` + `createUIMessageStreamResponse` + `convertToModelMessages` (async in v6) + `stepCountIs(resolveMaxSteps(agent.maxSteps))`; Hermes turns stream through `hermes/client.ts`. Turns persist to `Conversation`/`Message` via `mutations.ts` (`appendMessage`) only when the `conversationId` belongs to that agent. Messages store AI-SDK `parts` as JSON; the UI renders assistant replies as markdown via Streamdown/assistant-ui.
+- `src/lib/agents/run.ts` `runAgentTurn()` — shared non-streaming engine for sub-agents (`AGENT_MAX_DEPTH = 3`, cycle guard); `resolve.ts` `resolveAgentTools()` dedupes directly-attached + toolkit-derived deployments/skills; `tools.ts` `buildToolSet()` wraps each **running** deployment's MCP tools as AI-SDK tools proxied via `mcpRpc` (keys `<dep8>__<toolName>`); `skill-tools.ts` builds the skill toolset; `system-prompt.ts` concatenates the base prompt + each skill's `SKILL.md`; `model.ts` `buildModel()` — `format === 'anthropic'` → `createAnthropic`, else `createOpenAICompatible` (models fetched dynamically via `models-fetch.ts`).
+- **Sandboxes** — `AgentSandbox` exposes a workspace as MCP tools plus a PTY terminal (`/api/v1/agents/[agentId]/terminal/**`, `@xterm`). Docs: `docs/SANDBOXES.md`.
+- **Messaging channels** — an `AgentChannelConnection` + `platforms.ts` (telegram/discord/slack/whatsapp/email/open_webui/…) connect an external ecosystem to one agent; `channel-*.ts` handle encrypted credentials, pairing, and the hosted runner. API: `src/app/api/v1/agent-channels/**`. Docs: `docs/AGENT_MESSAGING_PLATFORMS.md`.
+- **Public API** — published `AgentEndpoint`s expose an OpenAI-compatible responses/conversations API through `src/lib/agents/public-api/**` (`src/app/api/v1/agent-endpoints/**`). Never exposes the Hermes container API, runtime tokens, or provider keys. Docs: `docs/AGENT_PUBLIC_API.md`.
+- **Control MCP** — each workspace is a Streamable HTTP MCP server (`POST /api/v1/workspaces/[slug]/agents/mcp`) for creating/using agents from Claude Code/Codex/Cursor; `control-mcp.ts` + `control-service.ts`. Docs: `docs/AGENT_CONTROL_MCP.md`.
+- **Market** — `AgentListing` (public metadata) → immutable `AgentRelease` (allowlisted manifest, no secrets) → `AgentInstall`; `market*.ts`. Console: `/app/[workspace]/market` (buy) + `seller` (publish).
 
 ### Data model
-Prisma schema (`prisma/schema.prisma`) splits into directory content (`Server`, `Client`, `Skill`, `Category`, `DailySnapshot`) and runtime/account state (`User`, `ApiToken`, `Workspace`, `Membership`, `Deployment`, `InstalledSkill`, `RequestLog`, `Toolkit*`, `ModelProvider`, `Agent*`, `Conversation`, `Message`). Note: the legacy `User.hubServers` Hub-favorites relation was removed in code but may linger in schema — the Hub feature is gone; toolkits replaced it.
+Prisma schema (`prisma/schema.prisma`) splits into directory content (`Server`, `Client`, `Skill`, `Category`, `DailySnapshot`) and runtime/account state (`User`, `PasswordResetToken`, `ApiToken`, `SystemSetting`, `Workspace`, `Membership`, `Deployment`, `DeploymentConfigFile`, `Sandbox*`, `InstalledSkill`, `RequestLog`, `Toolkit*`, `ModelProvider`, and the agent family: `Agent`, `AgentServer/Skill/Toolkit/Sandbox/SubAgent`, `AgentRuntime`, `AgentAttachment`, `AgentChannelConnection`, `AgentModelProvider`, `AgentListing/Release/Install`, `AgentEndpoint*`, `Conversation`, `Message`).
 
 ## Security invariants to preserve
 
 - Every workspace-scoped query/mutation must verify the resource belongs to the caller's workspace (past IDOR bugs were fixed here — gateway, manifests, agent chat conversation scoping).
 - Never persist a chat turn to a conversation that doesn't belong to the agent in the URL.
+- Public endpoints are the only public door: they never expose the Hermes container API/dashboard, runtime tokens, provider keys, or MCP runtime tokens (`docs/AGENT_PUBLIC_API.md`).
 - API tokens: return plaintext exactly once on creation; only the hash is stored.

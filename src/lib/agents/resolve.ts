@@ -38,21 +38,24 @@ export type LoadedAgentTools = {
   servers: { deploymentId: string }[];
   skills: AttachedSkill[];
   toolkits: { toolkit: { servers: { deploymentId: string }[]; skills: AttachedSkill[] } }[];
-  sandboxes?: { sandbox: { deploymentId: string } }[];
+  sandboxes?: { sandboxId: string; isDefault: boolean; sandbox: { id: string; deploymentId: string } }[];
+  knowledgeBases?: { knowledgeBase: { id: string; embeddingModel: string; topK: number; threshold: number; provider: { format: string; baseUrl: string; apiKey: string } | null } }[];
   subAgents?: { child: SubAgentChild }[];
 };
 
-export function resolveAgentTools(agent: LoadedAgentTools): {
+export function resolveAgentTools(agent: LoadedAgentTools, sandboxId?: string | null): {
   deploymentIds: string[];
   sandboxDeploymentIds: string[];
   skills: SkillForPrompt[];
   subAgents: SubAgentRef[];
+  knowledgeBases?: NonNullable<LoadedAgentTools['knowledgeBases']>;
 } {
   const depSet = new Set<string>();
   const sandboxDepSet = new Set<string>();
   const skillMap = new Map<string, SkillForPrompt>();
   for (const s of agent.servers) depSet.add(s.deploymentId);
   for (const s of agent.sandboxes ?? []) {
+    if (s.sandboxId !== sandboxId) continue;
     depSet.add(s.sandbox.deploymentId);
     sandboxDepSet.add(s.sandbox.deploymentId);
   }
@@ -74,5 +77,11 @@ export function resolveAgentTools(agent: LoadedAgentTools): {
     });
   }
 
-  return { deploymentIds: [...depSet], sandboxDeploymentIds: [...sandboxDepSet], skills, subAgents: [...subMap.values()] };
+  return {
+    deploymentIds: [...depSet],
+    sandboxDeploymentIds: [...sandboxDepSet],
+    skills,
+    subAgents: [...subMap.values()],
+    ...(agent.knowledgeBases ? { knowledgeBases: agent.knowledgeBases } : {}),
+  };
 }

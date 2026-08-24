@@ -1,45 +1,31 @@
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { getLocale, getTranslations } from 'next-intl/server';
+import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
 import { listSandboxes } from '@/lib/sandboxes/queries';
 import {
   getAgentPageData,
-  getConversation,
   listAgentDeploymentOptions,
   listAgents,
   listAgentSkillOptions,
-  listConversations,
   listProviders,
   resolveAgentMarketSetupGuide,
 } from '@/lib/agents/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
-import { AgentChat } from '@/components/dashboard/agents/AgentChat';
+import { AgentSettings } from '@/components/dashboard/agents/AgentSettings';
 import { listAgentChannelConnections } from '@/lib/agents/channel-connections';
 import { toAgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
-import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import { createHermesDashboardPath } from '@/lib/agents/hermes/token';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
-import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { SettingsModal } from '@/components/dashboard/SettingsModal';
 import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { originFromHeaders } from '@/lib/http/origin';
 import { getAgentEndpointForManagement } from '@/lib/agents/public-api/queries';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
-
-function fmtDate(d: Date, timeZone: string, locale: string): string {
-  return formatInTimeZone(
-    d,
-    timeZone,
-    { month: 'short', day: 'numeric' },
-    locale,
-  );
-}
 
 function isoDate(value: Date | string | null): string | null {
   if (!value) return null;
@@ -65,24 +51,26 @@ export default async function AgentDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; agentId: string }>;
-  searchParams: Promise<{ c?: string; settings?: string }>;
+  searchParams: Promise<{ c?: string; settings?: string; tab?: string }>;
 }) {
   const { workspace: slug, agentId } = await params;
-  const { c, settings } = await searchParams;
-  const [t, locale] = await Promise.all([
-    getTranslations('console.agents'),
-    getLocale(),
-  ]);
+  const { c, settings, tab } = await searchParams;
+  const t = await getTranslations('console.agents');
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
-  const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
 
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
+
+  if (c || tab === 'chat') {
+    const query = new URLSearchParams({ agent: agentId });
+    if (c) query.set('c', c);
+    redirect(`/app/${slug}/chat?${query}`);
+  }
 
   const isHermes = agent.runtime?.kind === 'hermes';
   const ready = isHermes
@@ -98,7 +86,6 @@ export default async function AgentDetailPage({
   const selectedDeps = new Set(agent.servers.map((server) => server.deploymentId));
   const selectedSkills = new Set(agent.skills.map((skill) => skill.installedSkillId));
   const [
-    conversations,
     channelConnections,
     providers,
     deployments,
@@ -110,7 +97,6 @@ export default async function AgentDetailPage({
     managerMembership,
     requestHeaders,
   ] = await Promise.all([
-    listConversations(agentId),
     agent.runtime?.kind === 'hermes'
       ? Promise.resolve([])
       : listAgentChannelConnections(ws.id, agentId),
@@ -130,44 +116,17 @@ export default async function AgentDetailPage({
     headers(),
   ]);
 
-  const activeId = c ?? conversations[0]?.id ?? null;
-  const loaded = activeId ? await getConversation(activeId, ws.id) : null;
-  const conv = loaded && loaded.agentId === agentId ? loaded : null;
-  const initialMessages: HermesUIMessage[] = (conv?.messages ?? []).map((m) => ({
-    id: m.id,
-    role: m.role as HermesUIMessage['role'],
-    parts: m.parts as HermesUIMessage['parts'],
-  }));
-
   const selectedToolkits = new Set(agent.toolkits.map((toolkit) => toolkit.toolkitId));
   const selectedSandboxes = new Set(agent.sandboxes.map((sandbox) => sandbox.sandboxId));
   const selectedSubAgents = new Set(agent.subAgents.map((subAgent) => subAgent.childId));
   const marketSetup = await resolveAgentMarketSetupGuide(ws.id, agent.marketInstall);
 
   return (
-    <>
-      <DashboardHeader
-        breadcrumb={[
-          { label: t('title'), href: `/app/${slug}/agents` },
-          { label: agent.name },
-        ]}
-      />
-      <AgentChat
-        key={`${conv?.id ?? 'empty'}-${settings ?? 'chat'}`}
+    <SettingsModal title={t('agentSettings')} fallbackHref={`/app/${slug}/agents`}>
+      <AgentSettings
+        key={settings ?? 'general'}
         slug={slug}
         agentId={agentId}
-        conversationId={conv?.id ?? null}
-        initialMessages={initialMessages}
-        conversations={conversations.map((cv) => ({
-          id: cv.id,
-          title: cv.title,
-          createdAt: fmtDate(cv.createdAt, timeZone, locale),
-          messageCount: cv._count.messages,
-          lastMessageAt: cv.messages[0]?.createdAt
-            ? fmtDate(cv.messages[0].createdAt, timeZone, locale)
-            : null,
-          source: parseMessagingSessionTitle(cv.title),
-        }))}
         settings={{
           name: agent.name,
           systemPrompt: agent.runtime?.kind === 'hermes' ? '' : agent.systemPrompt ?? '',
@@ -184,6 +143,7 @@ export default async function AgentDetailPage({
             checked: selectedToolkits.has(t.id),
             status: t.enabled ? 'enabled' : 'disabled',
           })),
+          defaultSandboxId: agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandboxId ?? null,
           sandboxes: sandboxes
             .filter((s) => {
               if (s.id === agent.runtime?.sandboxId) return false;
@@ -278,6 +238,6 @@ export default async function AgentDetailPage({
         marketSetup={marketSetup}
         initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
-    </>
+    </SettingsModal>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
+import { useActionState, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import {
   Blocks,
   Bot,
@@ -59,6 +59,7 @@ export function AgentSettingsForm({
   deployments,
   skills,
   toolkits,
+  defaultSandboxId = null,
   sandboxes,
   subAgents,
   runtime = null,
@@ -80,6 +81,7 @@ export function AgentSettingsForm({
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
+  defaultSandboxId?: string | null;
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
   runtime?: {
@@ -130,6 +132,7 @@ export function AgentSettingsForm({
   const [selectedSkillIds, setSelectedSkillIds] = useState(() => checkedIds(skills));
   const [selectedToolkitIds, setSelectedToolkitIds] = useState(() => checkedIds(toolkits));
   const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => checkedIds(sandboxes));
+  const [selectedDefaultSandboxId, setSelectedDefaultSandboxId] = useState(defaultSandboxId ?? '');
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
   const [uncontrolledActiveSection, setUncontrolledActiveSection] = useState<AgentSettingsSection>('general');
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
@@ -234,6 +237,13 @@ export function AgentSettingsForm({
     setSaveStatus('idle');
   }
 
+  function flushAutoSave(event: FocusEvent<HTMLFormElement>) {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    if (!autoSaveTimerRef.current) return;
+    clearAutoSaveTimer();
+    event.currentTarget.requestSubmit();
+  }
+
   const activeRuntimeState = lastRuntimeAction === 'sync'
     ? syncState
     : lastRuntimeAction === 'stop'
@@ -277,6 +287,7 @@ export function AgentSettingsForm({
     <form
       ref={formRef}
       action={formAction}
+      onBlur={flushAutoSave}
       onChange={scheduleAutoSave}
       onSubmit={handleSubmit}
       className={className}
@@ -697,9 +708,18 @@ export function AgentSettingsForm({
             selectedIds={selectedSandboxIds}
             onSelectionChange={(next) => {
               setSelectedSandboxIds(next);
+              if (!next.has(selectedDefaultSandboxId)) setSelectedDefaultSandboxId([...next][0] ?? '');
               scheduleAutoSave();
             }}
           />
+          {selectedSandboxIds.size ? (
+            <label className="mt-3 block text-xs text-muted-foreground">
+              <span className="mb-1 block">Default Work sandbox</span>
+              <select name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
+                {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxes.find((item) => item.id === id)?.label ?? id}</option>)}
+              </select>
+            </label>
+          ) : null}
           {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
         </div>
       </section>

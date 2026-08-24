@@ -82,7 +82,7 @@ function ToolkitAvailabilityPill({
     </>
   ) : (
     <>
-      <span className={`size-2 rounded-full ${enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
+      <span className={`size-2 rounded-full ${enabled ? 'bg-emerald-500' : 'bg-muted-foreground/55'}`} />
       {label}
     </>
   );
@@ -138,7 +138,7 @@ export function ToolkitsBrowser({
           </>
         }
       >
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-muted-foreground">
           {t('bundleToolsIntoASingleEndpoint')}
         </p>
       </DashboardToolbar>

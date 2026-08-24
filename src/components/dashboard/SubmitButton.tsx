@@ -18,6 +18,8 @@ export function SubmitButton({
   flash = true,
   error,
   disabled = false,
+  ariaLabel,
+  title,
 }: {
   children?: ReactNode;
   className?: string;
@@ -28,6 +30,8 @@ export function SubmitButton({
   flash?: boolean;
   error?: string | boolean | null;
   disabled?: boolean;
+  ariaLabel?: string;
+  title?: string;
 }) {
   const { pending } = useFormStatus();
   const [justSaved, setJustSaved] = useState(false);
@@ -50,6 +54,8 @@ export function SubmitButton({
       disabled={pending || disabled}
       aria-busy={pending}
       aria-disabled={disabled || undefined}
+      aria-label={ariaLabel}
+      title={title}
       className={`${className ?? ''} disabled:opacity-70 ${pending ? 'cursor-wait' : 'disabled:cursor-not-allowed'}`}
     >
       <span className="inline-flex items-center gap-1.5">

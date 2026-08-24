@@ -16,9 +16,12 @@ import {
   deleteAgent,
   createProvider,
   updateProvider,
+  updateAgentModelSelection,
   deleteProvider,
   setProviderModels,
   createConversation,
+  renameConsoleConversation,
+  deleteConsoleConversation,
   setHermesRuntimeEnv,
 } from '@/lib/agents/mutations';
 import {
@@ -517,11 +520,33 @@ export async function updateAgentAction(
     installedSkillIds: formData.getAll('installedSkillId').map(String),
     toolkitIds: formData.getAll('toolkitId').map(String),
     sandboxIds: formData.getAll('sandboxId').map(String),
+    defaultSandboxId: String(formData.get('defaultSandboxId') ?? '') || null,
     subAgentIds: formData.getAll('subAgentId').map(String),
   });
   const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
+  return { savedAt: Date.now() };
+}
+
+export async function updateAgentModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
+
+  await updateAgentModelSelection(
+    ctx.ws.id,
+    agentId,
+    formData.getAll('providerId').map(String),
+    String(formData.get('model') ?? '').trim() || null,
+  );
+  revalidatePath(`/app/${slug}/agents/${agentId}`);
+  revalidatePath(`/app/${slug}/chat`);
   return { savedAt: Date.now() };
 }
 
@@ -630,7 +655,33 @@ export async function createConversationAction(formData: FormData) {
   const conv = await createConversation(ctx.ws.id, agentId);
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  redirect(`/app/${slug}/agents/${agentId}?tab=chat&c=${conv.id}`);
+  revalidatePath(`/app/${slug}/chat`);
+  redirect(`/app/${slug}/chat?agent=${agentId}&c=${conv.id}`);
+}
+
+export async function renameConversationAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const conversationId = String(formData.get('conversationId') ?? '');
+  const title = String(formData.get('title') ?? '').trim().slice(0, 120);
+  if (!conversationId || !title) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
+  if (await renameConsoleConversation(ctx.ws.id, agentId, conversationId, title)) {
+    revalidatePath(`/app/${slug}/chat`);
+  }
+}
+
+export async function deleteConversationAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const conversationId = String(formData.get('conversationId') ?? '');
+  if (!conversationId) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
+  if (!await deleteConsoleConversation(ctx.ws.id, agentId, conversationId)) return;
+  revalidatePath(`/app/${slug}/chat`);
+  redirect(`/app/${slug}/chat?agent=${agentId}`);
 }
 
 export async function createAgentChannelConnectionAction(formData: FormData) {

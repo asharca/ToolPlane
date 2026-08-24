@@ -5,6 +5,8 @@ import { useFormStatus } from 'react-dom';
 
 type ConfirmSubmitButtonProps = {
   triggerLabel: ReactNode;
+  triggerAriaLabel?: string;
+  triggerTitle?: string;
   confirmLabel: ReactNode;
   cancelLabel: ReactNode;
   prompt: ReactNode;
@@ -19,6 +21,8 @@ type ConfirmSubmitButtonProps = {
 
 export function ConfirmSubmitButton({
   triggerLabel,
+  triggerAriaLabel,
+  triggerTitle,
   confirmLabel,
   cancelLabel,
   prompt,
@@ -92,6 +96,8 @@ export function ConfirmSubmitButton({
           type="button"
           disabled={disabled || pending}
           onClick={() => setConfirming(true)}
+          aria-label={triggerAriaLabel}
+          title={triggerTitle}
           className={`${triggerClassName} disabled:cursor-not-allowed disabled:opacity-60`}
         >
           {triggerLabel}

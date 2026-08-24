@@ -54,6 +54,16 @@ describe('workspace handoff intents', () => {
     );
   });
 
+  it('opens Chat for an authenticated user without a handoff intent', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1', email: 'smoke@example.com' });
+
+    await expect(AppIndexPage({
+      searchParams: Promise.resolve({}),
+    })).rejects.toMatchObject({
+      url: '/app/smoke/chat',
+    });
+  });
+
   it('keeps an exact deployable server intent on its market detail route', async () => {
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1', email: 'smoke@example.com' });
 

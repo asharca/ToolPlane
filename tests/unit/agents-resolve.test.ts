@@ -43,13 +43,13 @@ describe('resolveAgentTools', () => {
     });
   });
 
-  it('adds sandbox deployments to the agent tool list and tracks them separately', () => {
+  it('adds only the selected sandbox deployment to the agent tool list', () => {
     const { deploymentIds, sandboxDeploymentIds } = resolveAgentTools({
       servers: [{ deploymentId: 'mcp1' }],
       skills: [],
       toolkits: [],
-      sandboxes: [{ sandbox: { deploymentId: 'sandbox1' } }],
-    });
+      sandboxes: [{ sandboxId: 'sandbox-id', isDefault: true, sandbox: { id: 'sandbox-id', deploymentId: 'sandbox1' } }],
+    }, 'sandbox-id');
     expect(deploymentIds.sort()).toEqual(['mcp1', 'sandbox1']);
     expect(sandboxDeploymentIds).toEqual(['sandbox1']);
   });
