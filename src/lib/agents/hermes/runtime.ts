@@ -711,7 +711,11 @@ async function buildProjection(
     publicRuntime: Boolean(agent.publicRuntimeAllocation),
   });
   const runtimeEnvironment = readSandboxEnv(agent.runtime.sandbox.config);
-  const envPayload = renderHermesEnvPayload(runtimeEnvironment);
+  const projectedEnvironment = {
+    ...runtimeEnvironment,
+    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+  };
+  const envPayload = renderHermesEnvPayload(projectedEnvironment);
   await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
   await writeFile(path.join(directory, 'env.json'), envPayload, { mode: 0o600 });
   await writeFile(
@@ -728,7 +732,7 @@ async function buildProjection(
   // Native channel values are merely a one-time compatibility seed; Hermes'
   // volume owns them afterwards, so they must not keep invalidating the
   // ToolPlane projection fingerprint.
-  hash.update(`env\0${renderHermesEnvPayload(withoutHermesChannelEnv(runtimeEnvironment))}\0`);
+  hash.update(`env\0${renderHermesEnvPayload(withoutHermesChannelEnv(projectedEnvironment))}\0`);
   hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
 
   const usedNames = new Set<string>();

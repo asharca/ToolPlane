@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   disconnectConnector: vi.fn(),
   setConnectorSetupTokenCookie: vi.fn(),
   runHermesRuntimeMaintenance: vi.fn(),
+  ensureHermesRuntimeReady: vi.fn(),
   setHermesRuntimeEnv: vi.fn(),
   syncHermesRuntime: vi.fn(),
   headers: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock('@/lib/sandboxes/connector-setup-token', () => ({
   setConnectorSetupTokenCookie: mocks.setConnectorSetupTokenCookie,
 }));
 vi.mock('@/lib/agents/hermes/runtime', () => ({
+  ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance: mocks.runHermesRuntimeMaintenance,
   syncHermesRuntime: mocks.syncHermesRuntime,
 }));
@@ -210,6 +212,7 @@ describe('renameSandboxAction', () => {
     mocks.killProcess.mockResolvedValue(undefined);
     mocks.removeDockerVolumeCopyHelper.mockResolvedValue(undefined);
     mocks.setHermesRuntimeEnv.mockResolvedValue(true);
+    mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 8642 });
     mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
     mocks.headers.mockResolvedValue(new Headers({
       'x-forwarded-host': 'connect.example.com',
@@ -413,6 +416,19 @@ describe('renameSandboxAction', () => {
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes/sb1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/work');
+  });
+
+  it('starts an agent-managed Hermes sandbox through its runtime', async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+
+    await startSandboxAction(renameForm('Ignored'));
+
+    expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith('ws1', 'agent-1');
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/work');
   });
 
   it('creates the connector without collecting connection settings or exposing a token', async () => {

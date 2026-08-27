@@ -17,6 +17,12 @@ async function openDialog() {
 }
 
 describe('DeployCustomMcpDialog', () => {
+  it('can open directly from a create handoff', () => {
+    render(<DeployCustomMcpDialog slug="acme" defaultOpen />);
+
+    expect(screen.getByRole('dialog', { name: 'Deploy custom MCP' })).toBeInTheDocument();
+  });
+
   it('creates only JSON MCPs and fixes the submitted source to config', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();

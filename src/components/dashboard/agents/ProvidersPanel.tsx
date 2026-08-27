@@ -1,12 +1,11 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useActionState, useState } from 'react';
+import { useActionState, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Braces,
   Cpu,
-  Eye,
   FlaskConical,
   KeyRound,
   Link2,
@@ -14,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Trash2,
   X,
 } from 'lucide-react';
@@ -96,7 +96,6 @@ function ActionMessage({ state }: { state: ActionState }) {
 const dialogWidths = {
   'max-w-xl': '!max-w-xl',
   'max-w-2xl': '!max-w-2xl',
-  'max-w-4xl': '!max-w-4xl',
 } as const;
 
 function ProviderDialog({
@@ -267,9 +266,14 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
   const [state, testAction] = useActionState<ActionState, FormData>(testProviderModelAction, {});
 
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+    <div className="rounded-lg px-2.5 py-1.5 transition-colors hover:bg-muted/60">
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className="truncate text-xs font-medium text-foreground">{model}</span>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[10px] font-semibold text-muted-foreground">
+            {model.charAt(0).toUpperCase() || 'M'}
+          </span>
+          <span className="truncate text-sm text-foreground" title={model}>{model}</span>
+        </div>
         <form action={testAction}>
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="providerId" value={providerId} />
@@ -292,79 +296,6 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
         <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-300" role="status">{t('modelAvailable')}</p>
       ) : null}
     </div>
-  );
-}
-
-function ViewModelsDialog({
-  slug,
-  provider,
-  piProviderPresets,
-}: {
-  slug: string;
-  provider: ProviderRow;
-  piProviderPresets: ProviderPreset[];
-}) {
-  const t = useTranslations('console.agents');
-  const [open, setOpen] = useState(false);
-  const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
-  const endpoint = providerEndpoint(provider, piProviderPresets, t('builtInConnection'));
-
-  return (
-    <ProviderDialog
-      open={open}
-      onOpenChange={setOpen}
-      title={t('viewModels')}
-      maxWidth="max-w-4xl"
-      trigger={(
-        <button
-          type="button"
-          aria-label={t('viewModels')}
-          title={t('viewModels')}
-          className="ui-button-ghost ui-icon-button"
-        >
-          <Eye className="size-[18px]" />
-        </button>
-      )}
-    >
-        <div className="space-y-4 px-5 py-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
-              <p className="mt-1 truncate text-xs text-muted-foreground">{endpoint}</p>
-              {provider.modelsFetchedAt ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {t('lastRefreshedAt', { date: provider.modelsFetchedAt })}
-                </p>
-              ) : null}
-            </div>
-            <form action={refreshAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="providerId" value={provider.id} />
-              <SubmitButton
-                error={refreshState.error}
-                pendingLabel={t('refreshing')}
-                savedLabel={t('refreshed')}
-                ariaLabel={t('refreshModels')}
-                title={t('refreshModels')}
-                className="ui-button-secondary h-9 shrink-0 gap-2 px-3"
-              >
-                <RefreshCw className="size-4" />
-                {t('refreshModels')}
-              </SubmitButton>
-            </form>
-          </div>
-          <ActionMessage state={refreshState} />
-          {provider.models.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {provider.models.map((model) => (
-                <ModelTestRow key={model} slug={slug} providerId={provider.id} model={model} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">{t('noModelsCachedYet')}</p>
-          )}
-        </div>
-    </ProviderDialog>
   );
 }
 
@@ -467,7 +398,7 @@ function EditProviderDialog({
   );
 }
 
-function ProviderCard({
+function ProviderDetail({
   slug,
   provider,
   piProviderPresets,
@@ -478,28 +409,39 @@ function ProviderCard({
 }) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
+  const [modelQuery, setModelQuery] = useState('');
+  const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
   const endpoint = providerEndpoint(provider, piProviderPresets, t('builtInConnection'));
+  const visibleModels = useMemo(() => {
+    const query = modelQuery.trim().toLocaleLowerCase();
+    return query
+      ? provider.models.filter((model) => model.toLocaleLowerCase().includes(query))
+      : provider.models;
+  }, [modelQuery, provider.models]);
 
   return (
-    <li className="grid gap-3 px-5 py-4">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Cpu className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-foreground">{provider.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{endpoint}</p>
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-sm font-semibold text-muted-foreground">
+            {provider.name.charAt(0).toUpperCase() || 'P'}
+          </span>
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="truncate text-[15px] font-semibold text-foreground">{provider.name}</h2>
+              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                {provider.format}
+              </span>
             </div>
-            <span className="inline-flex h-6 items-center rounded-md border border-border bg-background px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {provider.format}
-            </span>
-            <span className="inline-flex h-6 items-center rounded-md bg-accent px-2 text-[11px] font-semibold uppercase tracking-wide text-accent-foreground">
-              {provider.modelCount} {t('models')}
-            </span>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={endpoint}>{endpoint}</p>
+            {provider.modelsFetchedAt ? (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {t('lastRefreshedAt', { date: provider.modelsFetchedAt })}
+              </p>
+            ) : null}
           </div>
         </div>
-        <div className="flex flex-wrap gap-1 lg:justify-end">
-          <ViewModelsDialog slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
+        <div className="flex shrink-0 items-center gap-1">
           <EditProviderDialog slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
           <form action={deleteProviderAction}>
             <input type="hidden" name="workspace" value={slug} />
@@ -520,8 +462,58 @@ function ProviderCard({
             />
           </form>
         </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 sm:px-6 sm:pb-6">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <h3 className="text-sm font-semibold text-foreground">{t('models')}</h3>
+            <span className="text-xs tabular-nums text-muted-foreground">{provider.modelCount}</span>
+          </div>
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
+            <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
+              <span className="sr-only">{t('searchModels')}</span>
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={modelQuery}
+                onChange={(event) => setModelQuery(event.target.value)}
+                placeholder={t('searchModels')}
+                className="ui-input h-8 w-full pl-8 pr-2 text-xs"
+              />
+            </label>
+            <form action={refreshAction}>
+              <input type="hidden" name="workspace" value={slug} />
+              <input type="hidden" name="providerId" value={provider.id} />
+              <SubmitButton
+                error={refreshState.error}
+                pendingLabel={t('refreshing')}
+                savedLabel={t('refreshed')}
+                ariaLabel={t('refreshModels')}
+                title={t('refreshModels')}
+                className="ui-button-secondary h-8 shrink-0 gap-1.5 px-2.5 text-xs"
+              >
+                <RefreshCw className="size-3.5" />
+                <span className="hidden sm:inline">{t('refreshModels')}</span>
+              </SubmitButton>
+            </form>
+          </div>
+        </div>
+        <ActionMessage state={refreshState} />
+        <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+          {visibleModels.length > 0 ? (
+            <div className="space-y-0.5">
+              {visibleModels.map((model) => (
+                <ModelTestRow key={model} slug={slug} providerId={provider.id} model={model} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-40 items-center justify-center px-4 text-center text-sm text-muted-foreground">
+              {provider.models.length > 0 ? t('noMatchingModels') : t('noModelsCachedYet')}
+            </div>
+          )}
+        </div>
       </div>
-    </li>
+    </section>
   );
 }
 
@@ -537,33 +529,86 @@ export function ProvidersPanel({
   embedded?: boolean;
 }) {
   const t = useTranslations('console.agents');
+  const common = useTranslations('common');
+  const [providerQuery, setProviderQuery] = useState('');
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(providers[0]?.id ?? null);
+  const visibleProviders = useMemo(() => {
+    const query = providerQuery.trim().toLocaleLowerCase();
+    if (!query) return providers;
+    return providers.filter((provider) => [provider.name, provider.format, ...provider.models]
+      .some((value) => value.toLocaleLowerCase().includes(query)));
+  }, [providerQuery, providers]);
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? providers[0] ?? null;
 
   return (
-    <div className={embedded ? 'space-y-5' : 'space-y-5 px-4 py-5 sm:px-6 lg:px-8'}>
-      <section className="ui-panel overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-foreground">{t('modelProviders')}</h2>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex h-7 items-center rounded-md border border-border bg-muted/25 px-2.5 text-xs font-medium text-muted-foreground">
-              {providers.length} {t('providers')}
-            </span>
+    <div className={embedded ? 'flex h-full min-h-0' : 'flex min-h-0 flex-1 p-3 sm:p-4'}>
+      <div className={`flex min-h-0 w-full flex-col overflow-hidden bg-background md:flex-row ${embedded ? '' : 'rounded-lg border border-border'}`}>
+        <aside className="flex max-h-56 w-full shrink-0 flex-col border-b border-border md:max-h-none md:h-full md:w-[248px] md:border-b-0 md:border-r">
+          <div className="flex shrink-0 items-center gap-1.5 px-2.5 pt-2.5">
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">{common('search')} {t('modelProviders')}</span>
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={providerQuery}
+                onChange={(event) => setProviderQuery(event.target.value)}
+                placeholder={common('search')}
+                className="ui-input h-8 w-full rounded-[10px] pl-8 pr-2 text-xs"
+              />
+            </label>
             <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} iconOnly />
           </div>
-        </div>
-        {providers.length === 0 ? (
-          <div className="px-5 py-10 text-center">
-            <Cpu className="mx-auto mb-3 size-8 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">{t('noProvidersYet')}</h3>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+            {visibleProviders.length > 0 ? (
+              <div className="space-y-1">
+                {visibleProviders.map((provider) => {
+                  const selected = provider.id === selectedProvider?.id;
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      aria-label={provider.name}
+                      aria-pressed={selected}
+                      onClick={() => setSelectedProviderId(provider.id)}
+                      className={`group flex h-10 w-full items-center gap-2.5 rounded-[10px] px-2 text-left transition-colors ${selected ? 'bg-muted' : 'hover:bg-muted/70'}`}
+                    >
+                      <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-[10px] font-semibold text-muted-foreground">
+                        {provider.name.charAt(0).toUpperCase() || 'P'}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className={`block truncate text-sm text-foreground ${selected ? 'font-medium' : ''}`}>{provider.name}</span>
+                        <span className="block truncate text-[11px] text-muted-foreground">{provider.format}</span>
+                      </span>
+                      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{provider.modelCount}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex h-full min-h-24 items-center justify-center px-3 text-center text-xs text-muted-foreground">
+                {t('noProvidersYet')}
+              </div>
+            )}
+          </div>
+          <div className="shrink-0 px-2.5 pb-2.5 text-[11px] text-muted-foreground">
+            {providers.length} {t('providers')}
+          </div>
+        </aside>
+
+        {selectedProvider ? (
+          <ProviderDetail
+            key={selectedProvider.id}
+            slug={slug}
+            provider={selectedProvider}
+            piProviderPresets={piProviderPresets}
+          />
+        ) : (
+          <div className="flex min-h-64 flex-1 flex-col items-center justify-center px-5 text-center">
+            <Cpu className="mb-3 size-8 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">{t('noProvidersYet')}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{t('noProvidersYetAddOneAboveThenRefreshItsModels')}</p>
           </div>
-        ) : (
-          <ul className="divide-y divide-border">
-            {providers.map((provider) => (
-              <ProviderCard key={provider.id} slug={slug} provider={provider} piProviderPresets={piProviderPresets} />
-            ))}
-          </ul>
         )}
-      </section>
+      </div>
     </div>
   );
 }

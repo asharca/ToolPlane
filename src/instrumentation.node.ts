@@ -79,6 +79,13 @@ export async function registerNode() {
     console.error('[mcp] startup reconcile failed', error);
   }
 
+  try {
+    const { startWorkCoordinator } = await import('@/lib/work/coordinator');
+    await startWorkCoordinator();
+  } catch (error) {
+    console.error('[work] startup reconcile failed', error);
+  }
+
   if (!g.__agentApiMaintenanceTimer) {
     let running = false;
     const maintain = async () => {

@@ -9,6 +9,7 @@ import { UserTimeZoneProvider } from '@/components/timezone/UserTimeZoneProvider
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import { runtimeSupportEmail } from '@/lib/site-runtime';
+import { readCurrentVersion } from '@/lib/system/release-update';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,7 @@ export default async function WorkspaceLayout({
   if (!ws) redirect('/app');
   const workspaces = await listWorkspacesForUser(user.id);
   const messages = await getMessages();
+  const currentVersion = await readCurrentVersion();
 
   return (
     <NextIntlClientProvider
@@ -48,6 +50,7 @@ export default async function WorkspaceLayout({
           userLabel={user.name ?? user.email}
           workspaces={workspaces}
           supportEmail={runtimeSupportEmail()}
+          currentVersion={currentVersion}
           isAdmin={user.role === 'admin'}
         >
           {children}

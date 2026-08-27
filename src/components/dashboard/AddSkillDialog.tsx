@@ -85,12 +85,14 @@ function GithubImportForm({ slug }: { slug: string }) {
 export function AddSkillDialog({
   slug,
   maxSkillImportSkills = DEFAULT_SKILL_IMPORT_SKILLS,
+  defaultOpen = false,
 }: {
   slug: string;
   maxSkillImportSkills?: number;
+  defaultOpen?: boolean;
 }) {
   const t = useTranslations('console.skills');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [mode, setMode] = useState<Mode>('menu');
   const [folder, setFolder] = useState<FolderSelection>(emptySelection);
   const close = () => { setOpen(false); setMode('menu'); setFolder(emptySelection); };

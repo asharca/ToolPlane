@@ -1,6 +1,7 @@
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { livePort } from '@/lib/process/supervisor';
+import { ensureHermesRuntimeReady } from '@/lib/agents/hermes/runtime';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,19 +19,38 @@ async function resolveTarget(req: Request, workSessionId: string) {
       sandboxId: { not: null },
     },
     select: {
+      workspaceId: true,
+      runtimeKind: true,
       sandboxId: true,
-      agent: { select: { sandboxes: { select: { sandboxId: true } } } },
+      agent: {
+        select: {
+          id: true,
+          sandboxes: { select: { sandboxId: true } },
+          runtime: { select: { kind: true, sandboxId: true } },
+        },
+      },
       sandbox: { select: { deploymentId: true } },
     },
   });
-  if (!work?.sandbox || !work.sandboxId || !work.agent.sandboxes.some((link) => link.sandboxId === work.sandboxId)) return null;
-  const port = livePort(work.sandbox.deploymentId);
+  if (!work?.sandbox || !work.sandboxId) return null;
+  const genericSandbox = work.agent.sandboxes.some((link) => link.sandboxId === work.sandboxId);
+  const hermesSandbox = work.runtimeKind === 'hermes'
+    && work.agent.runtime?.kind === 'hermes'
+    && work.agent.runtime.sandboxId === work.sandboxId;
+  if (!genericSandbox && !hermesSandbox) return null;
+  let port = livePort(work.sandbox.deploymentId);
+  if (!port && hermesSandbox) {
+    port = (await ensureHermesRuntimeReady(work.workspaceId, work.agent.id)).port ?? null;
+  }
   return port ? { port } : null;
 }
 
 function upstreamPath(path: string[]) {
   if (path[0] === 'rpc' && path.length === 1) return '/';
-  if (path[0] === 'terminal') return `/${path.map(encodeURIComponent).join('/')}`;
+  if (path[0] === 'terminal') {
+    const suffix = path.slice(1).map(encodeURIComponent).join('/');
+    return `/terminal/session${suffix ? `/${suffix}` : ''}`;
+  }
   return null;
 }
 

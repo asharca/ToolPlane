@@ -1,7 +1,16 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
-import { ArrowLeft, Brain, FileArchive, GitBranch, Star } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Brain,
+  CheckCircle2,
+  FileArchive,
+  GitBranch,
+  ShieldCheck,
+  Star,
+} from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketSkill, getWorkspaceForUser } from '@/lib/workspace/queries';
 import { installSkillAction } from '@/lib/workspace/actions';
@@ -37,59 +46,81 @@ export default async function SkillMarketDetailPage({
         {t('backToSkills')}
       </Link>
 
-      <div className="flex flex-col gap-5 rounded-lg border border-border bg-card p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-4">
-          {skill.iconUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={skill.iconUrl} alt="" width={56} height={56} className="size-14 rounded-xl object-cover" />
-          ) : (
-            <span className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-muted"><Brain className="size-6 text-muted-foreground" /></span>
-          )}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-2xl font-semibold tracking-tight text-foreground">{skill.name}</h2>
-              <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{t('curated')}</span>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">{skill.author ?? t('unknownPublisher')}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{skill.score.toLocaleString(locale)}</span>
-              <span className="inline-flex items-center gap-1"><FileArchive className="size-3.5" />{t('bundledFiles', { count: fileCount })}</span>
-              <span className="inline-flex items-center gap-1"><GitBranch className="size-3.5" />{skill.githubSource ? t('github') : t('catalog')}</span>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <section className="rounded-lg border border-border bg-card p-5 sm:p-6">
+          <div className="flex min-w-0 items-start gap-4">
+            {skill.iconUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={skill.iconUrl} alt="" width={56} height={56} className="size-14 rounded-lg object-cover" />
+            ) : (
+              <span className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-muted"><Brain className="size-6 text-muted-foreground" /></span>
+            )}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{skill.name}</h2>
+                <span className="rounded-md border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{t('curated')}</span>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">{skill.author ?? t('unknownPublisher')}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{skill.score.toLocaleString(locale)}</span>
+                <span className="inline-flex items-center gap-1"><FileArchive className="size-3.5" />{t('bundledFiles', { count: fileCount })}</span>
+                <span className="inline-flex items-center gap-1"><GitBranch className="size-3.5" />{skill.githubSource ? t('github') : t('catalog')}</span>
+              </div>
             </div>
           </div>
-        </div>
-        {skill.installId ? (
-          <Link href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} className="ui-button-secondary shrink-0">
-            {t('manageSkill')}
-          </Link>
-        ) : (
-          <form action={installSkillAction}>
-            <input type="hidden" name="workspace" value={slug} />
-            <input type="hidden" name="skillId" value={skill.id} />
-            <SubmitButton pendingLabel={t('installing')} className="ui-button-primary shrink-0">{t('installToWorkspace')}</SubmitButton>
-          </form>
-        )}
-      </div>
+          <p className="mt-5 max-w-4xl text-sm leading-7 text-muted-foreground">
+            {skill.description ?? t('noDescription')}
+          </p>
+          {skill.categories.length > 0 ? (
+            <div className="mt-5 flex flex-wrap gap-2">
+              {skill.categories.map((category) => (
+                <Link
+                  key={category.slug}
+                  href={`/app/${encodeURIComponent(slug)}/market/skills?category=${encodeURIComponent(category.slug)}`}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  {category.name}
+                </Link>
+              ))}
+            </div>
+          ) : null}
+        </section>
 
-      {skill.description ? <p className="max-w-4xl text-sm leading-7 text-muted-foreground">{skill.description}</p> : null}
-
-      {skill.categories.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {skill.categories.map((category) => (
-            <Link
-              key={category.slug}
-              href={`/app/${encodeURIComponent(slug)}/market/skills?category=${encodeURIComponent(category.slug)}`}
-              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"
-            >
-              {category.name}
+        <aside className="rounded-lg border border-border bg-card p-5 sm:p-6">
+          <div className="flex items-start gap-2.5">
+            {skill.installId ? (
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <ShieldCheck className="mt-0.5 size-5 shrink-0 text-brand" />
+            )}
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                {skill.installId ? t('alreadyAddedTitle') : t('readyToDeploy')}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('skillContentDescription')}</p>
+            </div>
+          </div>
+          {skill.installId ? (
+            <Link href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} className="ui-button-primary mt-5 h-10 w-full">
+              {t('manageSkill')}
+              <ArrowRight className="size-4" />
             </Link>
-          ))}
-        </div>
-      ) : null}
+          ) : (
+            <form action={installSkillAction} className="mt-5">
+              <input type="hidden" name="workspace" value={slug} />
+              <input type="hidden" name="skillId" value={skill.id} />
+              <SubmitButton pendingLabel={t('installing')} flash={false} className="ui-button-primary h-10 w-full">
+                {t('installToWorkspace')}
+                <ArrowRight className="size-4" />
+              </SubmitButton>
+            </form>
+          )}
+        </aside>
+      </div>
 
       <DashboardPanel title="SKILL.md" description={t('skillContentDescription')}>
         {skill.content ? (
-          <pre className="max-h-[42rem] overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-5 font-mono text-xs leading-6 text-zinc-100">{skill.content}</pre>
+          <pre className="max-h-[42rem] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/35 p-5 font-mono text-xs leading-6 text-foreground">{skill.content}</pre>
         ) : (
           <p className="text-sm text-muted-foreground">{t('noSkillContent')}</p>
         )}

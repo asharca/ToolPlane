@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
-import { Bot, Copy, Network, PackageCheck, Search, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, Bot, Container, Copy, PackageCheck, Plus, Search, SlidersHorizontal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
   listAgentMarketCategories,
@@ -91,8 +91,8 @@ export default async function AgentMarketPage({
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('heroDescription')}</p>
       </div>
 
-      <form className="grid gap-2 rounded-lg border border-border bg-card p-3 md:grid-cols-[minmax(14rem,1fr)_11rem_10rem_auto]">
-        <label className="relative min-w-0">
+      <form className="grid gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_11rem_10rem_auto]">
+        <label className="relative min-w-0 sm:col-span-2 lg:col-span-1">
           <span className="sr-only">{t('searchPlaceholder')}</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -121,7 +121,7 @@ export default async function AgentMarketPage({
         </button>
       </form>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
         <span>{t('resultCount', { count: result.total })}</span>
         {hasFilters ? (
           <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">
@@ -137,51 +137,71 @@ export default async function AgentMarketPage({
           description={hasFilters ? t('noSearchResultsDescription') : t('emptyDescription')}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {result.items.map((agent) => (
-            <article key={agent.id} className="ui-panel flex min-w-0 flex-col p-5">
-              <div className="flex items-start gap-3">
-                {agent.iconUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={agent.iconUrl} alt="" width={44} height={44} className="size-11 rounded-lg object-cover" />
-                ) : (
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-semibold text-accent-foreground">
-                    {avatarLabel(agent.name)}
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  <Link
-                    href={`/app/${encodeURIComponent(slug)}/market/agents/${encodeURIComponent(agent.id)}`}
-                    className="line-clamp-1 font-semibold text-foreground hover:underline"
-                  >
-                    {agent.name}
-                  </Link>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {agent.author ?? agent.workspaceName ?? agent.workspaceSlug ?? ''}
-                  </p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {result.items.map((agent) => {
+            const detailHref = `/app/${encodeURIComponent(slug)}/market/agents/${encodeURIComponent(agent.id)}`;
+            return (
+              <article key={agent.id} className="ui-panel flex min-w-0 flex-col p-4">
+                <div className="flex items-start gap-3">
+                  {agent.iconUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={agent.iconUrl} alt="" width={44} height={44} className="size-11 rounded-lg object-cover" />
+                  ) : (
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-semibold text-accent-foreground">
+                      {avatarLabel(agent.name)}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      href={detailHref}
+                      className="line-clamp-1 font-semibold text-foreground hover:underline"
+                    >
+                      {agent.name}
+                    </Link>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {agent.author ?? agent.workspaceName ?? agent.workspaceSlug ?? ''}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <p className="mt-4 line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-muted-foreground">
-                {agent.summary}
-              </p>
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {agent.categories.slice(0, 2).map((item) => (
-                  <Link
-                    key={item.slug}
-                    href={marketHref(slug, { category: item.slug, sort })}
-                    className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
-                  >
-                    {item.name}
+                <p className="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
+                  {agent.summary}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {agent.categories.slice(0, 2).map((item) => (
+                    <Link
+                      key={item.slug}
+                      href={marketHref(slug, { category: item.slug, sort })}
+                      className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                    >
+                      {item.name}
+                    </Link>
+                  ))}
+                </div>
+                <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-4 text-[11px] text-muted-foreground">
+                  <div className="min-w-0">
+                    <dt className="flex items-center gap-1"><PackageCheck className="size-3.5 shrink-0" />{t('resources')}</dt>
+                    <dd className="mt-1 font-semibold text-foreground">{agent.releaseSummary.resourceCount}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="flex items-center gap-1"><Container className="size-3.5 shrink-0" />{t('sandboxes')}</dt>
+                    <dd className="mt-1 font-semibold text-foreground">{agent.releaseSummary.agentCount}</dd>
+                  </div>
+                  <div className="min-w-0 text-right">
+                    <dt className="flex items-center justify-end gap-1"><Copy className="size-3.5 shrink-0" />{t('clones')}</dt>
+                    <dd className="mt-1 font-semibold text-foreground">{agent.installCount}</dd>
+                  </div>
+                </dl>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Link href={detailHref} className="ui-button-secondary h-9 min-w-0 px-3">
+                    {t('viewDetails')} <ArrowRight className="size-4" />
                   </Link>
-                ))}
-              </div>
-              <div className="mt-5 grid grid-cols-3 gap-2 border-t border-border pt-4 text-[11px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><PackageCheck className="size-3.5" />{agent.releaseSummary.resourceCount}</span>
-                <span className="inline-flex items-center gap-1"><Network className="size-3.5" />{agent.releaseSummary.subAgentCount}</span>
-                <span className="inline-flex items-center justify-end gap-1"><Copy className="size-3.5" />{agent.installCount}</span>
-              </div>
-            </article>
-          ))}
+                  <Link href={`${detailHref}#install`} className="ui-button-primary h-9 min-w-0 px-3">
+                    <Plus className="size-4" /> {t('addAgent')}
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 

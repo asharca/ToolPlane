@@ -17,7 +17,7 @@ export function DashboardHeader({
   }
 
   return (
-    <header className="sticky top-0 z-10 border-b border-border/80 bg-background/92 backdrop-blur-xl">
+    <header className="sticky top-0 z-10 bg-background/92 backdrop-blur-xl">
       <div className="flex h-11 items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
         {breadcrumb ? (
           <nav className="flex min-w-0 items-center gap-2 overflow-hidden text-sm">

@@ -7,6 +7,7 @@ import {
   Bot,
   Boxes,
   CheckCircle2,
+  Container,
   Copy,
   KeyRound,
   Network,
@@ -105,7 +106,7 @@ export default async function AgentMarketDetailPage({
       </header>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <main className="min-w-0 space-y-6">
+        <main className="order-2 min-w-0 space-y-6 xl:order-1">
           <section className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center gap-2.5">
               <Bot className="size-[18px] text-muted-foreground" />
@@ -173,8 +174,8 @@ export default async function AgentMarketDetailPage({
           ) : null}
         </main>
 
-        <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
-          <section className="rounded-xl border border-border bg-card p-5">
+        <aside className="order-1 space-y-4 xl:order-2 xl:sticky xl:top-20 xl:self-start">
+          <section id="install" className="scroll-mt-24 rounded-xl border border-border bg-card p-5">
             <ShieldCheck className="size-5 text-foreground" />
             <h3 className="mt-3 text-lg font-semibold text-foreground">{t('clonePanelTitle')}</h3>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('clonePanelDescription')}</p>
@@ -190,6 +191,7 @@ export default async function AgentMarketDetailPage({
             </div>
             <div className="mt-5 space-y-3 border-t border-border pt-5 text-xs leading-5 text-muted-foreground">
               <p className="flex gap-2"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-foreground" />{t('copiesDefinition')}</p>
+              <p className="flex gap-2"><Container className="mt-0.5 size-3.5 shrink-0 text-foreground" />{t('createsSandboxes', { count: release.summary.agentCount })}</p>
               <p className="flex gap-2"><Settings2 className="mt-0.5 size-3.5 shrink-0 text-foreground" />{t('matchesProvider')}</p>
               <p className="flex gap-2"><KeyRound className="mt-0.5 size-3.5 shrink-0 text-foreground" />{t('neverCopiesSecrets')}</p>
             </div>
@@ -201,6 +203,7 @@ export default async function AgentMarketDetailPage({
               {[
                 [t('modelPreference'), rootAgent.modelRequirement?.model ?? t('notSpecified')],
                 [t('maximumSteps'), String(rootAgent.maxSteps)],
+                [t('sandboxes'), String(release.summary.agentCount)],
                 [t('mcp'), String(release.summary.deploymentCount)],
                 [t('skills'), String(release.summary.skillCount)],
                 [t('toolkits'), String(release.summary.toolkitCount)],

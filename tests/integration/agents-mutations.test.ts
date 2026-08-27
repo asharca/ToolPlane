@@ -6,9 +6,11 @@ import {
   cloneAgent,
   cloneHermesVolumeData,
   createAgent,
+  createConfiguredAgent,
   deleteAgent,
   deleteProvider,
   updateAgent,
+  updateAgentModelSelection,
   setAgentTools,
   setProviderModels,
   setHermesRuntimeEnv,
@@ -20,6 +22,7 @@ import {
 } from '@/lib/agents/mutations';
 import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
 import { readSandboxEnv } from '@/lib/sandboxes/env';
+import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -69,26 +72,290 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function createDockerSandbox(label: string) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const deployment = await db.deployment.create({
+    data: { workspaceId, name: label, source: 'sandbox', status: 'stopped' },
+  });
+  return db.sandbox.create({
+    data: {
+      workspaceId,
+      deploymentId: deployment.id,
+      name: label,
+      slug: `test-sandbox-${suffix}`,
+      kind: 'docker',
+      network: 'isolated',
+    },
+  });
+}
+
 describe('agents mutations', () => {
   it('creates an agent with a unique slug', async () => {
-    const a = await createAgent(workspaceId, 'My Agent');
+    const a = await createAgent(workspaceId, 'My Agent', { runtime: 'pi' });
     expect(a.slug).toBe('my-agent');
-    const b = await createAgent(workspaceId, 'My Agent');
+    const b = await createAgent(workspaceId, 'My Agent', { runtime: 'pi' });
     expect(b.slug).toBe('my-agent-1');
+    await expect(db.agentSandbox.count({ where: { agentId: { in: [a.id, b.id] } } })).resolves.toBe(2);
   });
 
   it('serializes concurrent slug allocation within a workspace', async () => {
     const name = `Concurrent Agent ${Date.now()}`;
     const agents = await Promise.all(Array.from({ length: 4 }, () => (
-      createAgent(workspaceId, name)
+      createAgent(workspaceId, name, { runtime: 'pi' })
     )));
     expect(new Set(agents.map(({ slug }) => slug)).size).toBe(4);
   });
 
+  it.each([
+    ['pi', 'openai'],
+    ['claude-code', 'anthropic'],
+    ['dsh', 'openai'],
+  ] as const)('creates a %s agent with an automatic exclusive Docker sandbox', async (runtime, format) => {
+    const suffix = `${runtime}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const provider = format === 'openai'
+      ? { id: providerId }
+      : await db.modelProvider.create({
+          data: {
+            workspaceId,
+            name: `Provider ${suffix}`,
+            format,
+            baseUrl: 'https://provider.test/v1',
+            apiKey: 'secret',
+          },
+        });
+    const created = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: `Agent ${suffix}`,
+        systemPrompt: 'Work carefully.',
+        providerId: provider.id,
+        model: 'model-1',
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [] },
+      { runtime },
+    );
+    await expect(cloneAgent(workspaceId, created.id, `Clone ${suffix}`))
+      .rejects.toThrow('cannot be cloned without a new sandbox');
+    const stored = await db.agent.findUniqueOrThrow({
+      where: { id: created.id },
+      include: {
+        sandboxes: { include: { sandbox: { include: { deployment: true } } } },
+      },
+    });
+
+    expect(stored.runtimeKind).toBe(runtime);
+    expect(stored.providerId).toBe(provider.id);
+    expect(stored.sandboxes).toHaveLength(1);
+    const link = stored.sandboxes[0];
+    expect(link).toMatchObject({ isDefault: true });
+    expect(link.sandbox).toMatchObject({
+      kind: 'docker',
+      image: DEFAULT_SANDBOX_IMAGE,
+      network: 'isolated',
+      deployment: { status: 'stopped', source: 'sandbox', sourceRef: DEFAULT_SANDBOX_IMAGE },
+    });
+    expect(link.sandbox.deployment.installCfg).toMatchObject({
+      sandboxId: link.sandboxId,
+      kind: 'docker',
+      image: DEFAULT_SANDBOX_IMAGE,
+      network: 'isolated',
+      volumeName: sandboxVolumeName(link.sandboxId),
+      env: {},
+      allowSudo: false,
+    });
+  });
+
+  it('rejects invalid sandbox and provider bindings for sandbox harness runtimes atomically', async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    async function sandbox(kind: string, network: string) {
+      const deployment = await db.deployment.create({
+        data: { workspaceId, name: `Invalid sandbox ${suffix}`, source: 'sandbox', status: 'stopped' },
+      });
+      return db.sandbox.create({
+        data: {
+          workspaceId,
+          deploymentId: deployment.id,
+          name: `Invalid sandbox ${suffix}`,
+          slug: `invalid-${kind}-${network}-${deployment.id}`,
+          kind,
+          network,
+        },
+      });
+    }
+    const dockerOne = await sandbox('docker', 'isolated');
+    const dockerTwo = await sandbox('docker', 'isolated');
+    const connector = await sandbox('connector', 'isolated');
+    const offline = await sandbox('docker', 'none');
+    const anthropic = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Anthropic ${suffix}`,
+        format: 'anthropic',
+        baseUrl: 'https://anthropic.test',
+        apiKey: 'secret',
+      },
+    });
+    const piProvider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Pi ${suffix}`,
+        format: 'pi:openai',
+        baseUrl: 'https://pi.test',
+        apiKey: 'secret',
+      },
+    });
+    const cfg = (selectedProviderId: string) => ({
+      name: `Invalid harness ${suffix}`,
+      systemPrompt: null,
+      providerId: selectedProviderId,
+      model: 'model-1',
+      maxSteps: 8,
+    });
+    const tools = (sandboxIds: string[]) => ({
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds,
+    });
+    const before = await db.agent.count({ where: { workspaceId } });
+
+    for (const runtime of ['pi', 'claude-code', 'dsh'] as const) {
+      const selectedProviderId = runtime === 'claude-code' ? anthropic.id : providerId;
+      await expect(createConfiguredAgent(workspaceId, cfg(selectedProviderId), tools([dockerOne.id, dockerTwo.id]), { runtime }))
+        .rejects.toThrow('requires exactly one Docker sandbox');
+      await expect(createConfiguredAgent(workspaceId, cfg(selectedProviderId), tools([connector.id]), { runtime }))
+        .rejects.toThrow('requires exactly one Docker sandbox');
+      await expect(createConfiguredAgent(workspaceId, cfg(selectedProviderId), tools([offline.id]), { runtime }))
+        .rejects.toThrow('requires a networked Docker sandbox');
+    }
+    const claudeWithOpenAi = await createConfiguredAgent(
+      workspaceId,
+      cfg(providerId),
+      tools([dockerOne.id]),
+      { runtime: 'claude-code' },
+    );
+    expect(claudeWithOpenAi.runtimeKind).toBe('claude-code');
+    await db.agent.delete({ where: { id: claudeWithOpenAi.id } });
+    await expect(createConfiguredAgent(workspaceId, cfg(piProvider.id), tools([dockerOne.id]), { runtime: 'dsh' }))
+      .rejects.toThrow('does not support provider format "pi:openai"');
+    await expect(createConfiguredAgent(workspaceId, cfg(piProvider.id), tools([dockerOne.id]), { runtime: 'pi' }))
+      .rejects.toThrow('does not support provider format "pi:openai"');
+    expect(await db.agent.count({ where: { workspaceId } })).toBe(before);
+  });
+
+  it('preserves dedicated sandbox bindings when settings submit incompatible values', async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Claude provider ${suffix}`,
+        format: 'anthropic',
+        baseUrl: 'https://anthropic.test',
+        apiKey: 'secret',
+      },
+    });
+    const deployment = await db.deployment.create({
+      data: { workspaceId, name: `Claude sandbox ${suffix}`, source: 'sandbox', status: 'stopped' },
+    });
+    const sandbox = await db.sandbox.create({
+      data: {
+        workspaceId,
+        deploymentId: deployment.id,
+        name: `Claude sandbox ${suffix}`,
+        slug: `claude-sandbox-${suffix}`,
+        kind: 'docker',
+        network: 'isolated',
+      },
+    });
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: `Claude agent ${suffix}`,
+        systemPrompt: null,
+        providerId: provider.id,
+        model: 'claude-sonnet',
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [sandbox.id] },
+      { runtime: 'claude-code' },
+    );
+
+    const piProvider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Pi native provider ${suffix}`,
+        format: 'pi:openai',
+        baseUrl: 'https://pi.test',
+        apiKey: 'secret',
+      },
+    });
+
+    await expect(setAgentTools(workspaceId, agent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [],
+    })).rejects.toThrow('requires exactly one Docker sandbox');
+    await expect(updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId,
+      model: 'gpt-4.1',
+      maxSteps: 8,
+    })).resolves.toBeUndefined();
+    await expect(updateAgentModelSelection(workspaceId, agent.id, [piProvider.id], 'gpt-native'))
+      .rejects.toThrow('does not support provider format "pi:openai"');
+    await expect(db.agentSandbox.count({ where: { agentId: agent.id, sandboxId: sandbox.id } })).resolves.toBe(1);
+    await expect(createConfiguredAgent(
+      workspaceId,
+      {
+        name: `Pi agent ${suffix}`,
+        systemPrompt: null,
+        providerId,
+        model: 'gpt-4.1',
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [sandbox.id] },
+      { runtime: 'pi' },
+    )).rejects.toThrow('already assigned to agent');
+
+    const piSandbox = await createDockerSandbox('Pi agent workspace');
+    const piAgent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: `Pi agent ${suffix}`,
+        systemPrompt: null,
+        providerId,
+        model: 'gpt-4.1',
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [piSandbox.id] },
+      { runtime: 'pi' },
+    );
+    await expect(setAgentTools(workspaceId, piAgent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [],
+    })).rejects.toThrow('requires exactly one Docker sandbox');
+    await expect(setAgentTools(workspaceId, piAgent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [sandbox.id],
+    })).rejects.toThrow('already assigned to agent');
+    await expect(updateAgentModelSelection(workspaceId, piAgent.id, [piProvider.id], 'gpt-native'))
+      .rejects.toThrow('does not support provider format "pi:openai"');
+    await expect(db.agentSandbox.findMany({ where: { agentId: piAgent.id } })).resolves.toEqual([
+      expect.objectContaining({ sandboxId: piSandbox.id, isDefault: true }),
+    ]);
+  });
+
   it('clones reusable configuration and bindings without copying agent history', async () => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const source = await createAgent(workspaceId, 'Clone source');
-    const child = await createAgent(workspaceId, 'Clone child');
+    const source = await createAgent(workspaceId, 'Clone source', { runtime: 'hermes' });
+    const child = await createAgent(workspaceId, 'Clone child', { runtime: 'hermes' });
     const skill = await db.installedSkill.create({
       data: {
         workspaceId,
@@ -100,35 +367,11 @@ describe('agents mutations', () => {
     const toolkit = await db.toolkit.create({
       data: { workspaceId, name: 'Clone toolkit', slug: `clone-toolkit-${suffix}` },
     });
-    const sandboxDeployment = await db.deployment.create({
-      data: { workspaceId, name: 'Clone sandbox deployment', source: 'sandbox', status: 'stopped' },
-    });
-    const sandbox = await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: sandboxDeployment.id,
-        name: 'Clone sandbox',
-        slug: `clone-sandbox-${suffix}`,
-        kind: 'docker',
-      },
-    });
-    const blockedDeployment = await db.deployment.create({
-      data: { workspaceId, name: 'Failed sandbox copy', source: 'sandbox', status: 'copy_failed' },
-    });
-    const blockedSandbox = await db.sandbox.create({
-      data: {
-        workspaceId,
-        deploymentId: blockedDeployment.id,
-        name: 'Failed sandbox copy',
-        slug: `failed-clone-sandbox-${suffix}`,
-        kind: 'docker',
-      },
-    });
-
     await updateAgent(workspaceId, source.id, {
       name: source.name,
       systemPrompt: 'Clone these instructions',
       providerId,
+      providerIds: [providerId],
       model: 'gpt-clone',
       maxSteps: 13,
     });
@@ -136,11 +379,8 @@ describe('agents mutations', () => {
       deploymentIds: [deploymentId],
       installedSkillIds: [skill.id],
       toolkitIds: [toolkit.id],
-      sandboxIds: [sandbox.id],
+      sandboxIds: [],
       subAgentIds: [child.id],
-    });
-    await db.agentSandbox.create({
-      data: { agentId: source.id, sandboxId: blockedSandbox.id },
     });
     const conversation = await createConversation(workspaceId, source.id, 'Do not clone');
     await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'history' }]);
@@ -169,7 +409,7 @@ describe('agents mutations', () => {
     });
 
     const cloned = await cloneAgent(workspaceId, source.id, 'Clone target');
-    expect(cloned?.runtimeKind).toBe('native');
+    expect(cloned?.runtimeKind).toBe('hermes');
     const reread = await db.agent.findUnique({
       where: { id: cloned!.id },
       include: {
@@ -178,6 +418,7 @@ describe('agents mutations', () => {
         toolkits: true,
         sandboxes: true,
         subAgents: true,
+        modelProviders: true,
         conversations: true,
         channels: true,
         attachments: true,
@@ -187,38 +428,38 @@ describe('agents mutations', () => {
     expect(reread).toMatchObject({
       name: 'Clone target',
       slug: 'clone-target',
-      systemPrompt: 'Clone these instructions',
-      providerId,
-      model: 'gpt-clone',
+      systemPrompt: null,
+      providerId: null,
+      model: null,
       maxSteps: 13,
     });
     expect(reread?.servers.map((link) => link.deploymentId)).toEqual([deploymentId]);
     expect(reread?.skills.map((link) => link.installedSkillId)).toEqual([skill.id]);
     expect(reread?.toolkits.map((link) => link.toolkitId)).toEqual([toolkit.id]);
-    expect(reread?.sandboxes.map((link) => link.sandboxId)).toEqual([sandbox.id]);
+    expect(reread?.sandboxes).toHaveLength(0);
     expect(reread?.subAgents.map((link) => link.childId)).toEqual([child.id]);
+    expect(reread?.modelProviders.map((link) => link.providerId)).toEqual([providerId]);
     expect(reread?.conversations).toHaveLength(0);
     expect(reread?.channels).toHaveLength(0);
     expect(reread?.attachments).toHaveLength(0);
   });
 
-  it('does not copy a model when the source has no valid provider', async () => {
-    const source = await createAgent(workspaceId, 'Clone source without provider');
-    await db.agent.update({
-      where: { id: source.id },
-      data: { providerId: null, model: 'legacy-model' },
+  it('does not reuse an attached sandbox while cloning Hermes', async () => {
+    const source = await createAgent(workspaceId, 'Clone source with sandbox', { runtime: 'hermes' });
+    const sandbox = await createDockerSandbox('Clone source workspace');
+    await setAgentTools(workspaceId, source.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [sandbox.id],
     });
-
-    const cloned = await cloneAgent(workspaceId, source.id, 'Clone without provider');
-    const reread = await db.agent.findUniqueOrThrow({ where: { id: cloned!.id } });
-
-    expect(reread.providerId).toBeNull();
-    expect(reread.model).toBeNull();
+    await expect(cloneAgent(workspaceId, source.id, 'Clone without sandbox reuse'))
+      .rejects.toThrow('Sandboxes are exclusive to one agent');
   });
 
   it('uses clone scope to copy conversation data without unwanted bindings', async () => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const source = await createAgent(workspaceId, 'Scoped clone source');
+    const source = await createAgent(workspaceId, 'Scoped clone source', { runtime: 'hermes' });
     const skill = await db.installedSkill.create({
       data: { workspaceId, name: 'Scoped skill', slug: `scoped-skill-${suffix}`, content: '# scoped' },
     });
@@ -226,6 +467,7 @@ describe('agents mutations', () => {
       deploymentIds: [deploymentId],
       installedSkillIds: [skill.id],
       toolkitIds: [],
+      sandboxIds: [],
     });
     const conversation = await createConversation(workspaceId, source.id, 'Keep this history');
     await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Copied question' }]);
@@ -486,26 +728,42 @@ describe('agents mutations', () => {
 
   it('does not attach a managed Hermes runtime as another agent sandbox', async () => {
     const runtimeAgent = await createAgent(workspaceId, 'Runtime owner', { runtime: 'hermes' });
-    const nativeAgent = await createAgent(workspaceId, 'Native consumer');
+    const nativeAgent = await createAgent(workspaceId, 'Native consumer', { runtime: 'pi' });
+    const nativeSandbox = await createDockerSandbox('Native consumer workspace');
+    await setAgentTools(workspaceId, nativeAgent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [nativeSandbox.id],
+    });
     const runtime = await db.agentRuntime.findUniqueOrThrow({
       where: { agentId: runtimeAgent.id },
       select: { sandboxId: true },
     });
 
-    await setAgentTools(workspaceId, nativeAgent.id, {
+    await expect(setAgentTools(workspaceId, nativeAgent.id, {
       deploymentIds: [],
       installedSkillIds: [],
       toolkitIds: [],
       sandboxIds: [runtime.sandboxId],
-    });
+    })).rejects.toThrow('requires exactly one Docker sandbox');
 
-    await expect(db.agentSandbox.count({ where: { agentId: nativeAgent.id } })).resolves.toBe(0);
+    await expect(db.agentSandbox.findMany({ where: { agentId: nativeAgent.id } })).resolves.toEqual([
+      expect.objectContaining({ sandboxId: nativeSandbox.id, isDefault: true }),
+    ]);
     await deleteAgent(workspaceId, runtimeAgent.id);
     await deleteAgent(workspaceId, nativeAgent.id);
   });
 
   it('does not attach a sandbox with an incomplete data lifecycle operation', async () => {
-    const agent = await createAgent(workspaceId, 'Blocked sandbox consumer');
+    const agent = await createAgent(workspaceId, 'Blocked sandbox consumer', { runtime: 'pi' });
+    const activeSandbox = await createDockerSandbox('Active sandbox consumer workspace');
+    await setAgentTools(workspaceId, agent.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [activeSandbox.id],
+    });
     const deployment = await db.deployment.create({
       data: {
         workspaceId,
@@ -525,14 +783,16 @@ describe('agents mutations', () => {
       },
     });
 
-    await setAgentTools(workspaceId, agent.id, {
+    await expect(setAgentTools(workspaceId, agent.id, {
       deploymentIds: [],
       installedSkillIds: [],
       toolkitIds: [],
       sandboxIds: [sandbox.id],
-    });
+    })).rejects.toThrow('requires exactly one Docker sandbox');
 
-    await expect(db.agentSandbox.count({ where: { agentId: agent.id } })).resolves.toBe(0);
+    await expect(db.agentSandbox.findMany({ where: { agentId: agent.id } })).resolves.toEqual([
+      expect.objectContaining({ sandboxId: activeSandbox.id, isDefault: true }),
+    ]);
     await deleteAgent(workspaceId, agent.id);
     await db.deployment.delete({ where: { id: deployment.id } });
   });
@@ -558,12 +818,14 @@ describe('agents mutations', () => {
   });
 
   it('updates config and replaces the attached tools', async () => {
-    const a = await createAgent(workspaceId, 'Cfg');
+    const a = await createAgent(workspaceId, 'Cfg', { runtime: 'pi' });
+    const sandbox = await createDockerSandbox('Config workspace');
     await updateAgent(workspaceId, a.id, {
       name: 'Cfg2', systemPrompt: 'sp', providerId, model: 'gpt-x', maxSteps: 5,
     });
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [deploymentId], installedSkillIds: [], toolkitIds: [],
+      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({
       where: { id: a.id }, include: { servers: true },
@@ -572,7 +834,12 @@ describe('agents mutations', () => {
     expect(reread?.model).toBe('gpt-x');
     expect(reread?.servers).toHaveLength(1);
 
-    await setAgentTools(workspaceId, a.id, { deploymentIds: [], installedSkillIds: [], toolkitIds: [] });
+    await setAgentTools(workspaceId, a.id, {
+      deploymentIds: [],
+      installedSkillIds: [],
+      toolkitIds: [],
+      sandboxIds: [sandbox.id],
+    });
     const after = await db.agent.findUnique({ where: { id: a.id }, include: { servers: true } });
     expect(after?.servers).toHaveLength(0);
   });
@@ -594,7 +861,7 @@ describe('agents mutations', () => {
         apiKey: 'k',
       },
     });
-    const agent = await createAgent(workspaceId, 'Disposable provider agent');
+    const agent = await createAgent(workspaceId, 'Disposable provider agent', { runtime: 'pi' });
     const hermesAgent = await createAgent(workspaceId, 'Disposable Hermes provider agent', {
       runtime: 'hermes',
     });
@@ -700,7 +967,7 @@ describe('agents mutations', () => {
   });
 
   it('creates a conversation and appends messages', async () => {
-    const a = await createAgent(workspaceId, 'Chat');
+    const a = await createAgent(workspaceId, 'Chat', { runtime: 'pi' });
     const conv = await createConversation(workspaceId, a.id);
     await appendMessage(conv!.id, 'user', [{ type: 'text', text: 'hi' }]);
     const msgs = await db.message.findMany({ where: { conversationId: conv!.id } });
@@ -741,7 +1008,7 @@ describe('agents mutations', () => {
   });
 
   it('persists a generated user/assistant turn atomically and in order', async () => {
-    const agent = await createAgent(workspaceId, 'Atomic turn');
+    const agent = await createAgent(workspaceId, 'Atomic turn', { runtime: 'pi' });
     const conversation = await createConversation(workspaceId, agent.id);
     await appendConversationTurn(
       conversation!.id,
@@ -767,7 +1034,7 @@ describe('agents mutations', () => {
   });
 
   it('atomically derives a title when the first user messages race', async () => {
-    const agent = await createAgent(workspaceId, 'Concurrent title');
+    const agent = await createAgent(workspaceId, 'Concurrent title', { runtime: 'pi' });
     const conversation = await createConversation(workspaceId, agent.id);
 
     await Promise.all([
@@ -781,7 +1048,7 @@ describe('agents mutations', () => {
   });
 
   it('initializes legacy runtime session aliases once without replacing them', async () => {
-    const agent = await createAgent(workspaceId, 'Legacy Hermes chat');
+    const agent = await createAgent(workspaceId, 'Legacy Hermes chat', { runtime: 'pi' });
     const legacy = await db.conversation.create({ data: { agentId: agent.id } });
 
     const initialized = await ensureConversationRuntimeSession(
@@ -810,9 +1077,11 @@ describe('agents mutations', () => {
     });
     const fserver = await db.server.create({ data: { slug: `fsrv-${Date.now()}`, name: 'F' } });
     const fdep = await db.deployment.create({ data: { workspaceId: other.id, serverId: fserver.id } });
-    const a = await createAgent(workspaceId, 'Scope');
+    const a = await createAgent(workspaceId, 'Scope', { runtime: 'pi' });
+    const sandbox = await createDockerSandbox('Scoped tools workspace');
     await setAgentTools(workspaceId, a.id, {
       deploymentIds: [deploymentId, fdep.id], installedSkillIds: [], toolkitIds: [],
+      sandboxIds: [sandbox.id],
     });
     const reread = await db.agent.findUnique({ where: { id: a.id }, include: { servers: true } });
     expect(reread?.servers.map((s) => s.deploymentId)).toEqual([deploymentId]);
@@ -826,7 +1095,7 @@ describe('agents mutations', () => {
     const fprov = await db.modelProvider.create({
       data: { workspaceId: other.id, name: 'FP', format: 'openai', baseUrl: 'https://x/v1', apiKey: 'k' },
     });
-    const a = await createAgent(workspaceId, 'ProvScope');
+    const a = await createAgent(workspaceId, 'ProvScope', { runtime: 'pi' });
     await updateAgent(workspaceId, a.id, {
       name: 'ProvScope', systemPrompt: null, providerId: fprov.id, model: null, maxSteps: 8,
     });
@@ -851,7 +1120,7 @@ describe('agents mutations', () => {
     const other = await db.workspace.create({
       data: { slug: `m-o3-${Date.now()}`, name: 'O3', ownerId: userId, members: { create: { userId, role: 'owner' } } },
     });
-    const fagent = await db.agent.create({ data: { workspaceId: other.id, name: 'FA', slug: 'fa' } });
+    const fagent = await db.agent.create({ data: { workspaceId: other.id, name: 'FA', slug: 'fa', runtimeKind: 'pi' } });
     const conv = await createConversation(workspaceId, fagent.id);
     expect(conv).toBeNull();
     expect(await cloneAgent(workspaceId, fagent.id)).toBeNull();
@@ -861,7 +1130,7 @@ describe('agents mutations', () => {
   });
 
   it('creates encrypted platform-owned channel connections', async () => {
-    const a = await createAgent(workspaceId, 'Channels');
+    const a = await createAgent(workspaceId, 'Channels', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -890,7 +1159,7 @@ describe('agents mutations', () => {
   });
 
   it('creates QR setup channels before scan-returned credentials exist', async () => {
-    const a = await createAgent(workspaceId, 'WeCom QR');
+    const a = await createAgent(workspaceId, 'WeCom QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -923,7 +1192,7 @@ describe('agents mutations', () => {
   });
 
   it('requests WeCom QR and saves scan-returned credentials', async () => {
-    const a = await createAgent(workspaceId, 'WeCom active QR');
+    const a = await createAgent(workspaceId, 'WeCom active QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -974,7 +1243,7 @@ describe('agents mutations', () => {
   });
 
   it('requests Telegram managed-bot QR, waits for ready, then applies allowed users', async () => {
-    const a = await createAgent(workspaceId, 'Telegram active QR');
+    const a = await createAgent(workspaceId, 'Telegram active QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -1042,7 +1311,7 @@ describe('agents mutations', () => {
   });
 
   it('requests Weixin QR and saves confirmed login credentials', async () => {
-    const a = await createAgent(workspaceId, 'Weixin active QR');
+    const a = await createAgent(workspaceId, 'Weixin active QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
@@ -1102,7 +1371,7 @@ describe('agents mutations', () => {
   });
 
   it('requests DingTalk device QR and saves registered credentials', async () => {
-    const a = await createAgent(workspaceId, 'DingTalk active QR');
+    const a = await createAgent(workspaceId, 'DingTalk active QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,

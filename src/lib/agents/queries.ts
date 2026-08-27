@@ -61,6 +61,7 @@ const TOOL_INCLUDE = {
           name: true,
           slug: true,
           systemPrompt: true,
+          runtimeKind: true,
           runtime: { select: { kind: true } },
         },
       },
@@ -70,7 +71,7 @@ const TOOL_INCLUDE = {
     select: {
       sandboxId: true,
       isDefault: true,
-      sandbox: { select: { id: true, name: true, slug: true, deploymentId: true } },
+      sandbox: { select: { id: true, name: true, slug: true, kind: true, network: true, deploymentId: true } },
     },
   },
   knowledgeBases: {
@@ -226,6 +227,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       id: true,
       name: true,
       slug: true,
+      runtimeKind: true,
       systemPrompt: true,
       providerId: true,
       model: true,
@@ -241,7 +243,13 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       servers: { select: { deploymentId: true } },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },
-      sandboxes: { select: { sandboxId: true, isDefault: true } },
+      sandboxes: {
+        select: {
+          sandboxId: true,
+          isDefault: true,
+          sandbox: { select: { kind: true, network: true } },
+        },
+      },
       subAgents: { select: { childId: true } },
       marketInstall: {
         select: {
@@ -326,14 +334,32 @@ export async function listAgents(workspaceId: string) {
           image: true,
           status: true,
           lastError: true,
-          sandbox: { select: { id: true, deploymentId: true, deployment: { select: { status: true } } } },
+          sandbox: {
+            select: {
+              id: true,
+              name: true,
+              kind: true,
+              network: true,
+              deploymentId: true,
+              deployment: { select: { status: true } },
+            },
+          },
         },
       },
       sandboxes: {
         select: {
           sandboxId: true,
           isDefault: true,
-          sandbox: { select: { id: true, name: true, deploymentId: true, deployment: { select: { status: true } } } },
+          sandbox: {
+            select: {
+              id: true,
+              name: true,
+              kind: true,
+              network: true,
+              deploymentId: true,
+              deployment: { select: { status: true } },
+            },
+          },
         },
       },
       _count: {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminGate } from '@/lib/auth/admin-policy';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { isSameOriginRequest } from '@/lib/http/origin';
 import { applySystemUpdate, getLocalSystemUpdateStatus, getSystemUpdateStatus } from '@/lib/system/release-update';
 
 export const runtime = 'nodejs';
@@ -18,8 +19,9 @@ async function requireApiAdmin() {
 }
 
 export async function GET(request: Request) {
-  const denied = await requireApiAdmin();
-  if (denied) return denied;
+  if (!(await getCurrentUser())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const url = new URL(request.url);
   if (url.searchParams.get('local') === '1') {
     return NextResponse.json(await getLocalSystemUpdateStatus(), {
@@ -31,7 +33,10 @@ export async function GET(request: Request) {
   });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   const denied = await requireApiAdmin();
   if (denied) return denied;
 

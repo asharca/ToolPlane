@@ -28,7 +28,7 @@ const SendMessageArguments = z.object({
 }).strict();
 const CreateAgentArguments = z.object({
   name: z.string().trim().min(1).max(60),
-  runtime: z.enum(['native', 'hermes']).default('native'),
+  runtime: z.enum(['pi', 'hermes']),
   systemPrompt: z.string().trim().max(100_000).nullable().optional(),
   providerId: Id.nullable().optional(),
   providerIds: IdList.default([]),
@@ -41,12 +41,12 @@ const CreateAgentArguments = z.object({
   sandboxIds: IdList.default([]),
   subAgentIds: IdList.default([]),
 }).strict().superRefine((input, ctx) => {
-  if (input.runtime === 'native') {
+  if (input.runtime === 'pi') {
     if (input.providerIds.length > 0) {
       ctx.addIssue({
         code: 'custom',
         path: ['providerIds'],
-        message: 'Native agents use providerId, not providerIds.',
+        message: 'Pi agents use providerId, not providerIds.',
       });
     }
     if (input.model && !input.providerId) {
@@ -112,21 +112,21 @@ export const AGENT_CONTROL_MCP_TOOLS = [
   },
   {
     name: 'create_agent',
-    description: 'Create and fully configure a ToolPlane agent atomically from existing workspace resources. Native agents use providerId/model/systemPrompt. Hermes agents use providerIds and the instance-approved runtime image. Omit model configuration to create a draft. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.',
+    description: 'Create and fully configure a ToolPlane agent atomically from existing workspace resources. Pi agents use providerId/model/systemPrompt. Hermes agents use providerIds and the instance-approved runtime image. Omit model configuration to create a draft. This call is non-idempotent; after an uncertain timeout, call list_agents before retrying.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', minLength: 1, maxLength: 60 },
-        runtime: { type: 'string', enum: ['native', 'hermes'], default: 'native' },
+        runtime: { type: 'string', enum: ['pi', 'hermes'] },
         systemPrompt: { type: ['string', 'null'], maxLength: 100000 },
-        providerId: { type: ['string', 'null'], description: 'Native model provider ID.' },
+        providerId: { type: ['string', 'null'], description: 'Pi model provider ID.' },
         providerIds: {
           type: 'array',
           items: { type: 'string' },
           maxItems: 100,
           description: 'Hermes model provider IDs.',
         },
-        model: { type: ['string', 'null'], description: 'Native model ID.' },
+        model: { type: ['string', 'null'], description: 'Pi model ID.' },
         maxSteps: {
           type: 'integer',
           minimum: AGENT_STEP_BOUNDS.min,
@@ -139,7 +139,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
         sandboxIds: { type: 'array', items: { type: 'string' }, maxItems: 100 },
         subAgentIds: { type: 'array', items: { type: 'string' }, maxItems: 100 },
       },
-      required: ['name'],
+      required: ['name', 'runtime'],
       additionalProperties: false,
     },
     annotations: {

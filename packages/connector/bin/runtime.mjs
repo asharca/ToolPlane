@@ -401,11 +401,13 @@ export function createRuntime(rootInput) {
     const terminalId = randomUUID();
     const cols = Math.min(Math.max(Number(args.cols) || 80, 20), 240);
     const rows = Math.min(Math.max(Number(args.rows) || 24, 6), 80);
+    const target = await assertCanonicalPath(resolvePath(args.cwd ?? '.'));
+    if (!(await fs.stat(target.absolute)).isDirectory()) throw new Error('Terminal cwd is not a directory.');
     const term = pty.spawn(shell, terminalShellArgs(platform), {
       name: 'xterm-256color',
       cols,
       rows,
-      cwd: root,
+      cwd: target.absolute,
       env: {
         ...process.env,
         ...cleanEnv(args.env),

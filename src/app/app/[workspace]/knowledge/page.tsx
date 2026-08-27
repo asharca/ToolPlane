@@ -39,6 +39,7 @@ export default async function KnowledgePage({ params }: { params: Promise<{ work
           chunkOverlap: base.chunkOverlap,
           topK: base.topK,
           threshold: base.threshold,
+          providerId: base.providerId,
           providerName: base.provider?.name ?? null,
           agentIds: base.agentLinks.map((link) => link.agentId),
           documents: base.documents.map((document) => ({ id: document.id, filename: document.filename, status: document.status, error: document.error })),

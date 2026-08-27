@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   getLocalSystemUpdateStatus,
@@ -41,6 +44,20 @@ describe('release artifact updater', () => {
     await expect(readCurrentVersion('/definitely/missing/toolplane')).resolves.toBe('sha-test');
     if (previous === undefined) delete process.env.TOOLPLANE_VERSION;
     else process.env.TOOLPLANE_VERSION = previous;
+  });
+
+  it('uses package metadata as the development version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'toolplane-version-'));
+    const previous = process.env.TOOLPLANE_VERSION;
+    try {
+      delete process.env.TOOLPLANE_VERSION;
+      await writeFile(path.join(root, 'package.json'), JSON.stringify({ version: '0.22.0' }));
+      await expect(readCurrentVersion(root)).resolves.toBe('0.22.0');
+    } finally {
+      if (previous === undefined) delete process.env.TOOLPLANE_VERSION;
+      else process.env.TOOLPLANE_VERSION = previous;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('returns local version status without requiring a configured runtime root', async () => {

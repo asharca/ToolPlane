@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Check, CopyPlus, Loader2, X } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
 import { cloneAgentAction } from '@/lib/agents/actions';
+import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
 import {
   Dialog,
   DialogClose,
@@ -115,6 +116,7 @@ export function CloneAgentButton({
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<CloneScope>(defaultScope);
   const isHermes = runtimeKind === 'hermes';
+  const requiresNewSandbox = isDedicatedSandboxRuntimeKind(runtimeKind);
   const isComplete = scope.mcp
     && scope.skills
     && scope.toolkits
@@ -144,9 +146,14 @@ export function CloneAgentButton({
       }}
     >
       <DialogTrigger asChild>
-        <button type="button" className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+        <button
+          type="button"
+          disabled={requiresNewSandbox}
+          aria-label={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')}
+          title={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')}
+          className="ui-button-secondary size-10 shrink-0 px-0 disabled:cursor-not-allowed disabled:opacity-50"
+        >
           <CopyPlus className="size-[18px] shrink-0" />
-          {t('cloneAgent')}
         </button>
       </DialogTrigger>
 

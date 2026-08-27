@@ -108,7 +108,7 @@ describe('resolveAgentTools', () => {
           name: 'Hermes',
           slug: 'hermes',
           systemPrompt: 'Legacy ToolPlane prompt',
-          runtime: { kind: 'hermes' },
+          runtimeKind: 'hermes',
         },
       }],
     });

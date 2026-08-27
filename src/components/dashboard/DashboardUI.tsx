@@ -154,7 +154,7 @@ export function DashboardPanel({
         className,
       )}
     >
-      <div className={cx('border-b bg-muted/25 px-5 py-3.5', danger ? 'border-red-100 dark:border-red-500/20' : 'border-border')}>
+      <div className={cx('px-5 py-3.5', danger ? 'bg-red-500/5' : 'bg-muted/25')}>
         <h2 className={cx('text-sm font-semibold', danger ? 'text-red-700 dark:text-red-400' : 'text-foreground')}>
           {title}
         </h2>

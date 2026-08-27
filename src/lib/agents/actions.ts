@@ -5,12 +5,14 @@ import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getProvider } from '@/lib/agents/queries';
+import { generateConsoleConversationTitle } from '@/lib/agents/conversation-naming';
 import { buildModel, providerModelIds } from '@/lib/agents/model';
 import { providerPreset } from '@/lib/agents/provider-catalog';
 import {
   cloneAgent,
   cloneHermesVolumeData,
-  createAgent,
+  createConfiguredAgent,
+  AgentConfigurationError,
   updateAgent,
   setAgentTools,
   deleteAgent,
@@ -58,6 +60,7 @@ import {
 } from '@/lib/agents/market';
 import { safeRelativePath } from '@/lib/auth/safe-redirect';
 import { cleanupAgentEndpointRuntimesForSource } from '@/lib/agents/public-api/maintenance';
+import { implementedAgentRuntimeKind } from '@/lib/agents/runtime-kind';
 import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 import { db } from '@/lib/db';
 
@@ -270,37 +273,74 @@ export async function testProviderModelAction(
   return { savedAt: Date.now() };
 }
 
+export async function updateWorkspaceModelPreferenceAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const preference = String(formData.get('preference') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const model = String(formData.get('model') ?? '').trim();
+  if (preference !== 'default' && preference !== 'title') return { error: 'Invalid model preference.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+
+  if (providerId || model) {
+    const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
+    if (!provider || !model || !provider.models.includes(model)) {
+      return { error: 'Choose an available model.' };
+    }
+  }
+
+  await db.workspace.update({
+    where: { id: ctx.ws.id },
+    data: preference === 'default'
+      ? { defaultModelProviderId: providerId || null, defaultModel: model || null }
+      : { titleModelProviderId: providerId || null, titleModel: model || null },
+  });
+  revalidatePath(`/app/${slug}/settings`);
+  revalidatePath(`/app/${slug}/agents`);
+  return { savedAt: Date.now() };
+}
+
 export async function createAgentAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const name = String(formData.get('name') ?? '').trim() || 'New agent';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const runtime = String(formData.get('runtime') ?? '') === 'hermes' ? 'hermes' : 'native';
-  const agent = await createAgent(ctx.ws.id, name, {
-    runtime,
-    hermesImage: String(formData.get('hermesImage') ?? ''),
-  });
-
+  const runtime = implementedAgentRuntimeKind(formData.get('runtime'));
+  if (!runtime) throw new Error('Choose an available Agent runtime.');
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
-  await updateAgent(ctx.ws.id, agent.id, {
-    name,
-    systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
-    providerId,
-    providerIds,
-    model,
-    maxSteps: AGENT_STEP_BOUNDS.default,
-  });
-  await setAgentTools(ctx.ws.id, agent.id, {
-    deploymentIds: formData.getAll('deploymentId').map(String),
-    installedSkillIds: formData.getAll('installedSkillId').map(String),
-    toolkitIds: formData.getAll('toolkitId').map(String),
-    sandboxIds: formData.getAll('sandboxId').map(String),
-  });
+  const agent = await createConfiguredAgent(
+    ctx.ws.id,
+    {
+      name,
+      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+      providerId,
+      providerIds,
+      model,
+      maxSteps: AGENT_STEP_BOUNDS.default,
+    },
+    {
+      deploymentIds: formData.getAll('deploymentId').map(String),
+      installedSkillIds: formData.getAll('installedSkillId').map(String),
+      toolkitIds: formData.getAll('toolkitId').map(String),
+      sandboxIds: formData.getAll('sandboxId').map(String),
+    },
+    {
+      runtime,
+      hermesImage: String(formData.get('hermesImage') ?? ''),
+    },
+  );
   if (runtime === 'hermes') await syncHermesRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);
-  redirect(`/app/${slug}/agents/${agent.id}?settings=agent`);
+  revalidatePath(`/app/${slug}/work`);
+  const returnTo = safeRelativePath(formData.get('returnTo'));
+  const query = new URLSearchParams({ settings: 'agent' });
+  if (returnTo) query.set('returnTo', returnTo);
+  redirect(`/app/${slug}/agents/${agent.id}?${query}`);
 }
 
 export async function deleteAgentAction(formData: FormData) {
@@ -324,7 +364,8 @@ export async function deleteAgentAction(formData: FormData) {
   if (!await cleanupHermesRuntime(ctx.ws.id, agentId)) return;
   await deleteAgent(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents`);
-  redirect(`/app/${slug}/agents`);
+  revalidatePath(`/app/${slug}/work`);
+  redirect(safeRelativePath(formData.get('returnTo')) ?? `/app/${slug}/agents`);
 }
 
 export async function cloneAgentAction(formData: FormData) {
@@ -349,6 +390,7 @@ export async function cloneAgentAction(formData: FormData) {
       );
       if (copied.status === 'error') {
         revalidatePath(`/app/${slug}/agents`);
+        revalidatePath(`/app/${slug}/work`);
         revalidatePath(targetPath);
         redirect(`${targetPath}?settings=agent`);
       }
@@ -356,6 +398,7 @@ export async function cloneAgentAction(formData: FormData) {
     await syncHermesRuntime(ctx.ws.id, cloned.id);
   }
   revalidatePath(`/app/${slug}/agents`);
+  revalidatePath(`/app/${slug}/work`);
   revalidatePath(targetPath);
   redirect(`${targetPath}?settings=agent`);
 }
@@ -507,24 +550,30 @@ export async function updateAgentAction(
     ? Math.min(AGENT_STEP_BOUNDS.max, Math.max(AGENT_STEP_BOUNDS.min, maxStepsRaw))
     : AGENT_STEP_BOUNDS.default;
 
-  await updateAgent(ctx.ws.id, agentId, {
-    name: String(formData.get('name') ?? '').trim() || 'New agent',
-    systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
-    providerId,
-    providerIds,
-    model,
-    maxSteps,
-  });
-  await setAgentTools(ctx.ws.id, agentId, {
-    deploymentIds: formData.getAll('deploymentId').map(String),
-    installedSkillIds: formData.getAll('installedSkillId').map(String),
-    toolkitIds: formData.getAll('toolkitId').map(String),
-    sandboxIds: formData.getAll('sandboxId').map(String),
-    defaultSandboxId: String(formData.get('defaultSandboxId') ?? '') || null,
-    subAgentIds: formData.getAll('subAgentId').map(String),
-  });
+  try {
+    await updateAgent(ctx.ws.id, agentId, {
+      name: String(formData.get('name') ?? '').trim() || 'New agent',
+      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+      providerId,
+      providerIds,
+      model,
+      maxSteps,
+    });
+    await setAgentTools(ctx.ws.id, agentId, {
+      deploymentIds: formData.getAll('deploymentId').map(String),
+      installedSkillIds: formData.getAll('installedSkillId').map(String),
+      toolkitIds: formData.getAll('toolkitId').map(String),
+      sandboxIds: formData.getAll('sandboxId').map(String),
+      defaultSandboxId: String(formData.get('defaultSandboxId') ?? '') || null,
+      subAgentIds: formData.getAll('subAgentId').map(String),
+    });
+  } catch (error) {
+    if (error instanceof AgentConfigurationError) return { error: error.message };
+    throw error;
+  }
   const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
+  revalidatePath(`/app/${slug}/work`);
   if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
   return { savedAt: Date.now() };
 }
@@ -539,14 +588,20 @@ export async function updateAgentModelAction(
   if (!ctx) return { error: 'Not authorized.' };
   if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
 
-  await updateAgentModelSelection(
-    ctx.ws.id,
-    agentId,
-    formData.getAll('providerId').map(String),
-    String(formData.get('model') ?? '').trim() || null,
-  );
+  try {
+    await updateAgentModelSelection(
+      ctx.ws.id,
+      agentId,
+      formData.getAll('providerId').map(String),
+      String(formData.get('model') ?? '').trim() || null,
+    );
+  } catch (error) {
+    if (error instanceof AgentConfigurationError) return { error: error.message };
+    throw error;
+  }
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/chat`);
+  revalidatePath(`/app/${slug}/work`);
   return { savedAt: Date.now() };
 }
 
@@ -669,6 +724,24 @@ export async function renameConversationAction(formData: FormData) {
   if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
   if (await renameConsoleConversation(ctx.ws.id, agentId, conversationId, title)) {
     revalidatePath(`/app/${slug}/chat`);
+  }
+}
+
+export async function generateConversationTitleAction(formData: FormData): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const conversationId = String(formData.get('conversationId') ?? '');
+  const force = formData.get('force') === '1';
+  if (!conversationId) return { error: 'Conversation not found.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Conversation not found.' };
+  try {
+    const title = await generateConsoleConversationTitle(ctx.ws.id, agentId, conversationId, force);
+    if (force && !title) return { error: 'Could not generate a title for this conversation.' };
+    revalidatePath(`/app/${slug}/chat`);
+    return { savedAt: Date.now() };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Could not generate a conversation title.' };
   }
 }
 

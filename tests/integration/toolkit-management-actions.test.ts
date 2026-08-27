@@ -123,6 +123,7 @@ describe('toolkit management actions', () => {
           workspaceId: ownerWorkspace.id,
           name: 'Toolkit Consumer',
           slug: 'toolkit-consumer',
+          runtimeKind: 'pi',
         },
       }),
     ]);

@@ -30,6 +30,12 @@ const toolkits: ToolkitRow[] = [
 ];
 
 describe('ToolkitsBrowser', () => {
+  it('can open the create form from a market handoff', () => {
+    render(<ToolkitsBrowser slug="acme" toolkits={toolkits} startCreating />);
+
+    expect(screen.getByLabelText('Toolkit name')).toBeInTheDocument();
+  });
+
   it('opens the toolkit market from its canonical market route', () => {
     render(<ToolkitsBrowser slug="acme" toolkits={toolkits} />);
 

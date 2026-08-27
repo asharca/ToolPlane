@@ -16,9 +16,7 @@ import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { uiMessagesToPi, runNativeAgent } from '@/lib/agents/native';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
-import { getWorkSession } from '@/lib/work/sessions';
 import { writeHermesChatStream } from '@/lib/agents/hermes/client';
-import { liveStatus } from '@/lib/process/supervisor';
 import {
   acquireHermesRuntimeWriteLease,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
@@ -27,9 +25,20 @@ import {
   hermesAssistantSegments,
   type HermesUIMessage,
 } from '@/lib/agents/hermes/message-segments';
+import {
+  implementedAgentRuntimeKind,
+  isDedicatedSandboxRuntimeKind,
+} from '@/lib/agents/runtime-kind';
+import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
+import {
+  AttachmentMessageError,
+  attachmentIdsFromParts,
+  claimWorkspaceAttachments,
+  hydrateWorkspaceAttachmentMessages,
+} from '@/lib/attachments/messages';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 900;
 
 export async function POST(
   req: Request,
@@ -41,7 +50,9 @@ export async function POST(
 
   const agent = await getAgentForRequest(agentId, user.id);
   if (!agent) return new Response('Not found', { status: 404 });
-  const isHermes = agent.runtime?.kind === 'hermes';
+  const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
+  if (!runtimeKind) return new Response(`Agent runtime "${agent.runtimeKind}" is not available.`, { status: 409 });
+  const isHermes = runtimeKind === 'hermes';
   if (isHermes ? agent.modelProviders.length === 0 : !agent.provider || !agent.model) {
     return new Response(
       isHermes
@@ -62,9 +73,13 @@ export async function POST(
   let streamOwnsHermesWriteLease = false;
 
   try {
-    let body: { messages: UIMessage[]; conversationId?: string; workSessionId?: string };
+    let body: { messages: UIMessage[]; conversationId?: string };
     try {
-      const parsed = parseAgentChatBody(await req.json());
+      const raw = await req.json();
+      if (raw && typeof raw === 'object' && 'workSessionId' in raw) {
+        return new Response('Work sessions must use the Work API', { status: 400 });
+      }
+      const parsed = parseAgentChatBody(raw);
       if (!parsed) return new Response('Bad request', { status: 400 });
       body = parsed;
     } catch {
@@ -82,30 +97,14 @@ export async function POST(
         ) ?? null
       : null;
     const conversationId = conversation?.id ?? null;
-    if (conversation?.workSession && conversation.workSession.id !== body.workSessionId) {
-      return new Response('Work session required', { status: 400 });
-    }
-    const workSession = body.workSessionId && conversationId
-      ? await getWorkSession(agent.workspaceId, body.workSessionId, agentId, conversationId)
-      : null;
-    if (body.workSessionId && (!workSession || !workSession.sandboxId || !agent.sandboxes.some((link) => link.sandboxId === workSession.sandboxId))) {
-      return new Response('Work session not found', { status: 404 });
-    }
-    if (body.workSessionId && liveStatus(workSession!.sandbox!.deploymentId) !== 'running') {
-      return new Response('Work sandbox is not running', { status: 503 });
-    }
-    if (body.workSessionId && isHermes) {
-      return new Response('Hermes agents cannot run external work sandboxes.', { status: 400 });
+    if (conversation?.workSession) {
+      return new Response('Work conversations must use the Work API', { status: 400 });
     }
     const runtimeSession = isHermes && conversationId
       ? await ensureConversationRuntimeSession(agent.workspaceId, agent.id, conversationId)
       : null;
 
     const last = messages[messages.length - 1];
-    if (workSession) {
-      await db.workSession.update({ where: { id: workSession.id }, data: { status: 'running', error: null } });
-    }
-
     if (isHermes) {
       const writeLease = hermesWriteLease!;
       const runtimeSessionId = runtimeSession?.runtimeSessionId ?? randomUUID();
@@ -155,23 +154,85 @@ export async function POST(
       return new Response('This agent has no model configured.', { status: 400 });
     }
 
-    const resolved = resolveAgentTools(agent, workSession?.sandboxId);
-    const tools = await buildAgentToolSet(resolved, {
+    let attachmentIds: string[];
+    let hasAttachments: boolean;
+    try {
+      attachmentIds = last
+        ? attachmentIdsFromParts(last.parts as unknown as Array<Record<string, unknown>>)
+        : [];
+      hasAttachments = messages.some((message) => (
+        attachmentIdsFromParts(message.parts as unknown as Array<Record<string, unknown>>).length > 0
+      ));
+    } catch (error) {
+      return error instanceof AttachmentMessageError
+        ? new Response(error.message, { status: error.status })
+        : new Response('Invalid attachments.', { status: 400 });
+    }
+    if (body.conversationId && !conversationId) {
+      return new Response('Conversation not found', { status: 404 });
+    }
+    if (hasAttachments && !conversationId) {
+      return new Response('Attachments require a saved conversation.', { status: 400 });
+    }
+    if (attachmentIds.length && last?.role !== 'user') {
+      return new Response('Attachments must be sent in the current user message.', { status: 400 });
+    }
+
+    let hydratedMessages = messages;
+    if (hasAttachments) {
+      try {
+        await db.$transaction((tx) => claimWorkspaceAttachments(tx, {
+          ids: attachmentIds,
+          workspaceId: agent.workspaceId,
+          uploadedById: user.id,
+          scope: { conversationId: conversationId! },
+        }));
+        hydratedMessages = await hydrateWorkspaceAttachmentMessages(
+          messages as unknown as Array<{ role: string; parts: Array<Record<string, unknown>> }>,
+          { workspaceId: agent.workspaceId, scope: { conversationId: conversationId! } },
+        ) as HermesUIMessage[];
+      } catch (error) {
+        return error instanceof AttachmentMessageError
+          ? new Response(error.message, { status: error.status })
+          : new Response('Attachment processing failed.', { status: 502 });
+      }
+    }
+
+    const resolved = resolveAgentTools(agent);
+    const sandboxRuntime = isDedicatedSandboxRuntimeKind(runtimeKind);
+    const tools = sandboxRuntime ? null : await buildAgentToolSet(resolved, {
       workspaceId: agent.workspaceId,
       depth: 0,
       visited: new Set([agentId]),
     });
-    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
+    const system = sandboxRuntime
+      ? agent.systemPrompt
+      : assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
     const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
       execute: async ({ writer }) => {
+        if (sandboxRuntime) {
+          const id = `sandbox-${agent.id}`;
+          writer.write({ type: 'text-start', id });
+          await runDedicatedSandboxTurn({
+            agent,
+            systemPrompt: system,
+            messages: hydratedMessages as never,
+            skills: resolved.skills,
+            deploymentIds: resolved.deploymentIds,
+            signal: req.signal,
+            onTextDelta: (delta) => writer.write({ type: 'text-delta', id, delta }),
+          });
+          writer.write({ type: 'text-end', id });
+          return;
+        }
         const textPartIds = new Map<number, string>();
         await runNativeAgent({
           provider: agent.provider!,
           modelId: agent.model!,
-          systemPrompt: system,
-          messages: uiMessagesToPi(messages),
-          tools,
+          systemPrompt: system ?? '',
+          messages: uiMessagesToPi(hydratedMessages),
+          tools: tools!,
           maxSteps: agent.maxSteps,
           signal: req.signal,
           onEvent: (event) => {
@@ -214,20 +275,15 @@ export async function POST(
         });
       },
       onError: (error) => {
-        if (workSession) void db.workSession.update({ where: { id: workSession.id }, data: { status: 'failed', error: error instanceof Error ? error.message.slice(0, 500) : 'Agent request failed.' } });
         return error instanceof Error ? error.message : 'Agent request failed.';
       },
       onFinish: async ({ responseMessage, isAborted }) => {
-        if (isAborted) {
-          if (workSession) await db.workSession.update({ where: { id: workSession.id }, data: { status: 'active' } });
-          return;
-        }
+        if (isAborted) return;
         if (!conversationId) return;
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
         }
         await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
-        if (workSession) await db.workSession.update({ where: { id: workSession.id }, data: { status: 'completed', error: null } });
       },
     });
     return createUIMessageStreamResponse({ stream });

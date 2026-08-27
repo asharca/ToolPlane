@@ -11,6 +11,7 @@ import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { TimeZoneSettings } from '@/components/timezone/TimeZoneSettings';
 import { ChangePasswordForm } from '@/components/auth/PasswordRecoveryForms';
+import { WorkspaceModelSettings } from '@/components/dashboard/models/WorkspaceModelSettings';
 import {
   DashboardPanel,
 } from '@/components/dashboard/DashboardUI';
@@ -19,6 +20,7 @@ import {
   deleteWorkspaceAction,
 } from '@/lib/workspace/actions';
 import { originFromHeaders } from '@/lib/http/origin';
+import { listProviders } from '@/lib/agents/queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,8 +36,14 @@ export default async function SettingsPage({
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  const providers = await listProviders(ws.id);
   const isOwner = ws.ownerId === user.id;
   const workspaceUrlPrefix = new URL('/app/', originFromHeaders(await headers())).toString();
+  const modelSelection = (providerId: string | null, model: string | null) => (
+    providerId && model && providers.some((provider) => provider.id === providerId && provider.models.includes(model))
+      ? { providerId, model }
+      : null
+  );
 
   return (
     <SettingsModal title={t('title')} fallbackHref={`/app/${slug}/chat`}>
@@ -76,6 +84,23 @@ export default async function SettingsPage({
               {t('saveChanges')}
             </SubmitButton>
           </form>
+        </DashboardPanel>
+
+        <DashboardPanel
+          title={t('modelPreferences')}
+          description={t('modelPreferencesDesc')}
+          bodyClassName="py-4"
+        >
+          <WorkspaceModelSettings
+            slug={slug}
+            providers={providers.map((provider) => ({
+              id: provider.id,
+              name: provider.name,
+              models: provider.models,
+            }))}
+            defaultModel={modelSelection(ws.defaultModelProviderId, ws.defaultModel)}
+            titleModel={modelSelection(ws.titleModelProviderId, ws.titleModel)}
+          />
         </DashboardPanel>
 
         <DashboardPanel

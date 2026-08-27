@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, RefreshCw, TriangleAlert } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH = '/api/v1/admin/system/update?local=1';
@@ -139,15 +139,17 @@ export async function waitForSystemUpdateReady(
   return { status: 'timeout' };
 }
 
-export function SystemUpdateButton() {
+export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
   const t = useTranslations('console.systemUpdate');
   const [status, setStatus] = useState<UpdateStatus | null>(null);
-  const [uiState, setUiState] = useState<UiState>('checking');
+  const [uiState, setUiState] = useState<UiState>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const restartPollRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
     setUiState((state) => (state === 'updating' || state === 'restarting' ? state : 'checking'));
+    setStatus(null);
+    setMessage(null);
     try {
       const response = await fetch('/api/v1/admin/system/update', { cache: 'no-store' });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -162,28 +164,7 @@ export function SystemUpdateButton() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadStatus() {
-      try {
-        const response = await fetch('/api/v1/admin/system/update', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-        const data = (await response.json()) as UpdateStatus;
-        if (cancelled) return;
-        setStatus(data);
-        setMessage(data.reason);
-        setUiState('idle');
-      } catch (error) {
-        if (cancelled) return;
-        setMessage(error instanceof Error ? error.message : String(error));
-        setUiState('error');
-      }
-    }
-
-    void loadStatus();
-    return () => {
-      cancelled = true;
-      restartPollRef.current?.abort();
-    };
+    return () => restartPollRef.current?.abort();
   }, []);
 
   const waitForRestart = useCallback(
@@ -215,7 +196,13 @@ export function SystemUpdateButton() {
   );
 
   const runUpdate = async () => {
-    if (uiState === 'updating' || uiState === 'restarting') return;
+    if (
+      !status?.canUpdate
+      || status.updateAvailable !== true
+      || uiState === 'updating'
+      || uiState === 'restarting'
+    ) return;
+    if (!window.confirm(t('confirmUpdate', { version: status.latestVersion ?? '' }))) return;
     setUiState('updating');
     setMessage(null);
     const targetVersion = status?.latestVersion ?? null;
@@ -262,48 +249,60 @@ export function SystemUpdateButton() {
     }
   };
 
-  const disabled = !status?.canUpdate || uiState === 'checking' || uiState === 'updating' || uiState === 'restarting';
-  const Icon = uiState === 'error'
-    ? TriangleAlert
-    : status?.updateAvailable === false
-      ? CheckCircle2
-      : uiState === 'checking' || uiState === 'updating' || uiState === 'restarting'
-        ? RefreshCw
-        : Download;
+  const busy = uiState === 'checking' || uiState === 'updating' || uiState === 'restarting';
   let label = t('checkAndUpdate');
   if (uiState === 'checking') label = t('checking');
   else if (uiState === 'updating') label = t('updating');
   else if (uiState === 'restarting') label = t('restartingShort');
   else if (uiState === 'error') label = t('failed');
-  else if (!status?.canUpdate) label = t('unavailable');
-  else if (status.updateAvailable === false) label = t('upToDate');
-  else if (status.updateAvailable === true) label = t('updateAvailable');
+  else if (status && !status.canUpdate) label = t('unavailable');
+  else if (status?.updateAvailable === false) label = t('upToDate');
+  else if (status?.updateAvailable === true) label = t('updateAvailable');
 
   const versionDetail = systemUpdateVersionDetail(
     status?.currentVersion,
     status?.latestVersion,
   );
-  const detail = message || versionDetail || status?.artifactName || t('targetReleaseUnknown');
+  const detail = message || versionDetail || status?.artifactName || null;
+  const showUpdate = canInstall && status?.canUpdate === true && status.updateAvailable === true;
 
   return (
-    <div className="mt-3">
-      <button
-        type="button"
-        onClick={runUpdate}
-        disabled={disabled}
-        title={detail}
-        className="group flex h-9 w-full items-center gap-2 rounded-md border border-border bg-background/60 px-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-70"
-      >
-        <Icon
-          className={`size-3.5 shrink-0 ${
-            uiState === 'checking' || uiState === 'updating' || uiState === 'restarting' ? 'animate-spin' : ''
-          }`}
-        />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-      </button>
-      <p className="mt-1 truncate px-1 text-[10px] leading-4 text-muted-foreground" title={detail}>
-        {detail}
-      </p>
+    <div className="mt-2 border-t border-border/70 pt-2">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{label}</span>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={busy}
+          aria-label={t('checkAndUpdate')}
+          title={t('checkAndUpdate')}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+        >
+          <RefreshCw className={`size-3.5 ${busy ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+      {detail ? (
+        <p className="mt-0.5 truncate text-[10px] leading-4 text-muted-foreground" title={detail}>
+          {detail}
+        </p>
+      ) : null}
+      {showUpdate ? (
+        <button
+          type="button"
+          onClick={runUpdate}
+          disabled={uiState === 'updating' || uiState === 'restarting'}
+          className="ui-button-primary ui-button-sm mt-2 w-full disabled:cursor-wait disabled:opacity-70"
+        >
+          {uiState === 'updating' || uiState === 'restarting'
+            ? <RefreshCw className="size-3.5 animate-spin" />
+            : <Download className="size-3.5" />}
+          {uiState === 'updating'
+            ? t('updating')
+            : uiState === 'restarting'
+              ? t('restartingShort')
+              : t('updateNow')}
+        </button>
+      ) : null}
     </div>
   );
 }

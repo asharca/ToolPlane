@@ -104,17 +104,126 @@ describe('AgentConversation', () => {
     const input = screen.getByPlaceholderText('Message this agent');
     expect(input).toHaveAttribute('rows', '2');
     expect(input).toHaveClass('min-h-[46px]', 'max-h-[max(220px,40vh)]', 'pl-[15px]', 'pr-11', 'pb-0');
-    expect(input.closest('form')).toHaveClass('rounded-[20px]', 'border-[0.5px]', 'border-border', 'transition-all');
+    expect(input.closest('form')).toHaveClass('group/composer', 'rounded-[20px]', 'border-[0.5px]', 'border-border', 'transition-all', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
     expect(screen.getByRole('button', { name: 'Open tools' }).querySelector('svg')).toHaveClass('lucide-plus');
     expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('size-[30px]', 'text-brand');
-    await userEvent.click(screen.getByRole('button', { name: 'Expand composer' }));
+    const expand = screen.getByRole('button', { name: 'Expand composer' });
+    expect(expand).toHaveClass('group-hover/composer:opacity-100', 'group-focus-within/composer:opacity-100');
+    await userEvent.click(expand);
     expect(input).toHaveClass('max-h-[max(220px,50vh)]');
     expect(screen.getByRole('button', { name: 'Restore composer' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(screen.getByRole('button', { name: 'Restore composer' }));
     expect(input).toHaveClass('max-h-[max(220px,40vh)]');
     const copyButton = screen.getByRole('button', { name: 'Copy' });
-    expect(copyButton.parentElement?.parentElement).toHaveClass('min-h-[26px]');
+    expect(copyButton.closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
+    expect(screen.getByText('Test agent').closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
+  });
+
+  it('renders branch position and delegates sibling navigation', async () => {
+    const onBranchChange = vi.fn();
+    renderConversation({
+      branchNavigation: [{
+        messageId: 'm1',
+        position: 2,
+        total: 3,
+        previousMessageId: 'm0',
+        nextMessageId: 'm2',
+      }],
+      onBranchChange,
+    });
+
+    expect(screen.getByText('2/3')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(onBranchChange).toHaveBeenNthCalledWith(1, 'm0');
+    expect(onBranchChange).toHaveBeenNthCalledWith(2, 'm2');
+  });
+
+  it('starts a new branch from the assistant message actions', async () => {
+    const onStartBranch = vi.fn();
+    renderConversation({ onStartBranch });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start a new branch' }));
+
+    expect(onStartBranch).toHaveBeenCalledWith('m1');
+    expect(screen.getByText('hello').closest('[data-ui="assistant-reply"]')).toHaveAttribute('id', 'chat-message-m1');
+  });
+
+  it('disables the composer while a branch switch is being committed', () => {
+    renderConversation({ branchBusy: true });
+
+    expect(screen.getByPlaceholderText('Message this agent')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  it('sends an edited user message with its source id', async () => {
+    const messages: HermesUIMessage[] = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'original question' }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'original answer' }] },
+    ];
+    chatMocks.useChat.mockReturnValue({
+      messages,
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: chatMocks.regenerate,
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      status: 'ready',
+      error: undefined,
+    });
+    renderConversation({ allowEdit: true, initialMessages: messages, includeConversationIdInBody: false });
+
+    await userEvent.hover(screen.getByText('original question'));
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const editor = screen.getByDisplayValue('original question');
+    await userEvent.clear(editor);
+    await userEvent.type(editor, 'edited question');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ toolplaneEditMessageId: 'u1' }),
+        parts: [{ type: 'text', text: 'edited question' }],
+      }),
+      expect.any(Object),
+    ));
+  });
+
+  it('shows Cherry-style context usage beside the send button', async () => {
+    const messages: HermesUIMessage[] = [{
+      id: 'm-usage',
+      role: 'assistant',
+      parts: [
+        { type: 'text', text: 'hello' },
+        {
+          type: 'data-context-usage',
+          data: { usedTokens: 42, maxTokens: 100, modelName: 'gpt-test', estimated: false },
+        },
+      ],
+    }];
+    chatMocks.useChat.mockReturnValue({
+      messages,
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: chatMocks.regenerate,
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      status: 'ready',
+      error: undefined,
+    });
+
+    renderConversation({ initialMessages: messages });
+
+    const meter = screen.getByRole('meter', { name: 'Context usage 42%' });
+    expect(meter).toHaveAttribute('aria-valuenow', '42');
+    await userEvent.hover(meter);
+    expect((await screen.findAllByText('42 / 100 (42%)')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('gpt-test').length).toBeGreaterThan(0);
   });
 
   it('syncs local messages when the active conversation changes', async () => {
@@ -150,6 +259,33 @@ describe('AgentConversation', () => {
     })));
   });
 
+  it('passes the persisted assistant id when regenerating a chat branch', async () => {
+    renderConversation({ includeConversationIdInBody: false });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+
+    await waitFor(() => expect(chatMocks.regenerate).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'm1',
+    })));
+  });
+
+  it('refreshes persisted branch state when a request finishes', () => {
+    const onConversationChanged = vi.fn();
+    renderConversation({ onConversationChanged });
+
+    const config = chatMocks.useChat.mock.calls.at(-1)?.[0] as { onFinish?: () => void };
+    config.onFinish?.();
+
+    expect(onConversationChanged).toHaveBeenCalledOnce();
+  });
+
+  it('can disable regeneration for a transport that persists every submitted turn', () => {
+    renderConversation({ allowRegenerate: false });
+
+    expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument();
+    expect(chatMocks.regenerate).not.toHaveBeenCalled();
+  });
+
   it('creates a conversation before the first message is sent', async () => {
     const ensureConversation = vi.fn().mockResolvedValue('conv-new');
     renderConversation({
@@ -173,18 +309,65 @@ describe('AgentConversation', () => {
     });
   });
 
-  it('opens tools for every runtime and only enables Hermes attachments', async () => {
+  it('enables attachments for stored native uploads and Hermes', async () => {
     const { props, rerender } = renderConversation();
 
     const toolsButton = screen.getByRole('button', { name: 'Open tools' });
     expect(toolsButton).toBeEnabled();
     await userEvent.click(toolsButton);
     expect(screen.getByRole('button', { name: /Add attachment/ })).toBeDisabled();
-    expect(screen.getByText('Attachments are available for Hermes agents only.')).toBeInTheDocument();
+    expect(screen.getByText('Attachments are not available for this runtime or sandbox.')).toBeInTheDocument();
+
+    rerender(<AgentConversation {...props} attachmentUploadUrl="/api/v1/workspaces/workspace-1/attachments" />);
+
+    expect(screen.getByRole('button', { name: /Add attachment/ })).toBeEnabled();
 
     rerender(<AgentConversation {...props} runtimeKind="hermes" />);
 
     expect(screen.getByRole('button', { name: /Add attachment/ })).toBeEnabled();
+  });
+
+  it('uploads a native attachment as an internal file part', async () => {
+    apiMocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      id: 'attachment-1',
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: 5,
+      url: '/api/v1/attachments/attachment-1',
+    }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    }));
+    renderConversation({
+      attachmentUploadUrl: '/api/v1/workspaces/workspace-1/attachments',
+      runtimeKind: 'pi',
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    await userEvent.click(screen.getByRole('button', { name: /Add attachment/ }));
+    const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).not.toBeNull();
+    await userEvent.upload(fileInput!, new File(['notes'], 'notes.txt', { type: 'text/plain' }));
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Read this');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
+      '/api/v1/workspaces/workspace-1/attachments?filename=notes.txt',
+      expect.objectContaining({ method: 'POST', body: expect.any(File) }),
+    ));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'file',
+            filename: 'notes.txt',
+            mediaType: 'text/plain',
+            url: '/api/v1/attachments/attachment-1',
+          }),
+        ]),
+      }),
+      expect.objectContaining({ body: { conversationId: 'conv-new' } }),
+    ));
   });
 
   it('restores the composer when a Hermes attachment upload fails', async () => {
@@ -231,5 +414,7 @@ describe('AgentConversation', () => {
     expect(chatMocks.stop).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Stop' })).toHaveClass('text-destructive');
     expect(screen.getByRole('button', { name: 'Stop' }).querySelector('svg')).toHaveClass('lucide-circle-pause');
+    expect(screen.getByRole('status')).toHaveTextContent('Agent is responding');
+    expect(document.querySelectorAll('[data-ui="conversation-pending-dot"]')).toHaveLength(3);
   });
 });

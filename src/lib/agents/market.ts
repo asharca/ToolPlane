@@ -7,6 +7,7 @@ import { agentReleaseChecksum as calculateAgentReleaseChecksum } from '@/lib/age
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { createAgentRecords } from '@/lib/agents/mutations';
 import { MAX_AGENT_MARKET_ENV_REQUIREMENTS } from '@/lib/agents/market-limits';
+import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import {
   buildInstalledSkillMarkdown,
   buildSkillMarkdown,
@@ -32,6 +33,15 @@ const hermesRuntimeSchema = z.object({
   image: z.string().min(1).max(255),
 }).strict();
 
+const piRuntimeSchema = z.object({
+  kind: z.literal('pi'),
+}).strict();
+
+const portableRuntimeSchema = z.discriminatedUnion('kind', [
+  piRuntimeSchema,
+  hermesRuntimeSchema,
+]);
+
 const hermesProviderRequirementSchema = z.object({
   format: z.string().min(1).max(64),
 }).strict();
@@ -43,8 +53,9 @@ const portableAgentSchema = z.object({
   systemPrompt: z.string().max(200_000).nullable(),
   maxSteps: z.number().int().min(0).max(1000),
   modelRequirement: modelRequirementSchema.nullable(),
-  // Optional fields preserve the canonical checksum of existing native v1 releases.
-  runtime: hermesRuntimeSchema.optional(),
+  // Optional only for checksum-compatible parsing of legacy v1 releases.
+  // Every newly published release writes an explicit Pi or Hermes runtime.
+  runtime: portableRuntimeSchema.optional(),
   modelProviderRequirements: z.array(hermesProviderRequirementSchema).max(64).optional(),
   deploymentKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_RESOURCES),
   skillKeys: z.array(z.string().min(1).max(80)).max(MAX_GRAPH_RESOURCES),
@@ -152,7 +163,7 @@ const agentReleaseSummarySchema = z.object({
   resourceCount: z.number().int().nonnegative(),
   toolCount: z.number().int().nonnegative(),
   models: z.array(modelRequirementSchema),
-  runtimes: z.array(z.enum(['native', HERMES_RUNTIME_KIND])).min(1),
+  runtimes: z.array(z.enum(['native', 'pi', HERMES_RUNTIME_KIND])).min(1),
 }).strict();
 
 const agentInstallRequirementsSchema = z.object({
@@ -393,6 +404,7 @@ const MARKET_AGENT_SELECT = {
   workspaceId: true,
   name: true,
   slug: true,
+  runtimeKind: true,
   systemPrompt: true,
   model: true,
   maxSteps: true,
@@ -409,7 +421,9 @@ const MARKET_AGENT_SELECT = {
       sandbox: { select: { workspaceId: true } },
     },
   },
-  sandboxes: { select: { sandbox: { select: { id: true, workspaceId: true, kind: true } } } },
+  sandboxes: {
+    select: { sandbox: { select: { id: true, workspaceId: true, kind: true, network: true } } },
+  },
   servers: { select: { deployment: { select: MARKET_DEPLOYMENT_SELECT } } },
   skills: { select: { installedSkill: { select: MARKET_INSTALLED_SKILL_SELECT } } },
   toolkits: { select: { toolkit: { select: MARKET_TOOLKIT_SELECT } } },
@@ -483,6 +497,11 @@ export function agentReleaseChecksum(manifest: AgentReleaseManifestV1): string {
   return calculateAgentReleaseChecksum(manifest);
 }
 
+function portableAgentRuntimeKind(agent: PortableAgentDefinition): 'pi' | 'hermes' {
+  // Legacy v1 manifests omitted runtime to mean the in-process harness.
+  return agent.runtime?.kind ?? 'pi';
+}
+
 export function parseAgentReleaseManifest(raw: unknown, expectedChecksum?: string): AgentReleaseManifestV1 {
   const parsed = agentReleaseManifestSchema.safeParse(raw);
   if (!parsed.success) {
@@ -510,8 +529,8 @@ export function summarizeAgentReleaseManifest(manifest: AgentReleaseManifestV1):
   const toolkitCount = manifest.toolkits.length;
   const subAgentCount = Math.max(0, manifest.agents.length - 1);
   const runtimes = [...new Set(
-    manifest.agents.map((agent) => agent.runtime?.kind ?? 'native'),
-  )].sort((a, b) => a.localeCompare(b)) as Array<'native' | 'hermes'>;
+    manifest.agents.map((agent) => agent.runtime?.kind ?? 'pi'),
+  )].sort((a, b) => a.localeCompare(b)) as Array<'pi' | 'hermes'>;
   return {
     agentCount: manifest.agents.length,
     subAgentCount,
@@ -649,6 +668,7 @@ export async function buildCatalogAgentManifest(
         ? Math.max(0, Math.min(1000, Math.trunc(input.maxSteps)))
         : 8,
       modelRequirement: modelFormat && model ? { format: modelFormat, model } : null,
+      runtime: { kind: 'pi' },
       deploymentKeys: deployments.map(({ key }) => key),
       skillKeys: portableSkills.map(({ key }) => key),
       toolkitKeys: [],
@@ -908,13 +928,30 @@ async function collectPortableManifest(
       });
       continue;
     }
-    const isHermes = agent.runtime?.kind === HERMES_RUNTIME_KIND;
-    if (agent.runtime && !isHermes) {
+    const isHermes = agent.runtimeKind === HERMES_RUNTIME_KIND;
+    const isPi = agent.runtimeKind === 'pi';
+    if (!isHermes && !isPi) {
+      pushIssue(state, {
+        code: 'unsupported_runtime',
+        path: `${path}.runtime`,
+        message: `Runtime "${agent.runtimeKind}" is not portable in agent marketplace v1.`,
+        resourceId: agent.id,
+      });
+    }
+    if (agent.runtime && (!isHermes || agent.runtime.kind !== HERMES_RUNTIME_KIND)) {
       pushIssue(state, {
         code: 'unsupported_runtime',
         path: `${path}.runtime`,
         message: `Runtime "${agent.runtime.kind}" is not portable in agent marketplace v1.`,
         resourceId: agent.runtime.id,
+      });
+    }
+    if (isHermes && (!agent.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND)) {
+      pushIssue(state, {
+        code: 'invalid_definition',
+        path: `${path}.runtime`,
+        message: 'The Hermes Agent runtime record is missing or inconsistent.',
+        resourceId: agent.id,
       });
     }
     if (isHermes && agent.runtime && (
@@ -928,12 +965,28 @@ async function collectPortableManifest(
         resourceId: agent.runtime.id,
       });
     }
-    if (agent.sandboxes.length > 0) {
+    if (isPi) {
+      const sandbox = agent.sandboxes[0]?.sandbox;
+      if (
+        agent.sandboxes.length !== 1
+        || !sandbox
+        || sandbox.workspaceId !== workspaceId
+        || sandbox.kind !== 'docker'
+        || sandbox.network === 'none'
+      ) {
+        pushIssue(state, {
+          code: 'invalid_definition',
+          path: `${path}.sandboxes`,
+          message: 'Pi Agents require exactly one networked Docker sandbox in the published workspace.',
+          resourceId: agent.id,
+        });
+      }
+    } else if (agent.sandboxes.length > 0) {
       for (const { sandbox } of agent.sandboxes) {
         pushIssue(state, {
           code: 'external_sandbox',
           path: `${path}.sandboxes`,
-          message: 'Agents with attached sandboxes are not portable in agent marketplace v1.',
+          message: 'Only Pi Agents may attach a portable sandbox.',
           resourceId: sandbox.id,
         });
       }
@@ -1008,9 +1061,9 @@ async function collectPortableManifest(
         .map(({ provider }) => provider.format))
         .map((format) => ({ format }))
       : undefined;
-    const runtime = isHermes && agent.runtime
+    const runtime = isHermes && agent.runtime?.kind === HERMES_RUNTIME_KIND
       ? { kind: 'hermes' as const, image: resolveHermesImage(agent.runtime.image) }
-      : undefined;
+      : { kind: 'pi' as const };
     state.agents.push({
       key,
       name: agent.name,
@@ -1020,7 +1073,8 @@ async function collectPortableManifest(
       modelRequirement: !isHermes && agent.provider && agent.provider.workspaceId === workspaceId && agent.model
         ? { format: agent.provider.format, model: agent.model }
         : null,
-      ...(runtime ? { runtime, modelProviderRequirements } : {}),
+      runtime,
+      ...(modelProviderRequirements ? { modelProviderRequirements } : {}),
       deploymentKeys: sortedUnique(deploymentKeys),
       skillKeys: sortedUnique(skillKeys),
       toolkitKeys: sortedUnique(toolkitKeys),
@@ -1638,6 +1692,12 @@ export function getAgentMarketListing(
   return findAgentMarketListing({ id: listingId });
 }
 
+export function getAgentMarketListingByDirectorySlug(
+  directorySlug: string,
+): Promise<AgentMarketListingDetail | null> {
+  return findAgentMarketListing({ directorySlug });
+}
+
 export type MaterializeAgentReleaseResult = {
   install: {
     id: string;
@@ -1753,7 +1813,7 @@ async function uniqueSandboxSlugForInstall(
       return candidate;
     }
   }
-  throw new AgentMarketError('install_failed', 'Could not allocate a unique Hermes runtime sandbox slug.');
+  throw new AgentMarketError('install_failed', 'Could not allocate a unique runtime sandbox slug.');
 }
 
 async function uniqueToolkitSlugForInstall(
@@ -1895,7 +1955,7 @@ async function materializeAgentReleaseTransaction(
     );
   }
   const hermesProviderFormats = sortedUnique(manifest.agents.flatMap((agent) => (
-    agent.runtime?.kind === HERMES_RUNTIME_KIND
+    portableAgentRuntimeKind(agent) === HERMES_RUNTIME_KIND
       ? (agent.modelProviderRequirements ?? []).map(({ format }) => format)
       : []
   )));
@@ -2037,7 +2097,8 @@ async function materializeAgentReleaseTransaction(
     const provider = requirement
       ? providerByRequirement.get(`${requirement.format}\0${requirement.model}`)
       : undefined;
-    const isHermes = definition.runtime?.kind === HERMES_RUNTIME_KIND;
+    const runtimeKind = portableAgentRuntimeKind(definition);
+    const isHermes = runtimeKind === HERMES_RUNTIME_KIND;
     const hermesProviderIds = isHermes
       ? [...new Set((definition.modelProviderRequirements ?? [])
         .map(({ format }) => providerByFormat.get(format)?.id)
@@ -2049,7 +2110,12 @@ async function materializeAgentReleaseTransaction(
           input.targetWorkspaceId,
           requestedName,
           agentSlug,
-          { runtime: HERMES_RUNTIME_KIND, hermesImage: definition.runtime?.image },
+          {
+            runtime: HERMES_RUNTIME_KIND,
+            hermesImage: definition.runtime?.kind === HERMES_RUNTIME_KIND
+              ? definition.runtime.image
+              : undefined,
+          },
           await uniqueSandboxSlugForInstall(
             tx,
             input.targetWorkspaceId,
@@ -2062,6 +2128,7 @@ async function materializeAgentReleaseTransaction(
             workspaceId: input.targetWorkspaceId,
             name: requestedName,
             slug: agentSlug,
+            runtimeKind,
             systemPrompt: definition.systemPrompt,
             providerId: provider?.id ?? null,
             model: provider && requirement ? requirement.model : null,
@@ -2069,6 +2136,54 @@ async function materializeAgentReleaseTransaction(
           },
           select: { id: true, name: true, slug: true },
         });
+    if (!isHermes) {
+      const deployment = await tx.deployment.create({
+        data: {
+          workspaceId: input.targetWorkspaceId,
+          serverId: null,
+          name: `Sandbox: ${requestedName}`,
+          source: 'sandbox',
+          sourceRef: DEFAULT_SANDBOX_IMAGE,
+          status: 'stopped',
+        },
+      });
+      const sandbox = await tx.sandbox.create({
+        data: {
+          workspaceId: input.targetWorkspaceId,
+          deploymentId: deployment.id,
+          name: `${requestedName} Workspace`,
+          slug: await uniqueSandboxSlugForInstall(
+            tx,
+            input.targetWorkspaceId,
+            agentSlug,
+            reservedSandboxSlugs,
+          ),
+          kind: 'docker',
+          image: DEFAULT_SANDBOX_IMAGE,
+          network: 'isolated',
+          config: {},
+        },
+      });
+      await Promise.all([
+        tx.deployment.update({
+          where: { id: deployment.id },
+          data: {
+            installCfg: {
+              sandboxId: sandbox.id,
+              kind: 'docker',
+              image: DEFAULT_SANDBOX_IMAGE,
+              network: 'isolated',
+              volumeName: sandboxVolumeName(sandbox.id),
+              env: {},
+              allowSudo: false,
+            },
+          },
+        }),
+        tx.agentSandbox.create({
+          data: { agentId: agent.id, sandboxId: sandbox.id, isDefault: true },
+        }),
+      ]);
+    }
     if (isHermes) {
       await Promise.all([
         tx.agent.update({
@@ -2144,7 +2259,7 @@ async function materializeAgentReleaseTransaction(
       }))
     )),
     runtimes: manifest.agents.flatMap((definition) => (
-      definition.runtime?.kind === HERMES_RUNTIME_KIND
+      portableAgentRuntimeKind(definition) === HERMES_RUNTIME_KIND
         ? [{ agentKey: definition.key, kind: HERMES_RUNTIME_KIND, setupRequired: true as const }]
         : []
     )),

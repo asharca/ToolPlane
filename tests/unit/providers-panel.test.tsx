@@ -76,31 +76,45 @@ describe('ProvidersPanel', () => {
     expect(screen.getByText('https://generativelanguage.googleapis.com/v1beta')).toBeInTheDocument();
   });
 
-  it('puts model refresh inside the model list dialog', async () => {
+  it('filters providers by model and shows the selected provider inline', async () => {
     const user = userEvent.setup();
     render(
       <ProvidersPanel
         slug="acme"
-        providers={[{
-          id: 'provider-1',
-          name: 'OpenAI production',
-          format: 'openai',
-          baseUrl: 'https://api.openai.com/v1',
-          modelCount: 1,
-          models: ['gpt-4.1'],
-          modelsFetchedAt: null,
-        }]}
+        providers={[
+          {
+            id: 'provider-1',
+            name: 'OpenAI production',
+            format: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            modelCount: 1,
+            models: ['gpt-4.1'],
+            modelsFetchedAt: null,
+          },
+          {
+            id: 'provider-2',
+            name: 'Anthropic production',
+            format: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            modelCount: 1,
+            models: ['claude-sonnet-4'],
+            modelsFetchedAt: null,
+          },
+        ]}
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'Refresh models' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'View models' }));
+    await user.type(screen.getByRole('textbox', { name: 'Search Model Providers' }), 'sonnet');
+    expect(screen.queryByRole('button', { name: 'OpenAI production' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Anthropic production' }));
+    expect(screen.getByText('https://api.anthropic.com')).toBeInTheDocument();
+
     await user.click(screen.getByRole('button', { name: 'Refresh models' }));
 
     await waitFor(() => expect(actions.refreshModelsAction).toHaveBeenCalledTimes(1));
     const formData = actions.refreshModelsAction.mock.calls[0][1] as FormData;
     expect(formData.get('workspace')).toBe('acme');
-    expect(formData.get('providerId')).toBe('provider-1');
+    expect(formData.get('providerId')).toBe('provider-2');
   });
 
   it('requires confirmation before deleting a provider', async () => {

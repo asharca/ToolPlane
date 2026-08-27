@@ -10,6 +10,13 @@ vi.mock('@/lib/skills/actions', () => ({
 }));
 
 describe('AddSkillDialog', () => {
+  it('can open directly from an add handoff', () => {
+    render(<AddSkillDialog slug="acme" defaultOpen />);
+
+    expect(screen.getByRole('dialog', { name: 'Add a skill' })).toBeInTheDocument();
+    expect(screen.getByText('Upload a folder')).toBeInTheDocument();
+  });
+
   it('shows three sources and reveals the create form', async () => {
     render(<AddSkillDialog slug="acme" />);
     await userEvent.click(screen.getByRole('button', { name: /add skill/i }));

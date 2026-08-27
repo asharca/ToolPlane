@@ -120,7 +120,7 @@ async function readRequestText(
   }
 }
 
-async function parseJson<T>(
+export async function parseJson<T>(
   req: Request,
   schema: z.ZodType<T>,
   maxBytes = AGENT_API_MAX_BODY_BYTES,

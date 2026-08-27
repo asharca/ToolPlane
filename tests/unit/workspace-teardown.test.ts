@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   removeDockerVolumeStrict: vi.fn(),
   removeDeploymentContainer: vi.fn(),
   removeDeploymentConfigVolume: vi.fn(),
+  removeWorkspaceAttachmentVolume: vi.fn(),
   disconnectConnector: vi.fn(),
   closeWorkspaceOperations: vi.fn(),
 }));
@@ -37,6 +38,9 @@ vi.mock('@/lib/process/deployment-config-volume', () => ({
 vi.mock('@/lib/process/deployment-runtime-container', () => ({
   removeDeploymentContainer: mocks.removeDeploymentContainer,
 }));
+vi.mock('@/lib/attachments/storage', () => ({
+  removeWorkspaceAttachmentVolume: mocks.removeWorkspaceAttachmentVolume,
+}));
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   disconnectConnector: mocks.disconnectConnector,
 }));
@@ -55,6 +59,7 @@ describe('workspace process teardown', () => {
     mocks.removeDockerVolumeStrict.mockResolvedValue(undefined);
     mocks.removeDeploymentContainer.mockResolvedValue(undefined);
     mocks.removeDeploymentConfigVolume.mockResolvedValue(undefined);
+    mocks.removeWorkspaceAttachmentVolume.mockResolvedValue(undefined);
     mocks.closeWorkspaceOperations.mockResolvedValue(undefined);
   });
 
@@ -139,6 +144,7 @@ describe('workspace process teardown', () => {
       ['vol-snapshot-2'],
     ]);
     expect(mocks.removeDockerSandboxRuntimeStrict).toHaveBeenCalledWith('sb-docker', 'vol-docker');
+    expect(mocks.removeWorkspaceAttachmentVolume).toHaveBeenCalledWith('ws1');
     expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalledWith(
       'sb-connector',
       expect.anything(),

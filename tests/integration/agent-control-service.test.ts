@@ -105,7 +105,7 @@ beforeAll(async () => {
   });
   sandboxId = sandbox.id;
   const child = await db.agent.create({
-    data: { workspaceId, name: 'Child agent', slug: `child-${stamp}` },
+    data: { workspaceId, name: 'Child agent', slug: `child-${stamp}`, runtimeKind: 'pi' },
   });
   childAgentId = child.id;
 
@@ -157,7 +157,7 @@ beforeAll(async () => {
   });
   foreignSandboxId = foreignSandbox.id;
   const foreignAgent = await db.agent.create({
-    data: { workspaceId: foreignWorkspaceId, name: 'Foreign agent', slug: `foreign-agent-${stamp}` },
+    data: { workspaceId: foreignWorkspaceId, name: 'Foreign agent', slug: `foreign-agent-${stamp}`, runtimeKind: 'pi' },
   });
   foreignAgentId = foreignAgent.id;
 });
@@ -173,7 +173,7 @@ afterAll(async () => {
 function createInput(overrides: Partial<CreateAgentFromControlInput> = {}): CreateAgentFromControlInput {
   return {
     name: `Created agent ${Math.random().toString(36).slice(2)}`,
-    runtime: 'native',
+    runtime: 'pi',
     systemPrompt: 'Use the attached tools carefully.',
     providerId,
     providerIds: [],

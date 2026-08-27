@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useState, useSyncExternalStore } from 'react';
 import { Popover } from 'radix-ui';
-import { Check, ChevronsUpDown, LogOut, Plus } from 'lucide-react';
+import { Check, ChevronsUpDown, LogOut, Plus, Shield } from 'lucide-react';
 import { logoutAction } from '@/lib/auth/actions';
 import { createWorkspaceAction } from '@/lib/workspace/actions';
 
@@ -31,15 +31,18 @@ export function WorkspaceSwitcher({
   workspaceName,
   userLabel,
   workspaces,
+  isAdmin = false,
   compact = false,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  isAdmin?: boolean;
   compact?: boolean;
 }) {
   const t = useTranslations('console.workspaceSwitcher');
+  const sidebarT = useTranslations('console.sidebar');
   const [creating, setCreating] = useState(false);
   const wideViewport = useSyncExternalStore(
     subscribeToWideViewport,
@@ -137,6 +140,17 @@ export function WorkspaceSwitcher({
                 {t('createWorkspace')}
               </button>
             )}
+            {isAdmin ? (
+              <Popover.Close asChild>
+                <Link
+                  href="/admin"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
+                >
+                  <Shield className="size-4 shrink-0" />
+                  {sidebarT('adminConsole')}
+                </Link>
+              </Popover.Close>
+            ) : null}
             <form action={logoutAction} className="mt-1 border-t border-border pt-1">
               <button
                 type="submit"

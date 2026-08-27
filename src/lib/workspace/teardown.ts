@@ -9,6 +9,7 @@ import {
 import { HERMES_ARCHIVE_IMPORT_TIMEOUT_MS } from '@/lib/agents/hermes/archive-limits';
 import { disconnectConnector } from '@/lib/sandboxes/connector-broker';
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
+import { removeWorkspaceAttachmentVolume } from '@/lib/attachments/storage';
 import { closeWorkspaceOperations } from './operation-gate';
 
 export async function workspaceDeploymentIds(workspaceId: string): Promise<string[]> {
@@ -94,4 +95,5 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
       }
     }
   }
+  await removeWorkspaceAttachmentVolume(workspaceId);
 }

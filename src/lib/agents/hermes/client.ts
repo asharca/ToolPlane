@@ -32,6 +32,11 @@ type HermesStoredMessage = {
 };
 
 function fileLabel(part: FileUIPart): string {
+  const toolplane = part.providerMetadata?.toolplane;
+  const runtimePath = toolplane && typeof toolplane === 'object' && 'runtimePath' in toolplane
+    ? String(toolplane.runtimePath ?? '').trim()
+    : '';
+  if (runtimePath) return `[Attached file: ${part.filename || 'file'} at ${runtimePath}]`;
   return `[Attachment: ${part.filename || 'file'} (${part.mediaType}) ${part.url}]`;
 }
 

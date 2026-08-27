@@ -11,10 +11,9 @@ import {
 } from '@/lib/agents/queries';
 import { AgentsBrowser } from '@/components/dashboard/agents/AgentsBrowser';
 import { listToolkits } from '@/lib/toolkits/queries';
-import { listSandboxes } from '@/lib/sandboxes/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { SettingsModal } from '@/components/dashboard/SettingsModal';
 import { originFromHeaders } from '@/lib/http/origin';
 
 export const dynamic = 'force-dynamic';
@@ -24,10 +23,10 @@ export default async function AgentsPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; create?: string }>;
 }) {
   const { workspace: slug } = await params;
-  const { tab } = await searchParams;
+  const { tab, create } = await searchParams;
   if (tab === 'providers') redirect(`/app/${encodeURIComponent(slug)}/providers`);
   const t = await getTranslations('console.agents');
 
@@ -38,19 +37,24 @@ export default async function AgentsPage({
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [agents, providers, deployments, skills, toolkits, sandboxes] = await Promise.all([
+  const [agents, providers, deployments, skills, toolkits] = await Promise.all([
     listAgents(ws.id),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id),
     listAgentSkillOptions(ws.id),
     listToolkits(ws.id),
-    listSandboxes(ws.id),
   ]);
+  const defaultModelProviderId = ws.defaultModelProviderId;
+  const defaultModelId = ws.defaultModel;
+  const defaultModel = defaultModelProviderId && defaultModelId
+    && providers.some((provider) => provider.id === defaultModelProviderId && provider.models.includes(defaultModelId))
+    ? { providerId: defaultModelProviderId, model: defaultModelId }
+    : null;
 
   return (
-    <>
-      <DashboardHeader title={t('title')} />
-      <AgentsBrowser
+    <SettingsModal title={create === '1' ? t('newAgent') : t('title')} fallbackHref={`/app/${slug}/work`}>
+      <div className="h-full overflow-y-auto">
+        <AgentsBrowser
         slug={slug}
         agentControlEndpoint={agentControlEndpoint}
         agents={agents.map((a) => ({
@@ -61,7 +65,10 @@ export default async function AgentsPage({
           model: a.model,
           toolCount: a._count.servers + a._count.skills + a._count.toolkits + a._count.sandboxes,
           subAgentCount: a._count.subAgents,
-          runtimeKind: a.runtime?.kind ?? 'native',
+          runtimeKind: a.runtimeKind,
+          sandboxReady: a.sandboxes.length === 1
+            && a.sandboxes[0]?.sandbox.kind === 'docker'
+            && a.sandboxes[0]?.sandbox.network !== 'none',
           runtimeStatus: a.runtime
             ? ['error', 'setup_required'].includes(a.runtime.status)
               ? a.runtime.status
@@ -73,8 +80,10 @@ export default async function AgentsPage({
           providers: providers.map((provider) => ({
             id: provider.id,
             name: provider.name,
+            format: provider.format,
             models: provider.models,
           })),
+          defaultModel,
           deployments,
           skills,
           toolkits: toolkits.map((toolkit) => ({
@@ -82,13 +91,9 @@ export default async function AgentsPage({
             label: toolkit.name,
             status: toolkit.enabled ? 'enabled' : 'disabled',
           })),
-          sandboxes: sandboxes.map((sandbox) => ({
-            id: sandbox.id,
-            label: sandbox.name,
-            status: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status),
-          })),
         }}
-      />
-    </>
+        />
+      </div>
+    </SettingsModal>
   );
 }

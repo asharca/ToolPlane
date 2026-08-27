@@ -4,13 +4,26 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { Bot } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { getConversation, listAgents, listConversations, listProviders } from '@/lib/agents/queries';
+import {
+  getConversation,
+  listAgentDeploymentOptions,
+  listAgents,
+  listConversations,
+  listProviders,
+} from '@/lib/agents/queries';
 import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
+import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
+import {
+  getChatThreadForWorkspace,
+  listChatAssistantsForWorkspace,
+} from '@/lib/chat/service';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardEmptyState, DashboardPage } from '@/components/dashboard/DashboardUI';
 import { WorkspaceChat } from '@/components/dashboard/agents/WorkspaceChat';
+import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
+import { resolveModelContext } from '@/lib/agents/model';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,59 +36,154 @@ export default async function WorkspaceChatPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ agent?: string; c?: string }>;
+  searchParams: Promise<{
+    assistant?: string;
+    thread?: string;
+    agent?: string;
+    c?: string;
+    newAssistant?: string;
+  }>;
 }) {
-  const { workspace: slug } = await params;
-  const { agent: requestedAgentId, c: requestedConversationId } = await searchParams;
-  const [t, locale, user] = await Promise.all([
-    getTranslations('console.agents'),
-    getLocale(),
+  const [{ workspace: slug }, query, user, locale, t] = await Promise.all([
+    params,
+    searchParams,
     getCurrentUser(),
+    getLocale(),
+    getTranslations('console.agents'),
   ]);
   if (!user) redirect('/app/login');
-  const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  const workspace = await getWorkspaceForUser(slug, user.id);
+  if (!workspace) redirect('/app');
 
-  const agents = await listAgents(ws.id);
-  if (agents.length === 0) {
+  if (query.agent || query.c) {
+    const agents = await listAgents(workspace.id);
+    if (agents.length === 0) {
+      return (
+        <>
+          <DashboardHeader title={t('chat')} />
+          <DashboardPage>
+            <DashboardEmptyState
+              icon={Bot}
+              title={t('noAgentsYet')}
+              description={t('createAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
+              actions={(
+                <Link href={`/app/${encodeURIComponent(slug)}/agents`} className="ui-button-primary">
+                  <Bot className="size-4" />
+                  {t('createAgent')}
+                </Link>
+              )}
+            />
+          </DashboardPage>
+        </>
+      );
+    }
+
+    const [conversations, providers] = await Promise.all([
+      listConversations(workspace.id, agents.map((agent) => agent.id)),
+      listProviders(workspace.id),
+    ]);
+    const chatAgents = agents.map((agent) => {
+      const isHermes = agent.runtimeKind === 'hermes';
+      const sandboxReady = agent.sandboxes.length === 1
+        && agent.sandboxes[0]?.sandbox.kind === 'docker'
+        && agent.sandboxes[0]?.sandbox.network !== 'none';
+      return {
+        id: agent.id,
+        name: agent.name,
+        ready: isHermes
+          ? agent.modelProviders.length > 0
+          : Boolean(
+              agent.providerId
+              && agent.model
+              && (!isDedicatedSandboxRuntimeKind(agent.runtimeKind) || sandboxReady),
+            ),
+        runtimeKind: agent.runtimeKind,
+        providerId: agent.providerId,
+        providerIds: agent.modelProviders.map((link) => link.providerId),
+        model: agent.model,
+        providerLabel: isHermes
+          ? agent.modelProviders.map((link) => link.provider.name).join(', ') || t('noModelProvidersSelected')
+          : agent.provider
+            ? `${agent.provider.name} · ${agent.model ?? t('noModelSelected')}`
+            : t('noProviderSelected'),
+      };
+    });
+    const activeAgent = chatAgents.find((agent) => agent.id === query.agent)
+      ?? chatAgents.find((agent) => agent.ready)
+      ?? chatAgents[0];
+    if (!activeAgent) return null;
+    const selectedConversationId = query.c
+      ?? conversations.find((item) => item.agentId === activeAgent.id)?.id
+      ?? null;
+    const loadedConversation = selectedConversationId
+      ? await getConversation(selectedConversationId, workspace.id)
+      : null;
+    const conversation = loadedConversation?.agentId === activeAgent.id && !loadedConversation.workSession
+      ? loadedConversation
+      : null;
+    const timeZone = resolveUserTimeZone(user);
+    const initialMessages: HermesUIMessage[] = (conversation?.messages ?? []).map((message) => ({
+      id: message.id,
+      role: message.role as HermesUIMessage['role'],
+      parts: message.parts as HermesUIMessage['parts'],
+    }));
+
     return (
       <>
         <DashboardHeader title={t('chat')} />
-        <DashboardPage>
-          <DashboardEmptyState
-            icon={Bot}
-            title={t('noAgentsYet')}
-            description={t('createAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
-            actions={(
-              <Link href={`/app/${encodeURIComponent(slug)}/agents`} className="ui-button-primary">
-                <Bot className="size-4" />
-                {t('createAgent')}
-              </Link>
-            )}
-          />
-        </DashboardPage>
+        <WorkspaceChat
+          slug={slug}
+          workspaceId={workspace.id}
+          agentId={activeAgent.id}
+          conversationId={conversation?.id ?? null}
+          initialMessages={initialMessages}
+          agents={chatAgents}
+          providers={providers.map((provider) => ({
+            id: provider.id,
+            name: provider.name,
+            format: provider.format,
+            models: provider.models,
+          }))}
+          conversations={conversations.map((item) => {
+            const source = parseMessagingSessionTitle(item.title);
+            return {
+              id: item.id,
+              agentId: item.agentId,
+              title: item.title,
+              createdAt: formatDate(item.createdAt, timeZone, locale),
+              lastMessageAt: item.messages[0]?.createdAt
+                ? formatDate(item.messages[0].createdAt, timeZone, locale)
+                : null,
+              source,
+              editable: !item.publicApiConversation && !source,
+            };
+          })}
+          startInChat
+        />
       </>
     );
   }
 
-  const requestedAgent = agents.find((agent) => agent.id === requestedAgentId);
-  const activeAgent = requestedAgent ?? agents.find((agent) => agent.runtime?.kind === 'hermes'
-    ? agent.modelProviders.length > 0
-    : Boolean(agent.providerId && agent.model)) ?? agents.find((agent) => agent.runtime?.kind !== 'hermes') ?? agents[0];
-  if (!activeAgent) return null;
-  const [conversations, providers] = await Promise.all([
-    listConversations(ws.id, agents.map((agent) => agent.id)),
-    listProviders(ws.id),
+  const [assistants, providers, deployments] = await Promise.all([
+    listChatAssistantsForWorkspace(workspace.id),
+    listProviders(workspace.id),
+    listAgentDeploymentOptions(workspace.id),
   ]);
-  const selectedConversationId = requestedConversationId
-    ?? conversations.find((item) => item.agentId === activeAgent.id)?.id
-    ?? null;
-  const loadedConversation = selectedConversationId
-    ? await getConversation(selectedConversationId, ws.id)
+  const providersById = new Map(providers.map((provider) => [provider.id, provider]));
+  const activeAssistant = assistants.find((item) => item.id === query.assistant) ?? assistants[0] ?? null;
+  const requestedThreadId = query.thread ?? activeAssistant?.threads[0]?.id ?? null;
+  let activeThread = activeAssistant && requestedThreadId
+    ? await getChatThreadForWorkspace(workspace.id, activeAssistant.id, requestedThreadId)
     : null;
-  const conversation = loadedConversation?.agentId === activeAgent.id && !loadedConversation.workSession ? loadedConversation : null;
+  if (!activeThread && query.thread && activeAssistant?.threads[0]) {
+    activeThread = await getChatThreadForWorkspace(
+      workspace.id,
+      activeAssistant.id,
+      activeAssistant.threads[0].id,
+    );
+  }
   const timeZone = resolveUserTimeZone(user);
-  const initialMessages: HermesUIMessage[] = (conversation?.messages ?? []).map((message) => ({
+  const initialMessages: HermesUIMessage[] = (activeThread?.messages ?? []).map((message) => ({
     id: message.id,
     role: message.role as HermesUIMessage['role'],
     parts: message.parts as HermesUIMessage['parts'],
@@ -84,44 +192,67 @@ export default async function WorkspaceChatPage({
   return (
     <>
       <DashboardHeader title={t('chat')} />
-      <WorkspaceChat
+      <WorkspaceAssistantChat
         slug={slug}
-        agentId={activeAgent.id}
-        conversationId={conversation?.id ?? null}
+        workspaceId={workspace.id}
+        startCreating={query.newAssistant === '1'}
+        selectedAssistantId={activeAssistant?.id ?? null}
+        selectedThreadId={activeThread?.id ?? null}
+        branch={activeThread?.branch ?? null}
         initialMessages={initialMessages}
-        agents={agents.map((agent) => {
-          const isHermes = agent.runtime?.kind === 'hermes';
-          return {
-            id: agent.id,
-            name: agent.name,
-            ready: isHermes ? agent.modelProviders.length > 0 : Boolean(agent.providerId && agent.model),
-            runtimeKind: agent.runtime?.kind ?? null,
-            providerId: agent.providerId,
-            providerIds: agent.modelProviders.map((link) => link.providerId),
-            model: agent.model,
-            providerLabel: isHermes
-              ? agent.modelProviders.map((link) => link.provider.name).join(', ') || t('noModelProvidersSelected')
-              : agent.provider
-                ? `${agent.provider.name} · ${agent.model ?? t('noModelSelected')}`
-                : t('noProviderSelected'),
-          };
-        })}
-        providers={providers.map((provider) => ({ id: provider.id, name: provider.name, models: provider.models }))}
-        conversations={conversations.map((item) => {
-          const source = parseMessagingSessionTitle(item.title);
-          return {
-            id: item.id,
-            agentId: item.agentId,
-            title: item.title,
-            createdAt: formatDate(item.createdAt, timeZone, locale),
-            lastMessageAt: item.messages[0]?.createdAt
-              ? formatDate(item.messages[0].createdAt, timeZone, locale)
+        providers={providers.map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          models: provider.models,
+        }))}
+        deployments={deployments.map((deployment) => ({
+          id: deployment.id,
+          name: deployment.label,
+          status: deployment.status,
+        }))}
+        assistants={assistants.map((assistant) => {
+          const modelProvider = assistant.modelProviderId
+            ? providersById.get(assistant.modelProviderId)
+            : null;
+          const modelContext = modelProvider && assistant.model
+            ? resolveModelContext(modelProvider, assistant.model)
+            : null;
+          const threads = assistant.threads.map((thread) => ({
+            id: thread.id,
+            title: thread.title,
+            createdAt: formatDate(thread.createdAt, timeZone, locale),
+            lastMessageAt: thread.messages[0]?.createdAt
+              ? formatDate(thread.messages[0].createdAt, timeZone, locale)
               : null,
-            source,
-            editable: !item.publicApiConversation && !source,
+          }));
+          if (
+            assistant.id === activeAssistant?.id
+            && activeThread
+            && !threads.some((thread) => thread.id === activeThread.id)
+          ) {
+            threads.unshift({
+              id: activeThread.id,
+              title: activeThread.title,
+              createdAt: formatDate(activeThread.createdAt, timeZone, locale),
+              lastMessageAt: activeThread.messages.at(-1)?.createdAt
+                ? formatDate(activeThread.messages.at(-1)!.createdAt, timeZone, locale)
+                : null,
+            });
+          }
+          return {
+            id: assistant.id,
+            name: assistant.name,
+            systemPrompt: assistant.systemPrompt,
+            modelProviderId: assistant.modelProviderId,
+            model: assistant.model,
+            maxSteps: assistant.maxSteps,
+            providerName: assistant.modelProvider?.name ?? null,
+            contextWindow: modelContext?.maxTokens ?? null,
+            contextWindowEstimated: modelContext?.estimated ?? true,
+            deploymentIds: assistant.mcpGrants.map((grant) => grant.deploymentId),
+            threads,
           };
         })}
-        startInChat={Boolean(requestedAgentId || requestedConversationId)}
       />
     </>
   );

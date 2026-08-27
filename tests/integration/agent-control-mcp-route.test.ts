@@ -21,10 +21,28 @@ let otherAgentConversationId = '';
 let foreignWorkspaceId = '';
 let foreignProviderId = '';
 let foreignAgentId = '';
+let createAgentSandboxId = '';
+let invalidProviderSandboxId = '';
 let ownerToken = '';
 let memberToken = '';
 let outsiderToken = '';
 let toolkitToken = '';
+
+async function createDockerSandbox(workspaceId: string, label: string) {
+  const deployment = await db.deployment.create({
+    data: { workspaceId, name: label, source: 'sandbox', status: 'stopped' },
+  });
+  return db.sandbox.create({
+    data: {
+      workspaceId,
+      deploymentId: deployment.id,
+      name: label,
+      slug: `${label.toLowerCase().replaceAll(' ', '-')}-${stamp}`,
+      kind: 'docker',
+      network: 'isolated',
+    },
+  });
+}
 
 beforeAll(async () => {
   const owner = await db.user.create({
@@ -52,18 +70,21 @@ beforeAll(async () => {
     },
   });
   providerId = provider.id;
+  createAgentSandboxId = (await createDockerSandbox(workspaceId, 'Route agent sandbox')).id;
+  invalidProviderSandboxId = (await createDockerSandbox(workspaceId, 'Invalid provider sandbox')).id;
   const messageAgent = await db.agent.create({
     data: {
       workspaceId,
       name: 'Message target',
       slug: `message-target-${stamp}`,
+      runtimeKind: 'pi',
       providerId,
       model: 'route-model',
     },
   });
   messageAgentId = messageAgent.id;
   const otherAgent = await db.agent.create({
-    data: { workspaceId, name: 'Other message agent', slug: `other-message-${stamp}` },
+    data: { workspaceId, name: 'Other message agent', slug: `other-message-${stamp}`, runtimeKind: 'pi' },
   });
   const otherConversation = await db.conversation.create({ data: { agentId: otherAgent.id } });
   otherAgentConversationId = otherConversation.id;
@@ -108,6 +129,7 @@ beforeAll(async () => {
       workspaceId: foreignWorkspaceId,
       name: 'Foreign route agent',
       slug: `foreign-route-agent-${stamp}`,
+      runtimeKind: 'pi',
     },
   });
   foreignAgentId = foreignAgent.id;
@@ -184,9 +206,11 @@ describe('Agent Control MCP route authorization and creation', () => {
   it('creates a configured agent through JSON-RPC without exposing its provider secret', async () => {
     const response = await invoke(call(ownerToken, 'create_agent', {
       name: 'Route-created agent',
+      runtime: 'pi',
       providerId,
       model: 'route-model',
       systemPrompt: 'Be concise.',
+      sandboxIds: [createAgentSandboxId],
     }));
     const body = await response.json();
     expect(body.result.isError).not.toBe(true);
@@ -206,8 +230,10 @@ describe('Agent Control MCP route authorization and creation', () => {
     const before = await db.agent.count({ where: { workspaceId } });
     const response = await invoke(call(ownerToken, 'create_agent', {
       name: 'Must not persist',
+      runtime: 'pi',
       providerId: foreignProviderId,
       model: 'foreign-model',
+      sandboxIds: [invalidProviderSandboxId],
     }));
     const body = await response.json();
     expect(body.result).toMatchObject({

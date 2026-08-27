@@ -40,10 +40,10 @@ beforeAll(async () => {
   });
   workspaceId = workspace.id;
   const source = await db.agent.create({
-    data: { workspaceId, name: 'Source', slug: `source-${suffix}` },
+    data: { workspaceId, name: 'Source', slug: `source-${suffix}`, runtimeKind: 'pi' },
   });
   const hidden = await db.agent.create({
-    data: { workspaceId, name: 'Hidden', slug: `hidden-${suffix}` },
+    data: { workspaceId, name: 'Hidden', slug: `hidden-${suffix}`, runtimeKind: 'pi' },
   });
   const endpoint = await db.agentEndpoint.create({
     data: {

@@ -16,6 +16,7 @@ describe('buildModel', () => {
     expect(buildModel({ ...base, format: 'openai' }, 'gpt-x').model).toMatchObject({
       id: 'gpt-x',
       api: 'openai-completions',
+      input: ['text', 'image'],
     });
     expect(buildModel({ ...base, format: 'openai-responses' }, 'gpt-x').model).toMatchObject({
       id: 'gpt-x',

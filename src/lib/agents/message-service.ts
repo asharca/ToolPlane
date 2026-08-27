@@ -20,6 +20,11 @@ import {
   acquireHermesRuntimeWriteLease,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
 } from '@/lib/agents/hermes/runtime';
+import {
+  implementedAgentRuntimeKind,
+  isDedicatedSandboxRuntimeKind,
+} from '@/lib/agents/runtime-kind';
+import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 
 type LoadedMessageAgent = NonNullable<Awaited<ReturnType<typeof getAgentForRequest>>>;
 
@@ -98,7 +103,11 @@ async function runLoadedAgentMessage(params: {
   defaults?: Partial<AgentMessageBody>;
 }): Promise<AgentMessageResult> {
   const { agent } = params;
-  const isHermes = agent.runtime?.kind === 'hermes';
+  const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
+  if (!runtimeKind) {
+    return { status: 400, body: { error: `Agent runtime "${agent.runtimeKind}" is not available.` } };
+  }
+  const isHermes = runtimeKind === 'hermes';
   if (isHermes ? agent.modelProviders.length === 0 : !agent.provider || !agent.model) {
     return {
       status: 400,
@@ -184,20 +193,30 @@ async function runLoadedAgentMessage(params: {
       return { status: 400, body: { error: 'This agent has no model configured.' } };
     }
     const resolved = resolveAgentTools(agent);
-    const tools = await buildAgentToolSet(resolved, {
-      workspaceId: agent.workspaceId,
-      depth: 0,
-      visited: new Set([agent.id]),
-    });
-    const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
-    text = await runNativeAgent({
-      provider: agent.provider,
-      modelId: agent.model,
-      systemPrompt: system,
-      messages: uiMessagesToPi([...priorMessages, userMessage]),
-      tools,
-      maxSteps: agent.maxSteps,
-    });
+    if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
+      text = await runDedicatedSandboxTurn({
+        agent,
+        systemPrompt: agent.systemPrompt,
+        messages: [...priorMessages, userMessage] as never,
+        skills: resolved.skills,
+        deploymentIds: resolved.deploymentIds,
+      });
+    } else {
+      const tools = await buildAgentToolSet(resolved, {
+        workspaceId: agent.workspaceId,
+        depth: 0,
+        visited: new Set([agent.id]),
+      });
+      const system = assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
+      text = await runNativeAgent({
+        provider: agent.provider,
+        modelId: agent.model,
+        systemPrompt: system,
+        messages: uiMessagesToPi([...priorMessages, userMessage]),
+        tools,
+        maxSteps: agent.maxSteps,
+      });
+    }
   }
   const silent = isSilentAgentReply(text);
 

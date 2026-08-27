@@ -4,7 +4,8 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ChevronRight, Download, FileText, Folder, Loader2, RefreshCw, TerminalIcon, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Download, FileText, Folder, FolderOpen, Loader2, RefreshCw, TerminalIcon, Trash2 } from 'lucide-react';
+import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 
 type RpcResult = {
@@ -24,8 +25,35 @@ type DownloadPayload = {
 
 type FilePreview = {
   path: string;
-  content: string;
+  kind: 'text' | 'markdown' | 'image' | 'pdf' | 'unsupported';
+  content?: string;
+  url?: string;
 };
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+const TEXT_EXTENSIONS = new Set([
+  'bash', 'c', 'cc', 'conf', 'cpp', 'css', 'csv', 'env', 'go', 'h', 'hpp', 'html',
+  'ini', 'java', 'js', 'json', 'jsonl', 'jsx', 'log', 'mjs', 'py', 'rs', 'scss',
+  'sh', 'sql', 'toml', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml', 'zsh',
+]);
+
+function previewType(path: string): { kind: FilePreview['kind']; mimeType?: string } {
+  const filename = path.split('/').pop() ?? '';
+  const extension = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() ?? '' : '';
+  if (extension === 'md' || extension === 'mdx') return { kind: 'markdown' };
+  if (extension === 'pdf') return { kind: 'pdf', mimeType: 'application/pdf' };
+  if (IMAGE_MIME_TYPES[extension]) return { kind: 'image', mimeType: IMAGE_MIME_TYPES[extension] };
+  if (!extension || TEXT_EXTENSIONS.has(extension)) return { kind: 'text' };
+  return { kind: 'unsupported' };
+}
 
 function textFromResult(result: RpcResult | null): string {
   return result?.content?.[0]?.text ?? JSON.stringify(result, null, 2);
@@ -71,22 +99,32 @@ function formatSize(size: number | null): string {
   return `${Math.round(size / 1024 / 102.4) / 10} MB`;
 }
 
-function downloadBase64File(payload: DownloadPayload, fallbackName: string, invalidMessage: string) {
+function decodeBase64File(
+  payload: DownloadPayload,
+  fallbackName: string,
+  invalidMessage: string,
+  mimeType = 'application/octet-stream',
+) {
   if (payload.encoding !== 'base64' || typeof payload.content !== 'string') {
     throw new Error(invalidMessage);
   }
   const binary = atob(payload.content);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([bytes]));
+  return { blob: new Blob([bytes], { type: mimeType }), filename: payload.filename || fallbackName };
+}
+
+function downloadBase64File(payload: DownloadPayload, fallbackName: string, invalidMessage: string) {
+  const { blob, filename } = decodeBase64File(payload, fallbackName, invalidMessage);
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = payload.filename || fallbackName;
+  anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
 }
 
-async function callTool(
+export async function callSandboxTool(
   rpcApiBase: string,
   name: string,
   args: Record<string, unknown>,
@@ -125,6 +163,7 @@ export function SandboxConsole({
   initialPath,
   initialEntries,
   terminalOnly = false,
+  filesOnly = false,
   compact = false,
   terminalApiBase,
   rpcApiBase,
@@ -138,6 +177,7 @@ export function SandboxConsole({
   initialPath: string;
   initialEntries: SandboxFileEntry[];
   terminalOnly?: boolean;
+  filesOnly?: boolean;
   compact?: boolean;
   terminalApiBase?: string;
   rpcApiBase?: string;
@@ -155,9 +195,16 @@ export function SandboxConsole({
   const sessionIdRef = useRef<string | null>(null);
   const inputQueueRef = useRef('');
   const inputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedDirectoryRef = useRef(initialEntries.length
+    ? `${rpcBase}:${normalizePath(initialPath)}`
+    : '');
+  const treeScopeRef = useRef(`${rpcBase}:${normalizePath(initialPath)}`);
 
-  const [dirPath, setDirPath] = useState(normalizePath(initialPath));
-  const [entries, setEntries] = useState(() => sortedEntries(initialEntries));
+  const rootPath = normalizePath(initialPath);
+  const [entriesByPath, setEntriesByPath] = useState<Record<string, SandboxFileEntry[]>>(() =>
+    initialEntries.length ? { [rootPath]: sortedEntries(initialEntries) } : {},
+  );
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState('');
   const [preview, setPreview] = useState<FilePreview | null>(null);
@@ -166,20 +213,12 @@ export function SandboxConsole({
   );
   const [terminalGeneration, setTerminalGeneration] = useState(0);
   const [compactView, setCompactView] = useState<'files' | 'terminal'>('terminal');
-  const [fileStatus, setFileStatus] = useState(
-    initialEntries.length
-      ? t('itemCount', { count: initialEntries.length })
-      : running
-        ? t('emptyDirectory')
-        : waitingForConnector
-          ? t('waitingForConnector')
-          : t('startTheSandboxToBrowseFiles'),
-  );
+  const [fileError, setFileError] = useState('');
 
   const loadDirectory = useCallback(
     async (nextPath: string) => {
       const normalized = normalizePath(nextPath);
-      const raw = await callTool(rpcBase, 'list_dir', { path: normalized }, t('toolCallFailed'));
+      const raw = await callSandboxTool(rpcBase, 'list_dir', { path: normalized }, t('toolCallFailed'));
       const parsed = parseSandboxDirectoryText(raw, normalized);
       if (!parsed) throw new Error(raw);
       return {
@@ -190,27 +229,46 @@ export function SandboxConsole({
     [rpcBase, t],
   );
 
-  const refreshDir = useCallback(
-    async (nextPath = dirPath) => {
-      const normalized = normalizePath(nextPath);
-      setLoadingPath(normalized);
+  const refreshTree = useCallback(
+    async () => {
+      setLoadingPath(rootPath);
+      setEntriesByPath({});
+      setExpandedPaths(new Set());
+      setPreview(null);
+      setSelectedPath('');
+      setFileError('');
       try {
-        const listing = await loadDirectory(normalized);
-        setDirPath(listing.path);
-        setEntries(listing.entries);
-        setPreview(null);
-        setSelectedPath('');
-        setFileStatus(t('itemCount', { count: listing.entries.length }));
-        return listing.path;
+        const listing = await loadDirectory(rootPath);
+        setEntriesByPath({ [rootPath]: listing.entries });
       } catch (error) {
-        setFileStatus(String(error instanceof Error ? error.message : error));
-        return null;
+        setFileError(String(error instanceof Error ? error.message : error));
       } finally {
         setLoadingPath(null);
       }
     },
-    [dirPath, loadDirectory, t],
+    [loadDirectory, rootPath],
   );
+
+  useEffect(() => {
+    const key = `${rpcBase}:${rootPath}`;
+    if (treeScopeRef.current !== key) {
+      treeScopeRef.current = key;
+      loadedDirectoryRef.current = '';
+      setEntriesByPath({});
+      setExpandedPaths(new Set());
+      setPreview(null);
+      setSelectedPath('');
+      setFileError('');
+    }
+    if (!running || terminalOnly) return;
+    if (loadedDirectoryRef.current === key) return;
+    loadedDirectoryRef.current = key;
+    void refreshTree();
+  }, [refreshTree, rootPath, rpcBase, running, terminalOnly]);
+
+  useEffect(() => () => {
+    if (preview?.url) URL.revokeObjectURL(preview.url);
+  }, [preview?.url]);
 
   const flushInput = useCallback(() => {
     const sessionId = sessionIdRef.current;
@@ -287,7 +345,7 @@ export function SandboxConsole({
       const sessionRes = await fetch(terminalBase, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows }),
+        body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows, cwd: normalizePath(initialPath) }),
       });
       if (!sessionRes.ok) {
         terminal.writeln(`\x1b[31m${t('failedToOpenTerminal', { status: sessionRes.status })}\x1b[0m`);
@@ -346,19 +404,37 @@ export function SandboxConsole({
       terminalRef.current = null;
       terminal?.dispose();
     };
-  }, [compactView, compact, flushInput, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, waitingForConnector]);
+  }, [compactView, compact, filesOnly, flushInput, initialPath, queueInput, resizeTerminal, running, t, terminalBase, terminalGeneration, terminalOnly, waitingForConnector]);
 
   async function openFile(path: string) {
     setSelectedPath(path);
+    setPreview(null);
     setLoadingPath(path);
+    setFileError('');
     try {
-      const raw = await callTool(rpcBase, 'read_file', { path }, t('toolCallFailed'));
-      const payload = JSON.parse(raw) as Partial<FilePreview>;
+      const type = previewType(path);
+      if (type.kind === 'unsupported') {
+        setPreview({ path, kind: type.kind });
+        return;
+      }
+      if (type.kind === 'image' || type.kind === 'pdf') {
+        const raw = await callSandboxTool(rpcBase, 'download_file', { path }, t('toolCallFailed'));
+        const payload = JSON.parse(raw) as DownloadPayload;
+        const { blob } = decodeBase64File(
+          payload,
+          path.split('/').pop() || 'sandbox-file',
+          t('invalidDownloadResponse'),
+          type.mimeType,
+        );
+        setPreview({ path, kind: type.kind, url: URL.createObjectURL(blob) });
+        return;
+      }
+      const raw = await callSandboxTool(rpcBase, 'read_file', { path }, t('toolCallFailed'));
+      const payload = JSON.parse(raw) as { content?: unknown };
       if (typeof payload.content !== 'string') throw new Error(t('filePreviewUnavailable'));
-      setPreview({ path, content: payload.content });
-      setFileStatus(path);
+      setPreview({ path, kind: type.kind, content: payload.content });
     } catch (error) {
-      setFileStatus(String(error instanceof Error ? error.message : error));
+      setFileError(String(error instanceof Error ? error.message : error));
     } finally {
       setLoadingPath(null);
     }
@@ -366,16 +442,16 @@ export function SandboxConsole({
 
   async function downloadFile(path: string) {
     setLoadingPath(path);
+    setFileError('');
     try {
-      const raw = await callTool(rpcBase, 'download_file', { path }, t('toolCallFailed'));
+      const raw = await callSandboxTool(rpcBase, 'download_file', { path }, t('toolCallFailed'));
       downloadBase64File(
         JSON.parse(raw) as DownloadPayload,
         path.split('/').pop() || 'sandbox-file',
         t('invalidDownloadResponse'),
       );
-      setFileStatus(t('downloadFile'));
     } catch (error) {
-      setFileStatus(String(error instanceof Error ? error.message : error));
+      setFileError(String(error instanceof Error ? error.message : error));
     } finally {
       setLoadingPath(null);
     }
@@ -384,18 +460,115 @@ export function SandboxConsole({
   async function deleteFile(path: string) {
     if (!window.confirm(t('deleteThisFile'))) return;
     setLoadingPath(path);
+    setFileError('');
     try {
-      await callTool(rpcBase, 'delete_file', { path }, t('toolCallFailed'));
+      await callSandboxTool(rpcBase, 'delete_file', { path }, t('toolCallFailed'));
       if (selectedPath === path) {
         setSelectedPath('');
         setPreview(null);
       }
-      await refreshDir(dirPath);
+      const directory = parentPath(path);
+      const listing = await loadDirectory(directory);
+      setEntriesByPath((current) => ({ ...current, [directory]: listing.entries }));
     } catch (error) {
-      setFileStatus(String(error instanceof Error ? error.message : error));
+      setFileError(String(error instanceof Error ? error.message : error));
     } finally {
       setLoadingPath(null);
     }
+  }
+
+  async function toggleDirectory(path: string) {
+    setFileError('');
+    if (expandedPaths.has(path)) {
+      setExpandedPaths((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      return;
+    }
+
+    setExpandedPaths((current) => new Set(current).add(path));
+    if (Object.prototype.hasOwnProperty.call(entriesByPath, path)) return;
+
+    setLoadingPath(path);
+    try {
+      const listing = await loadDirectory(path);
+      setEntriesByPath((current) => ({ ...current, [path]: listing.entries }));
+    } catch (error) {
+      setExpandedPaths((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      setFileError(String(error instanceof Error ? error.message : error));
+    } finally {
+      setLoadingPath(null);
+    }
+  }
+
+  function renderTreeEntries(directory: string, depth: number) {
+    return (entriesByPath[directory] ?? []).map((entry) => {
+      const fullPath = joinPath(directory, entry.name);
+      const isFolder = entry.type === 'dir';
+      const expanded = isFolder && expandedPaths.has(fullPath);
+      const selected = selectedPath === fullPath;
+      const loading = loadingPath === fullPath;
+      const children = entriesByPath[fullPath];
+
+      return (
+        <div
+          key={`${entry.type}:${fullPath}`}
+          role="treeitem"
+          aria-expanded={isFolder ? expanded : undefined}
+          aria-selected={selected}
+        >
+          <div className={`group flex min-h-7 items-center rounded-md transition-colors ${selected ? 'bg-brand-soft text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
+            <button
+              type="button"
+              onClick={() => (isFolder ? void toggleDirectory(fullPath) : void openFile(fullPath))}
+              disabled={!running || loadingPath !== null}
+              aria-expanded={isFolder ? expanded : undefined}
+              title={entry.name}
+              style={{ paddingLeft: `${depth * 12 + 8}px` }}
+              className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left text-sm disabled:opacity-50"
+            >
+              {isFolder ? (
+                <ChevronRight className={`size-[11px] shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+              ) : (
+                <span aria-hidden className="size-[11px] shrink-0" />
+              )}
+              {loading ? (
+                <Loader2 className="size-4 shrink-0 animate-spin" />
+              ) : isFolder ? (
+                expanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />
+              ) : (
+                <FileText className="size-4 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              {!isFolder ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
+            </button>
+            {!isFolder ? (
+              <div className="flex shrink-0 items-center pr-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                <button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></button>
+                <button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></button>
+              </div>
+            ) : null}
+          </div>
+          {expanded ? (
+            <div role="group">
+              {loading ? (
+                <div style={{ paddingLeft: `${(depth + 1) * 12 + 26}px` }} className="flex h-7 items-center text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /></div>
+              ) : children?.length ? (
+                renderTreeEntries(fullPath, depth + 1)
+              ) : (
+                <p style={{ paddingLeft: `${(depth + 1) * 12 + 26}px` }} className="py-1.5 pr-2 text-xs text-muted-foreground">{t('noFilesInThisDirectory')}</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      );
+    });
   }
 
   const terminalPanel = (
@@ -404,7 +577,7 @@ export function SandboxConsole({
         ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#111419]'
         : 'ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-[#111419]'}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+      <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-white/10'}`}>
         <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
           <TerminalIcon className="size-4 text-zinc-400" />
           {terminalLabel ?? t('terminal')}
@@ -432,65 +605,80 @@ export function SandboxConsole({
     </section>
   );
 
+  const displayedRootPath = displayWorkspacePath(rootPath, workspaceRoot);
+  const rootName = displayedRootPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || displayedRootPath;
+  const rootEntries = entriesByPath[rootPath];
+
   const filesPanel = (
     <aside className={compact ? 'flex h-full min-h-0 flex-col overflow-hidden bg-card' : 'ui-panel order-2 flex min-h-96 flex-col overflow-hidden xl:order-1'}>
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
+      <div className={compact ? 'flex items-center justify-between gap-2 px-3 pb-2 pt-3' : 'flex items-center justify-between gap-2 border-b border-border px-3 py-3'}>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Folder className="size-4 text-muted-foreground" />
           {t('files')}
         </div>
-        <button type="button" onClick={() => void refreshDir(dirPath)} disabled={!running || loadingPath !== null} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')}>
-          {loadingPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+        <button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>
+          {loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
         </button>
       </div>
-      <div className="border-b border-border p-3">
-        <div className="mb-2 truncate font-mono text-xs text-foreground">{displayWorkspacePath(dirPath, workspaceRoot)}</div>
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span className="truncate">{fileStatus}</span>
-          <button type="button" onClick={() => void refreshDir(parentPath(dirPath))} disabled={!running || loadingPath !== null || dirPath === '.'} className="rounded px-1.5 py-1 hover:bg-muted hover:text-foreground disabled:opacity-40">{t('up')}</button>
+      <div role="tree" aria-label={t('files')} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
+        <div role="treeitem" aria-expanded="true" aria-selected="false">
+          <div title={displayedRootPath} className="flex min-h-7 items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-sm font-medium text-foreground">
+            <ChevronRight className="size-[11px] shrink-0 rotate-90" />
+            <FolderOpen className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{rootName}</span>
+          </div>
+          {fileError && rootEntries ? <p role="alert" className="px-5 py-1 text-xs text-destructive">{fileError}</p> : null}
+          <div role="group">
+            {rootEntries?.length ? renderTreeEntries(rootPath, 1) : (
+              <p className="px-5 py-5 text-sm text-muted-foreground">
+                {loadingPath === rootPath
+                  ? <Loader2 className="size-4 animate-spin" />
+                  : !running
+                    ? waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles')
+                    : rootEntries ? t('noFilesInThisDirectory') : fileError || t('noFilesInThisDirectory')}
+              </p>
+            )}
+          </div>
         </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto p-2">
-        {entries.length === 0 ? (
-          <p className="px-2 py-6 text-sm text-muted-foreground">{running ? t('noFilesInThisDirectory') : waitingForConnector ? t('waitingForConnectorSession') : t('startTheSandboxToBrowseFiles')}</p>
-        ) : entries.map((entry) => {
-          const fullPath = joinPath(dirPath, entry.name);
-          const selected = selectedPath === fullPath;
-          const loading = loadingPath === fullPath;
-          return (
-            <div key={`${entry.type}:${entry.name}`} className={`group flex items-center gap-1 rounded-md transition-colors ${selected ? 'bg-brand-soft text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-              <button type="button" onClick={() => (entry.type === 'dir' ? void refreshDir(fullPath) : void openFile(fullPath))} disabled={!running || loadingPath !== null} className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left font-mono text-xs disabled:opacity-50">
-                {loading ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : entry.type === 'dir' ? <Folder className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
-                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                {entry.type === 'dir' ? <ChevronRight className="size-3 shrink-0 opacity-50" /> : null}
-                {entry.type === 'file' ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
-              </button>
-              {entry.type === 'file' ? <div className="flex shrink-0 items-center pr-1">
-                <button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></button>
-                <button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></button>
-              </div> : null}
-            </div>
-          );
-        })}
       </div>
     </aside>
   );
 
   const previewPanel = preview ? (
-    <section className="absolute inset-0 flex min-h-0 flex-col overflow-hidden border border-border bg-card">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="min-w-0 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
-        <button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} className="ui-button-ghost ui-icon-button shrink-0" title={t('close')} aria-label={t('close')}><X className="size-4" /></button>
+    <section className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-card ${compact ? '' : 'border border-border'}`}>
+      <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-border'}`}>
+        <button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} className="ui-button-ghost ui-icon-button shrink-0" title={t('close')} aria-label={t('close')}><ArrowLeft className="size-4" /></button>
+        <div className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
+        <button type="button" onClick={() => void downloadFile(preview.path)} disabled={loadingPath !== null} className="ui-button-ghost ui-icon-button shrink-0" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-4" /></button>
       </div>
-      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">{preview.content}</pre>
+      {preview.kind === 'image' && preview.url ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element -- preview source is a short-lived local blob URL. */}
+          <img src={preview.url} alt={preview.path.split('/').pop() || preview.path} className="max-h-full max-w-full object-contain" />
+        </div>
+      ) : preview.kind === 'pdf' && preview.url ? (
+        <iframe src={preview.url} title={preview.path.split('/').pop() || preview.path} sandbox="" referrerPolicy="no-referrer" className="min-h-0 flex-1 bg-white" />
+      ) : preview.kind === 'markdown' ? (
+        <div className="min-h-0 flex-1 overflow-auto p-4 text-sm leading-6"><AssistantMarkdown text={preview.content ?? ''} /></div>
+      ) : preview.kind === 'text' ? (
+        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground">{preview.content}</pre>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+          <FileText className="size-10 opacity-40" />
+          <p>{t('filePreviewUnavailable')}</p>
+          <button type="button" onClick={() => void downloadFile(preview.path)} className="ui-button-secondary h-8 gap-2 px-3 text-xs"><Download className="size-3.5" />{t('downloadFile')}</button>
+        </div>
+      )}
     </section>
   ) : null;
 
   if (terminalOnly) return terminalPanel;
 
+  if (filesOnly) return <div className="relative h-full min-h-0 overflow-hidden bg-background">{filesPanel}{previewPanel}</div>;
+
   if (compact) return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <div className="grid h-10 shrink-0 grid-cols-2 border-b border-border bg-muted/30 p-1">
+      <div className="grid h-10 shrink-0 grid-cols-2 bg-muted/30 p-1">
         <button type="button" onClick={() => setCompactView('terminal')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'terminal' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><TerminalIcon className="size-3.5" />{t('terminal')}</button>
         <button type="button" onClick={() => setCompactView('files')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'files' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><Folder className="size-3.5" />{t('files')}</button>
       </div>

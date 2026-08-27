@@ -20,6 +20,7 @@ import {
   Home,
   MessageSquare,
   Settings,
+  TerminalSquare,
 } from 'lucide-react';
 import {
   Dialog,
@@ -96,7 +97,7 @@ export function DashboardHeaderControls() {
         { id: 'toolkits', label: t('toolkits'), group: t('groupBuild'), icon: Wrench, run: go(`${b}/toolkits`) },
         { id: 'sandboxes', label: t('sandboxes'), group: t('groupBuild'), icon: Boxes, run: go(`${b}/sandboxes`) },
         { id: 'chat', label: t('chat'), group: t('groupRun'), icon: MessageSquare, run: go(`${b}/chat`) },
-        { id: 'agents', label: t('agents'), group: t('groupRun'), icon: Bot, run: go(`${b}/agents`) },
+        { id: 'work', label: t('work'), group: t('groupRun'), icon: TerminalSquare, run: go(`${b}/work`) },
         { id: 'obs', label: t('logs'), group: t('groupOperate'), icon: BarChart3, run: go(`${b}/observability`) },
         { id: 'members', label: t('members'), group: t('groupWorkspace'), icon: Users, run: go(`${b}/members`) },
         { id: 'settings', label: t('settings'), group: t('groupWorkspace'), icon: Settings, run: go(`${b}/settings?returnTo=${encodeURIComponent(returnTo)}`) },

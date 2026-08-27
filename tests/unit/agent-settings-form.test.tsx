@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSettingsForm } from '@/components/dashboard/agents/AgentSettingsForm';
@@ -22,6 +22,7 @@ vi.mock('@/lib/agents/actions', () => actions);
 const baseProps = {
   slug: 'acme',
   agentId: 'agent-1',
+  runtimeKind: 'pi',
   name: 'Test agent',
   systemPrompt: '',
   providerId: null,
@@ -32,6 +33,7 @@ const baseProps = {
     {
       id: 'provider-1',
       name: 'OpenAI',
+      format: 'openai',
       models: ['gpt-4.1', 'gpt-4.1-mini'],
     },
   ],
@@ -43,29 +45,83 @@ const baseProps = {
 };
 
 describe('AgentSettingsForm', () => {
+  it.each([
+    ['pi', ['read', 'bash', 'edit', 'write'], 'Glob'],
+    ['claude-code', ['Read', 'Bash', 'Glob', 'Workflow'], 'read_image'],
+    ['dsh', ['read_image', 'todo_write', 'subagent', 'web_search'], 'Read'],
+    ['hermes', ['read_file', 'terminal', 'browser_navigate', 'image_generate'], 'todo_write'],
+  ])('shows the %s runtime built-in tools', (runtimeKind, expectedTools, absentTool) => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        runtimeKind={runtimeKind}
+        activeSection="builtInTools"
+        showNavigation={false}
+      />,
+    );
+
+    const catalog = screen.getByRole('list', { name: 'Built-in tools' });
+    for (const tool of expectedTools) expect(within(catalog).getByText(tool)).toBeVisible();
+    expect(within(catalog).queryByText(absentTool)).not.toBeInTheDocument();
+  });
+
   it('keeps the selected provider and model visible across save-state rerenders', async () => {
     const view = render(<AgentSettingsForm {...baseProps} />);
 
-    const provider = screen.getByLabelText('Provider');
-    await userEvent.selectOptions(provider, 'provider-1');
-
-    const model = screen.getByLabelText('Model');
-    await userEvent.selectOptions(model, 'gpt-4.1-mini');
-
-    expect(provider).toHaveValue('provider-1');
-    expect(model).toHaveValue('gpt-4.1-mini');
+    await userEvent.click(screen.getByRole('button', { name: 'Model: Select model' }));
+    await userEvent.click(screen.getByRole('option', { name: 'gpt-4.1-mini' }));
+    expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
+    expect(document.querySelector('input[name="model"]')).toHaveValue('gpt-4.1-mini');
 
     view.rerender(<AgentSettingsForm {...baseProps} />);
 
-    expect(screen.getByLabelText('Provider')).toHaveValue('provider-1');
-    expect(screen.getByLabelText('Model')).toHaveValue('gpt-4.1-mini');
+    expect(screen.getByRole('button', { name: 'Model: gpt-4.1-mini' })).toBeInTheDocument();
+    expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
+    expect(document.querySelector('input[name="model"]')).toHaveValue('gpt-4.1-mini');
     expect(screen.getByLabelText('System prompt')).toBeInTheDocument();
+  });
+
+  it.each(['pi', 'claude-code', 'dsh'])('keeps %s on one networked Docker sandbox', async (runtimeKind) => {
+    const user = userEvent.setup();
+    const providerId = runtimeKind === 'claude-code' ? 'anthropic' : 'provider-1';
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        runtimeKind={runtimeKind}
+        providers={[
+          ...baseProps.providers,
+          { id: 'anthropic', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'] },
+        ]}
+        providerId={providerId}
+        model={runtimeKind === 'claude-code' ? 'claude-sonnet' : 'gpt-4.1'}
+        defaultSandboxId="docker-1"
+        sandboxes={[
+          { id: 'docker-1', label: 'Docker one', kind: 'docker', network: 'default', checked: true },
+          { id: 'docker-2', label: 'Docker two', kind: 'docker', network: 'default' },
+          { id: 'offline', label: 'Offline Docker', kind: 'docker', network: 'none' },
+          { id: 'connector', label: 'Remote connector', kind: 'connector' },
+        ]}
+      />,
+    );
+
+    if (runtimeKind === 'claude-code') {
+      await user.click(screen.getByRole('button', { name: 'Model: claude-sonnet' }));
+      expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole('button', { name: /^Sandboxes/ }));
+    expect(screen.queryByRole('radio', { name: 'Select Offline Docker' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Select Remote connector' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Select Docker two' }));
+    expect(screen.getByRole('radio', { name: 'Select Docker one' })).not.toBeChecked();
+    expect(document.querySelectorAll('input[name="sandboxId"]')).toHaveLength(1);
+    expect(document.querySelector('[name="defaultSandboxId"]')).toBeNull();
   });
 
   it('does not expose a ToolPlane system prompt field for Hermes agents', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
+        runtimeKind="hermes"
         systemPrompt="Legacy ToolPlane prompt"
         runtime={{
           kind: 'hermes',
@@ -87,9 +143,10 @@ describe('AgentSettingsForm', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
+        runtimeKind="hermes"
         providers={[
           ...baseProps.providers,
-          { id: 'provider-2', name: 'Anthropic', models: ['claude-sonnet'] },
+          { id: 'provider-2', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'] },
         ]}
         providerIds={['provider-1']}
         runtime={{
@@ -113,6 +170,7 @@ describe('AgentSettingsForm', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
+        runtimeKind="hermes"
         runtime={{
           kind: 'hermes',
           image: 'nousresearch/hermes-agent:latest',
@@ -147,6 +205,7 @@ describe('AgentSettingsForm', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
+        runtimeKind="hermes"
         hermesImages={[
           'nousresearch/hermes-agent:latest',
           'nousresearch/hermes-agent:v2026.7.20',
@@ -192,6 +251,7 @@ describe('AgentSettingsForm', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
+        runtimeKind="hermes"
         runtime={{
           kind: 'hermes',
           image: 'nousresearch/hermes-agent:latest',
@@ -307,7 +367,13 @@ describe('AgentSettingsForm', () => {
         deployments={[{ id: 'deployment-1', label: 'RouterOS MCP', checked: true }]}
         skills={[{ id: 'skill-1', label: 'Network skill', checked: true }]}
         toolkits={[{ id: 'toolkit-1', label: 'Ops toolkit', checked: true }]}
-        sandboxes={[{ id: 'sandbox-1', label: 'Workspace', checked: true }]}
+        sandboxes={[{
+          id: 'sandbox-1',
+          label: 'Workspace',
+          kind: 'docker',
+          network: 'isolated',
+          checked: true,
+        }]}
         subAgents={[{ id: 'agent-2', label: 'Reviewer', checked: true }]}
       />,
     );

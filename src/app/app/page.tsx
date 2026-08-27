@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { getAgentMarketListingByDirectorySlug } from '@/lib/agents/market';
 import { getOrCreateDefaultWorkspace } from '@/lib/workspace/queries';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ export default async function AppIndexPage({
   searchParams: Promise<{
     server?: string | string[];
     skill?: string | string[];
+    agent?: string | string[];
     market?: string | string[];
     q?: string | string[];
   }>;
@@ -22,6 +24,7 @@ export default async function AppIndexPage({
   const query = await searchParams;
   const server = intentSlug(query.server);
   const skill = intentSlug(query.skill);
+  const agent = intentSlug(query.agent);
   const rawMarket = Array.isArray(query.market) ? query.market[0] : query.market;
   const market = rawMarket === 'mcp' || rawMarket === 'skills' ? rawMarket : null;
   const rawTerm = Array.isArray(query.q) ? query.q[0] : query.q;
@@ -33,7 +36,9 @@ export default async function AppIndexPage({
     ? `/app?server=${encodeURIComponent(server)}`
     : skill
       ? `/app?skill=${encodeURIComponent(skill)}`
-      : marketIntent ?? '/app';
+      : agent
+        ? `/app?agent=${encodeURIComponent(agent)}`
+        : marketIntent ?? '/app';
   const user = await getCurrentUser();
   if (!user) redirect(`/app/login?next=${encodeURIComponent(intent)}`);
   const ws = await getOrCreateDefaultWorkspace(user.id, user.email);
@@ -42,6 +47,11 @@ export default async function AppIndexPage({
   }
   if (skill) {
     redirect(`/app/${encodeURIComponent(ws.slug)}/market/skills/${encodeURIComponent(skill)}`);
+  }
+  if (agent) {
+    const detail = await getAgentMarketListingByDirectorySlug(agent);
+    const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/agents`;
+    redirect(detail ? `${marketPath}/${encodeURIComponent(detail.listing.id)}#install` : marketPath);
   }
   if (market) {
     const marketPath = `/app/${encodeURIComponent(ws.slug)}/market/${market}`;

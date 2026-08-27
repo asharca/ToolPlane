@@ -107,7 +107,12 @@ export default async function Page({
       <section className="mt-6 rounded-lg border border-border bg-card p-5">
         <h2 className="font-semibold text-foreground">{t('clonePanelTitle')}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('clonePanelDescription')}</p>
-        <Link href="/app" className="ui-button-primary mt-4">{t('openConsole')}</Link>
+        <Link
+          href={`/app?agent=${encodeURIComponent(listing.directorySlug)}`}
+          className="ui-button-primary mt-4"
+        >
+          {t('addAgent')}
+        </Link>
       </section>
     </article>
   );

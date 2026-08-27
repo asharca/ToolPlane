@@ -16,7 +16,6 @@ import {
   DashboardPage,
   DashboardPagination,
   DashboardSection,
-  DashboardTable,
 } from '@/components/dashboard/DashboardUI';
 import { NativeSelect } from '@/components/ui/NativeSelect';
 
@@ -106,8 +105,13 @@ export default async function SkillMarketPage({
     sort,
   });
   const { featured, all, total, pageSize } = browse;
+  const pageFeatured = page === 1 ? featured : [];
+  const featuredIds = new Set(pageFeatured.map((skill) => skill.id));
+  const remainingSkills = all.filter((skill) => !featuredIds.has(skill.id));
+  const featuredSkills = remainingSkills.length > 0 ? pageFeatured : [];
+  const allSkills = featuredSkills.length > 0 ? remainingSkills : all;
   const installedIds = new Set(
-    [...featured, ...all].filter((skill) => skill.installed).map((skill) => skill.id),
+    [...featuredSkills, ...allSkills].filter((skill) => skill.installed).map((skill) => skill.id),
   );
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   if (page > lastPage) {
@@ -118,7 +122,7 @@ export default async function SkillMarketPage({
   );
 
   return (
-    <DashboardPage className="space-y-8">
+    <DashboardPage className="space-y-6">
       <div className="space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('skillsTitle')}</h2>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('skillsDescription')}</p>
@@ -155,29 +159,32 @@ export default async function SkillMarketPage({
         <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
       </form>
 
-      {hasFilters ? (
-        <div className="flex justify-end">
-          <Link href={skillMarketHref(slug, {})} className="ui-button-ghost">{t('clearFilters')}</Link>
-        </div>
-      ) : null}
-
-      {featured.length > 0 ? (
+      {featuredSkills.length > 0 ? (
         <DashboardSection title={t('featuredSkills')}>
           <BrowseGrid
-            items={featured}
+            items={featuredSkills}
             installedIds={installedIds}
             slug={slug}
             action={installSkillAction}
             idField="skillId"
             actionLabel={t('install')}
+            pendingLabel={t('installing')}
             installedLabel={t('installed')}
             detailKind="skills"
           />
         </DashboardSection>
       ) : null}
 
-      <DashboardSection title={hasFilters ? t('filteredSkills') : t('allSkills')} count={total}>
-        {all.length === 0 ? (
+      <DashboardSection
+        title={hasFilters ? t('filteredSkills') : t('allSkills')}
+        count={total}
+        actions={hasFilters ? (
+          <Link href={skillMarketHref(slug, {})} className="text-xs font-medium text-foreground hover:underline">
+            {t('clearFilters')}
+          </Link>
+        ) : undefined}
+      >
+        {allSkills.length === 0 ? (
           <DashboardEmptyState
             title={t('noSkillsTitle')}
             description={hasFilters ? t('noSkillsMatchFilters') : t('noSkillsDescription')}
@@ -185,51 +192,17 @@ export default async function SkillMarketPage({
           />
         ) : (
           <>
-            <DashboardTable
-              headers={[
-                { label: t('resource') },
-                { label: t('publisher') },
-                { label: t('source') },
-                { label: t('description') },
-                { align: 'right' },
-              ]}
-              minWidth="52rem"
-            >
-              {all.map((skill) => (
-                <tr key={skill.id}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      {skill.iconUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={skill.iconUrl} alt="" width={20} height={20} className="size-5 rounded object-cover" />
-                      ) : (
-                        <span className="size-5 rounded bg-muted" />
-                      )}
-                      <Link
-                        href={`/app/${encodeURIComponent(slug)}/market/skills/${encodeURIComponent(skill.slug)}`}
-                        className="font-medium text-foreground hover:underline"
-                      >
-                        {skill.name}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{skill.author ?? t('unknownPublisher')}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{skill.githubSource ? t('github') : t('catalog')}</td>
-                  <td className="px-4 py-3 text-muted-foreground"><span className="line-clamp-1">{skill.description ?? t('noDescription')}</span></td>
-                  <td className="px-4 py-3 text-right">
-                    {skill.installed ? (
-                      <span className="text-xs text-muted-foreground">{t('installed')}</span>
-                    ) : (
-                      <form action={installSkillAction} className="inline">
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="skillId" value={skill.id} />
-                        <button className="text-xs font-medium text-foreground hover:text-muted-foreground">{t('install')}</button>
-                      </form>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </DashboardTable>
+            <BrowseGrid
+              items={allSkills}
+              installedIds={installedIds}
+              slug={slug}
+              action={installSkillAction}
+              idField="skillId"
+              actionLabel={t('install')}
+              pendingLabel={t('installing')}
+              installedLabel={t('installed')}
+              detailKind="skills"
+            />
             <DashboardPagination
               page={page}
               lastPage={lastPage}

@@ -77,21 +77,15 @@ describe('buildSkillToolSet', () => {
     expect(out.error).toMatch(/Invalid skill file path/);
   });
 
-  it('runs bundled scripts with a minimal environment', async () => {
+  it('refuses bundled scripts without an attached sandbox', async () => {
     const set = buildSkillToolSet([pdfSkill]);
     const out = (await (set.skill_run_script.execute as ToolExec)({
       skill: 'pdf',
       path: 'scripts/echo.js',
       args: ['one', 'two'],
-    })) as {
-      exitCode: number | null;
-      stdout: string;
-      stderr: string;
-    };
+    })) as { error: string };
 
-    expect(out.exitCode).toBe(0);
-    expect(out.stderr).toBe('');
-    expect(JSON.parse(out.stdout)).toEqual({ args: ['one', 'two'], secret: '' });
+    expect(out.error).toMatch(/require.*sandbox/i);
   });
 
   it('runs bundled scripts through an attached sandbox when available', async () => {

@@ -21,7 +21,7 @@ function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFram
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     "media-src 'self' data: blob: https:",
-    "frame-src 'self' https:",
+    "frame-src 'self' blob: https:",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
   ].join('; ');
@@ -44,6 +44,7 @@ function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFram
 const nextConfig: NextConfig = {
   output: 'standalone',
   poweredByHeader: false,
+  serverExternalPackages: ['@earendil-works/pi-ai'],
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders() },

@@ -24,6 +24,7 @@ export type ProviderConfig = {
 
 export type PiModel = Model<Api>;
 export type PiModelRuntime = { models: MutableModels; model: PiModel };
+export type ModelContext = { maxTokens: number; modelName: string; estimated: boolean };
 
 function providerId(provider: ProviderConfig): string {
   return provider.id ?? `toolplane-${provider.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'provider'}`;
@@ -108,11 +109,20 @@ export function createPiModel(provider: ProviderConfig, modelId: string): PiMode
     provider: providerId(provider),
     baseUrl: configuredBaseUrl(provider) ?? '',
     reasoning: false,
-    input: ['text'],
+    input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 16_384,
   } as PiModel;
+}
+
+export function resolveModelContext(provider: ProviderConfig, modelId: string): ModelContext {
+  const model = createPiModel(provider, modelId);
+  return {
+    maxTokens: model.contextWindow,
+    modelName: model.name,
+    estimated: providerModelIds(provider)?.includes(modelId) !== true,
+  };
 }
 
 export function buildModel(provider: ProviderConfig, modelId: string): PiModelRuntime {

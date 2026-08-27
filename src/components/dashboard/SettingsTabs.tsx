@@ -31,7 +31,7 @@ export function SettingsTabs({ slug }: { slug: string }) {
   ];
 
   return (
-    <aside className="shrink-0 border-b border-border bg-shell/70 md:w-52 md:border-b-0 md:border-r">
+    <aside className="shrink-0 bg-shell/70 md:w-52">
       <nav aria-label={t('title')} className="flex gap-1 overflow-x-auto p-3 md:flex-col md:overflow-visible md:p-4">
         {tabs.map(({ label, href, icon: Icon }) => {
           const active = pathname === href.split('?')[0];

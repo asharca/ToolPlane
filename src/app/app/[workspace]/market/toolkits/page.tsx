@@ -70,25 +70,29 @@ export default async function ToolkitMarketPage({
   }
 
   return (
-    <DashboardPage>
-      <DashboardToolbar
-        actions={
+    <DashboardPage className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('publicToolkits')}</h2>
+        <div>
           <Link href={`/app/${encodeURIComponent(slug)}/toolkits`} className="ui-button-ghost">
             {t('backToToolkits')}
           </Link>
-        }
-      >
+        </div>
+      </div>
+
+      <DashboardToolbar className="rounded-lg border border-border bg-card p-3">
         <DashboardSearchForm
           defaultValue={q}
           placeholder={t('searchPublicToolkits')}
           clearHref={marketHref}
+          width="sm:w-[28rem]"
           submitLabel={common('search')}
           clearLabel={t('clearSearch')}
         />
       </DashboardToolbar>
 
       <DashboardSection
-        title={q ? t('searchResults', { query: q }) : t('publicToolkits')}
+        title={q ? t('searchResults', { query: q }) : t('title')}
         count={total}
       >
         {items.length === 0 ? (
@@ -97,44 +101,30 @@ export default async function ToolkitMarketPage({
             description={q ? t('noPublicToolkitsMatch', { query: q }) : t('noPublicToolkitsYet')}
           />
         ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {items.map((toolkit) => (
-              <article key={toolkit.id} className="ui-panel p-5">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <article key={toolkit.id} className="ui-panel flex min-w-0 flex-col p-4">
+                <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{toolkit.workspaceName}</span>
                       <span aria-hidden="true">/</span>
                       <time dateTime={toolkit.createdAt.toISOString()}>
                         {fmt(toolkit.createdAt, timeZone, locale)}
                       </time>
                     </div>
-                    <h3 className="truncate text-lg font-semibold text-foreground">
+                    <h3 className="truncate font-semibold text-foreground">
                       {toolkit.name}
                     </h3>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm font-medium text-muted-foreground">
-                      <Wrench className="size-4" />
-                      {toolkit.toolCount}
-                    </span>
-                    <form action={clonePublicToolkitAction}>
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="toolkitId" value={toolkit.id} />
-                      <SubmitButton
-                        className="ui-button-primary ui-button-sm"
-                        pendingLabel={t('importing')}
-                        flash={false}
-                      >
-                        <CopyPlus className="size-4" />
-                        {t('import')}
-                      </SubmitButton>
-                    </form>
-                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                    <Wrench className="size-3.5" />
+                    {toolkit.toolCount}
+                  </span>
                 </div>
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-md border border-border bg-muted/35 p-3">
+                <div className="mt-4 grid flex-1 grid-cols-2 divide-x divide-border border-y border-border py-3">
+                  <div className="min-w-0 pr-3">
                     <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
                       <Plug className="size-3.5" />
                       {t('mcp')} {toolkit.serverCount}
@@ -143,7 +133,7 @@ export default async function ToolkitMarketPage({
                       {preview(toolkit.serverNames, t('noMcp'))}
                     </p>
                   </div>
-                  <div className="rounded-md border border-border bg-muted/35 p-3">
+                  <div className="min-w-0 pl-3">
                     <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
                       <Brain className="size-3.5" />
                       {t('skills')} {toolkit.skillCount}
@@ -159,6 +149,19 @@ export default async function ToolkitMarketPage({
                     {t('customSetupSummary', { count: toolkit.customServerCount })}
                   </p>
                 ) : null}
+
+                <form action={clonePublicToolkitAction} className="mt-4 border-t border-border pt-4">
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="toolkitId" value={toolkit.id} />
+                  <SubmitButton
+                    className="ui-button-primary h-9 w-full"
+                    pendingLabel={t('importing')}
+                    flash={false}
+                  >
+                    <CopyPlus className="size-4" />
+                    {t('import')}
+                  </SubmitButton>
+                </form>
               </article>
             ))}
           </div>

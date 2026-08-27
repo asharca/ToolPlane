@@ -9,9 +9,11 @@ import {
   Box,
   BrainCircuit,
   Check,
+  ChevronDown,
   Container,
   Cpu,
   FileText,
+  Hammer,
   Loader2,
   PackageCheck,
   Save,
@@ -29,18 +31,25 @@ import {
   type ActionState,
 } from '@/lib/agents/actions';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import {
+  agentRuntimeBuiltinToolGroups,
+  agentRuntimeDisplayName,
+  agentRuntimeSupportsProviderFormat,
+  isDedicatedSandboxRuntimeKind,
+  type AgentRuntimeBuiltinToolCategory,
+} from '@/lib/agents/runtime-kind';
 import { formatInTimeZone } from '@/lib/timezone';
 import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
+import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
-type Provider = { id: string; name: string; models: string[] };
+type Provider = { id: string; name: string; format: string; models: string[] };
 type SaveStatus = 'idle' | 'dirty';
-export type AgentSettingsSection = 'general' | 'instructions' | 'mcp' | 'skills' | 'toolkits' | 'sandboxes' | 'subAgents' | 'advanced';
+export type AgentSettingsSection = 'general' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits' | 'sandboxes' | 'subAgents' | 'advanced';
 
 function checkedIds(options: AgentResourceOption[]) {
   return new Set(options.filter((option) => option.checked).map((option) => option.id));
@@ -49,6 +58,7 @@ function checkedIds(options: AgentResourceOption[]) {
 export function AgentSettingsForm({
   slug,
   agentId,
+  runtimeKind,
   name,
   systemPrompt,
   providerId,
@@ -71,6 +81,7 @@ export function AgentSettingsForm({
 }: {
   slug: string;
   agentId: string;
+  runtimeKind: string;
   name: string;
   systemPrompt: string;
   providerId: string | null;
@@ -122,36 +133,72 @@ export function AgentSettingsForm({
     updateHermesRuntimeEnvAction,
     {},
   );
+  const singleSandboxRuntime = isDedicatedSandboxRuntimeKind(runtimeKind);
   const [nameValue, setNameValue] = useState(name);
   const [systemPromptValue, setSystemPromptValue] = useState(systemPrompt);
-  const [selectedProvider, setSelectedProvider] = useState(providerId ?? '');
+  const [selectedProvider, setSelectedProvider] = useState(() => {
+    const provider = providers.find((entry) => entry.id === providerId);
+    return provider && agentRuntimeSupportsProviderFormat(runtimeKind, provider.format) ? provider.id : '';
+  });
   const [selectedProviderIds, setSelectedProviderIds] = useState(() => new Set(providerIds));
   const [selectedModel, setSelectedModel] = useState(model ?? '');
   const [maxStepsValue, setMaxStepsValue] = useState(String(maxSteps));
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState(() => checkedIds(deployments));
   const [selectedSkillIds, setSelectedSkillIds] = useState(() => checkedIds(skills));
   const [selectedToolkitIds, setSelectedToolkitIds] = useState(() => checkedIds(toolkits));
-  const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => checkedIds(sandboxes));
-  const [selectedDefaultSandboxId, setSelectedDefaultSandboxId] = useState(defaultSandboxId ?? '');
+  const [selectedSandboxIds, setSelectedSandboxIds] = useState(() => {
+    const selected = checkedIds(sandboxes);
+    return singleSandboxRuntime
+      ? new Set([...selected].filter((id) => sandboxes.some((sandbox) => (
+          sandbox.id === id && sandbox.kind === 'docker' && sandbox.network !== 'none'
+        ))).slice(0, 1))
+      : selected;
+  });
+  const [selectedDefaultSandboxId, setSelectedDefaultSandboxId] = useState(() => (
+    singleSandboxRuntime
+      ? sandboxes.find((sandbox) => (
+          sandbox.checked && sandbox.kind === 'docker' && sandbox.network !== 'none'
+        ))?.id ?? ''
+      : defaultSandboxId ?? ''
+  ));
   const [selectedSubAgentIds, setSelectedSubAgentIds] = useState(() => checkedIds(subAgents));
   const [uncontrolledActiveSection, setUncontrolledActiveSection] = useState<AgentSettingsSection>('general');
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastRuntimeAction, setLastRuntimeAction] = useState<'sync' | 'stop' | 'upgrade' | null>(null);
-  const models = useMemo(
-    () => providers.find((p) => p.id === selectedProvider)?.models ?? [],
-    [providers, selectedProvider],
+  const compatibleProviders = useMemo(
+    () => providers.filter((provider) => agentRuntimeSupportsProviderFormat(runtimeKind, provider.format)),
+    [providers, runtimeKind],
   );
-  const modelOptions = useMemo(() => {
-    if (selectedModel && !models.includes(selectedModel)) return [selectedModel, ...models];
-    return models;
-  }, [models, selectedModel]);
+  const models = useMemo(
+    () => compatibleProviders.find((p) => p.id === selectedProvider)?.models ?? [],
+    [compatibleProviders, selectedProvider],
+  );
+  const selectedProviderOption = compatibleProviders.find((provider) => provider.id === selectedProvider) ?? null;
   const providerOptions = useMemo(() => providers.map((provider) => ({
     id: provider.id,
     label: provider.name,
     description: t('providerModelCount', { count: provider.models.length }),
     keywords: provider.models,
   })), [providers, t]);
-  const isHermes = runtime?.kind === 'hermes';
+  const sandboxOptions = useMemo(
+    () => singleSandboxRuntime
+      ? sandboxes.filter((sandbox) => sandbox.kind === 'docker' && sandbox.network !== 'none')
+      : sandboxes,
+    [sandboxes, singleSandboxRuntime],
+  );
+  const isHermes = runtimeKind === 'hermes';
+  const runtimeLabel = agentRuntimeDisplayName(runtimeKind);
+  const builtInToolGroups = agentRuntimeBuiltinToolGroups(runtimeKind);
+  const builtInToolCount = builtInToolGroups.reduce((count, group) => count + group.tools.length, 0);
+  const builtInToolCategoryLabels: Record<AgentRuntimeBuiltinToolCategory, string> = {
+    file: t('toolCategoryFile'),
+    shell: t('toolCategoryShell'),
+    search: t('toolCategorySearch'),
+    context: t('toolCategoryContext'),
+    orchestration: t('toolCategoryOrchestration'),
+    browser: t('toolCategoryBrowser'),
+    media: t('toolCategoryMedia'),
+  };
   const selectedProviderNames = providers
     .filter((provider) => selectedProviderIds.has(provider.id))
     .map((provider) => provider.name);
@@ -183,6 +230,7 @@ export function AgentSettingsForm({
     {
       label: t('tools'),
       items: [
+        { id: 'builtInTools', label: t('builtInTools'), count: builtInToolCount, icon: Hammer },
         { id: 'mcp', label: t('mcp'), count: selectedDeploymentIds.size, icon: Server },
         { id: 'skills', label: t('skills'), count: selectedSkillIds.size, icon: PackageCheck },
         { id: 'toolkits', label: t('toolkits'), count: selectedToolkitIds.size, icon: Blocks },
@@ -301,7 +349,7 @@ export function AgentSettingsForm({
         {showNavigation ? (
           <nav
             aria-label={t('configurationNavigation')}
-            className="border-b border-border bg-muted/20 p-2 lg:border-b-0 lg:border-r lg:p-3"
+            className="bg-muted/20 p-2 lg:p-3"
           >
             <div className="flex min-w-max gap-4 overflow-x-auto px-1 py-1 lg:block lg:min-w-0 lg:space-y-5 lg:overflow-visible">
               {navigationGroups.map((group) => (
@@ -344,7 +392,7 @@ export function AgentSettingsForm({
             </p>
           ) : null}
       <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Bot className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('general')}</p>
@@ -360,7 +408,7 @@ export function AgentSettingsForm({
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="rounded-md bg-background px-2 py-1 text-xs font-medium text-foreground ring-1 ring-border">
-                  {isHermes ? 'Hermes' : t('nativeRuntime')}
+                  {runtimeLabel}
                 </span>
                 {isHermes && runtime?.status ? (
                   <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{runtime.status}</span>
@@ -395,7 +443,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'instructions'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <FileText className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('instructions')}</p>
@@ -427,7 +475,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('advanced')}</p>
@@ -454,9 +502,9 @@ export function AgentSettingsForm({
         </div>
       </section>
 
-      {isHermes ? (
+      {isHermes && runtime ? (
         <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <Container className="size-[18px] shrink-0 text-muted-foreground" />
               <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
@@ -622,8 +670,42 @@ export function AgentSettingsForm({
         </section>
       ) : null}
 
+      <section hidden={activeSection !== 'builtInTools'} className="rounded-lg border border-border bg-background">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Hammer className="size-[18px] shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">{t('builtInTools')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {isHermes
+                ? t('hermesBuiltInToolsDescription')
+                : t('builtInToolsDescription', { runtime: runtimeLabel })}
+            </p>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <div
+            role="list"
+            aria-label={t('builtInTools')}
+            className="grid gap-x-8 gap-y-5 sm:grid-cols-2"
+          >
+            {builtInToolGroups.map((group) => (
+              <div key={group.category} role="listitem" className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {builtInToolCategoryLabels[group.category]}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+                  {group.tools.map((tool) => (
+                    <code key={tool} className="text-xs text-foreground">{tool}</code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section hidden={activeSection !== 'mcp'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Server className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('mcp')}</p>
@@ -646,7 +728,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'skills'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <PackageCheck className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('skills')}</p>
@@ -669,7 +751,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'toolkits'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('toolkits')}</p>
@@ -692,7 +774,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'sandboxes'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Box className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('sandboxes')}</p>
@@ -704,19 +786,20 @@ export function AgentSettingsForm({
             icon={Box}
             label={t('sandboxes')}
             name="sandboxId"
-            options={sandboxes}
+            options={sandboxOptions}
             selectedIds={selectedSandboxIds}
             onSelectionChange={(next) => {
               setSelectedSandboxIds(next);
               if (!next.has(selectedDefaultSandboxId)) setSelectedDefaultSandboxId([...next][0] ?? '');
               scheduleAutoSave();
             }}
+            selectionMode={singleSandboxRuntime ? 'single-required' : 'multiple'}
           />
-          {selectedSandboxIds.size ? (
+          {!singleSandboxRuntime && selectedSandboxIds.size ? (
             <label className="mt-3 block text-xs text-muted-foreground">
               <span className="mb-1 block">Default Work sandbox</span>
               <select name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
-                {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxes.find((item) => item.id === id)?.label ?? id}</option>)}
+                {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxOptions.find((item) => item.id === id)?.label ?? id}</option>)}
               </select>
             </label>
           ) : null}
@@ -725,7 +808,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'subAgents'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <Users className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{t('subAgents')}</p>
@@ -748,7 +831,7 @@ export function AgentSettingsForm({
       </section>
 
       <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2.5 px-4 py-3">
           <BrainCircuit className="size-[18px] shrink-0 text-muted-foreground" />
           <div>
             <p className="text-sm font-semibold text-foreground">{isHermes ? t('modelProviders') : t('model')}</p>
@@ -772,45 +855,39 @@ export function AgentSettingsForm({
               <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
             </div>
           ) : (
-            <>
-              <label className="block">
-                <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <Cpu className="size-4 shrink-0" />
-                  {t('provider')}
-                </span>
-                <NativeSelect
-                  name="providerId"
-                  value={selectedProvider}
-                  onChange={(event) => {
-                    setSelectedProvider(event.target.value);
-                    setSelectedModel('');
-                  }}
-                  className="ui-input h-10 w-full"
-                >
-                  <option value="">{t('none')}</option>
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </NativeSelect>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <BrainCircuit className="size-4 shrink-0" />
-                  {t('model')}
-                </span>
-                <NativeSelect
-                  name="model"
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  className="ui-input h-10 w-full"
-                >
-                  <option value="">{t('select')}</option>
-                  {modelOptions.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </NativeSelect>
-              </label>
-            </>
+            <div className="sm:col-span-2">
+              <input type="hidden" name="providerId" value={selectedProvider} />
+              <input type="hidden" name="model" value={selectedModel} />
+              <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <BrainCircuit className="size-4 shrink-0" />
+                {t('model')}
+              </span>
+              <ModelPicker
+                providers={compatibleProviders}
+                value={selectedProvider && selectedModel
+                  ? { providerId: selectedProvider, model: selectedModel }
+                  : null}
+                onSelect={(selection) => {
+                  setSelectedProvider(selection.providerId);
+                  setSelectedModel(selection.model);
+                  scheduleAutoSave();
+                }}
+                onConfigure={() => {
+                  const returnTo = `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=agent`;
+                  window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+                }}
+                trigger={(
+                  <button type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                      {selectedProviderOption?.name.charAt(0).toUpperCase() || 'M'}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{selectedModel || t('selectModel')}</span>
+                    <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProviderOption?.name}</span>
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                )}
+              />
+            </div>
           )}
           {!isHermes && selectedProvider && models.length === 0 ? (
             <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">

@@ -125,6 +125,7 @@ export const getPublicAgentListing = unstable_cache(
         latestRelease: { is: { reviewStatus: 'approved' } },
       },
       select: {
+        directorySlug: true,
         name: true,
         author: true,
         summary: true,
@@ -149,6 +150,7 @@ export const getPublicAgentListing = unstable_cache(
     };
     return {
       listing: {
+        directorySlug: result.directorySlug,
         name: result.name,
         author: result.author,
         summary: result.summary,

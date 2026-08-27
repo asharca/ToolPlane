@@ -16,6 +16,8 @@ import {
   acquireHermesRuntimeWriteLease,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR,
 } from './hermes/runtime';
+import { implementedAgentRuntimeKind, isDedicatedSandboxRuntimeKind } from './runtime-kind';
+import { runDedicatedSandboxTurn } from './sandbox-turn';
 
 export type AgentRunContext = {
   workspaceId: string;
@@ -30,6 +32,7 @@ export type RunAgent = LoadedAgentTools & {
   slug?: string;
   workspaceId?: string;
   name: string;
+  runtimeKind: string;
   systemPrompt: string | null;
   model: string | null;
   maxSteps: number;
@@ -50,6 +53,7 @@ export type RunDeps = {
     tools: AgentToolSet;
     maxSteps: number;
   }) => Promise<string>;
+  runSandboxModel?: (args: Parameters<typeof runDedicatedSandboxTurn>[0]) => Promise<string>;
 };
 
 const defaultDeps: RunDeps = {
@@ -62,6 +66,7 @@ const defaultDeps: RunDeps = {
     tools,
     maxSteps: resolveMaxSteps(maxSteps),
   }),
+  runSandboxModel: runDedicatedSandboxTurn,
 };
 
 export function subAgentToolKey(slug: string): string {
@@ -118,7 +123,9 @@ export async function runAgentTurn(
 
   const agent = await deps.loadAgent(agentId, ctx.workspaceId);
   if (!agent) return `Sub-agent ${agentId} not found in this workspace.`;
-  const isHermes = agent.runtime?.kind === 'hermes';
+  const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
+  if (!runtimeKind) return `Sub-agent runtime "${agent.runtimeKind}" is not available.`;
+  const isHermes = runtimeKind === 'hermes';
   if (isHermes ? !agent.modelProviders?.length : !agent.provider || !agent.model) {
     if (isHermes) return `Hermes sub-agent "${agent.name}" has no model provider configured.`;
     return `Sub-agent "${agent.name}" has no model configured.`;
@@ -153,6 +160,26 @@ export async function runAgentTurn(
   }
 
   const resolved = resolveAgentTools(agent);
+  if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
+    if (!agent.provider.id) return `Sub-agent "${agent.name}" has an invalid model provider.`;
+    if (!deps.runSandboxModel) return `Sub-agent runtime "${runtimeKind}" is not configured in this runner.`;
+    try {
+      return await deps.runSandboxModel({
+        agent: {
+          ...agent,
+          id: agentId,
+          workspaceId: ctx.workspaceId,
+          provider: { ...agent.provider, id: agent.provider.id },
+        },
+        systemPrompt: agent.systemPrompt,
+        messages: [{ role: 'user', parts: [{ type: 'text', text: prompt }] }],
+        skills: resolved.skills,
+        deploymentIds: resolved.deploymentIds,
+      });
+    } catch (error) {
+      return `${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
   const childCtx: AgentRunContext = {
     workspaceId: ctx.workspaceId,
     depth: ctx.depth + 1,

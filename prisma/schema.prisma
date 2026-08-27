@@ -43,27 +43,29 @@ model Server {
 }
 
 model User {
-  id                     String               @id @default(cuid())
-  email                  String               @unique
+  id                     String                @id @default(cuid())
+  email                  String                @unique
   name                   String?
   passwordHash           String
-  sessionVersion         Int                  @default(0)
-  role                   UserRole             @default(user)
-  status                 UserStatus           @default(active)
-  locale                 String               @default("en")
+  sessionVersion         Int                   @default(0)
+  role                   UserRole              @default(user)
+  status                 UserStatus            @default(active)
+  locale                 String                @default("en")
   detectedTimeZone       String?
   timeZoneOverride       String?
   apiTokens              ApiToken[]
   passwordResetTokens    PasswordResetToken[]
-  ownedWorkspaces        Workspace[]          @relation("WorkspaceOwner")
+  ownedWorkspaces        Workspace[]           @relation("WorkspaceOwner")
   memberships            Membership[]
-  agentListings          AgentListing[]       @relation("AgentListingPublisher")
-  reviewedAgentReleases  AgentRelease[]       @relation("AgentReleaseReviewer")
-  agentInstalls          AgentInstall[]       @relation("AgentInstallActor")
-  createdAgentEndpoints  AgentEndpoint[]      @relation("AgentEndpointCreator")
-  createdAgentApiClients AgentApiClient[]     @relation("AgentApiClientCreator")
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
+  agentListings          AgentListing[]        @relation("AgentListingPublisher")
+  reviewedAgentReleases  AgentRelease[]        @relation("AgentReleaseReviewer")
+  agentInstalls          AgentInstall[]        @relation("AgentInstallActor")
+  createdAgentEndpoints  AgentEndpoint[]       @relation("AgentEndpointCreator")
+  createdAgentApiClients AgentApiClient[]      @relation("AgentApiClientCreator")
+  resolvedWorkApprovals  WorkApproval[]        @relation("WorkApprovalResolver")
+  uploadedAttachments    WorkspaceAttachment[] @relation("WorkspaceAttachmentUploader")
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
 }
 
 model PasswordResetToken {
@@ -155,31 +157,38 @@ model DailySnapshot {
 }
 
 model Workspace {
-  id               String                   @id @default(cuid())
-  slug             String                   @unique
-  name             String
-  ownerId          String
-  owner            User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members          Membership[]
-  deployments      Deployment[]
-  installedSkills  InstalledSkill[]
-  requestLogs      RequestLog[]
-  sandboxes        Sandbox[]
-  toolkits         Toolkit[]
-  modelProviders   ModelProvider[]
-  agents           Agent[]
-  agentRuntimes    AgentRuntime[]
-  agentAttachments AgentAttachment[]
-  agentChannels    AgentChannelConnection[]
-  workSessions     WorkSession[]
-  knowledgeBases   KnowledgeBase[]
-  agentListings    AgentListing[]           @relation("AgentListingWorkspace")
-  agentInstalls    AgentInstall[]           @relation("AgentInstallWorkspace")
-  agentEndpoints   AgentEndpoint[]
-  skillInvocations SkillInvocation[]
-  syncEvents       SyncEvent[]
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
+  id                     String                   @id @default(cuid())
+  slug                   String                   @unique
+  name                   String
+  defaultModelProviderId String?
+  defaultModel           String?
+  titleModelProviderId   String?
+  titleModel             String?
+  ownerId                String
+  owner                  User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members                Membership[]
+  deployments            Deployment[]
+  installedSkills        InstalledSkill[]
+  requestLogs            RequestLog[]
+  sandboxes              Sandbox[]
+  toolkits               Toolkit[]
+  modelProviders         ModelProvider[]
+  chatAssistants         ChatAssistant[]
+  chatThreads            ChatThread[]
+  agents                 Agent[]
+  agentRuntimes          AgentRuntime[]
+  agentAttachments       AgentAttachment[]
+  workspaceAttachments   WorkspaceAttachment[]
+  agentChannels          AgentChannelConnection[]
+  workSessions           WorkSession[]
+  knowledgeBases         KnowledgeBase[]
+  agentListings          AgentListing[]           @relation("AgentListingWorkspace")
+  agentInstalls          AgentInstall[]           @relation("AgentInstallWorkspace")
+  agentEndpoints         AgentEndpoint[]
+  skillInvocations       SkillInvocation[]
+  syncEvents             SyncEvent[]
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
 }
 
 model Membership {
@@ -195,27 +204,28 @@ model Membership {
 }
 
 model Deployment {
-  id              String                 @id @default(cuid())
-  workspaceId     String
-  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  serverId        String?
-  server          Server?                @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  name            String?
-  source          String?
-  sourceRef       String?
-  installCfg      Json?
-  status          String                 @default("provisioning")
-  mcpToolExposure McpToolExposure        @default(all)
-  mcpAllowedTools String[]               @default([])
+  id                  String                  @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  serverId            String?
+  server              Server?                 @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name                String?
+  source              String?
+  sourceRef           String?
+  installCfg          Json?
+  status              String                  @default("provisioning")
+  mcpToolExposure     McpToolExposure         @default(all)
+  mcpAllowedTools     String[]                @default([])
   // Explicit owner review gate for untrusted public Agent prompts. Internal
   // Agent use and a public multi-tenant API are deliberately separate grants.
-  publicInvocable Boolean                @default(false)
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-  toolkitLinks    ToolkitServer[]
-  agentLinks      AgentServer[]
-  configFiles     DeploymentConfigFile[]
-  sandbox         Sandbox?
+  publicInvocable     Boolean                 @default(false)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  toolkitLinks        ToolkitServer[]
+  agentLinks          AgentServer[]
+  chatAssistantGrants ChatAssistantMcpGrant[]
+  configFiles         DeploymentConfigFile[]
+  sandbox             Sandbox?
 
   @@unique([workspaceId, serverId])
 }
@@ -236,24 +246,24 @@ model DeploymentConfigFile {
 }
 
 model Sandbox {
-  id           String            @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  deploymentId String            @unique
-  deployment   Deployment        @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
-  name         String
-  slug         String
-  kind         String            @default("docker")
-  image        String?
-  hostRoot     String?
-  network      String            @default("isolated")
-  config       Json?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  agentLinks   AgentSandbox[]
-  agentRuntime AgentRuntime?
-  snapshots    SandboxSnapshot[]
-  workSessions WorkSession[]
+  id                 String              @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deploymentId       String              @unique
+  deployment         Deployment          @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  name               String
+  slug               String
+  kind               String              @default("docker")
+  image              String?
+  hostRoot           String?
+  network            String              @default("isolated")
+  config             Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  agentLinks         AgentSandbox[]
+  agentRuntime       AgentRuntime?
+  snapshots          SandboxSnapshot[]
+  workSessions       WorkSession[]
   knowledgeDocuments KnowledgeDocument[]
 
   @@unique([workspaceId, slug])
@@ -385,6 +395,7 @@ model ModelProvider {
   agents          Agent[]
   agentLinks      AgentModelProvider[]
   knowledgeBases  KnowledgeBase[]
+  chatAssistants  ChatAssistant[]
 
   @@unique([workspaceId, name])
 }
@@ -399,6 +410,7 @@ model Agent {
   providerId              String?
   provider                ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model                   String?
+  runtimeKind             String
   maxSteps                Int                      @default(8)
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -574,6 +586,29 @@ model AgentAttachment {
   @@index([conversationId])
 }
 
+model WorkspaceAttachment {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  uploadedById   String
+  uploadedBy     User          @relation("WorkspaceAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  chatThreadId   String?
+  chatThread     ChatThread?   @relation(fields: [chatThreadId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  name           String
+  mimeType       String
+  size           Int
+  storagePath    String
+  extractedText  String?
+  createdAt      DateTime      @default(now())
+
+  @@unique([workspaceId, storagePath])
+  @@index([workspaceId, createdAt])
+  @@index([chatThreadId])
+  @@index([conversationId])
+}
+
 model AgentChannelConnection {
   id                 String    @id @default(cuid())
   workspaceId        String
@@ -646,48 +681,80 @@ model AgentSandbox {
   sandbox   Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
 
   @@id([agentId, sandboxId])
+  @@unique([sandboxId])
   @@index([agentId, isDefault])
 }
 
 model WorkSession {
-  id             String       @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId        String
-  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  sandboxId      String?
-  sandbox        Sandbox?     @relation(fields: [sandboxId], references: [id], onDelete: SetNull)
-  conversationId String       @unique
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  title          String?
-  task           String?
-  status         String       @default("active")
-  result         String?
-  error          String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                 String         @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId            String
+  agent              Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId          String?
+  sandbox            Sandbox?       @relation(fields: [sandboxId], references: [id], onDelete: SetNull)
+  conversationId     String         @unique
+  conversation       Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  title              String?
+  task               String?
+  acceptanceCriteria String?
+  runtimeKind        String
+  runtimeSnapshot    Json?
+  status             String         @default("queued")
+  maxSteps           Int            @default(12)
+  stepCount          Int            @default(0)
+  waitingQuestion    String?
+  result             String?
+  artifacts          Json?
+  error              String?
+  deadlineAt         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelRequestedAt  DateTime?
+  approvals          WorkApproval[]
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   @@index([workspaceId, agentId, updatedAt])
+  @@index([status, createdAt])
   @@index([sandboxId])
 }
 
+model WorkApproval {
+  id            String      @id @default(cuid())
+  workSessionId String
+  workSession   WorkSession @relation(fields: [workSessionId], references: [id], onDelete: Cascade)
+  toolCallId    String
+  toolName      String
+  input         Json
+  status        String      @default("pending")
+  resolvedById  String?
+  resolvedBy    User?       @relation("WorkApprovalResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  requestedAt   DateTime    @default(now())
+  resolvedAt    DateTime?
+
+  @@unique([workSessionId, toolCallId])
+  @@index([workSessionId, status, requestedAt])
+  @@index([resolvedById])
+}
+
 model KnowledgeBase {
-  id               String               @id @default(cuid())
-  workspaceId      String
-  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name             String
-  providerId       String?
-  provider         ModelProvider?       @relation(fields: [providerId], references: [id], onDelete: SetNull)
-  embeddingModel   String
-  dimensions       Int?
-  chunkSize        Int                  @default(1200)
-  chunkOverlap     Int                  @default(200)
-  topK             Int                  @default(6)
-  threshold        Float                @default(0.2)
-  documents        KnowledgeDocument[]
-  agentLinks       AgentKnowledgeBase[]
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  id             String               @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name           String
+  providerId     String?
+  provider       ModelProvider?       @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  embeddingModel String
+  dimensions     Int?
+  chunkSize      Int                  @default(1200)
+  chunkOverlap   Int                  @default(200)
+  topK           Int                  @default(6)
+  threshold      Float                @default(0.2)
+  documents      KnowledgeDocument[]
+  agentLinks     AgentKnowledgeBase[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
   @@unique([workspaceId, name])
   @@index([workspaceId, updatedAt])
@@ -714,13 +781,13 @@ model KnowledgeDocument {
 }
 
 model KnowledgeChunk {
-  id         String            @id @default(cuid())
+  id         String                 @id @default(cuid())
   documentId String
-  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document   KnowledgeDocument      @relation(fields: [documentId], references: [id], onDelete: Cascade)
   ordinal    Int
   content    String
   embedding  Unsupported("vector")?
-  createdAt  DateTime          @default(now())
+  createdAt  DateTime               @default(now())
 
   @@unique([documentId, ordinal])
   @@index([documentId])
@@ -736,7 +803,6 @@ model AgentKnowledgeBase {
   @@index([knowledgeBaseId])
 }
 
-
 model Conversation {
   id                    String                   @id @default(cuid())
   agentId               String
@@ -750,6 +816,7 @@ model Conversation {
   createdAt             DateTime                 @default(now())
   messages              Message[]
   attachments           AgentAttachment[]
+  workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
 }
@@ -768,6 +835,92 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([conversationId, sequence])
+}
+
+// Chat is deliberately isolated from Agent/Work. It can bind only a model,
+// a prompt, and direct MCP deployments; there are no Skill, Sandbox, Toolkit,
+// sub-agent, or Runtime relations in this bounded context.
+model ChatAssistant {
+  id              String                  @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name            String
+  systemPrompt    String?
+  modelProviderId String?
+  modelProvider   ModelProvider?          @relation(fields: [modelProviderId], references: [id], onDelete: SetNull)
+  model           String?
+  maxSteps        Int                     @default(8)
+  mcpGrants       ChatAssistantMcpGrant[]
+  threads         ChatThread[]
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([workspaceId, updatedAt])
+  @@index([modelProviderId])
+}
+
+model ChatAssistantMcpGrant {
+  assistantId  String
+  assistant    ChatAssistant @relation(fields: [assistantId], references: [id], onDelete: Cascade)
+  deploymentId String
+  deployment   Deployment    @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+
+  @@id([assistantId, deploymentId])
+  @@index([deploymentId])
+}
+
+model ChatThread {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assistantId     String
+  assistant       ChatAssistant         @relation(fields: [assistantId], references: [id], onDelete: Cascade)
+  activeMessageId String?
+  title           String?
+  turns           ChatTurn[]
+  messages        ChatMessage[]
+  attachments     WorkspaceAttachment[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([workspaceId, updatedAt])
+  @@index([assistantId, updatedAt])
+}
+
+model ChatTurn {
+  id          String        @id @default(cuid())
+  threadId    String
+  thread      ChatThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  status      String        @default("pending")
+  error       String?
+  messages    ChatMessage[]
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  @@index([threadId, createdAt])
+}
+
+model ChatMessage {
+  id             String        @id @default(cuid())
+  threadId       String
+  thread         ChatThread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  turnId         String
+  turn           ChatTurn      @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  parentId       String?
+  parent         ChatMessage?  @relation("ChatMessageBranches", fields: [parentId], references: [id], onDelete: SetNull)
+  children       ChatMessage[] @relation("ChatMessageBranches")
+  siblingGroupId String?
+  role           String
+  status         String        @default("success")
+  modelId        String?
+  parts          Json
+  createdAt      DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([threadId, parentId, createdAt])
+  @@index([threadId, siblingGroupId, createdAt])
+  @@index([turnId, createdAt])
 }
 
 // Public Agent API control-plane deployment. It is intentionally separate

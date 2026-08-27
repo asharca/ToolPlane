@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -333,6 +335,31 @@ describe('Hermes sandbox lifecycle isolation', () => {
       data: expect.objectContaining({
         installCfg: expect.objectContaining({ env: { EXISTING: 'value' } }),
       }),
+    }));
+  });
+
+  it('persists the runtime API key for Hermes gateway authentication', async () => {
+    const agent = deletingAgent();
+    agent.runtime.status = 'stopped';
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    let projectedEnvironment: Record<string, string> | undefined;
+    mocks.spawn.mockImplementation((_command: string, args: string[]) => {
+      if (args[0] === 'cp' && typeof args[1] === 'string') {
+        projectedEnvironment = JSON.parse(
+          readFileSync(path.join(path.resolve(args[1]), 'env.json'), 'utf8'),
+        ) as Record<string, string>;
+      }
+      return successfulDockerChild();
+    });
+
+    await expect(syncHermesRuntime('workspace-1', agent.id, { start: false })).resolves.toEqual({
+      status: 'setup_required',
+    });
+
+    expect(projectedEnvironment).toEqual(expect.objectContaining({
+      EXISTING: 'value',
+      API_SERVER_KEY: expect.stringMatching(/^tphr_/),
     }));
   });
 

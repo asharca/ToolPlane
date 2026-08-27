@@ -33,7 +33,7 @@ export default async function SettingsProvidersPage({
     <SettingsModal title={t('title')} fallbackHref={`/app/${slug}/chat`}>
       <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SettingsTabs slug={slug} />
-        <div className="min-w-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:p-8">
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <ProvidersPanel
             slug={slug}
             piProviderPresets={piProviderPresets()}

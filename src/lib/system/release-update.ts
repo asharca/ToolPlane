@@ -189,7 +189,16 @@ export async function readCurrentVersion(root = versionRoot()): Promise<string> 
   } catch {
     // Older images do not have a version file.
   }
-  return process.env.TOOLPLANE_VERSION || 'unknown';
+  if (process.env.TOOLPLANE_VERSION) return process.env.TOOLPLANE_VERSION;
+  try {
+    const manifest = JSON.parse(
+      await readFile(path.join(/* turbopackIgnore: true */ root, 'package.json'), 'utf8'),
+    ) as { version?: unknown };
+    if (typeof manifest.version === 'string' && manifest.version.trim()) return manifest.version.trim();
+  } catch {
+    // Development checkouts do not have a release version file.
+  }
+  return 'unknown';
 }
 
 function githubHeaders(): HeadersInit {

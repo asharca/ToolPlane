@@ -11,6 +11,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useComposerRuntime,
+  type AppendMessage,
   type AssistantRuntime,
   type Attachment,
   type AttachmentAdapter,
@@ -20,35 +21,50 @@ import {
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
 import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk';
-import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown';
-import { code } from '@streamdown/code';
-import { DefaultChatTransport, generateId } from 'ai';
-import { Popover } from 'radix-ui';
+import { DefaultChatTransport, generateId, type CreateUIMessage, type UIMessage } from 'ai';
 import {
   Box,
   Bot,
   Brain,
+  Check,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
   CircleAlert,
   CirclePause,
-  Clock3,
   Copy,
   Loader2,
-  Maximize2,
-  Minimize2,
   Paperclip,
+  Pencil,
   Plug,
-  Plus,
   RefreshCw,
   Send,
+  Split,
   UserRound,
   Wrench,
   X,
 } from 'lucide-react';
-import remarkBreaks from 'remark-breaks';
-import { defaultRemarkPlugins } from 'streamdown';
+import {
+  ConversationAttachmentChip,
+  ConversationAttachmentPicker,
+  ConversationAttachmentRemoveButton,
+  ConversationContextUsage,
+  ConversationComposerExpand,
+  conversationAttachmentThumbClassName,
+  conversationComposerClassName,
+  conversationComposerInputClassName,
+  conversationComposerToolbarClassName,
+  useConversationComposerExpansion,
+} from '@/components/dashboard/ConversationComposer';
+import {
+  AssistantMarkdown,
+  AssistantReply,
+  ConversationPendingIndicator,
+  assistantMessageActionClassName,
+} from '@/components/dashboard/ConversationMessage';
+import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
+import type { ChatBranchNavigation } from '@/lib/chat/branches';
 import {
   expandHermesAssistantMessages,
   type HermesUIMessage,
@@ -56,10 +72,6 @@ import {
 
 const MAX_ATTACHMENTS = 5;
 const ATTACHMENT_ERROR_PART = 'data-toolplane-attachment-error';
-const SOFT_BREAK_REMARK_PLUGINS = [
-  ...Object.values(defaultRemarkPlugins),
-  remarkBreaks,
-];
 
 type AttachmentContentPart = CompleteAttachment['content'][number];
 type DraftSnapshot = {
@@ -73,6 +85,39 @@ function cx(...classes: Array<string | false | null | undefined>) {
 
 function displayUserText(text: string) {
   return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
+}
+
+function toEditableCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
+  message: AppendMessage,
+): CreateUIMessage<UI_MESSAGE> {
+  const inputParts = [
+    ...message.content.filter((part) => part.type !== 'file'),
+    ...(message.attachments?.flatMap((attachment) => attachment.content.map((part) => ({
+      ...part,
+      filename: attachment.name,
+    }))) ?? []),
+  ];
+  const parts = inputParts.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    if (part.type === 'image') {
+      return { type: 'file', url: part.image, mediaType: 'image/png', ...(part.filename ? { filename: part.filename } : {}) };
+    }
+    if (part.type === 'file') {
+      return { type: 'file', url: part.data, mediaType: part.mimeType, ...(part.filename ? { filename: part.filename } : {}) };
+    }
+    if (part.type === 'data') return { type: `data-${part.name}`, data: part.data };
+    throw new Error(`Unsupported message part: ${part.type}`);
+  });
+  return {
+    role: message.role,
+    parts,
+    metadata: message.sourceId
+      ? {
+          ...(message.metadata && typeof message.metadata === 'object' ? message.metadata : {}),
+          toolplaneEditMessageId: message.sourceId,
+        }
+      : message.metadata,
+  } as unknown as CreateUIMessage<UI_MESSAGE>;
 }
 
 function formatToolResult(result: unknown) {
@@ -186,19 +231,8 @@ function UserText({ text }: TextMessagePartProps) {
   );
 }
 
-function AssistantText() {
-  return (
-    <StreamdownTextPrimitive
-      plugins={{ code }}
-      remarkPlugins={SOFT_BREAK_REMARK_PLUGINS}
-      security={{
-        allowedProtocols: ['http', 'https', 'mailto'],
-        allowDataImages: true,
-      }}
-      defer
-      className="space-y-2 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5"
-    />
-  );
+function AssistantText({ text, status }: TextMessagePartProps) {
+  return <AssistantMarkdown text={text} streaming={status.type === 'running'} />;
 }
 
 function FilePart({ data, filename }: FileMessagePartProps) {
@@ -349,19 +383,17 @@ function SentAttachment({ attachment }: { attachment: CompleteAttachment }) {
 function ComposerAttachment({ attachment }: { attachment: Attachment }) {
   const t = useTranslations('console.agents');
   return (
-    <AttachmentPrimitive.Root className="mx-0.5 my-0.5 inline-flex h-6 max-w-[calc(100%_-_0.25rem)] items-center gap-1 overflow-hidden rounded-md border border-border bg-muted/50 px-1.5 text-xs font-medium text-foreground">
-      <AttachmentPrimitive.unstable_Thumb className="flex size-[18px] shrink-0 items-center justify-center rounded-[5px] bg-background text-[9px] font-semibold uppercase text-muted-foreground" />
-      <span className="max-w-48 truncate"><AttachmentPrimitive.Name /></span>
-      {attachment.status.type === 'running' ? (
-        <span className="text-muted-foreground">{Math.round(attachment.status.progress * 100)}%</span>
-      ) : null}
-      <AttachmentPrimitive.Remove
-        aria-label={t('removeAttachment', { name: attachment.name })}
-        title={t('removeAttachment', { name: attachment.name })}
-        className="flex size-4 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <X className="size-3" />
-      </AttachmentPrimitive.Remove>
+    <AttachmentPrimitive.Root asChild>
+      <ConversationAttachmentChip
+        name={<AttachmentPrimitive.Name />}
+        progress={attachment.status.type === 'running' ? attachment.status.progress : undefined}
+        thumbnail={<AttachmentPrimitive.unstable_Thumb className={conversationAttachmentThumbClassName} />}
+        removeButton={(
+          <AttachmentPrimitive.Remove asChild>
+            <ConversationAttachmentRemoveButton label={t('removeAttachment', { name: attachment.name })} />
+          </AttachmentPrimitive.Remove>
+        )}
+      />
     </AttachmentPrimitive.Root>
   );
 }
@@ -375,128 +407,103 @@ function AttachmentPickerButton({
   onClearError: () => void;
   supportsAttachments: boolean;
 }) {
-  const t = useTranslations('console.agents');
   const composer = useComposerRuntime();
-  const openPicker = useCallback(() => {
-    onClearError();
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.hidden = true;
-    const accept = composer.getState().attachmentAccept;
-    if (accept !== '*') input.accept = accept;
-    const removeInput = () => input.remove();
-    input.onchange = () => {
-      for (const file of Array.from(input.files ?? [])) {
-        void composer.addAttachment(file).catch(() => undefined);
-      }
-      removeInput();
-    };
-    input.oncancel = removeInput;
-    document.body.appendChild(input);
-    input.click();
-  }, [composer, onClearError]);
-
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={t('openComposerTools')}
-          title={t('openComposerTools')}
-          className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-        >
-          <Plus className="size-[18px]" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
-          align="start"
-          sideOffset={8}
-          collisionPadding={12}
-          aria-label={t('composerTools')}
-          className="z-50 w-64 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
-        >
-          <Popover.Close asChild>
-            <button
-              type="button"
-              disabled={!supportsAttachments}
-              onClick={openPicker}
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Paperclip className="size-4 shrink-0" />
-              <span className="min-w-0">
-                <span className="block">{t('addAttachment')}</span>
-                {!supportsAttachments ? (
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('attachmentRuntimeRequired')}</span>
-                ) : null}
-              </span>
-            </button>
-          </Popover.Close>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <ConversationAttachmentPicker
+      accept={composer.getState().attachmentAccept}
+      disabled={disabled}
+      supportsAttachments={supportsAttachments}
+      onFiles={(files) => {
+        onClearError();
+        for (const file of files) {
+          void composer.addAttachment(file).catch(() => undefined);
+        }
+      }}
+    />
   );
 }
 
-function UserMessage() {
+function ConversationBranchNavigator({
+  branch,
+  disabled,
+  onSelect,
+}: {
+  branch?: ChatBranchNavigation;
+  disabled: boolean;
+  onSelect?: (messageId: string) => void | Promise<void>;
+}) {
+  const t = useTranslations('console.agents');
+  const common = useTranslations('common');
+  if (!branch || !onSelect) return null;
+  return (
+    <div aria-label={t('conversationBranch')} className="inline-flex h-[26px] items-center gap-0.5 text-[11px] tabular-nums text-muted-foreground">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => void onSelect(branch.previousMessageId)}
+        aria-label={common('previous')}
+        title={common('previous')}
+        className="flex size-[22px] items-center justify-center rounded-md hover:bg-muted hover:text-foreground disabled:opacity-40"
+      >
+        <ChevronLeft className="size-3" />
+      </button>
+      <span className="min-w-8 text-center font-mono">{branch.position}/{branch.total}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => void onSelect(branch.nextMessageId)}
+        aria-label={common('next')}
+        title={common('next')}
+        className="flex size-[22px] items-center justify-center rounded-md hover:bg-muted hover:text-foreground disabled:opacity-40"
+      >
+        <ChevronRight className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+function UserMessage({
+  allowEdit,
+  branch,
+  branchBusy,
+  messageId,
+  onBranchChange,
+}: {
+  allowEdit: boolean;
+  branch?: ChatBranchNavigation;
+  branchBusy: boolean;
+  messageId: string;
+  onBranchChange?: (messageId: string) => void | Promise<void>;
+}) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
   return (
     <MessagePrimitive.Root asChild>
-      <article className="flex flex-col items-end rounded-[10px] pt-2.5">
-        <div className="flex max-w-full items-start justify-end gap-2.5">
-          <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
-            <MessagePrimitive.Parts components={{ Text: UserText }} />
-            <MessagePrimitive.Attachments>
-              {({ attachment }) => <SentAttachment attachment={attachment} />}
-            </MessagePrimitive.Attachments>
+      <article id={`chat-message-${messageId}`} className="flex flex-col items-end rounded-[10px] pt-2.5">
+        <ComposerPrimitive.If editing={false}>
+          <div className="flex max-w-full items-start justify-end gap-2.5">
+            <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
+              <MessagePrimitive.Parts components={{ Text: UserText }} />
+              <MessagePrimitive.Attachments>
+                {({ attachment }) => <SentAttachment attachment={attachment} />}
+              </MessagePrimitive.Attachments>
+            </div>
+            <div aria-label={t('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <UserRound className="size-4" />
+            </div>
           </div>
-          <div aria-label={t('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <UserRound className="size-4" />
-          </div>
-        </div>
-        <div className="mr-10 min-h-[26px]">
-          <ActionBarPrimitive.Root autohide="always" className="flex h-[26px] items-center justify-end gap-0.5">
-            <ActionBarPrimitive.Copy
-              aria-label={common('copy')}
-              title={common('copy')}
-              className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-            >
-              <Copy className="size-[15px]" />
-            </ActionBarPrimitive.Copy>
-          </ActionBarPrimitive.Root>
-        </div>
-      </article>
-    </MessagePrimitive.Root>
-  );
-}
-
-function AssistantMessage({ agentName }: { agentName: string }) {
-  const common = useTranslations('common');
-  return (
-    <MessagePrimitive.Root asChild>
-      <article className="flex items-start justify-start gap-2.5 rounded-[10px] pt-2.5">
-        <div className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <Bot className="size-[15px]" />
-        </div>
-        <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] flex-1">
-          <div className="text-sm font-semibold leading-5 text-foreground">
-            {agentName}
-          </div>
-          <div className="mt-2 min-w-0 break-words text-sm leading-[1.65] text-foreground">
-            <MessagePrimitive.Parts
-              components={{
-                Text: AssistantText,
-                File: FilePart,
-                tools: { Fallback: ToolPart },
-              }}
-            />
-          </div>
-          <div className="mt-1 min-h-[26px]">
-            <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex h-[26px] items-center gap-0.5">
+          <div className="mr-10 flex min-h-[26px] items-center justify-end gap-1">
+            <ConversationBranchNavigator branch={branch} disabled={branchBusy} onSelect={onBranchChange} />
+            <ActionBarPrimitive.Root autohide="always" className="flex h-[26px] items-center justify-end gap-0.5">
+              {allowEdit ? (
+                <ActionBarPrimitive.Edit
+                  aria-label={common('edit')}
+                  title={common('edit')}
+                  className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                >
+                  <Pencil className="size-[14px]" />
+                </ActionBarPrimitive.Edit>
+              ) : null}
               <ActionBarPrimitive.Copy
                 aria-label={common('copy')}
                 title={common('copy')}
@@ -504,17 +511,121 @@ function AssistantMessage({ agentName }: { agentName: string }) {
               >
                 <Copy className="size-[15px]" />
               </ActionBarPrimitive.Copy>
-              <ActionBarPrimitive.Reload
-                aria-label={common('regenerate')}
-                title={common('regenerate')}
-                className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              >
-                <RefreshCw className="size-[15px]" />
-              </ActionBarPrimitive.Reload>
             </ActionBarPrimitive.Root>
           </div>
-        </div>
+        </ComposerPrimitive.If>
+        <ComposerPrimitive.If editing>
+          <ComposerPrimitive.Root className="mr-10 w-[min(36rem,calc(100%_-_2.5rem))] rounded-[10px] bg-muted p-2">
+            <ComposerPrimitive.Input
+              autoFocus
+              rows={2}
+              submitMode="enter"
+              className="max-h-48 min-h-14 w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none"
+            />
+            <div className="mt-1 flex justify-end gap-1">
+              <ComposerPrimitive.Cancel
+                aria-label={common('cancel')}
+                title={common('cancel')}
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+              >
+                <X className="size-4" />
+              </ComposerPrimitive.Cancel>
+              <ComposerPrimitive.Send
+                aria-label={common('save')}
+                title={common('save')}
+                className="flex size-7 items-center justify-center rounded-md bg-foreground text-background disabled:opacity-40"
+              >
+                <Check className="size-4" />
+              </ComposerPrimitive.Send>
+            </div>
+          </ComposerPrimitive.Root>
+        </ComposerPrimitive.If>
       </article>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AssistantMessage({
+  agentName,
+  allowRegenerate,
+  branch,
+  branchBusy,
+  messageId,
+  onBranchChange,
+  onRegenerate,
+  onStartBranch,
+}: {
+  agentName: string;
+  allowRegenerate: boolean;
+  branch?: ChatBranchNavigation;
+  branchBusy: boolean;
+  messageId: string;
+  onBranchChange?: (messageId: string) => void | Promise<void>;
+  onRegenerate?: (messageId: string) => void | Promise<void>;
+  onStartBranch?: (messageId: string) => void | Promise<void>;
+}) {
+  const common = useTranslations('common');
+  const chat = useTranslations('console.chatAssistants');
+  return (
+    <MessagePrimitive.Root asChild>
+      <AssistantReply
+        id={`chat-message-${messageId}`}
+        agentName={agentName}
+        actions={(
+          <div className="flex h-[26px] items-center gap-1">
+            <ConversationBranchNavigator branch={branch} disabled={branchBusy} onSelect={onBranchChange} />
+            <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex h-[26px] items-center gap-0.5">
+              {onStartBranch ? (
+                <button
+                  type="button"
+                  disabled={branchBusy}
+                  aria-label={chat('newBranch')}
+                  title={chat('newBranch')}
+                  className={assistantMessageActionClassName}
+                  onClick={() => void onStartBranch(messageId)}
+                >
+                  <Split className="size-[15px]" />
+                </button>
+              ) : null}
+              <ActionBarPrimitive.Copy
+                aria-label={common('copy')}
+                title={common('copy')}
+                className={assistantMessageActionClassName}
+              >
+                <Copy className="size-[15px]" />
+              </ActionBarPrimitive.Copy>
+              {allowRegenerate && onRegenerate ? (
+                <button
+                  type="button"
+                  disabled={branchBusy}
+                  aria-label={common('regenerate')}
+                  title={common('regenerate')}
+                  className={assistantMessageActionClassName}
+                  onClick={() => void onRegenerate?.(messageId)}
+                >
+                  <RefreshCw className="size-[15px]" />
+                </button>
+              ) : allowRegenerate ? (
+                <ActionBarPrimitive.Reload
+                  aria-label={common('regenerate')}
+                  title={common('regenerate')}
+                  className={assistantMessageActionClassName}
+                >
+                  <RefreshCw className="size-[15px]" />
+                </ActionBarPrimitive.Reload>
+              ) : null}
+            </ActionBarPrimitive.Root>
+          </div>
+        )}
+      >
+        <MessagePrimitive.Parts
+          components={{
+            Text: AssistantText,
+            File: FilePart,
+            tools: { Fallback: ToolPart },
+          }}
+        />
+      </AssistantReply>
     </MessagePrimitive.Root>
   );
 }
@@ -522,9 +633,18 @@ function AssistantMessage({ agentName }: { agentName: string }) {
 function AgentThread({
   activeConversationId,
   agentName,
+  allowEdit,
+  allowRegenerate,
+  branchBusy,
+  branchNavigation,
   creatingConversation,
+  contextUsage,
+  contextUsageBusy,
   error,
   onClearAttachmentError,
+  onBranchChange,
+  onRegenerateMessage,
+  onStartBranch,
   ready,
   supportsAttachments,
   submitError,
@@ -533,9 +653,18 @@ function AgentThread({
 }: {
   activeConversationId: string | null;
   agentName: string;
+  allowEdit: boolean;
+  allowRegenerate: boolean;
+  branchBusy: boolean;
+  branchNavigation: ChatBranchNavigation[];
   creatingConversation: boolean;
+  contextUsage: ContextUsageSnapshot | null;
+  contextUsageBusy: boolean;
   error?: Error;
   onClearAttachmentError: () => void;
+  onBranchChange?: (messageId: string) => void | Promise<void>;
+  onRegenerateMessage?: (messageId: string) => void | Promise<void>;
+  onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
   supportsAttachments: boolean;
   submitError: string | null;
@@ -543,11 +672,16 @@ function AgentThread({
   workMode: boolean;
 }) {
   const t = useTranslations('console.agents');
-  const [composerMinRows, setComposerMinRows] = useState(2);
-  const composerInputRef = useRef<HTMLTextAreaElement>(null);
-  const composerExpanded = composerMinRows > 2;
-  const ComposerExpandIcon = composerExpanded ? Minimize2 : Maximize2;
-  const composerExpandLabel = t(composerExpanded ? 'restoreComposer' : 'expandComposer');
+  const {
+    expanded: composerExpanded,
+    inputRef: composerInputRef,
+    minRows: composerMinRows,
+    toggle: toggleComposer,
+  } = useConversationComposerExpansion();
+  const branchByMessageId = useMemo(
+    () => new Map(branchNavigation.map((branch) => [branch.messageId, branch])),
+    [branchNavigation],
+  );
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
       <ThreadPrimitive.Viewport className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
@@ -567,14 +701,11 @@ function AgentThread({
           <div className="mx-auto flex w-full max-w-[53rem] flex-col gap-0 px-6">
             <ThreadPrimitive.Messages>
               {({ message }) => message.role === 'user'
-                ? <UserMessage />
-                : <AssistantMessage agentName={agentName} />}
+                ? <UserMessage allowEdit={allowEdit} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} />
+                : <AssistantMessage agentName={agentName} allowRegenerate={allowRegenerate} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} onRegenerate={onRegenerateMessage} onStartBranch={onStartBranch} />}
             </ThreadPrimitive.Messages>
             <ThreadPrimitive.If running>
-              <div className="flex items-center gap-2.5 py-2.5 pl-10 text-sm text-muted-foreground">
-                <Clock3 className="size-4 shrink-0 animate-pulse" />
-                {t('agentIsResponding')}
-              </div>
+              <ConversationPendingIndicator label={t('agentIsResponding')} />
             </ThreadPrimitive.If>
           </div>
         </div>
@@ -600,29 +731,9 @@ function AgentThread({
             data-ui="chat.composer"
             data-composer-inputbar=""
             data-composer-presentation="regular"
-            className="relative rounded-[20px] border-[0.5px] border-border bg-card pt-2 shadow-sm transition-all duration-200 ease-in-out"
+            className={conversationComposerClassName}
           >
-            <div className="group/expand-corner absolute right-px top-px z-10 size-8">
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute right-1 top-1 size-3 origin-top-right scale-100 rounded-tr-[16px] border-r-[1.5px] border-t-[1.5px] border-foreground/60 opacity-70 transition-[opacity,scale] duration-200 ease-out group-focus-within/expand-corner:scale-50 group-focus-within/expand-corner:opacity-0 group-hover/expand-corner:scale-50 group-hover/expand-corner:opacity-0"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setComposerMinRows(composerExpanded
-                    ? 2
-                    : Math.ceil((Math.max(220, window.innerHeight * 0.5) - 6) / (14 * 1.4)));
-                  composerInputRef.current?.focus();
-                }}
-                aria-label={composerExpandLabel}
-                title={composerExpandLabel}
-                aria-pressed={composerExpanded}
-                className="pointer-events-none absolute right-1 top-1 flex size-[22px] -translate-y-2.5 translate-x-2.5 rotate-[-8deg] scale-80 items-center justify-center rounded-full bg-transparent text-muted-foreground opacity-0 transition-[opacity,translate,scale,rotate,color,background-color] duration-300 ease-out hover:bg-muted hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:translate-y-0 focus-visible:rotate-0 focus-visible:scale-100 focus-visible:bg-muted focus-visible:text-foreground focus-visible:opacity-100 group-focus-within/expand-corner:pointer-events-auto group-focus-within/expand-corner:translate-x-0 group-focus-within/expand-corner:translate-y-0 group-focus-within/expand-corner:rotate-0 group-focus-within/expand-corner:scale-100 group-focus-within/expand-corner:bg-muted/80 group-focus-within/expand-corner:text-foreground group-focus-within/expand-corner:opacity-100 group-hover/expand-corner:pointer-events-auto group-hover/expand-corner:translate-x-0 group-hover/expand-corner:translate-y-0 group-hover/expand-corner:rotate-0 group-hover/expand-corner:scale-100 group-hover/expand-corner:bg-muted/80 group-hover/expand-corner:text-foreground group-hover/expand-corner:opacity-100"
-              >
-                <ComposerExpandIcon className="size-3 transition-transform duration-300 ease-out group-focus-within/expand-corner:scale-110 group-hover/expand-corner:scale-110" />
-              </button>
-            </div>
+            <ConversationComposerExpand expanded={composerExpanded} onToggle={toggleComposer} />
             <div className="flex flex-wrap gap-1.5 px-[15px] empty:hidden">
               <ComposerPrimitive.Attachments>
                 {({ attachment }) => <ComposerAttachment attachment={attachment} />}
@@ -631,19 +742,16 @@ function AgentThread({
             <ComposerPrimitive.Input
               ref={composerInputRef}
               placeholder={t('messageThisAgent')}
-              disabled={!ready || creatingConversation || uploadingAttachments}
+              disabled={!ready || branchBusy || creatingConversation || uploadingAttachments}
               rows={2}
               minRows={composerMinRows}
               submitMode="enter"
-              className={cx(
-                'block min-h-[46px] w-full resize-none overflow-y-auto bg-transparent pb-0 pl-[15px] pr-11 pt-1.5 text-sm leading-[1.4] text-foreground outline-none transition-none placeholder:text-muted-foreground disabled:opacity-60 [&::-webkit-scrollbar]:w-[3px]',
-                composerExpanded ? 'max-h-[max(220px,50vh)]' : 'max-h-[max(220px,40vh)]',
-              )}
+              className={conversationComposerInputClassName(composerExpanded)}
             />
-            <div data-ui="part:composer-actions" data-composer-toolbar="" className="relative z-[2] flex h-10 items-center justify-between gap-4 px-2 py-[5px]">
+            <div data-ui="part:composer-actions" data-composer-toolbar="" className={conversationComposerToolbarClassName}>
               <div className="flex min-w-0 items-center gap-1.5">
                 <AttachmentPickerButton
-                  disabled={creatingConversation || uploadingAttachments}
+                  disabled={branchBusy || creatingConversation || uploadingAttachments}
                   onClearError={onClearAttachmentError}
                   supportsAttachments={supportsAttachments}
                 />
@@ -658,24 +766,27 @@ function AgentThread({
                 ) : null}
               </div>
 
-              <ThreadPrimitive.If running={false}>
-                <ComposerPrimitive.Send
-                  aria-label={creatingConversation ? t('creating') : t('send')}
-                  title={creatingConversation ? t('creating') : t('send')}
-                  className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50"
-                >
-                  {creatingConversation ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
-                </ComposerPrimitive.Send>
-              </ThreadPrimitive.If>
-              <ThreadPrimitive.If running>
-                <ComposerPrimitive.Cancel
-                  aria-label={t('stop')}
-                  title={t('stop')}
-                  className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted"
-                >
-                  <CirclePause className="size-5" />
-                </ComposerPrimitive.Cancel>
-              </ThreadPrimitive.If>
+              <div className="flex shrink-0 items-center gap-2">
+                <ConversationContextUsage busy={contextUsageBusy} usage={contextUsage} />
+                <ThreadPrimitive.If running={false}>
+                  <ComposerPrimitive.Send
+                    aria-label={creatingConversation ? t('creating') : t('send')}
+                    title={creatingConversation ? t('creating') : t('send')}
+                    className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50"
+                  >
+                    {creatingConversation ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
+                  </ComposerPrimitive.Send>
+                </ThreadPrimitive.If>
+                <ThreadPrimitive.If running>
+                  <ComposerPrimitive.Cancel
+                    aria-label={t('stop')}
+                    title={t('stop')}
+                    className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted"
+                  >
+                    <CirclePause className="size-5" />
+                  </ComposerPrimitive.Cancel>
+                </ThreadPrimitive.If>
+              </div>
             </div>
           </ComposerPrimitive.Root>
         </div>
@@ -686,6 +797,7 @@ function AgentThread({
 
 function useAgentAttachmentAdapter({
   agentId,
+  attachmentUploadUrl,
   ensureConversation,
   isHermes,
   onError,
@@ -696,6 +808,7 @@ function useAgentAttachmentAdapter({
   recoveryErrorRef,
 }: {
   agentId: string;
+  attachmentUploadUrl?: string;
   ensureConversation: () => Promise<string>;
   isHermes: boolean;
   onError: (message: string | null) => void;
@@ -712,7 +825,7 @@ function useAgentAttachmentAdapter({
   return useMemo<AttachmentAdapter>(() => ({
     accept: '*',
     async add({ file }) {
-      if (!isHermes) {
+      if (!isHermes && !attachmentUploadUrl) {
         const message = t('attachmentRuntimeRequired');
         onError(message);
         throw new Error(message);
@@ -752,14 +865,22 @@ function useAgentAttachmentAdapter({
       onUploadingChange(true);
       onError(null);
       try {
-        const conversationId = sendConversationIdRef.current ?? await ensureConversation();
-        sendConversationIdRef.current = conversationId;
-        if (!isHermes) throw new Error(t('attachmentRuntimeRequired'));
-        const query = new URLSearchParams({
-          conversationId,
-          filename: attachment.file.name,
-        });
-        const response = await fetch(`/api/v1/agents/${agentId}/attachments?${query}`, {
+        let uploadUrl: string;
+        if (isHermes) {
+          const conversationId = sendConversationIdRef.current ?? await ensureConversation();
+          sendConversationIdRef.current = conversationId;
+          const query = new URLSearchParams({
+            conversationId,
+            filename: attachment.file.name,
+          });
+          uploadUrl = `/api/v1/agents/${agentId}/attachments?${query}`;
+        } else {
+          if (!attachmentUploadUrl) throw new Error(t('attachmentRuntimeRequired'));
+          const url = new URL(attachmentUploadUrl, window.location.origin);
+          url.searchParams.set('filename', attachment.file.name);
+          uploadUrl = `${url.pathname}${url.search}`;
+        }
+        const response = await fetch(uploadUrl, {
           method: 'POST',
           headers: {
             'content-type': attachment.contentType || 'application/octet-stream',
@@ -768,24 +889,33 @@ function useAgentAttachmentAdapter({
         });
         const result = await response.json().catch(() => ({})) as {
           name?: string;
+          mimeType?: string;
           runtimePath?: string;
           size?: number;
+          url?: string;
           error?: string;
         };
-        if (!response.ok || !result.runtimePath) {
+        if (!response.ok || (isHermes ? !result.runtimePath : !result.url)) {
           throw new Error(result.error || t('attachmentUploadFailed'));
         }
         const name = result.name || attachment.name;
-        const content: AttachmentContentPart[] = [{
-          type: 'text',
-          text: [
-            t('attachmentStoredInHermesWorkspace'),
-            t('attachmentMetadataName', { name }),
-            t('attachmentMetadataPath', { path: result.runtimePath }),
-            t('attachmentMetadataSize', { size: result.size ?? attachment.file.size }),
-            t('attachmentMetadataType', { type: attachment.contentType || 'application/octet-stream' }),
-          ].join('\n'),
-        }];
+        const content: AttachmentContentPart[] = isHermes
+          ? [{
+              type: 'text',
+              text: [
+                t('attachmentStoredInHermesWorkspace'),
+                t('attachmentMetadataName', { name }),
+                t('attachmentMetadataPath', { path: result.runtimePath! }),
+                t('attachmentMetadataSize', { size: result.size ?? attachment.file.size }),
+                t('attachmentMetadataType', { type: attachment.contentType || 'application/octet-stream' }),
+              ].join('\n'),
+            }]
+          : [{
+              type: 'file',
+              data: result.url!,
+              mimeType: result.mimeType || attachment.contentType || 'application/octet-stream',
+              filename: name,
+            }];
 
         return {
           ...attachment,
@@ -818,28 +948,58 @@ function useAgentAttachmentAdapter({
         }
       }
     },
-  }), [agentId, draftSnapshotRef, ensureConversation, isHermes, onError, onUploadingChange, recoveryErrorRef, runtimeRef, sendConversationIdRef, t]);
+  }), [agentId, attachmentUploadUrl, draftSnapshotRef, ensureConversation, isHermes, onError, onUploadingChange, recoveryErrorRef, runtimeRef, sendConversationIdRef, t]);
 }
 
 export function AgentConversation({
   activeConversationId,
   agentId,
   agentName,
+  allowEdit = false,
+  allowRegenerate = true,
+  apiPath,
+  attachmentUploadUrl,
+  branchBusy = false,
+  branchNavigation = [],
+  contextBaseText,
+  contextWindow,
+  contextWindowEstimated = true,
   creatingConversation,
   ensureConversation,
+  includeConversationIdInBody = true,
   initialMessages,
+  modelName,
+  onBranchChange,
+  onConversationChanged,
+  onStartBranch,
   ready,
   runtimeKind,
+  supportsAttachments,
   workSessionId,
 }: {
   activeConversationId: string | null;
   agentId: string;
   agentName: string;
+  allowEdit?: boolean;
+  allowRegenerate?: boolean;
+  apiPath?: string;
+  attachmentUploadUrl?: string;
+  branchBusy?: boolean;
+  branchNavigation?: ChatBranchNavigation[];
+  contextBaseText?: string | null;
+  contextWindow?: number | null;
+  contextWindowEstimated?: boolean;
   creatingConversation: boolean;
   ensureConversation: () => Promise<string>;
+  includeConversationIdInBody?: boolean;
   initialMessages: HermesUIMessage[];
+  modelName?: string | null;
+  onBranchChange?: (messageId: string) => void | Promise<void>;
+  onConversationChanged?: () => void | Promise<void>;
+  onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
   runtimeKind: string | null;
+  supportsAttachments?: boolean;
   workSessionId?: string;
 }) {
   const t = useTranslations('console.agents');
@@ -851,12 +1011,33 @@ export function AgentConversation({
   const attachmentDraftSnapshotRef = useRef<DraftSnapshot | null>(null);
   const attachmentRecoveryErrorRef = useRef<string | null>(null);
   const transport = useMemo(() => new DefaultChatTransport({
-    api: `/api/v1/agents/${agentId}/chat`,
-  }), [agentId]);
+    api: apiPath ?? `/api/v1/agents/${agentId}/chat`,
+    ...(!includeConversationIdInBody ? {
+      prepareSendMessagesRequest: ({ body, messageId, messages, trigger }) => {
+        const editMessageId = (messages.at(-1)?.metadata as { toolplaneEditMessageId?: unknown } | undefined)
+          ?.toolplaneEditMessageId;
+        return {
+          body: {
+            ...body,
+            messageId: messageId ?? (typeof editMessageId === 'string' ? editMessageId : undefined),
+            messages: messages.slice(-1),
+            trigger,
+          },
+        };
+      },
+    } : {}),
+  }), [agentId, apiPath, includeConversationIdInBody]);
   const chat = useChat<HermesUIMessage>({
     transport,
     messages: initialMessages,
+    onFinish: () => { void onConversationChanged?.(); },
   });
+  const contextUsage = useMemo(() => resolveContextUsage(chat.messages, {
+    maxTokens: contextWindow,
+    modelName,
+    context: contextBaseText,
+    estimated: contextWindowEstimated,
+  }), [chat.messages, contextBaseText, contextWindow, contextWindowEstimated, modelName]);
 
   const displayMessages = useMemo(
     () => expandHermesAssistantMessages(chat.messages),
@@ -876,6 +1057,7 @@ export function AgentConversation({
   const sendChatMessage = chat.sendMessage;
   const regenerateChat = chat.regenerate;
   const sendMessage = useCallback<typeof chat.sendMessage>(async (message, options) => {
+    if (branchBusy) return;
     setSubmitError(null);
     const messageParts = message && typeof message === 'object'
       && 'parts' in message && Array.isArray(message.parts)
@@ -910,12 +1092,13 @@ export function AgentConversation({
       ...options,
       body: {
         ...options?.body,
-        conversationId: nextConversationId,
+        ...(includeConversationIdInBody ? { conversationId: nextConversationId } : {}),
         ...(workSessionId ? { workSessionId } : {}),
       },
     });
-  }, [ensureConversation, sendChatMessage, t, workSessionId]);
+  }, [branchBusy, ensureConversation, includeConversationIdInBody, sendChatMessage, t, workSessionId]);
   const regenerate = useCallback<typeof chat.regenerate>(async (options) => {
+    if (!allowRegenerate || branchBusy) return;
     setSubmitError(null);
     let nextConversationId: string;
     try {
@@ -928,13 +1111,14 @@ export function AgentConversation({
       ...options,
       body: {
         ...options?.body,
-        conversationId: nextConversationId,
+        ...(includeConversationIdInBody ? { conversationId: nextConversationId } : {}),
         ...(workSessionId ? { workSessionId } : {}),
       },
     });
-  }, [activeConversationId, ensureConversation, regenerateChat, t, workSessionId]);
+  }, [activeConversationId, allowRegenerate, branchBusy, ensureConversation, includeConversationIdInBody, regenerateChat, t, workSessionId]);
   const attachmentAdapter = useAgentAttachmentAdapter({
     agentId,
+    attachmentUploadUrl,
     ensureConversation,
     isHermes: runtimeKind === 'hermes',
     onError: setSubmitError,
@@ -952,8 +1136,9 @@ export function AgentConversation({
   }), [chat, displayMessages, regenerate, sendMessage]);
   const runtime = useAISDKRuntime(assistantChat, {
     adapters: { attachments: attachmentAdapter },
-    isSendDisabled: !ready || creatingConversation || uploadingAttachments,
+    isSendDisabled: !ready || branchBusy || creatingConversation || uploadingAttachments,
     joinStrategy: 'none',
+    ...(allowEdit ? { toCreateMessage: toEditableCreateMessage } : {}),
   });
   useEffect(() => {
     assistantRuntimeRef.current = runtime;
@@ -967,11 +1152,22 @@ export function AgentConversation({
       <AgentThread
         activeConversationId={activeConversationId}
         agentName={agentName}
+        allowEdit={allowEdit}
+        allowRegenerate={allowRegenerate}
+        branchBusy={branchBusy}
+        branchNavigation={branchNavigation}
         creatingConversation={creatingConversation}
+        contextUsage={contextUsage}
+        contextUsageBusy={chat.status === 'submitted' || chat.status === 'streaming'}
         error={chat.error}
         onClearAttachmentError={clearSubmitError}
+        onBranchChange={onBranchChange}
+        onRegenerateMessage={!includeConversationIdInBody
+          ? (messageId) => void regenerate({ messageId })
+          : undefined}
+        onStartBranch={onStartBranch}
         ready={ready}
-        supportsAttachments={runtimeKind === 'hermes'}
+        supportsAttachments={supportsAttachments ?? (runtimeKind === 'hermes' || Boolean(attachmentUploadUrl))}
         submitError={submitError}
         uploadingAttachments={uploadingAttachments}
         workMode={Boolean(workSessionId)}

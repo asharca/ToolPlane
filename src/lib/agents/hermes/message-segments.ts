@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai';
+import type { ContextUsageSnapshot } from '@/lib/context-usage';
 
 export type HermesAssistantSegment = {
   id: string;
@@ -11,6 +12,7 @@ export type HermesTurnMessages = {
 
 export type HermesUIData = {
   'hermes-messages': HermesTurnMessages;
+  'context-usage': ContextUsageSnapshot;
 };
 
 export type HermesUIMessage = UIMessage<unknown, HermesUIData>;

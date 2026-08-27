@@ -23,14 +23,16 @@ function fmt(d: Date, timeZone: string, locale: string) {
 
 export default async function ToolkitsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
+  searchParams: Promise<{ create?: string }>;
 }) {
   const [t, locale] = await Promise.all([
     getTranslations('console.toolkits'),
     getLocale(),
   ]);
-  const { workspace: slug } = await params;
+  const [{ workspace: slug }, query] = await Promise.all([params, searchParams]);
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const timeZone = resolveUserTimeZone(user);
@@ -53,6 +55,7 @@ export default async function ToolkitsPage({
       <ToolkitsBrowser
         slug={slug}
         canManagePublishing={canManagePublishing}
+        startCreating={query.create === '1'}
         toolkits={toolkits.map((t) => ({
           id: t.id,
           name: t.name,

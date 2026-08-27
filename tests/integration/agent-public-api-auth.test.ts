@@ -38,7 +38,7 @@ beforeAll(async () => {
   });
   workspaceId = workspace.id;
   const agent = await db.agent.create({
-    data: { workspaceId, name: 'Public source', slug: `public-source-${suffix}` },
+    data: { workspaceId, name: 'Public source', slug: `public-source-${suffix}`, runtimeKind: 'pi' },
   });
   agentId = agent.id;
   const endpoint = await db.agentEndpoint.create({

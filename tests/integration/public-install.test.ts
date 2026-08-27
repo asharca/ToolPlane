@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { upsertInstalledSkill } from '@/lib/skills/install';
 
@@ -13,6 +13,11 @@ beforeAll(async () => {
   wsId = ws.id;
   const sk = await db.skill.create({ data: { slug: `pi-skill-${stamp}`, name: 'PI Skill' } });
   skillId = sk.id;
+});
+
+afterAll(async () => {
+  await db.user.deleteMany({ where: { email: `pi-${stamp}@t.dev` } });
+  await db.skill.deleteMany({ where: { id: skillId } });
 });
 
 describe('upsertInstalledSkill', () => {

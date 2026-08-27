@@ -24,6 +24,7 @@ import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { originFromHeaders } from '@/lib/http/origin';
 import { getAgentEndpointForManagement } from '@/lib/agents/public-api/queries';
 import { db } from '@/lib/db';
+import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,10 +73,17 @@ export default async function AgentDetailPage({
     redirect(`/app/${slug}/chat?${query}`);
   }
 
-  const isHermes = agent.runtime?.kind === 'hermes';
+  const isHermes = agent.runtimeKind === 'hermes';
+  const sandboxReady = agent.sandboxes.length === 1
+    && agent.sandboxes[0]?.sandbox.kind === 'docker'
+    && agent.sandboxes[0]?.sandbox.network !== 'none';
   const ready = isHermes
     ? agent.modelProviders.length > 0
-    : Boolean(agent.providerId && agent.model);
+    : Boolean(
+        agent.providerId
+        && agent.model
+        && (!isDedicatedSandboxRuntimeKind(agent.runtimeKind) || sandboxReady),
+      );
   const providerLabel = isHermes
     ? agent.modelProviders.length > 0
       ? agent.modelProviders.map((link) => link.provider.name).join(', ')
@@ -97,7 +105,7 @@ export default async function AgentDetailPage({
     managerMembership,
     requestHeaders,
   ] = await Promise.all([
-    agent.runtime?.kind === 'hermes'
+    isHermes
       ? Promise.resolve([])
       : listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
@@ -122,19 +130,20 @@ export default async function AgentDetailPage({
   const marketSetup = await resolveAgentMarketSetupGuide(ws.id, agent.marketInstall);
 
   return (
-    <SettingsModal title={t('agentSettings')} fallbackHref={`/app/${slug}/agents`}>
+    <SettingsModal title={t('agentSettings')} fallbackHref={`/app/${slug}/work`}>
       <AgentSettings
         key={settings ?? 'general'}
         slug={slug}
         agentId={agentId}
         settings={{
           name: agent.name,
-          systemPrompt: agent.runtime?.kind === 'hermes' ? '' : agent.systemPrompt ?? '',
+          runtimeKind: agent.runtimeKind,
+          systemPrompt: isHermes ? '' : agent.systemPrompt ?? '',
           providerId: agent.providerId,
           providerIds: agent.modelProviders.map((link) => link.providerId),
           model: agent.model,
           maxSteps: agent.maxSteps,
-          providers: providers.map((p) => ({ id: p.id, name: p.name, models: p.models })),
+          providers: providers.map((p) => ({ id: p.id, name: p.name, format: p.format, models: p.models })),
           deployments,
           skills,
           toolkits: toolkits.map((t) => ({
@@ -147,6 +156,7 @@ export default async function AgentDetailPage({
           sandboxes: sandboxes
             .filter((s) => {
               if (s.id === agent.runtime?.sandboxId) return false;
+              if (s._count.agentLinks > 0 && !selectedSandboxes.has(s.id)) return false;
               return ![
                 'copying',
                 'copy_failed',
@@ -161,6 +171,8 @@ export default async function AgentDetailPage({
             .map((s) => ({
               id: s.id,
               label: s.name,
+              kind: s.kind,
+              network: s.network,
               checked: selectedSandboxes.has(s.id),
               status: effectiveStatus(s.deploymentId, s.deployment.status),
             })),
@@ -236,7 +248,7 @@ export default async function AgentDetailPage({
         agentName={agent.name}
         providerLabel={providerLabel}
         marketSetup={marketSetup}
-        initialSettingsTab={settings === 'channels' && agent.runtime?.kind !== 'hermes' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'channels' && !isHermes ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </SettingsModal>
   );

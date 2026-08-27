@@ -29,10 +29,12 @@ function formatDate(d: Date, timeZone: string, locale: string): string {
 
 export default async function McpServersPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
+  searchParams: Promise<{ create?: string }>;
 }) {
-  const { workspace: slug } = await params;
+  const [{ workspace: slug }, query] = await Promise.all([params, searchParams]);
   const [t, locale] = await Promise.all([
     getTranslations('console.mcp'),
     getLocale(),
@@ -70,7 +72,7 @@ export default async function McpServersPage({
                 <Store className="size-4" />
                 {t('browseToolplane')}
               </Link>
-              <DeployCustomMcpDialog slug={slug} />
+              <DeployCustomMcpDialog slug={slug} defaultOpen={query.create === '1'} />
             </>
           }
         >

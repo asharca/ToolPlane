@@ -97,16 +97,17 @@ describe('Agent Control MCP protocol', () => {
       .toMatchObject({ annotations: { idempotentHint: false, destructiveHint: true } });
   });
 
-  it('validates and dispatches create_agent with safe defaults', async () => {
+  it('requires and dispatches an explicit implemented runtime', async () => {
     const response = await POST(call('create_agent', {
       name: 'Researcher',
+      runtime: 'pi',
       providerId: 'provider-1',
       model: 'gpt-test',
     }), routeParams);
 
     expect(mocks.createAgent).toHaveBeenCalledWith('workspace-1', 'acme', {
       name: 'Researcher',
-      runtime: 'native',
+      runtime: 'pi',
       systemPrompt: undefined,
       providerId: 'provider-1',
       providerIds: [],

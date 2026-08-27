@@ -40,6 +40,22 @@ describe('Hermes chat projection', () => {
     expect(uiMessagesToHermes(messages)[0].content).toContain('report.pdf');
   });
 
+  it('uses the runtime path for files copied into a Work sandbox', () => {
+    const messages: UIMessage[] = [{
+      id: 'm1',
+      role: 'user',
+      parts: [{
+        type: 'file',
+        mediaType: 'text/plain',
+        filename: 'notes.txt',
+        url: '/api/v1/attachments/attachment-1',
+        providerMetadata: { toolplane: { runtimePath: '/opt/data/workspace/notes.txt' } },
+      }],
+    }];
+
+    expect(uiMessagesToHermes(messages)[0].content).toContain('/opt/data/workspace/notes.txt');
+  });
+
   it('never forwards system messages from ToolPlane to Hermes', () => {
     const messages = [{
       id: 'system-1',

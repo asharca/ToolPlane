@@ -7,12 +7,17 @@ import { Copy, Check } from 'lucide-react';
 export function CopyButton({
   text,
   label = 'Copy',
+  className,
+  iconOnly = false,
 }: {
   text: string;
   label?: string;
+  className?: string;
+  iconOnly?: boolean;
 }) {
   const t = useTranslations('console.common');
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const statusLabel = status === 'copied' ? t('copied') : status === 'failed' ? t('copyFailed') : label;
 
   async function copy() {
     let success = false;
@@ -47,10 +52,12 @@ export function CopyButton({
     <button
       type="button"
       onClick={copy}
-      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      aria-label={iconOnly ? statusLabel : undefined}
+      title={iconOnly ? statusLabel : undefined}
+      className={className ?? 'inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800'}
     >
       {status === 'copied' ? <Check className="size-4" /> : <Copy className="size-4" />}
-      {status === 'copied' ? t('copied') : status === 'failed' ? t('copyFailed') : label}
+      {iconOnly ? null : statusLabel}
     </button>
   );
 }

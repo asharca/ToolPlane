@@ -15,6 +15,7 @@ import {
 } from '@/lib/workspace/mcp-tool-exposure';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
+import type { ImplementedAgentRuntimeKind } from '@/lib/agents/runtime-kind';
 
 export class AgentControlError extends Error {
   constructor(
@@ -28,7 +29,7 @@ export class AgentControlError extends Error {
 
 export type CreateAgentFromControlInput = {
   name: string;
-  runtime: 'native' | 'hermes';
+  runtime: ImplementedAgentRuntimeKind;
   systemPrompt?: string | null;
   providerId?: string | null;
   providerIds: string[];
@@ -45,6 +46,7 @@ const AGENT_CONTROL_SELECT = {
   id: true,
   name: true,
   slug: true,
+  runtimeKind: true,
   systemPrompt: true,
   providerId: true,
   model: true,
@@ -144,24 +146,24 @@ function toSafeAgent(agent: Awaited<ReturnType<typeof loadAgentControlRow>> exte
   ? NonNullable<T>
   : never, workspaceSlug: string) {
   const runtimeStatus = safeRuntimeStatus(agent.runtime);
-  const configured = agent.runtime?.kind === 'hermes'
+  const configured = agent.runtimeKind === 'hermes'
     ? agent.modelProviders.length > 0
     : Boolean(agent.provider && agent.model);
   return {
     id: agent.id,
     name: agent.name,
     slug: agent.slug,
-    runtime: agent.runtime
+    runtime: agent.runtimeKind === 'hermes' && agent.runtime
       ? {
-          kind: agent.runtime.kind,
+          kind: agent.runtimeKind,
           status: runtimeStatus,
           image: agent.runtime.image,
         }
-      : { kind: 'native', status: null, image: null },
+      : { kind: agent.runtimeKind, status: null, image: null },
     configured,
-    ready: agent.runtime?.kind === 'hermes' ? configured && runtimeStatus === 'running' : configured,
+    ready: agent.runtimeKind === 'hermes' ? configured && runtimeStatus === 'running' : configured,
     systemPrompt: agent.systemPrompt,
-    model: agent.runtime?.kind === 'hermes'
+    model: agent.runtimeKind === 'hermes'
       ? {
           providerIds: agent.modelProviders.map(({ providerId }) => providerId),
           providers: agent.modelProviders.map(({ provider }) => ({
@@ -340,6 +342,7 @@ export async function listAgentControlAgents(workspaceId: string) {
       id: true,
       name: true,
       slug: true,
+      runtimeKind: true,
       providerId: true,
       model: true,
       provider: { select: { name: true } },
@@ -367,17 +370,17 @@ export async function listAgentControlAgents(workspaceId: string) {
   });
   return agents.map((agent) => {
     const runtimeStatus = safeRuntimeStatus(agent.runtime);
-    const configured = agent.runtime?.kind === 'hermes'
+    const configured = agent.runtimeKind === 'hermes'
       ? agent.modelProviders.length > 0
       : Boolean(agent.provider && agent.model);
     return {
       id: agent.id,
       name: agent.name,
       slug: agent.slug,
-      runtime: agent.runtime?.kind ?? 'native',
+      runtime: agent.runtimeKind,
       runtimeStatus,
       configured,
-      ready: agent.runtime?.kind === 'hermes' ? configured && runtimeStatus === 'running' : configured,
+      ready: agent.runtimeKind === 'hermes' ? configured && runtimeStatus === 'running' : configured,
       providerId: agent.providerId,
       providerName: agent.provider?.name ?? null,
       providerIds: agent.modelProviders.map(({ providerId }) => providerId),
@@ -453,7 +456,7 @@ export async function createAgentFromControl(
   workspaceSlug: string,
   input: CreateAgentFromControlInput,
 ) {
-  if (input.runtime === 'native' && input.model && !input.providerId) {
+  if (input.runtime === 'pi' && input.model && !input.providerId) {
     throw new AgentControlError('invalid_arguments', 'A model requires providerId.');
   }
   if (input.runtime === 'hermes' && (input.providerId || input.model || input.systemPrompt)) {
@@ -470,9 +473,9 @@ export async function createAgentFromControl(
       {
         name: input.name,
         systemPrompt: input.systemPrompt?.trim() || null,
-        providerId: input.runtime === 'native' ? input.providerId ?? null : null,
+        providerId: input.runtime === 'pi' ? input.providerId ?? null : null,
         providerIds: input.runtime === 'hermes' ? input.providerIds : [],
-        model: input.runtime === 'native' ? input.model ?? null : null,
+        model: input.runtime === 'pi' ? input.model ?? null : null,
         maxSteps: input.maxSteps,
       },
       {
@@ -491,7 +494,7 @@ export async function createAgentFromControl(
     throw error;
   }
 
-  let runtimeSync: { status: string; error?: string } = { status: 'native' };
+  let runtimeSync: { status: string; error?: string } = { status: 'pi' };
   if (input.runtime === 'hermes') {
     try {
       const result = await syncHermesRuntime(workspaceId, created.id);

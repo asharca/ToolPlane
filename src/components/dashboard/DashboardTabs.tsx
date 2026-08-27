@@ -115,8 +115,10 @@ function isWorkspaceHref(href: string, base: string): boolean {
 
 function locationForTabs(pathname: string, searchParams: URLSearchParams, base: string) {
   const settingsPath = pathname === `${base}/settings` || pathname.startsWith(`${base}/settings/`);
-  const agentPath = pathname.startsWith(`${base}/agents/`)
-    && !pathname.slice(`${base}/agents/`.length).includes('/');
+  const agentPath = pathname === `${base}/agents` || (
+    pathname.startsWith(`${base}/agents/`)
+    && !pathname.slice(`${base}/agents/`.length).includes('/')
+  );
   const returnTo = settingsPath || agentPath ? searchParams.get('returnTo') : null;
   if (returnTo && isWorkspaceHref(returnTo, base) && !parseUrl(returnTo).pathname.startsWith(`${base}/settings`)) {
     const url = parseUrl(returnTo);
@@ -412,7 +414,7 @@ function DashboardTabButton({ tab, active, label, Icon, canClose, draggingId, on
 
 export function DashboardTabContent({ children }: { children?: ReactNode }) {
   return (
-    <main className="m-2 mt-0 flex min-h-0 flex-1 flex-col overflow-auto rounded-[12px] border border-border/80 bg-background animate-[dashboard-enter_180ms_cubic-bezier(0.22,1,0.36,1)] lg:ml-0">
+    <main className="m-2 mt-0 flex min-h-0 flex-1 flex-col overflow-auto rounded-[12px] bg-background lg:ml-0">
       {children}
     </main>
   );

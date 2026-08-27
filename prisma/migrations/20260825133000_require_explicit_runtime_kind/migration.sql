@@ -1,0 +1,5 @@
+ALTER TABLE "Agent"
+ALTER COLUMN "runtimeKind" DROP DEFAULT;
+
+ALTER TABLE "WorkSession"
+ALTER COLUMN "runtimeKind" DROP DEFAULT;

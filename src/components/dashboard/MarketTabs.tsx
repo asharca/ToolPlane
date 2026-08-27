@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Bot, Brain, Plug, Wrench } from 'lucide-react';
+import { Bot, Brain, LayoutGrid, Plug, Wrench } from 'lucide-react';
 
 const TABS = [
+  { key: '', labelKey: 'overview', icon: LayoutGrid },
   { key: 'mcp', labelKey: 'mcp', icon: Plug },
   { key: 'skills', labelKey: 'skills', icon: Brain },
   { key: 'agents', labelKey: 'agents', icon: Bot },
@@ -18,24 +19,27 @@ export function MarketTabs({ slug }: { slug: string }) {
   const base = `/app/${encodeURIComponent(slug)}/market`;
 
   return (
-    <nav aria-label={t('navigation')} className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-muted p-1 ring-1 ring-border/60">
+    <nav aria-label={t('navigation')} className="grid max-w-full grid-cols-5 border-b border-border sm:flex">
       {TABS.map((tab) => {
-        const href = `${base}/${tab.key}`;
-        const active = pathname === href || pathname.startsWith(`${href}/`);
+        const href = tab.key ? `${base}/${tab.key}` : base;
+        const active = tab.key
+          ? pathname === href || pathname.startsWith(`${href}/`)
+          : pathname === href;
         const Icon = tab.icon;
         return (
           <Link
             key={tab.key}
             href={href}
             aria-current={active ? 'page' : undefined}
-            className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
+            title={t(tab.labelKey)}
+            className={`inline-flex h-11 min-w-0 items-center justify-center gap-2 border-b-2 px-2 text-sm transition-colors sm:px-3 ${
               active
-                ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border/60'
-                : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                ? 'border-foreground font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:border-border hover:text-foreground'
             }`}
           >
-            <Icon className="size-4" />
-            {t(tab.labelKey)}
+            <Icon className="size-4 shrink-0" />
+            <span className="sr-only sm:not-sr-only">{t(tab.labelKey)}</span>
           </Link>
         );
       })}

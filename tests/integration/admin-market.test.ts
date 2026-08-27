@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect } from 'vitest';
 import { db } from '@/lib/db';
 import {
   createDirectoryServer, updateDirectoryServer, deleteDirectoryServer,
@@ -7,6 +7,16 @@ import {
 } from '@/lib/admin/market';
 
 const stamp = Date.now();
+
+afterAll(async () => {
+  await db.user.deleteMany({
+    where: { email: { in: [`msd-${stamp}@t.dev`, `mk-${stamp}@t.dev`] } },
+  });
+  await db.server.deleteMany({
+    where: { slug: { in: [`ms-${stamp}`, `msd-${stamp}`, `msok-${stamp}`] } },
+  });
+  await db.skill.deleteMany({ where: { slug: `mk-${stamp}` } });
+});
 
 describe('directory server mutations', () => {
   it('creates a curated server', async () => {

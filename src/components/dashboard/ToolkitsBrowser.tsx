@@ -111,14 +111,16 @@ export function ToolkitsBrowser({
   slug,
   toolkits,
   canManagePublishing = false,
+  startCreating = false,
 }: {
   slug: string;
   toolkits: ToolkitRow[];
   canManagePublishing?: boolean;
+  startCreating?: boolean;
 }) {
   const t = useTranslations('console.toolkits');
   const [query, setQuery] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(startCreating);
 
   const filtered = toolkits.filter((t) =>
     t.name.toLowerCase().includes(query.trim().toLowerCase()),

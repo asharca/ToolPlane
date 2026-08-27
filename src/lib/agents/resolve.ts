@@ -1,5 +1,3 @@
-import { HERMES_RUNTIME_KIND } from './hermes/constants';
-
 export type SkillForPrompt = {
   skillId: string | null;
   skill: {
@@ -29,7 +27,7 @@ type SubAgentChild = {
   name: string;
   slug: string;
   systemPrompt: string | null;
-  runtime?: { kind: string } | null;
+  runtimeKind: string;
 };
 
 export type SubAgentRef = { id: string; name: string; slug: string; description: string | null };
@@ -73,7 +71,7 @@ export function resolveAgentTools(agent: LoadedAgentTools, sandboxId?: string | 
       id: c.id,
       name: c.name,
       slug: c.slug,
-      description: c.runtime?.kind === HERMES_RUNTIME_KIND ? null : c.systemPrompt,
+      description: c.runtimeKind === 'hermes' ? null : c.systemPrompt,
     });
   }
 

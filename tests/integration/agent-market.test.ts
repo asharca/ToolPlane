@@ -9,6 +9,7 @@ import {
   withdrawPendingAgentRelease,
   type AgentReleaseManifestV1,
 } from '@/lib/agents/market';
+import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 
 const stamp = `${process.pid}-${Date.now()}`;
 
@@ -27,6 +28,8 @@ const REQUIRED_ENV = 'MARKET_TEST_API_KEY';
 const HERMES_IMAGE = 'nousresearch/hermes-agent:test';
 const HERMES_PROMPT_CANARY = `hermes-private-prompt-${stamp}`;
 const HERMES_RUNTIME_ENV_CANARY = `hermes-runtime-env-${stamp}`;
+const SOURCE_SANDBOX_ENV_CANARY = `source-sandbox-env-${stamp}`;
+const SOURCE_SANDBOX_VOLUME_CANARY = `source-sandbox-volume-${stamp}`;
 
 let sourceUserId = '';
 let targetUserId = '';
@@ -43,6 +46,8 @@ let sourceDeploymentId = '';
 let targetDeploymentId = '';
 let sourceCustomSkillId = '';
 let sourceToolkitId = '';
+let sourceSandboxId = '';
+let sourceSandboxDeploymentId = '';
 let firstListingId = '';
 let firstReleaseId = '';
 let firstReleaseManifest: AgentReleaseManifestV1;
@@ -54,7 +59,7 @@ function manifestOf(value: unknown): AgentReleaseManifestV1 {
 
 async function createAgent(name: string, slug: string) {
   return db.agent.create({
-    data: { workspaceId: sourceWorkspaceId, name, slug },
+    data: { workspaceId: sourceWorkspaceId, name, slug, runtimeKind: 'pi' },
   });
 }
 
@@ -212,6 +217,7 @@ describe.sequential('agent marketplace releases and installs', () => {
         workspaceId: sourceWorkspace.id,
         name: 'Portable Research Agent',
         slug: `portable-research-${stamp}`,
+        runtimeKind: 'pi',
         systemPrompt: ORIGINAL_PROMPT,
         providerId: sourceProvider.id,
         model: MODEL_ID,
@@ -222,6 +228,49 @@ describe.sequential('agent marketplace releases and installs', () => {
       },
     });
     sourceAgentId = sourceAgent.id;
+
+    const sourceSandboxDeployment = await db.deployment.create({
+      data: {
+        workspaceId: sourceWorkspace.id,
+        name: 'Portable Research Agent sandbox',
+        source: 'sandbox',
+        sourceRef: 'alpine:3.20',
+        status: 'stopped',
+      },
+    });
+    sourceSandboxDeploymentId = sourceSandboxDeployment.id;
+    const sourceSandbox = await db.sandbox.create({
+      data: {
+        workspaceId: sourceWorkspace.id,
+        deploymentId: sourceSandboxDeployment.id,
+        name: 'Portable Research Agent Workspace',
+        slug: `portable-research-workspace-${stamp}`,
+        kind: 'docker',
+        image: 'alpine:3.20',
+        network: 'isolated',
+        config: { env: { SOURCE_SANDBOX_SECRET: SOURCE_SANDBOX_ENV_CANARY }, allowSudo: true },
+      },
+    });
+    sourceSandboxId = sourceSandbox.id;
+    await Promise.all([
+      db.deployment.update({
+        where: { id: sourceSandboxDeployment.id },
+        data: {
+          installCfg: {
+            sandboxId: sourceSandbox.id,
+            kind: 'docker',
+            image: sourceSandbox.image,
+            network: sourceSandbox.network,
+            volumeName: SOURCE_SANDBOX_VOLUME_CANARY,
+            env: { SOURCE_SANDBOX_SECRET: SOURCE_SANDBOX_ENV_CANARY },
+            allowSudo: true,
+          },
+        },
+      }),
+      db.agentSandbox.create({
+        data: { agentId: sourceAgent.id, sandboxId: sourceSandbox.id, isDefault: true },
+      }),
+    ]);
 
     const conversation = await db.conversation.create({
       data: { agentId: sourceAgent.id, title: 'Private market conversation' },
@@ -318,6 +367,8 @@ describe.sequential('agent marketplace releases and installs', () => {
       CHANNEL_TOKEN_CANARY,
       MESSAGE_CANARY,
       ATTACHMENT_CANARY,
+      SOURCE_SANDBOX_ENV_CANARY,
+      SOURCE_SANDBOX_VOLUME_CANARY,
     ]) {
       expect(serialized).not.toContain(secret);
     }
@@ -330,6 +381,7 @@ describe.sequential('agent marketplace releases and installs', () => {
         systemPrompt: ORIGINAL_PROMPT,
         maxSteps: 17,
         modelRequirement: { format: 'openai', model: MODEL_ID },
+        runtime: { kind: 'pi' },
       })],
       deployments: [expect.objectContaining({
         catalogSlug: catalogServerSlug,
@@ -347,11 +399,13 @@ describe.sequential('agent marketplace releases and installs', () => {
       })],
       toolkits: [expect.objectContaining({ name: 'Research Toolkit' })],
     });
-    expect(firstReleaseManifest.agents[0]).not.toHaveProperty('runtime');
+    expect(firstReleaseManifest.agents[0].runtime).toEqual({ kind: 'pi' });
     expect(serialized).not.toContain(sourceProviderId);
     expect(serialized).not.toContain(sourceDeploymentId);
     expect(serialized).not.toContain(sourceCustomSkillId);
     expect(serialized).not.toContain(sourceToolkitId);
+    expect(serialized).not.toContain(sourceSandboxId);
+    expect(serialized).not.toContain(sourceSandboxDeploymentId);
 
     await approvePendingAgentRelease({
       listingId: pendingListing.id,
@@ -507,12 +561,14 @@ describe.sequential('agent marketplace releases and installs', () => {
         conversations: true,
         channels: true,
         attachments: true,
+        sandboxes: { include: { sandbox: { include: { deployment: true } } } },
       },
     });
 
     expect(installedAgent).toMatchObject({
       workspaceId: targetWorkspaceId,
       name: 'Installed Research Agent',
+      runtimeKind: 'pi',
       systemPrompt: ORIGINAL_PROMPT,
       providerId: targetProviderId,
       model: MODEL_ID,
@@ -524,6 +580,35 @@ describe.sequential('agent marketplace releases and installs', () => {
     expect(installedAgent.conversations).toHaveLength(0);
     expect(installedAgent.channels).toHaveLength(0);
     expect(installedAgent.attachments).toHaveLength(0);
+
+    expect(installedAgent.sandboxes).toHaveLength(1);
+    const installedSandboxLink = installedAgent.sandboxes[0];
+    expect(installedSandboxLink.isDefault).toBe(true);
+    expect(installedSandboxLink.sandbox).toMatchObject({
+      workspaceId: targetWorkspaceId,
+      kind: 'docker',
+      image: DEFAULT_SANDBOX_IMAGE,
+      network: 'isolated',
+      config: {},
+    });
+    expect(installedSandboxLink.sandbox.id).not.toBe(sourceSandboxId);
+    expect(installedSandboxLink.sandbox.deploymentId).not.toBe(sourceSandboxDeploymentId);
+    expect(installedSandboxLink.sandbox.deployment).toMatchObject({
+      workspaceId: targetWorkspaceId,
+      serverId: null,
+      source: 'sandbox',
+      sourceRef: DEFAULT_SANDBOX_IMAGE,
+      status: 'stopped',
+    });
+    expect(installedSandboxLink.sandbox.deployment.installCfg).toEqual({
+      sandboxId: installedSandboxLink.sandbox.id,
+      kind: 'docker',
+      image: DEFAULT_SANDBOX_IMAGE,
+      network: 'isolated',
+      volumeName: sandboxVolumeName(installedSandboxLink.sandbox.id),
+      env: {},
+      allowSudo: false,
+    });
 
     expect(installedAgent.servers).toHaveLength(1);
     const installedDeployment = installedAgent.servers[0].deployment;
@@ -591,6 +676,10 @@ describe.sequential('agent marketplace releases and installs', () => {
       sourceDeploymentId,
       sourceCustomSkillId,
       sourceToolkitId,
+      sourceSandboxId,
+      sourceSandboxDeploymentId,
+      SOURCE_SANDBOX_ENV_CANARY,
+      SOURCE_SANDBOX_VOLUME_CANARY,
     ]) {
       expect(serializedTargetGraph).not.toContain(sourceId);
     }
@@ -608,6 +697,7 @@ describe.sequential('agent marketplace releases and installs', () => {
         workspaceId: sourceWorkspaceId,
         name: 'Portable Hermes Agent',
         slug: `portable-hermes-${stamp}`,
+        runtimeKind: 'hermes',
         systemPrompt: HERMES_PROMPT_CANARY,
         maxSteps: 13,
       },
@@ -718,6 +808,7 @@ describe.sequential('agent marketplace releases and installs', () => {
     expect(installed).toMatchObject({
       workspaceId: targetWorkspaceId,
       name: 'Installed Hermes Agent',
+      runtimeKind: 'hermes',
       systemPrompt: null,
       providerId: null,
       model: null,
@@ -762,11 +853,21 @@ describe.sequential('agent marketplace releases and installs', () => {
     }
   });
 
-  it('assesses custom MCP, unknown runtime, attached sandbox, and foreign links as non-portable', async () => {
-    const [customAgent, unknownRuntimeAgent, sandboxAgent, foreignAgent] = await Promise.all([
+  it('rejects unsafe resources and invalid runtime sandbox assignments', async () => {
+    const [customAgent, unknownRuntimeAgent, sandboxAgent, missingSandboxAgent, hermesSandboxAgent, foreignAgent]
+      = await Promise.all([
       createAgent('Custom MCP Agent', `custom-mcp-${stamp}`),
       createAgent('Unknown Runtime Agent', `unknown-runtime-${stamp}`),
       createAgent('Sandbox Agent', `sandbox-${stamp}`),
+      createAgent('Missing Sandbox Agent', `missing-sandbox-${stamp}`),
+      db.agent.create({
+        data: {
+          workspaceId: sourceWorkspaceId,
+          name: 'Hermes Direct Sandbox Agent',
+          slug: `hermes-direct-sandbox-${stamp}`,
+          runtimeKind: 'hermes',
+        },
+      }),
       createAgent('Foreign Link Agent', `foreign-link-${stamp}`),
     ]);
 
@@ -827,6 +928,7 @@ describe.sequential('agent marketplace releases and installs', () => {
           slug: `attached-sandbox-${stamp}`,
           kind: 'docker',
           image: 'alpine:3.20',
+          network: 'none',
         },
       }),
     ]);
@@ -846,30 +948,46 @@ describe.sequential('agent marketplace releases and installs', () => {
         },
       }),
       db.agentSandbox.create({
-        data: { agentId: sandboxAgent.id, sandboxId: attachedSandbox.id },
+        data: { agentId: sandboxAgent.id, sandboxId: attachedSandbox.id, isDefault: true },
+      }),
+      db.agentSandbox.create({
+        data: { agentId: hermesSandboxAgent.id, sandboxId: unknownRuntimeSandbox.id },
       }),
       db.agentServer.create({
         data: { agentId: foreignAgent.id, deploymentId: foreignDeployment.id },
       }),
     ]);
 
-    const [custom, unknownRuntime, sandbox, foreign] = await Promise.all([
+    const [custom, unknownRuntime, sandbox, missingSandbox, hermesSandbox, foreign] = await Promise.all([
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: customAgent.id }),
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: unknownRuntimeAgent.id }),
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: sandboxAgent.id }),
+      assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: missingSandboxAgent.id }),
+      assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: hermesSandboxAgent.id }),
       assessAgentPortability({ workspaceId: sourceWorkspaceId, agentId: foreignAgent.id }),
     ]);
 
     expect(custom).toMatchObject({ portable: false });
     expect(unknownRuntime).toMatchObject({ portable: false });
     expect(sandbox).toMatchObject({ portable: false });
+    expect(missingSandbox).toMatchObject({ portable: false });
+    expect(hermesSandbox).toMatchObject({ portable: false });
     expect(foreign).toMatchObject({ portable: false });
-    if (custom.portable || unknownRuntime.portable || sandbox.portable || foreign.portable) {
+    if (
+      custom.portable
+      || unknownRuntime.portable
+      || sandbox.portable
+      || missingSandbox.portable
+      || hermesSandbox.portable
+      || foreign.portable
+    ) {
       throw new Error('Expected every unsafe agent fixture to be non-portable.');
     }
     expect(custom.issues.map(({ code }) => code)).toContain('custom_mcp');
     expect(unknownRuntime.issues.map(({ code }) => code)).toContain('unsupported_runtime');
-    expect(sandbox.issues.map(({ code }) => code)).toContain('external_sandbox');
+    expect(sandbox.issues.map(({ code }) => code)).toContain('invalid_definition');
+    expect(missingSandbox.issues.map(({ code }) => code)).toContain('invalid_definition');
+    expect(hermesSandbox.issues.map(({ code }) => code)).toContain('external_sandbox');
     expect(foreign.issues.map(({ code }) => code)).toContain('cross_workspace_deployment');
   });
 });

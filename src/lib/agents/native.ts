@@ -6,7 +6,8 @@ import {
   type Message,
   type ToolCall,
 } from '@earendil-works/pi-ai';
-import { buildModel, type ProviderConfig } from './model';
+import type { ContextUsageSnapshot } from '@/lib/context-usage';
+import { buildModel, providerModelIds, type ProviderConfig } from './model';
 import { resolveMaxSteps } from './constants';
 import type { AgentToolSet } from './agent-tool';
 
@@ -21,13 +22,41 @@ const EMPTY_USAGE = {
 
 type UiMessageLike = {
   role: string;
-  parts: Array<{ type: string; text?: string }>;
+  parts: Array<{
+    type: string;
+    text?: string;
+    toolName?: string;
+    input?: unknown;
+    output?: unknown;
+    isError?: boolean;
+    data?: unknown;
+    mimeType?: unknown;
+    filename?: unknown;
+    providerMetadata?: unknown;
+  }>;
 };
+
+function runtimeFileText(part: UiMessageLike['parts'][number]): string | null {
+  if (part.type !== 'file' || !part.providerMetadata || typeof part.providerMetadata !== 'object') return null;
+  const toolplane = 'toolplane' in part.providerMetadata ? part.providerMetadata.toolplane : null;
+  if (!toolplane || typeof toolplane !== 'object' || !('runtimePath' in toolplane)) return null;
+  const runtimePath = typeof toolplane.runtimePath === 'string' ? toolplane.runtimePath.trim() : '';
+  if (!runtimePath) return null;
+  const filename = (typeof part.filename === 'string' ? part.filename.trim() : '') || 'file';
+  return `[Attached file: ${filename.replace(/\s+/g, ' ').slice(0, 240)} at ${runtimePath.replace(/\s+/g, ' ').slice(0, 1_000)}]`;
+}
 
 function messageText(parts: UiMessageLike['parts']): string {
   return parts
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text)
+    .flatMap((part) => {
+      if (part.type === 'text' && typeof part.text === 'string') return [part.text];
+      const runtimeFile = runtimeFileText(part);
+      if (runtimeFile) return [runtimeFile];
+      if (part.type !== 'work-tool' || !part.toolName) return [];
+      const input = toolResultText(part.input).slice(0, 20_000);
+      const output = toolResultText(part.output).slice(0, 20_000);
+      return [`[Recorded ${part.isError ? 'failed' : 'successful'} tool call: ${part.toolName}]\nInput: ${input}\nOutput: ${output}`];
+    })
     .join('\n')
     .trim();
 }
@@ -36,11 +65,23 @@ export function uiMessagesToPi(messages: readonly UiMessageLike[]): Message[] {
   const converted: Message[] = [];
   for (const message of messages) {
     const text = messageText(message.parts);
-    if (!text || (message.role !== 'user' && message.role !== 'assistant')) continue;
+    const images = message.parts.flatMap((part) => (
+      part.type === 'image' && typeof part.data === 'string' && typeof part.mimeType === 'string'
+        ? [{ type: 'image' as const, data: part.data, mimeType: part.mimeType }]
+        : []
+    ));
+    if ((!text && !images.length) || (message.role !== 'user' && message.role !== 'assistant')) continue;
     if (message.role === 'user') {
-      converted.push({ role: 'user', content: text, timestamp: Date.now() });
+      converted.push({
+        role: 'user',
+        content: images.length
+          ? [...(text ? [{ type: 'text' as const, text }] : []), ...images]
+          : text,
+        timestamp: Date.now(),
+      });
       continue;
     }
+    if (!text) continue;
     converted.push({
       role: 'assistant',
       content: [{ type: 'text', text }],
@@ -74,10 +115,12 @@ export type NativeRunOptions = {
   signal?: AbortSignal;
   onEvent?: (event: AssistantMessageEvent) => void | Promise<void>;
   onToolResult?: (toolCall: ToolCall, output: unknown, isError: boolean) => void | Promise<void>;
+  onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
 };
 
 export async function runNativeAgent(options: NativeRunOptions): Promise<string> {
   const { models, model } = buildModel(options.provider, options.modelId);
+  const contextWindowEstimated = providerModelIds(options.provider)?.includes(options.modelId) !== true;
   const tools = Object.values(options.tools);
   const maxSteps = resolveMaxSteps(options.maxSteps);
   const context: Context = {
@@ -94,6 +137,14 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       throw new Error(message.errorMessage || 'Model request failed.');
     }
+    if (Number.isFinite(message.usage.totalTokens) && message.usage.totalTokens > 0) {
+      await options.onContextUsage?.({
+        usedTokens: message.usage.totalTokens,
+        maxTokens: model.contextWindow,
+        modelName: model.name,
+        estimated: contextWindowEstimated,
+      });
+    }
     context.messages.push(message);
     const responseText = message.content
       .filter((content): content is { type: 'text'; text: string } => content.type === 'text')
@@ -103,9 +154,9 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
 
     const toolCalls = message.content.filter((content): content is ToolCall => content.type === 'toolCall');
     if (!toolCalls.length) return text;
-    if (step + 1 >= maxSteps) return text;
 
     for (const toolCall of toolCalls) {
+      if (options.signal?.aborted) throw new Error('Model request aborted.');
       const localTool = options.tools[toolCall.name];
       let output: unknown;
       let isError = false;

@@ -1,24 +1,43 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useTranslations } from 'next-intl';
+import { ContextMenu } from 'radix-ui';
 import {
+  AlertCircle,
   Bot,
+  ChevronDown,
   ChevronRight,
   Cpu,
+  Edit3,
+  Loader2,
   MessageSquare,
-  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
-import { createConversationAction, deleteConversationAction, renameConversationAction } from '@/lib/agents/actions';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+} from '@/components/ui/Dialog';
+import {
+  createConversationAction,
+  deleteConversationAction,
+  generateConversationTitleAction,
+  renameConversationAction,
+} from '@/lib/agents/actions';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
 
@@ -59,6 +78,7 @@ function conversationLabel(item: ChatConversation, fallback: string) {
 
 export function WorkspaceChat({
   slug,
+  workspaceId,
   agentId,
   conversationId,
   initialMessages,
@@ -68,16 +88,18 @@ export function WorkspaceChat({
   startInChat = false,
 }: {
   slug: string;
+  workspaceId: string;
   agentId: string;
   conversationId: string | null;
   initialMessages: HermesUIMessage[];
   agents: ChatAgent[];
-  providers?: Array<{ id: string; name: string; models: string[] }>;
+  providers?: Array<{ id: string; name: string; format: string; models: string[] }>;
   conversations: ChatConversation[];
   startInChat?: boolean;
 }) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
+  const router = useRouter();
   const activeAgent = agents.find((agent) => agent.id === agentId) ?? agents[0];
   const [mobilePane, setMobilePane] = useState<'sidebar' | 'chat'>(startInChat ? 'chat' : 'sidebar');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -99,6 +121,14 @@ export function WorkspaceChat({
   } | null>(null);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
+  const [inlineRenameId, setInlineRenameId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<ChatConversation | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatConversation | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [generatingTitleId, setGeneratingTitleId] = useState<string | null>(null);
+  const [titleGenerationFailed, setTitleGenerationFailed] = useState(false);
+  const deleteConfirmTimeoutRef = useRef<number | null>(null);
+  const generatingTitleRef = useRef(false);
   const selectedConversationIdRef = useRef<string | null>(conversationId);
   const activeConversationIdRef = useRef<string | null>(conversationId);
   const conversationCreationRef = useRef<{
@@ -124,6 +154,50 @@ export function WorkspaceChat({
     selectedConversationIdRef.current = conversationId;
     activeConversationIdRef.current = conversationId;
   }, [agentId, conversationId]);
+
+  const clearDeleteConfirmation = useCallback(() => {
+    if (deleteConfirmTimeoutRef.current !== null) {
+      window.clearTimeout(deleteConfirmTimeoutRef.current);
+      deleteConfirmTimeoutRef.current = null;
+    }
+    setDeleteConfirmId(null);
+  }, []);
+
+  useEffect(() => clearDeleteConfirmation, [clearDeleteConfirmation]);
+
+  const generateTitle = useCallback(async (
+    targetAgentId: string,
+    targetConversationId: string,
+    force: boolean,
+  ) => {
+    if (generatingTitleRef.current) return;
+    generatingTitleRef.current = true;
+    setGeneratingTitleId(targetConversationId);
+    if (force) setTitleGenerationFailed(false);
+    const formData = new FormData();
+    formData.set('workspace', slug);
+    formData.set('agentId', targetAgentId);
+    formData.set('conversationId', targetConversationId);
+    if (force) formData.set('force', '1');
+    try {
+      const result = await generateConversationTitleAction(formData);
+      if (force && result.error) setTitleGenerationFailed(true);
+      else if (!result.error) setTitleGenerationFailed(false);
+      router.refresh();
+    } catch {
+      if (force) setTitleGenerationFailed(true);
+      router.refresh();
+    } finally {
+      generatingTitleRef.current = false;
+      setGeneratingTitleId(null);
+    }
+  }, [router, slug]);
+
+  const handleConversationChanged = useCallback(async () => {
+    const currentConversationId = activeConversationIdRef.current;
+    if (currentConversationId) await generateTitle(agentId, currentConversationId, false);
+    else router.refresh();
+  }, [agentId, generateTitle, router]);
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeConversationIdRef.current) return activeConversationIdRef.current;
@@ -169,15 +243,16 @@ export function WorkspaceChat({
   if (!activeAgent) return null;
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-background">
-      <div className={cx(
-        'grid min-h-0 flex-1 grid-cols-1',
-        sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)] min-[1024px]:max-[1080px]:grid-cols-[13.125rem_minmax(0,1fr)]!',
-      )}>
+    <>
+      <div className="flex h-full min-h-0 overflow-hidden bg-background">
+        <div className={cx(
+          'grid min-h-0 flex-1 grid-cols-1',
+          sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)] min-[1024px]:max-[1080px]:grid-cols-[13.125rem_minmax(0,1fr)]!',
+        )}>
         <aside
           aria-label={t('agents')}
           className={cx(
-            'min-h-0 flex-col overflow-hidden border-r-[0.5px] border-border bg-background p-1.5',
+            'min-h-0 flex-col overflow-hidden bg-background p-1.5',
             mobilePane === 'chat' ? (sidebarOpen ? 'hidden lg:flex' : 'hidden') : (sidebarOpen ? 'flex' : 'flex lg:hidden'),
           )}
         >
@@ -203,13 +278,18 @@ export function WorkspaceChat({
                 </button>
               ) : null}
             </div>
+            {titleGenerationFailed ? (
+              <p role="alert" className="px-2 pt-1.5 text-[11px] text-destructive">
+                {t('generateConversationTitleFailed')}
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
             <div className="flex h-8 items-center justify-between px-2.5">
               <p className="truncate text-xs font-medium text-muted-foreground">{t('agents')}</p>
               <Link
-                href={`/app/${encodeURIComponent(slug)}/agents/new`}
+                href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(chatHref(slug, agentId, conversationId ?? undefined))}`}
                 aria-label={t('addAgent')}
                 title={t('addAgent')}
                 className="flex size-5 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-muted hover:text-foreground hover:opacity-100"
@@ -264,53 +344,146 @@ export function WorkspaceChat({
                     </div>
 
                     {expanded ? (
-                      <div id={`agent-conversations-${agent.id}`} className="ml-4 border-l border-border/60 pl-1">
+                      <div id={`agent-conversations-${agent.id}`} className="ml-4 pl-1">
                         <ul className="py-0.5">
-                          {items.map((item) => (
-                            <li key={item.id} className="group/conversation relative py-0.5">
-                              <Link
-                                href={chatHref(slug, agent.id, item.id)}
-                                onClick={handleChatNavigation}
-                                aria-current={item.id === activeConversationId ? 'page' : undefined}
-                                title={item.lastMessageAt ? t('lastMessageOn', { date: item.lastMessageAt }) : t('chatCreatedOn', { date: item.createdAt })}
-                                className={cx(
-                                  'flex h-[30px] min-w-0 items-center gap-1.5 rounded-lg px-2 text-xs transition-colors',
-                                  item.editable && 'pr-7',
-                                  item.id === activeConversationId ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60 hover:text-foreground',
-                                )}
-                              >
-                                <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
-                                <span className={cx('min-w-0 flex-1 truncate', item.source && 'capitalize')}>{conversationLabel(item, t('newChat'))}</span>
-                              </Link>
-                              {item.editable ? <details className="absolute right-1 top-1/2 z-10 -translate-y-1/2 opacity-0 group-hover/conversation:opacity-100 focus-within:opacity-100">
-                                <summary
-                                  aria-label={t('conversationActions', { title: conversationLabel(item, t('newChat')) })}
-                                  title={t('conversationActions', { title: conversationLabel(item, t('newChat')) })}
-                                  className="flex size-6 cursor-pointer list-none items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                                >
-                                  <MoreHorizontal className="size-3.5" />
-                                </summary>
-                                <div className="absolute right-0 top-7 w-60 rounded-lg border border-border bg-popover p-2 shadow-md">
-                                  <form action={renameConversationAction} className="flex gap-1">
+                          {items.map((item) => {
+                            const label = conversationLabel(item, t('newChat'));
+                            const renaming = inlineRenameId === item.id;
+                            const confirmingDelete = deleteConfirmId === item.id;
+                            const generatingTitle = generatingTitleId === item.id;
+                            const row = (
+                              <div className="group/conversation relative rounded-lg data-[state=open]:bg-muted/60">
+                                {renaming ? (
+                                  <form
+                                    action={renameConversationAction}
+                                    onSubmit={() => setInlineRenameId(null)}
+                                    className={cx(
+                                      'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2',
+                                      item.id === activeConversationId ? 'bg-muted text-foreground' : 'bg-muted/60 text-foreground',
+                                    )}
+                                  >
                                     <input type="hidden" name="workspace" value={slug} />
                                     <input type="hidden" name="agentId" value={agent.id} />
                                     <input type="hidden" name="conversationId" value={item.id} />
-                                    <input name="title" defaultValue={item.title ?? ''} aria-label={t('renameConversation')} className="ui-input h-8 min-w-0 flex-1 text-xs" maxLength={120} required />
-                                    <button type="submit" className="ui-button-primary h-8 px-2 text-xs">{common('save')}</button>
+                                    <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
+                                    <input
+                                      name="title"
+                                      defaultValue={item.title ?? ''}
+                                      aria-label={t('renameConversation')}
+                                      autoFocus
+                                      required
+                                      maxLength={120}
+                                      onFocus={(event) => event.currentTarget.select()}
+                                      onBlur={(event) => {
+                                        if (event.currentTarget.value.trim()) event.currentTarget.form?.requestSubmit();
+                                        else setInlineRenameId(null);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== 'Escape') return;
+                                        event.preventDefault();
+                                        setInlineRenameId(null);
+                                      }}
+                                      className="h-6 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] font-medium leading-5 text-foreground outline-none"
+                                    />
                                   </form>
-                                  <form action={deleteConversationAction} className="mt-1">
+                                ) : (
+                                  <Link
+                                    href={chatHref(slug, agent.id, item.id)}
+                                    onClick={handleChatNavigation}
+                                    onDoubleClick={item.editable && !generatingTitle ? (event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setInlineRenameId(item.id);
+                                    } : undefined}
+                                    aria-current={item.id === activeConversationId ? 'page' : undefined}
+                                    title={item.lastMessageAt ? t('lastMessageOn', { date: item.lastMessageAt }) : t('chatCreatedOn', { date: item.createdAt })}
+                                    className={cx(
+                                      'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 transition-colors',
+                                      item.editable && 'pr-7',
+                                      item.id === activeConversationId ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60 hover:text-foreground',
+                                    )}
+                                  >
+                                    <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
+                                    <span className={cx('min-w-0 flex-1 truncate', item.source && 'capitalize', generatingTitle && 'animate-pulse')}>{label}</span>
+                                  </Link>
+                                )}
+
+                                {item.editable && !renaming ? (
+                                  <form
+                                    action={deleteConversationAction}
+                                    onSubmit={clearDeleteConfirmation}
+                                    className={cx(
+                                      'absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-opacity duration-150',
+                                      confirmingDelete
+                                        ? 'pointer-events-auto opacity-100'
+                                        : 'pointer-events-none opacity-0 group-focus-within/conversation:pointer-events-auto group-focus-within/conversation:opacity-100 group-hover/conversation:pointer-events-auto group-hover/conversation:opacity-100',
+                                    )}
+                                  >
                                     <input type="hidden" name="workspace" value={slug} />
                                     <input type="hidden" name="agentId" value={agent.id} />
                                     <input type="hidden" name="conversationId" value={item.id} />
-                                    <button type="submit" className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-xs text-destructive hover:bg-destructive/10">
-                                      <Trash2 className="size-3.5" />
-                                      {t('deleteConversation')}
+                                    <button
+                                      type="submit"
+                                      aria-label={confirmingDelete ? common('confirm') : common('delete')}
+                                      title={confirmingDelete ? t('deleteConversation') : common('delete')}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (event.metaKey || event.ctrlKey || confirmingDelete) {
+                                          clearDeleteConfirmation();
+                                          return;
+                                        }
+                                        event.preventDefault();
+                                        clearDeleteConfirmation();
+                                        setDeleteConfirmId(item.id);
+                                        deleteConfirmTimeoutRef.current = window.setTimeout(clearDeleteConfirmation, 2000);
+                                      }}
+                                      className="flex size-5 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
+                                    >
+                                      {confirmingDelete ? <Trash2 className="size-3.5 text-destructive" /> : <X className="size-3.5" />}
                                     </button>
                                   </form>
-                                </div>
-                              </details> : null}
-                            </li>
-                          ))}
+                                ) : null}
+                              </div>
+                            );
+
+                            return (
+                              <li key={item.id} className="py-0.5">
+                                {item.editable ? (
+                                  <ContextMenu.Root modal={false}>
+                                    <ContextMenu.Trigger asChild>{row}</ContextMenu.Trigger>
+                                    <ContextMenu.Portal>
+                                      <ContextMenu.Content className="z-50 max-h-[var(--radix-context-menu-content-available-height)] min-w-32 origin-[var(--radix-context-menu-content-transform-origin)] overflow-x-hidden overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+                                        <ContextMenu.Item
+                                          disabled={Boolean(generatingTitleId)}
+                                          onSelect={() => void generateTitle(agent.id, item.id, true)}
+                                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                                        >
+                                          {generatingTitle ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />}
+                                          {t('generateConversationTitle')}
+                                        </ContextMenu.Item>
+                                        <ContextMenu.Item
+                                          disabled={Boolean(generatingTitleId)}
+                                          onSelect={() => setRenameTarget(item)}
+                                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                                        >
+                                          <Edit3 className="size-3.5 shrink-0 text-muted-foreground" />
+                                          {t('renameConversation')}
+                                        </ContextMenu.Item>
+                                        <ContextMenu.Separator className="my-1 h-px bg-border" />
+                                        <ContextMenu.Item
+                                          onSelect={() => setDeleteTarget(item)}
+                                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm text-destructive outline-none data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
+                                        >
+                                          <Trash2 className="size-3.5 shrink-0 text-destructive" />
+                                          {t('deleteConversation')}
+                                        </ContextMenu.Item>
+                                      </ContextMenu.Content>
+                                    </ContextMenu.Portal>
+                                  </ContextMenu.Root>
+                                ) : row}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </div>
                     ) : null}
@@ -351,16 +524,39 @@ export function WorkspaceChat({
                   <span className="max-w-40 truncate">{activeAgent.name}</span>
                   <span className={cx('size-1.5 shrink-0 rounded-full', activeAgent.ready ? 'bg-emerald-500' : 'bg-amber-500')} title={activeAgent.ready ? t('ready1') : t('needsModel')} />
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setModelDialogOpen(true)}
-                  aria-label={t('modelConfiguration')}
-                  title={t('modelConfiguration')}
-                  className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Cpu className="size-4 shrink-0" />
-                  <span className="hidden max-w-52 truncate sm:block">{activeAgent.providerLabel}</span>
-                </button>
+                <AgentModelDialog
+                  key={activeAgent.id}
+                  open={modelDialogOpen}
+                  onOpenChange={setModelDialogOpen}
+                  slug={slug}
+                  agent={{
+                    ...activeAgent,
+                    providerId: activeAgent.providerId ?? null,
+                    providerIds: activeAgent.providerIds ?? [],
+                    model: activeAgent.model ?? null,
+                  }}
+                  providers={providers}
+                  trigger={(
+                    <button
+                      type="button"
+                      aria-label={t('modelConfiguration')}
+                      title={t('modelConfiguration')}
+                      className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      {activeAgent.runtimeKind === 'hermes' || !activeAgent.model ? (
+                        <Cpu className="size-4 shrink-0" />
+                      ) : (
+                        <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[9px] font-semibold text-muted-foreground">
+                          {activeAgent.model.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                      <span className="hidden max-w-52 truncate sm:block">
+                        {activeAgent.runtimeKind === 'hermes' ? activeAgent.providerLabel : activeAgent.model ?? t('select')}
+                      </span>
+                      <ChevronDown className="size-3.5 shrink-0" />
+                    </button>
+                  )}
+                />
               </div>
           </header>
 
@@ -369,27 +565,84 @@ export function WorkspaceChat({
             activeConversationId={activeConversationId}
             agentId={activeAgent.id}
             agentName={activeAgent.name}
+            attachmentUploadUrl={activeAgent.runtimeKind === 'hermes'
+              ? undefined
+              : `/api/v1/workspaces/${workspaceId}/attachments`}
             creatingConversation={creatingConversation}
             ensureConversation={ensureConversation}
             initialMessages={initialMessages}
             ready={activeAgent.ready}
             runtimeKind={activeAgent.runtimeKind}
-          />
-          <AgentModelDialog
-            key={activeAgent.id}
-            open={modelDialogOpen}
-            onOpenChange={setModelDialogOpen}
-            slug={slug}
-            agent={{
-              ...activeAgent,
-              providerId: activeAgent.providerId ?? null,
-              providerIds: activeAgent.providerIds ?? [],
-              model: activeAgent.model ?? null,
-            }}
-            providers={providers}
+            onConversationChanged={handleConversationChanged}
           />
         </section>
+        </div>
       </div>
-    </div>
+
+      <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open) setRenameTarget(null); }}>
+        <DialogPortal>
+          <DialogOverlay className="!bg-black/40" />
+          {renameTarget ? (
+            <DialogContent
+              key={renameTarget.id}
+              aria-describedby={undefined}
+              onInteractOutside={(event) => event.preventDefault()}
+              className="!z-[51] !max-w-md !gap-0 !overflow-hidden !rounded-2xl !border-border !p-0"
+            >
+              <header className="border-b border-border px-4 py-3">
+                <DialogTitle className="!text-sm !leading-4 !tracking-normal">{t('renameConversation')}</DialogTitle>
+              </header>
+              <form action={renameConversationAction} onSubmit={() => setRenameTarget(null)} className="flex flex-col">
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="agentId" value={renameTarget.agentId} />
+                <input type="hidden" name="conversationId" value={renameTarget.id} />
+                <label className="space-y-1 px-4 py-3 text-xs font-medium text-muted-foreground">
+                  {t('name')}
+                  <input
+                    name="title"
+                    defaultValue={renameTarget.title ?? ''}
+                    placeholder={t('newChat')}
+                    autoFocus
+                    required
+                    maxLength={120}
+                    className="ui-input mt-1 h-8 w-full rounded-lg px-2.5 text-sm text-foreground"
+                  />
+                </label>
+                <footer className="flex justify-end gap-2 border-t border-border px-4 py-3">
+                  <button type="button" onClick={() => setRenameTarget(null)} className="ui-button-secondary h-8 min-h-8 rounded-lg px-3 text-xs">{common('cancel')}</button>
+                  <button type="submit" className="ui-button-primary h-8 min-h-8 rounded-lg px-3 text-xs">{common('save')}</button>
+                </footer>
+              </form>
+            </DialogContent>
+          ) : null}
+        </DialogPortal>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogPortal>
+          <DialogOverlay className="!bg-black/40" />
+          {deleteTarget ? (
+            <DialogContent key={deleteTarget.id} className="!z-[51] !max-w-lg !gap-5 !rounded-3xl !border-0 !p-6">
+              <form action={deleteConversationAction} onSubmit={() => setDeleteTarget(null)}>
+                <input type="hidden" name="workspace" value={slug} />
+                <input type="hidden" name="agentId" value={deleteTarget.agentId} />
+                <input type="hidden" name="conversationId" value={deleteTarget.id} />
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="mt-0.5 size-5 shrink-0 text-warning" />
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="!text-base !leading-6 !tracking-normal">{t('deleteConversation')}</DialogTitle>
+                    <DialogDescription className="mt-2 !leading-5">{t('deleteConversationDescription')}</DialogDescription>
+                  </div>
+                </div>
+                <footer className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setDeleteTarget(null)} className="ui-button-secondary h-9 px-4 text-sm">{common('cancel')}</button>
+                  <button type="submit" className="ui-button-primary ui-button-danger h-9 px-4 text-sm">{common('delete')}</button>
+                </footer>
+              </form>
+            </DialogContent>
+          ) : null}
+        </DialogPortal>
+      </Dialog>
+    </>
   );
 }

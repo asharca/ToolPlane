@@ -8,11 +8,13 @@ const actions = vi.hoisted(() => ({
   createAgentAction: vi.fn(),
   deleteAgentAction: vi.fn(),
 }));
+const navigation = vi.hoisted(() => ({ search: '__dashboardTab=agents-tab', push: vi.fn() }));
 
 vi.mock('@/lib/agents/actions', () => actions);
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/acme/agents',
-  useSearchParams: () => new URLSearchParams('__dashboardTab=agents-tab'),
+  useRouter: () => ({ push: navigation.push }),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 describe('AgentsBrowser', () => {
@@ -20,6 +22,42 @@ describe('AgentsBrowser', () => {
     actions.cloneAgentAction.mockReset();
     actions.createAgentAction.mockReset();
     actions.deleteAgentAction.mockReset();
+    navigation.search = '__dashboardTab=agents-tab';
+    navigation.push.mockReset();
+  });
+
+  it('opens the create form from Work and preserves its return path', () => {
+    navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(document.querySelector<HTMLInputElement>('input[name="returnTo"]')).toHaveValue('/app/acme/work');
+  });
+
+  it('keeps the Work add flow focused on creation instead of existing Agent management', () => {
+    navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[{
+          id: 'agent-1', name: 'Existing Agent', providerName: 'OpenAI', providerNames: [],
+          model: 'gpt-5', toolCount: 0, subAgentCount: 0, runtimeKind: 'pi',
+          runtimeStatus: 'running', sandboxReady: true,
+        }]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.queryByText('Existing Agent')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Browse market' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
   });
 
   it('keeps the market entry inside the authenticated workspace console', () => {
@@ -37,6 +75,87 @@ describe('AgentsBrowser', () => {
     );
   });
 
+  it('requires an explicit runtime and enables every supported runtime', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /DeepSeek Harness/ })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /Hermes managed runtime/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
+
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: /Basic/ })).toHaveAttribute('aria-current', 'step');
+
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.type(screen.getByLabelText('Name'), 'Research agent');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: 'Create draft agent' })).toBeEnabled();
+    expect(screen.getByText(/dedicated Docker sandbox is created automatically/i)).toBeInTheDocument();
+  });
+
+  it('filters harness providers and provisions its sandbox automatically', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [
+            { id: 'openai', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] },
+            { id: 'responses', name: 'Responses', format: 'openai-responses', models: ['gpt-5.6-luna'] },
+            { id: 'anthropic', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'] },
+            { id: 'pi-native', name: 'Pi native', format: 'pi:openai', models: ['gpt-native'] },
+          ],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.type(screen.getByLabelText('Name'), 'Harness agent');
+    await user.click(screen.getByRole('radio', { name: /Claude Code/ }));
+    await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
+    const picker = screen.getByRole('listbox', { name: 'Select model' });
+    expect(within(picker).getByRole('group', { name: 'Anthropic' })).toBeInTheDocument();
+    expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    expect(within(picker).getByRole('group', { name: 'Responses' })).toBeInTheDocument();
+    expect(within(picker).queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
+    expect(document.querySelectorAll('input[name="sandboxId"]')).toHaveLength(0);
+
+    await user.click(screen.getByRole('radio', { name: /DeepSeek Harness/ }));
+    await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
+    expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
+    expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByLabelText('System prompt')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: 'Create draft agent' })).toBeEnabled();
+  });
+
   it('labels the open form as cancellable and clears its controlled draft state', async () => {
     const user = userEvent.setup();
     render(
@@ -44,7 +163,7 @@ describe('AgentsBrowser', () => {
         slug="acme"
         agents={[]}
         createOptions={{
-          providers: [{ id: 'provider-1', name: 'OpenAI', models: ['gpt-4.1'] }],
+          providers: [{ id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] }],
           deployments: [{ id: 'deployment-1', label: 'Router MCP' }],
           skills: [],
           toolkits: [],
@@ -53,16 +172,53 @@ describe('AgentsBrowser', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'New agent' }));
-    await user.selectOptions(screen.getByLabelText('Provider'), 'provider-1');
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
+    await user.click(screen.getByRole('option', { name: 'gpt-4.1' }));
+    await user.type(screen.getByLabelText('Name'), 'Research agent');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Router MCP' }));
 
-    const cancel = screen.getByRole('button', { name: 'Cancel', expanded: true });
+    const form = document.querySelector<HTMLElement>('#agent-create-form');
+    expect(form).not.toBeNull();
+    const cancel = within(form!).getByRole('button', { name: 'Cancel' });
     await user.click(cancel);
 
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'New agent' }));
-    expect(screen.getByLabelText('Provider')).toHaveValue('');
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+    expect(screen.getByRole('button', { name: 'Model: Select model' })).toBeInTheDocument();
+    expect(document.querySelector('input[name="providerId"]')).toHaveValue('');
+    await user.type(screen.getByLabelText('Name'), 'Second agent');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('checkbox', { name: 'Select Router MCP' })).not.toBeChecked();
+  });
+
+  it('tracks the current create step and preserves the name when going back', async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    const basicStep = screen.getByRole('button', { name: /Basic/ });
+    expect(basicStep).toHaveAttribute('aria-current', 'step');
+    await user.type(screen.getByLabelText('Name'), 'Research agent');
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: /Instructions/ })).toHaveAttribute('aria-current', 'step');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+
+    expect(basicStep).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByLabelText('Name')).toBeVisible();
+    expect(screen.getByLabelText('Name')).toHaveValue('Research agent');
   });
 
   it('shows progress and completion feedback while creating an agent', async () => {
@@ -74,12 +230,20 @@ describe('AgentsBrowser', () => {
       <AgentsBrowser
         slug="acme"
         agents={[]}
-        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+        createOptions={{
+          providers: [],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+        }}
       />,
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
+    await userEvent.click(screen.getByRole('radio', { name: /^Pi/ }));
     await userEvent.type(screen.getByLabelText('Name'), 'Research agent');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     await userEvent.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Creating...' })).toBeDisabled());
@@ -94,8 +258,8 @@ describe('AgentsBrowser', () => {
         agents={[]}
         createOptions={{
           providers: [
-            { id: 'provider-1', name: 'OpenAI', models: ['gpt-4.1'] },
-            { id: 'provider-2', name: 'Anthropic', models: ['claude-sonnet'] },
+            { id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] },
+            { id: 'provider-2', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'] },
           ],
           deployments: [],
           skills: [],
@@ -105,7 +269,7 @@ describe('AgentsBrowser', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
-    await userEvent.click(screen.getByText('Hermes'));
+    await userEvent.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select OpenAI' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
 
@@ -129,7 +293,7 @@ describe('AgentsBrowser', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'New agent' }));
-    await user.click(screen.getByText('Hermes'));
+    await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     const version = screen.getByLabelText('Hermes version');
     expect(version).toHaveValue('nousresearch/hermes-agent:latest');
     expect(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' })).toBeInTheDocument();
@@ -146,13 +310,14 @@ describe('AgentsBrowser', () => {
       'registry.example/hermes:v2026.8.1',
     );
     await user.type(screen.getByLabelText('Name'), 'Custom Hermes');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
     expect(formData.get('hermesImage')).toBe('registry.example/hermes:v2026.8.1');
   });
 
-  it('binds a sandbox when creating a native harness agent', async () => {
+  it('lets the backend provision a sandbox when creating a Pi agent', async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -163,34 +328,44 @@ describe('AgentsBrowser', () => {
           deployments: [],
           skills: [],
           toolkits: [],
-          sandboxes: [{ id: 'sandbox-1', label: 'Coding workspace', status: 'running' }],
         }}
       />,
     );
 
     await user.click(screen.getByRole('button', { name: 'New agent' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Select Coding workspace' }));
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.type(screen.getByLabelText('Name'), 'Harness');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.getAll('sandboxId')).toEqual(['sandbox-1']);
+    expect(formData.get('runtime')).toBe('pi');
+    expect(formData.getAll('sandboxId')).toEqual([]);
   });
 
-  it('includes an optional system prompt for a native agent', async () => {
+  it('includes an optional system prompt for a Pi agent', async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
         slug="acme"
         agents={[]}
-        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+        createOptions={{
+          providers: [],
+          deployments: [],
+          skills: [],
+          toolkits: [],
+        }}
       />,
     );
 
     await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.type(screen.getByLabelText('Name'), 'Researcher');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.type(screen.getByLabelText('System prompt'), 'Use sources carefully.');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
@@ -214,12 +389,13 @@ describe('AgentsBrowser', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'New agent' }));
-    await user.click(screen.getByText('Hermes'));
+    await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     await user.type(screen.getByLabelText('Name'), 'Pinned Hermes');
     await user.selectOptions(
       screen.getByLabelText('Hermes version'),
       'nousresearch/hermes-agent:v2026.7.20',
     );
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Create draft agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
@@ -240,8 +416,9 @@ describe('AgentsBrowser', () => {
             model: 'gpt-4.1',
             toolCount: 0,
             subAgentCount: 0,
-            runtimeKind: 'native',
+            runtimeKind: 'pi',
             runtimeStatus: null,
+            sandboxReady: true,
           },
         ]}
         createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
@@ -274,6 +451,7 @@ describe('AgentsBrowser', () => {
             subAgentCount: 0,
             runtimeKind: 'hermes',
             runtimeStatus: 'running',
+            sandboxReady: false,
           },
         ]}
         createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
@@ -284,9 +462,40 @@ describe('AgentsBrowser', () => {
     expect(row).not.toBeNull();
     expect(within(row!).getByText('Ready')).toBeInTheDocument();
     expect(within(row!).getByText(/2 selected: OpenAI, Anthropic/)).toBeInTheDocument();
+    expect(within(row!).getByRole('link', { name: 'Chat' })).toHaveAttribute(
+      'href',
+      '/app/acme/chat?agent=agent-hermes',
+    );
   });
 
-  it('offers clone and confirmed delete actions for each agent', async () => {
+  it('shows the stored runtime instead of relabeling it as Pi', () => {
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[{
+          id: 'agent-dsh',
+          name: 'Harness agent',
+          providerName: 'OpenAI',
+          providerNames: [],
+          model: 'gpt-4.1',
+          toolCount: 0,
+          subAgentCount: 0,
+          runtimeKind: 'dsh',
+          runtimeStatus: null,
+          sandboxReady: false,
+        }]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    const row = screen.getByRole('link', { name: 'Harness agent' }).closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText('DeepSeek Harness')).toBeInTheDocument();
+    expect(within(row!).getByText('needs sandbox')).toBeInTheDocument();
+    expect(within(row!).queryByText('Ready')).not.toBeInTheDocument();
+  });
+
+  it('requires a new sandbox instead of cloning a dedicated-runtime agent', async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -300,30 +509,29 @@ describe('AgentsBrowser', () => {
             model: 'gpt-4.1',
             toolCount: 2,
             subAgentCount: 1,
-            runtimeKind: 'native',
+            runtimeKind: 'pi',
             runtimeStatus: null,
+            sandboxReady: true,
           },
         ]}
         createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Clone agent' }));
-    const cloneDialog = screen.getByRole('dialog', { name: 'Clone agent' });
-    const cloneForm = within(cloneDialog).getByRole('button', { name: 'Clone agent' }).closest('form');
-    expect(cloneForm).not.toBeNull();
-    expect(cloneForm?.querySelector<HTMLInputElement>('input[name="workspace"]')).toHaveValue('acme');
-    expect(cloneForm?.querySelector<HTMLInputElement>('input[name="agentId"]')).toHaveValue('agent-1');
-    expect(cloneForm?.querySelector<HTMLInputElement>('input[name="cloneName"]')).toHaveValue('Researcher copy');
-    expect(cloneForm?.querySelector<HTMLInputElement>('input[name="cloneOptions"]')).toHaveValue('1');
-    expect(within(cloneDialog).getByRole('checkbox', { name: /^MCP bindings/ })).toBeChecked();
-    expect(within(cloneDialog).getByRole('checkbox', { name: /^Conversations and messages/ })).not.toBeChecked();
+    const settingsButton = screen.getByRole('link', { name: 'Settings' });
+    const cloneButton = screen.getByRole('button', {
+      name: 'Create a new agent and select an unassigned sandbox',
+    });
+    const deleteButton = screen.getByRole('button', { name: 'Delete agent' });
+    expect(settingsButton).toHaveAttribute('title', 'Settings');
+    expect(cloneButton).toBeDisabled();
+    expect(cloneButton).toHaveAttribute(
+      'title',
+      'Create a new agent and select an unassigned sandbox',
+    );
+    expect(deleteButton).toHaveAttribute('title', 'Delete agent');
 
-    await user.click(within(cloneDialog).getByRole('button', { name: 'Select complete clone' }));
-    expect(within(cloneDialog).getByRole('checkbox', { name: /^Conversations and messages/ })).toBeChecked();
-    await user.click(within(cloneDialog).getByRole('button', { name: 'Close' }));
-
-    await user.click(screen.getByRole('button', { name: 'Delete agent' }));
+    await user.click(deleteButton);
     expect(screen.getByText('Delete this agent and all its conversations?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toHaveAttribute('type', 'submit');
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toHaveFocus();
@@ -345,6 +553,7 @@ describe('AgentsBrowser', () => {
             subAgentCount: 0,
             runtimeKind: 'hermes',
             runtimeStatus: 'stopped',
+            sandboxReady: false,
           },
         ]}
         createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}

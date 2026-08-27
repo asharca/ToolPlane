@@ -32,7 +32,7 @@ beforeAll(async () => {
     data: { workspaceId, name: 'OpenAI', format: 'openai',
       baseUrl: 'https://api.openai.com/v1', apiKey: 'k', models: ['gpt-x'] },
   });
-  const agent = await db.agent.create({ data: { workspaceId, name: 'A', slug: 'a' } });
+  const agent = await db.agent.create({ data: { workspaceId, name: 'A', slug: 'a', runtimeKind: 'pi' } });
   agentId = agent.id;
   const deployment = await db.deployment.create({
     data: {

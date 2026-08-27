@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, AlertTriangle, Plug } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
@@ -84,21 +84,31 @@ const JSON_CONFIG_EXAMPLES = {
 const field =
   'w-full rounded-md border border-input bg-card px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/15';
 const labelCls = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
+const subscribeToHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
-export function DeployCustomMcpDialog({ slug }: { slug: string }) {
+export function DeployCustomMcpDialog({
+  slug,
+  defaultOpen = false,
+}: {
+  slug: string;
+  defaultOpen?: boolean;
+}) {
   const t = useTranslations('console.mcp');
   // `jsonGitHint` includes URL placeholders such as `<host>`. Read it as raw
   // text so next-intl does not interpret those placeholders as rich-text tags.
   const jsonGitHint = typeof t.raw === 'function'
     ? String(t.raw('jsonGitHint'))
     : t('jsonGitHint');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [config, setConfig] = useState('');
   const [configError, setConfigError] = useState<string | null>(null);
   const [runtimeFiles, setRuntimeFiles] = useState<RuntimeFileDraft[]>([]);
   const [runtimeFilesError, setRuntimeFilesError] = useState<string | null>(null);
   const [network, setNetwork] = useState<'isolated' | 'none'>('isolated');
   const [networkTouched, setNetworkTouched] = useState(false);
+  const mounted = useSyncExternalStore(subscribeToHydration, clientSnapshot, serverSnapshot);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const configRef = useRef<HTMLTextAreaElement>(null);
   const restoreTriggerFocus = useRef(false);
@@ -201,7 +211,7 @@ export function DeployCustomMcpDialog({ slug }: { slug: string }) {
         {t('addCustomMcp')}
       </button>
 
-      {open
+      {open && mounted
         ? createPortal(
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/35 p-4 backdrop-blur-[1px]" onClick={closeDialog}>
               <div

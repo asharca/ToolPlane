@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Blocks,
   Box,
@@ -12,12 +12,18 @@ import {
   CircleAlert,
   Container,
   Cpu,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileText,
+  MessageSquare,
   PackageCheck,
   Plus,
   Server,
+  Sparkles,
   Settings2,
   Store,
+  Zap,
   Wrench,
   Users,
   X,
@@ -32,11 +38,17 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
+import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
 import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
+import {
+  agentRuntimeDisplayName,
+  agentRuntimeSupportsProviderFormat,
+  isDedicatedSandboxRuntimeKind,
+  type AgentRuntimeKind,
+} from '@/lib/agents/runtime-kind';
 
 export type AgentRow = {
   id: string;
@@ -48,24 +60,29 @@ export type AgentRow = {
   subAgentCount: number;
   runtimeKind: string;
   runtimeStatus: string | null;
+  sandboxReady: boolean;
 };
 
 type CreateOptions = {
-  providers: Array<{ id: string; name: string; models: string[] }>;
+  providers: Array<{ id: string; name: string; format: string; models: string[] }>;
+  defaultModel?: { providerId: string; model: string } | null;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
-  sandboxes?: AgentResourceOption[];
 };
+
+type CreateStep = 'basic' | 'instructions' | 'tools';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-function isAgentReady(agent: Pick<AgentRow, 'providerName' | 'providerNames' | 'model' | 'runtimeKind'>) {
-  return agent.runtimeKind === 'hermes'
-    ? agent.providerNames.length > 0
-    : Boolean(agent.providerName && agent.model);
+function isAgentReady(agent: Pick<AgentRow, 'providerName' | 'providerNames' | 'model' | 'runtimeKind' | 'sandboxReady'>) {
+  if (agent.runtimeKind === 'hermes') return agent.providerNames.length > 0;
+  if (isDedicatedSandboxRuntimeKind(agent.runtimeKind)) {
+    return Boolean(agent.providerName && agent.model && agent.sandboxReady);
+  }
+  return false;
 }
 
 function CountPill({
@@ -100,53 +117,88 @@ export function AgentsBrowser({
   hermesImages?: string[];
 }) {
   const t = useTranslations('console.agents');
+  const router = useRouter();
   const pathname = usePathname() ?? `/app/${encodeURIComponent(slug)}/agents`;
   const searchParams = useSearchParams();
   const query = searchParams.toString();
   const returnTo = `${pathname}${query ? `?${query}` : ''}`;
-  const [creating, setCreating] = useState(false);
-  const [runtime, setRuntime] = useState<'native' | 'hermes'>('native');
-  const [providerId, setProviderId] = useState('');
-  const [modelId, setModelId] = useState('');
-  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => new Set());
+  const requestedReturnTo = searchParams.get('returnTo') ?? '';
+  const createOnly = searchParams.get('create') === '1';
+  const [creating, setCreating] = useState(createOnly);
+  const [createStep, setCreateStep] = useState<CreateStep>('basic');
+  const [agentName, setAgentName] = useState('');
+  const [runtime, setRuntime] = useState<AgentRuntimeKind | null>(null);
+  const [providerId, setProviderId] = useState(createOptions.defaultModel?.providerId ?? '');
+  const [modelId, setModelId] = useState(createOptions.defaultModel?.model ?? '');
+  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => (
+    new Set(createOptions.defaultModel?.providerId ? [createOptions.defaultModel.providerId] : [])
+  ));
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
-  const [selectedSandboxIds, setSelectedSandboxIds] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
-  const creatingDraft = runtime === 'hermes'
-    ? selectedProviderIds.size === 0
-    : !providerId || !modelId;
-  const models = createOptions.providers.find((provider) => provider.id === providerId)?.models ?? [];
+  const compatibleProviders = createOptions.providers.filter((provider) => (
+    !runtime || agentRuntimeSupportsProviderFormat(runtime, provider.format)
+  ));
+  const creatingDraft = runtime === null
+    || (runtime === 'hermes' ? selectedProviderIds.size === 0 : !providerId || !modelId);
+  const selectedProvider = compatibleProviders.find((provider) => provider.id === providerId) ?? null;
   const providerOptions = createOptions.providers.map((provider) => ({
     id: provider.id,
     label: provider.name,
     description: t('providerModelCount', { count: provider.models.length }),
     keywords: provider.models,
   }));
+  const createSteps: Array<{ id: CreateStep; label: string; description: string }> = [
+    { id: 'basic', label: t('basic'), description: t('generalSettingsDescription') },
+    ...(runtime === 'hermes' ? [] : [{
+      id: 'instructions' as const,
+      label: t('instructions'),
+      description: t('instructionsSettingsDescription'),
+    }]),
+    { id: 'tools', label: t('tools'), description: t('resourceSettingsDescription') },
+  ];
+  const createStepIndex = Math.max(0, createSteps.findIndex((step) => step.id === createStep));
+  const activeCreateStep = createSteps[createStepIndex]?.id ?? 'basic';
+  const lastCreateStep = createStepIndex === createSteps.length - 1;
+
+  function selectRuntime(nextRuntime: AgentRuntimeKind) {
+    setRuntime(nextRuntime);
+    const selectedProvider = createOptions.providers.find((provider) => provider.id === providerId);
+    if (selectedProvider && !agentRuntimeSupportsProviderFormat(nextRuntime, selectedProvider.format)) {
+      setProviderId('');
+      setModelId('');
+    }
+  }
 
   function closeCreateForm() {
+    if (createOnly) {
+      router.push(requestedReturnTo || `/app/${encodeURIComponent(slug)}/work`);
+      return;
+    }
     setCreating(false);
-    setRuntime('native');
-    setProviderId('');
-    setModelId('');
-    setSelectedProviderIds(new Set());
+    setCreateStep('basic');
+    setAgentName('');
+    setRuntime(null);
+    setProviderId(createOptions.defaultModel?.providerId ?? '');
+    setModelId(createOptions.defaultModel?.model ?? '');
+    setSelectedProviderIds(new Set(createOptions.defaultModel?.providerId ? [createOptions.defaultModel.providerId] : []));
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
-    setSelectedSandboxIds(new Set());
   }
 
   return (
-    <DashboardPage className="space-y-5">
+    <DashboardPage className={createOnly ? 'h-full max-w-none p-0' : 'space-y-5'}>
+      {!createOnly ? (
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold text-foreground">{t('agent')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('agentDescription')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {agentControlEndpoint ? (
+          {!createOnly && agentControlEndpoint ? (
             <ConnectDialog
               endpoint={agentControlEndpoint}
               name={`${slug}-agent-control`}
@@ -154,10 +206,12 @@ export function AgentsBrowser({
               variant="outline"
             />
           ) : null}
-          <Link href={`/app/${encodeURIComponent(slug)}/market/agents`} className="ui-button-secondary h-10 gap-2 px-4">
-            <Store className="size-[18px] shrink-0" />
-            {t('browseAgentMarket')}
-          </Link>
+          {!createOnly ? (
+            <Link href={`/app/${encodeURIComponent(slug)}/market/agents`} className="ui-button-secondary h-10 gap-2 px-4">
+              <Store className="size-[18px] shrink-0" />
+              {t('browseAgentMarket')}
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -173,8 +227,9 @@ export function AgentsBrowser({
           </button>
         </div>
       </div>
+      ) : null}
 
-      {!hasProviders ? (
+      {!hasProviders && !creating ? (
         <div className="flex flex-col gap-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
@@ -194,182 +249,310 @@ export function AgentsBrowser({
         <form
           id="agent-create-form"
           action={createAgentAction}
-          className="ui-panel space-y-5 p-5"
+          className={cx(
+            'flex min-h-0 flex-col overflow-hidden bg-background',
+            createOnly ? 'h-full' : 'ui-panel min-h-[38rem] max-h-[calc(100dvh-10rem)]',
+          )}
         >
           <input type="hidden" name="workspace" value={slug} />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
-              <input
-                name="name"
-                autoFocus
-                required
-                maxLength={60}
-                placeholder={t('egResearchAssistant')}
-                className="ui-input h-10 w-full"
-              />
-            </label>
-            <fieldset>
-              <legend className="mb-1.5 text-xs font-semibold text-foreground">{t('runtime')}</legend>
-              <div className="grid grid-cols-2 rounded-md border border-border bg-muted/20 p-1">
-                {([
-                  { value: 'native' as const, label: t('nativeRuntime'), icon: Bot },
-                  { value: 'hermes' as const, label: 'Hermes', icon: Container },
-                ]).map((option) => {
-                  const Icon = option.icon;
+          <input type="hidden" name="returnTo" value={requestedReturnTo} />
+          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+            <nav
+              aria-label={t('configurationNavigation')}
+              className="shrink-0 border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r"
+            >
+              <ol className="flex gap-1 overflow-x-auto p-2 sm:block sm:space-y-1 sm:p-3">
+                {createSteps.map((step, index) => {
+                  const active = index === createStepIndex;
+                  const done = index < createStepIndex;
                   return (
-                    <label
-                      key={option.value}
-                      className={cx(
-                        'flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors',
-                        runtime === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="runtime"
-                        value={option.value}
-                        checked={runtime === option.value}
-                        onChange={() => setRuntime(option.value)}
-                        className="sr-only"
-                      />
-                      <Icon className="size-4" />
-                      {option.label}
-                    </label>
+                    <li key={step.id} className="shrink-0 sm:w-full">
+                      <button
+                        type="button"
+                        aria-current={active ? 'step' : undefined}
+                        disabled={index > createStepIndex}
+                        onClick={() => {
+                          if (done) setCreateStep(step.id);
+                        }}
+                        className={cx(
+                          'flex h-10 min-w-max items-center gap-2 rounded-md px-3 text-sm transition-colors sm:w-full',
+                          active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                          'disabled:cursor-default disabled:opacity-55',
+                        )}
+                      >
+                        <span className={cx(
+                          'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium',
+                          active ? 'bg-foreground text-background' : 'border border-border text-muted-foreground',
+                        )}>
+                          {index + 1}
+                        </span>
+                        <span>{step.label}</span>
+                      </button>
+                    </li>
                   );
                 })}
-              </div>
-            </fieldset>
+              </ol>
+            </nav>
+
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+              <section
+                hidden={activeCreateStep !== 'basic'}
+                aria-labelledby="agent-create-basic-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-basic-title" className="text-base font-semibold text-foreground">{t('basic')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('generalSettingsDescription')}</p>
+                </div>
+
+                {!hasProviders ? (
+                  <div className="flex items-start gap-3 rounded-md bg-amber-500/10 px-4 py-3">
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-foreground">{t('modelProviderRequired')}</p>
+                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('modelProviderRequiredDescription')}</p>
+                    </div>
+                    <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-secondary shrink-0">
+                      <Cpu className="size-4" />
+                      {t('addModelProvider')}
+                    </Link>
+                  </div>
+                ) : null}
+
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
+                  <input
+                    name="name"
+                    value={agentName}
+                    onChange={(event) => setAgentName(event.target.value)}
+                    autoFocus
+                    required
+                    maxLength={60}
+                    placeholder={t('egResearchAssistant')}
+                    className="ui-input h-10 w-full"
+                  />
+                </label>
+
+                <fieldset>
+                  <legend className="mb-1.5 text-xs font-semibold text-foreground">{t('runtime')}</legend>
+                  <div className="space-y-2">
+                    {([
+                      {
+                        value: 'claude-code' as const,
+                        label: t('claudeCodeRuntime'),
+                        description: t('claudeCodeRuntimeDescription'),
+                        icon: Sparkles,
+                      },
+                      {
+                        value: 'pi' as const,
+                        label: t('piRuntime'),
+                        description: t('piRuntimeDescription'),
+                        icon: Zap,
+                      },
+                      {
+                        value: 'dsh' as const,
+                        label: t('deepSeekHarnessRuntime'),
+                        description: t('deepSeekHarnessRuntimeDescription'),
+                        icon: Cpu,
+                      },
+                      {
+                        value: 'hermes' as const,
+                        label: t('hermesManagedRuntime'),
+                        description: t('hermesManagedRuntimeDescription'),
+                        icon: Container,
+                      },
+                    ]).map((option) => {
+                      const Icon = option.icon;
+                      const selected = runtime === option.value;
+                      return (
+                        <label
+                          key={option.value}
+                          className={cx(
+                            'flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40',
+                            selected ? 'border-foreground/20 bg-muted/60' : 'border-border',
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            name="runtime"
+                            value={option.value}
+                            checked={selected}
+                            onChange={() => selectRuntime(option.value)}
+                            required
+                            className="sr-only"
+                          />
+                          <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-foreground">{option.label}</span>
+                            <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
+                          </span>
+                          <CheckCircle2 className={cx('mt-0.5 size-4 shrink-0', selected ? 'text-foreground' : 'invisible')} />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+
+                {runtime === 'hermes' ? (
+                  <HermesImageSelector id="create-hermes-version" images={hermesImages} />
+                ) : null}
+
+                {runtime === 'hermes' ? (
+                  <div className="space-y-2">
+                    <AgentResourceSelect
+                      icon={Cpu}
+                      label={t('modelProviders')}
+                      name="providerId"
+                      options={providerOptions}
+                      selectedIds={selectedProviderIds}
+                      onSelectionChange={setSelectedProviderIds}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
+                  </div>
+                ) : runtime ? (
+                  <div>
+                    <input type="hidden" name="providerId" value={providerId} />
+                    <input type="hidden" name="model" value={modelId} />
+                    <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                      <Cpu className="size-4 text-muted-foreground" /> {t('model')}
+                    </span>
+                    <ModelPicker
+                      providers={compatibleProviders}
+                      value={providerId && modelId ? { providerId, model: modelId } : null}
+                      onSelect={(selection) => {
+                        setProviderId(selection.providerId);
+                        setModelId(selection.model);
+                      }}
+                      onConfigure={() => {
+                        window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+                      }}
+                      trigger={(
+                        <button type="button" aria-label={`${t('model')}: ${modelId || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                            {selectedProvider?.name.charAt(0).toUpperCase() || 'M'}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{modelId || t('selectModel')}</span>
+                          <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span>
+                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                      )}
+                    />
+                  </div>
+                ) : null}
+
+                {runtime && runtime !== 'hermes' ? (
+                  <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                    <Box className="mt-0.5 size-4 shrink-0" />
+                    <p>{t('automaticSandboxHelp')}</p>
+                  </div>
+                ) : null}
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'instructions'}
+                aria-labelledby="agent-create-instructions-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-instructions-title" className="text-base font-semibold text-foreground">{t('instructions')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('instructionsSettingsDescription')}</p>
+                </div>
+                <label className="block">
+                  <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <FileText className="size-4 text-muted-foreground" /> {t('systemPrompt')}
+                  </span>
+                  <textarea
+                    name="systemPrompt"
+                    rows={12}
+                    placeholder={t('youAreAHelpfulAssistant')}
+                    className="ui-input min-h-72 w-full resize-y py-3"
+                  />
+                </label>
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'tools'}
+                aria-labelledby="agent-create-tools-title"
+                className="mx-auto max-w-4xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-tools-title" className="text-base font-semibold text-foreground">{t('tools')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('resourceSettingsDescription')}</p>
+                </div>
+                <div className="grid items-start gap-4 lg:grid-cols-2">
+                  <AgentResourceSelect
+                    icon={Server}
+                    label={t('mcp')}
+                    name="deploymentId"
+                    options={createOptions.deployments}
+                    selectedIds={selectedDeploymentIds}
+                    onSelectionChange={setSelectedDeploymentIds}
+                  />
+                  <AgentResourceSelect
+                    icon={PackageCheck}
+                    label={t('skills')}
+                    name="installedSkillId"
+                    options={createOptions.skills}
+                    selectedIds={selectedSkillIds}
+                    onSelectionChange={setSelectedSkillIds}
+                  />
+                  <AgentResourceSelect
+                    icon={Blocks}
+                    label={t('toolkits')}
+                    name="toolkitId"
+                    options={createOptions.toolkits}
+                    selectedIds={selectedToolkitIds}
+                    onSelectionChange={setSelectedToolkitIds}
+                  />
+                </div>
+              </section>
+            </div>
           </div>
 
-          {runtime === 'hermes' ? (
-            <HermesImageSelector
-              id="create-hermes-version"
-              images={hermesImages}
-            />
-          ) : null}
-
-          {runtime === 'hermes' ? (
-            <div className="space-y-2">
-              <AgentResourceSelect
-                icon={Cpu}
-                label={t('modelProviders')}
-                name="providerId"
-                options={providerOptions}
-                selectedIds={selectedProviderIds}
-                onSelectionChange={setSelectedProviderIds}
-              />
-              <p className="text-xs text-muted-foreground">{t('hermesProviderSelectionHelp')}</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                  <Cpu className="size-4 text-muted-foreground" /> {t('provider')}
-                </span>
-                <NativeSelect
-                  name="providerId"
-                  value={providerId}
-                  onChange={(event) => {
-                    setProviderId(event.target.value);
-                    setModelId('');
-                  }}
-                  className="ui-input h-10 w-full"
-                >
-                  <option value="">{t('none')}</option>
-                  {createOptions.providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>{provider.name}</option>
-                  ))}
-                </NativeSelect>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
-                <NativeSelect
-                  name="model"
-                  value={modelId}
-                  onChange={(event) => setModelId(event.target.value)}
-                  disabled={!providerId}
-                  className="ui-input h-10 w-full disabled:opacity-60"
-                >
-                  <option value="">{t('select')}</option>
-                  {models.map((model) => <option key={model} value={model}>{model}</option>)}
-                </NativeSelect>
-              </label>
-            </div>
-          )}
-
-          {runtime === 'native' ? (
-            <label className="block">
-              <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                <FileText className="size-4 text-muted-foreground" /> {t('systemPrompt')}
-              </span>
-              <textarea
-                name="systemPrompt"
-                rows={3}
-                placeholder={t('youAreAHelpfulAssistant')}
-                className="ui-input min-h-24 w-full resize-y py-2.5"
-              />
-            </label>
-          ) : null}
-
-          <div className="grid items-start gap-3 lg:grid-cols-2">
-            <AgentResourceSelect
-              icon={Server}
-              label={t('mcp')}
-              name="deploymentId"
-              options={createOptions.deployments}
-              selectedIds={selectedDeploymentIds}
-              onSelectionChange={setSelectedDeploymentIds}
-            />
-            <AgentResourceSelect
-              icon={PackageCheck}
-              label={t('skills')}
-              name="installedSkillId"
-              options={createOptions.skills}
-              selectedIds={selectedSkillIds}
-              onSelectionChange={setSelectedSkillIds}
-            />
-            <AgentResourceSelect
-              icon={Blocks}
-              label={t('toolkits')}
-              name="toolkitId"
-              options={createOptions.toolkits}
-              selectedIds={selectedToolkitIds}
-              onSelectionChange={setSelectedToolkitIds}
-            />
-            {runtime === 'native' ? (
-              <div className="space-y-1.5">
-                <AgentResourceSelect
-                  icon={Box}
-                  label={t('sandboxes')}
-                  name="sandboxId"
-                  options={createOptions.sandboxes ?? []}
-                  selectedIds={selectedSandboxIds}
-                  onSelectionChange={setSelectedSandboxIds}
-                />
-                <p className="text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3 sm:px-6">
             <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
               <X className="size-4 shrink-0" />
               {t('cancel')}
             </button>
-            <SubmitButton
-              pendingLabel={t('creatingAgent')}
-              savedLabel={t('agentCreated')}
-              className="ui-button-primary h-10 gap-2 px-4"
-            >
-              <Plus className="size-[18px] shrink-0" />
-              {creatingDraft ? t('createDraftAgent') : t('createAgent')}
-            </SubmitButton>
+            {createStepIndex > 0 ? (
+              <button
+                type="button"
+                onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
+                className="ui-button-secondary h-10 gap-2 px-4"
+              >
+                <ChevronLeft className="size-4 shrink-0" />
+                {t('back')}
+              </button>
+            ) : null}
+            {lastCreateStep ? (
+              <SubmitButton
+                pendingLabel={t('creatingAgent')}
+                savedLabel={t('agentCreated')}
+                disabled={!runtime || !agentName.trim()}
+                className="ui-button-primary h-10 gap-2 px-4"
+              >
+                <Plus className="size-[18px] shrink-0" />
+                {creatingDraft ? t('createDraftAgent') : t('createAgent')}
+              </SubmitButton>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  const form = document.getElementById('agent-create-form') as HTMLFormElement | null;
+                  if (activeCreateStep === 'basic' && form && !form.reportValidity()) return;
+                  setCreateStep(createSteps[createStepIndex + 1]!.id);
+                }}
+                className="ui-button-primary h-10 gap-2 px-4"
+              >
+                {t('next')}
+                <ChevronRight className="size-4 shrink-0" />
+              </button>
+            )}
           </div>
         </form>
       ) : null}
 
-      {agents.length === 0 ? (
+      {!creating && (agents.length === 0 ? (
         <DashboardEmptyState
           icon={Bot}
           title={t('noAgentsYet')}
@@ -445,13 +628,15 @@ export function AgentsBrowser({
                             {ready ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
                             {ready
                               ? t('ready')
-                              : agent.runtimeKind === 'hermes' || !agent.providerName
+                              : isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !agent.sandboxReady
+                                ? t('needsSandbox')
+                                : agent.runtimeKind === 'hermes' || !agent.providerName
                                 ? t('needsProvider')
                                 : t('needsModel')}
                           </span>
                           <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-[11px] font-medium text-muted-foreground">
                             {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}
-                            {agent.runtimeKind === 'hermes' ? 'Hermes' : t('nativeRuntime')}
+                            {agentRuntimeDisplayName(agent.runtimeKind)}
                             {agent.runtimeStatus ? ` · ${agent.runtimeStatus}` : ''}
                           </span>
                         </div>
@@ -466,9 +651,23 @@ export function AgentsBrowser({
                     </div>
 
                     <div className="flex flex-wrap gap-2.5 lg:justify-end">
-                      <Link href={detailsHref} className="ui-button-secondary h-10 gap-2 px-4 text-sm">
+                      {ready ? (
+                        <Link
+                          href={`/app/${encodeURIComponent(slug)}/chat?agent=${encodeURIComponent(agent.id)}`}
+                          aria-label={t('chat')}
+                          title={t('chat')}
+                          className="ui-button-primary size-10 shrink-0 px-0"
+                        >
+                          <MessageSquare className="size-[18px] shrink-0" />
+                        </Link>
+                      ) : null}
+                      <Link
+                        href={detailsHref}
+                        aria-label={t('settings')}
+                        title={t('settings')}
+                        className="ui-button-secondary size-10 shrink-0 px-0"
+                      >
                         <Settings2 className="size-[18px] shrink-0" />
-                        {t('settings')}
                       </Link>
                       <CloneAgentButton
                         slug={slug}
@@ -484,7 +683,7 @@ export function AgentsBrowser({
             })}
           </ul>
         </section>
-      )}
+      ))}
     </DashboardPage>
   );
 }

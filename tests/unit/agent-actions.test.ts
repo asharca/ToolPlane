@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspaceForUser: vi.fn(),
   revalidatePath: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
-  createAgent: vi.fn(),
+  createConfiguredAgent: vi.fn(),
   setAgentTools: vi.fn(),
   setHermesRuntimeEnv: vi.fn(),
   stopHermesRuntime: vi.fn(),
@@ -15,8 +15,11 @@ const mocks = vi.hoisted(() => ({
   agentFindFirst: vi.fn(),
   createConversation: vi.fn(),
   renameConsoleConversation: vi.fn(),
+  generateConsoleConversationTitle: vi.fn(),
   deleteConsoleConversation: vi.fn(),
   updateAgentModelSelection: vi.fn(),
+  getProvider: vi.fn(),
+  workspaceUpdate: vi.fn(),
   redirect: vi.fn(),
 }));
 
@@ -24,14 +27,21 @@ vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
-vi.mock('@/lib/agents/queries', () => ({ getProvider: vi.fn() }));
+vi.mock('@/lib/agents/queries', () => ({ getProvider: mocks.getProvider }));
+vi.mock('@/lib/agents/conversation-naming', () => ({
+  generateConsoleConversationTitle: mocks.generateConsoleConversationTitle,
+}));
 vi.mock('@/lib/db', () => ({
-  db: { agent: { findFirst: mocks.agentFindFirst } },
+  db: {
+    agent: { findFirst: mocks.agentFindFirst },
+    workspace: { update: mocks.workspaceUpdate },
+  },
 }));
 vi.mock('@/lib/agents/mutations', () => ({
   cloneAgent: vi.fn(),
   cloneHermesVolumeData: vi.fn(),
-  createAgent: mocks.createAgent,
+  createConfiguredAgent: mocks.createConfiguredAgent,
+  AgentConfigurationError: class AgentConfigurationError extends Error {},
   updateAgent: mocks.updateAgent,
   setAgentTools: mocks.setAgentTools,
   deleteAgent: vi.fn(),
@@ -77,9 +87,11 @@ import {
   createAgentAction,
   updateAgentAction,
   updateAgentModelAction,
+  updateWorkspaceModelPreferenceAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
   createConversationAction,
+  generateConversationTitleAction,
   renameConversationAction,
   deleteConversationAction,
 } from '@/lib/agents/actions';
@@ -241,24 +253,54 @@ describe('createAgentAction', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
-    mocks.createAgent.mockResolvedValue({ id: 'agent-1' });
+    mocks.createConfiguredAgent.mockResolvedValue({ id: 'agent-1' });
   });
 
-  it('binds selected sandboxes to a newly created native agent', async () => {
+  it('lets the backend provision a sandbox for a newly created Pi agent', async () => {
     const form = new FormData();
     form.set('workspace', 'acme');
     form.set('name', 'Harness');
-    form.append('sandboxId', 'sandbox-1');
+    form.set('runtime', 'pi');
+    form.set('returnTo', '/app/acme/work');
 
     await createAgentAction(form);
 
-    expect(mocks.setAgentTools).toHaveBeenCalledWith('workspace-1', 'agent-1', {
-      deploymentIds: [],
-      installedSkillIds: [],
-      toolkitIds: [],
-      sandboxIds: ['sandbox-1'],
-    });
+    expect(mocks.createConfiguredAgent).toHaveBeenCalledWith(
+      'workspace-1',
+      {
+        name: 'Harness',
+        systemPrompt: null,
+        providerId: null,
+        providerIds: [],
+        model: null,
+        maxSteps: 8,
+      },
+      {
+        deploymentIds: [],
+        installedSkillIds: [],
+        toolkitIds: [],
+        sandboxIds: [],
+      },
+      { runtime: 'pi', hermesImage: '' },
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      '/app/acme/agents/agent-1?settings=agent&returnTo=%2Fapp%2Facme%2Fwork',
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
+
+  it.each([undefined, 'unknown'])(
+    'rejects a missing or unavailable runtime (%s)',
+    async (runtime) => {
+      const form = new FormData();
+      form.set('workspace', 'acme');
+      form.set('name', 'Harness');
+      if (runtime) form.set('runtime', runtime);
+
+      await expect(createAgentAction(form)).rejects.toThrow('Choose an available Agent runtime.');
+      expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('model configuration action', () => {
@@ -279,11 +321,58 @@ describe('model configuration action', () => {
   });
 });
 
+describe('workspace model preferences', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getProvider.mockResolvedValue({ id: 'provider-1', models: ['gpt-5'] });
+  });
+
+  it('saves only a model exposed by a provider in the current workspace', async () => {
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('preference', 'title');
+    form.set('providerId', 'provider-1');
+    form.set('model', 'gpt-5');
+
+    await expect(updateWorkspaceModelPreferenceAction({}, form)).resolves.toEqual({ savedAt: expect.any(Number) });
+    expect(mocks.getProvider).toHaveBeenCalledWith('workspace-1', 'provider-1');
+    expect(mocks.workspaceUpdate).toHaveBeenCalledWith({
+      where: { id: 'workspace-1' },
+      data: { titleModelProviderId: 'provider-1', titleModel: 'gpt-5' },
+    });
+  });
+
+  it('rejects a stale model and can clear the default selection', async () => {
+    mocks.getProvider.mockResolvedValueOnce({ id: 'provider-1', models: ['gpt-4.1'] });
+    const invalid = new FormData();
+    invalid.set('workspace', 'acme');
+    invalid.set('preference', 'default');
+    invalid.set('providerId', 'provider-1');
+    invalid.set('model', 'gpt-5');
+    await expect(updateWorkspaceModelPreferenceAction({}, invalid)).resolves.toEqual({
+      error: 'Choose an available model.',
+    });
+    expect(mocks.workspaceUpdate).not.toHaveBeenCalled();
+
+    const clear = new FormData();
+    clear.set('workspace', 'acme');
+    clear.set('preference', 'default');
+    await updateWorkspaceModelPreferenceAction({}, clear);
+    expect(mocks.workspaceUpdate).toHaveBeenCalledWith({
+      where: { id: 'workspace-1' },
+      data: { defaultModelProviderId: null, defaultModel: null },
+    });
+  });
+});
+
 describe('conversation management actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorizedAgent();
     mocks.renameConsoleConversation.mockResolvedValue(true);
+    mocks.generateConsoleConversationTitle.mockResolvedValue('Project brief');
     mocks.deleteConsoleConversation.mockResolvedValue(true);
   });
 
@@ -299,6 +388,22 @@ describe('conversation management actions', () => {
       'agent-1',
       'conversation-1',
       'Project brief',
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+  });
+
+  it('generates a title through the workspace-scoped conversation helper', async () => {
+    const form = runtimeForm();
+    form.set('conversationId', 'conversation-1');
+    form.set('force', '1');
+
+    await expect(generateConversationTitleAction(form)).resolves.toEqual({ savedAt: expect.any(Number) });
+
+    expect(mocks.generateConsoleConversationTitle).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'conversation-1',
+      true,
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
   });

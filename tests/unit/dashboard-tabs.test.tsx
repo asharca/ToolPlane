@@ -78,6 +78,12 @@ describe('DashboardTabsProvider', () => {
     expect(activeTab().querySelector('button')).toHaveAttribute('aria-current', 'page');
   });
 
+  it('renders route content without a full-page entrance animation', () => {
+    renderTabs();
+
+    expect(screen.getByRole('main').className).not.toContain('dashboard-enter');
+  });
+
   it.each([
     ['work', 'Work'],
     ['knowledge', 'Knowledge'],
@@ -108,6 +114,16 @@ describe('DashboardTabsProvider', () => {
 
     expect(activeTab()).toHaveTextContent('Chat');
     expect(activeTab()).toHaveAttribute('data-tab-id', 'chat-tab');
+  });
+
+  it('keeps the Work tab while Agent management is open', () => {
+    navigation.pathname = '/app/smoke/agents';
+    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fwork%3F__dashboardTab%3Dwork-tab';
+
+    renderTabs();
+
+    expect(activeTab()).toHaveTextContent('Work');
+    expect(activeTab()).toHaveAttribute('data-tab-id', 'work-tab');
   });
 
   it('keeps a pinned route open when sidebar navigation opens another route', async () => {

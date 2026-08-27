@@ -4,24 +4,27 @@ import { type MouseEvent, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { HoverCard } from 'radix-ui';
 import {
-  Bot,
   Plug,
   Brain,
   Wrench,
   Boxes,
   Store,
   Settings,
-  Shield,
   MessageSquare,
   TerminalSquare,
   LibraryBig,
   Layers3,
+  GitFork,
+  ExternalLink,
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { SITE } from '@/lib/site';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { DashboardLogo } from './DashboardLogo';
+import { SystemUpdateButton } from './SystemUpdateButton';
 import { useDashboardTabs } from './DashboardTabs';
 
 type NavItem = {
@@ -36,7 +39,6 @@ const NAV_ITEMS: NavItem[] = [
   { labelKey: 'chat', segment: 'chat', icon: MessageSquare },
   { labelKey: 'work', segment: 'work', icon: TerminalSquare },
   { labelKey: 'knowledge', segment: 'knowledge', icon: LibraryBig },
-  { labelKey: 'agents', segment: 'agents', icon: Bot },
   { labelKey: 'market', segment: 'market', icon: Store },
   { labelKey: 'mcpServers', segment: 'mcp', icon: Plug },
   { labelKey: 'skills', segment: 'skills', icon: Brain },
@@ -44,11 +46,14 @@ const NAV_ITEMS: NavItem[] = [
   { labelKey: 'sandboxes', segment: 'sandboxes', icon: Boxes },
 ];
 
+const SOURCE_REPOSITORY = SITE.sourceUrl.replace(/^https?:\/\/github\.com\//, '');
+
 export function DashboardSidebar({
   slug,
   workspaceName,
   userLabel,
   workspaces,
+  currentVersion,
   isAdmin = false,
   mobileOpen = false,
   onClose,
@@ -57,6 +62,7 @@ export function DashboardSidebar({
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  currentVersion: string;
   isAdmin?: boolean;
   mobileOpen?: boolean;
   onClose?: () => void;
@@ -132,15 +138,53 @@ export function DashboardSidebar({
     >
       <div className="flex h-14 shrink-0 items-center justify-between px-4 lg:justify-center lg:px-0">
         <div className="lg:hidden"><DashboardLogo /></div>
-        <Link
-          href={`${base}/chat`}
-          onClick={(event) => handleWorkspaceRoute(event, `${base}/chat`)}
-          aria-label="ToolPlane"
-          title="ToolPlane"
-          className="hidden size-9 items-center justify-center rounded-xl bg-brand text-sm font-bold tracking-tight text-brand-foreground shadow-sm lg:flex"
-        >
-          <Layers3 className="size-[18px]" strokeWidth={1.9} />
-        </Link>
+        <HoverCard.Root openDelay={200} closeDelay={150}>
+          <HoverCard.Trigger asChild>
+            <Link
+              href={`${base}/chat`}
+              onClick={(event) => handleWorkspaceRoute(event, `${base}/chat`)}
+              aria-label="ToolPlane"
+              className="hidden size-9 items-center justify-center rounded-xl bg-brand text-sm font-bold tracking-tight text-brand-foreground shadow-sm lg:flex"
+            >
+              <Layers3 className="size-[18px]" strokeWidth={1.9} />
+            </Link>
+          </HoverCard.Trigger>
+          <HoverCard.Portal>
+            <HoverCard.Content
+              side="right"
+              align="start"
+              sideOffset={8}
+              collisionPadding={8}
+              className="z-50 w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=right]:slide-in-from-left-2"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-brand-foreground">
+                  <Layers3 className="size-4" strokeWidth={1.9} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">ToolPlane</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {t('version')} {currentVersion}
+                  </p>
+                </div>
+              </div>
+              <a
+                href={SITE.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 flex items-center gap-2 rounded-md px-1.5 py-1.5 text-xs transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <GitFork className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="block">{t('sourceCode')}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{SOURCE_REPOSITORY}</span>
+                </span>
+                <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
+              </a>
+              <SystemUpdateButton canInstall={isAdmin} />
+            </HoverCard.Content>
+          </HoverCard.Portal>
+        </HoverCard.Root>
         <div className="lg:hidden">
           <button
             ref={closeButtonRef}
@@ -184,24 +228,13 @@ export function DashboardSidebar({
         </ul>
       </nav>
 
-      <div className="flex shrink-0 flex-col items-stretch gap-1 border-t border-border/70 px-3 py-3 lg:items-center lg:px-2">
-        {isAdmin ? (
-          <Link
-            href="/admin"
-            onClick={onClose}
-            aria-label={t('adminConsole')}
-            title={t('adminConsole')}
-            className="ui-button-ghost justify-start px-3 text-red-600 hover:text-red-700 lg:w-9 lg:rounded-full lg:px-0 dark:text-red-400 dark:hover:text-red-300"
-          >
-            <Shield className="size-[18px]" />
-            <span className="lg:hidden">{t('adminConsole')}</span>
-          </Link>
-        ) : null}
+      <div className="flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 lg:items-center lg:px-2">
         <WorkspaceSwitcher
           slug={slug}
           workspaceName={workspaceName}
           userLabel={userLabel}
           workspaces={workspaces}
+          isAdmin={isAdmin}
           compact
         />
         <Link
@@ -209,7 +242,7 @@ export function DashboardSidebar({
           onClick={onClose}
           aria-label={t('settings')}
           title={t('settings')}
-          className="ui-button-ghost justify-start px-3 lg:w-9 lg:rounded-full lg:px-0"
+          className="ui-button-ghost justify-start px-3 lg:w-9 lg:justify-center lg:rounded-full lg:px-0"
         >
           <Settings className="size-[18px]" />
           <span className="lg:hidden">{t('settings')}</span>

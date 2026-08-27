@@ -17,6 +17,8 @@ const RESOURCE_RENDER_LIMIT = 100;
 export type AgentResourceOption = {
   id: string;
   label: string;
+  kind?: string;
+  network?: string;
   checked?: boolean;
   description?: string | null;
   source?: string | null;
@@ -58,6 +60,7 @@ export function AgentResourceSelect({
   options,
   selectedIds,
   onSelectionChange,
+  selectionMode = 'multiple',
 }: {
   icon: LucideIcon;
   label: string;
@@ -65,6 +68,7 @@ export function AgentResourceSelect({
   options: AgentResourceOption[];
   selectedIds: ReadonlySet<string>;
   onSelectionChange: (next: Set<string>) => void;
+  selectionMode?: 'multiple' | 'single-required';
 }) {
   const t = useTranslations('console.agents');
   const [query, setQuery] = useState('');
@@ -122,6 +126,10 @@ export function AgentResourceSelect({
   }
 
   function toggleOption(id: string, checked: boolean) {
+    if (selectionMode === 'single-required') {
+      if (checked) onSelectionChange(new Set([id]));
+      return;
+    }
     const next = new Set(activeSelected);
     if (checked) next.add(id);
     else next.delete(id);
@@ -224,24 +232,26 @@ export function AgentResourceSelect({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-background/60 px-3 py-2.5">
-            <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
-              <input
-                ref={selectAllRef}
-                type="checkbox"
-                checked={allFilteredSelected}
-                disabled={filteredOptions.length === 0}
-                onChange={(event) => {
-                  stopFormChange(event);
-                  toggleFiltered();
-                }}
-                className="size-4 shrink-0"
-              />
-              <span className="truncate">{t('selectMatches', { count: filteredOptions.length })}</span>
-            </label>
+            {selectionMode === 'multiple' ? (
+              <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  disabled={filteredOptions.length === 0}
+                  onChange={(event) => {
+                    stopFormChange(event);
+                    toggleFiltered();
+                  }}
+                  className="size-4 shrink-0"
+                />
+                <span className="truncate">{t('selectMatches', { count: filteredOptions.length })}</span>
+              </label>
+            ) : null}
             <span className="text-xs tabular-nums text-muted-foreground">
               {t('selectedResources', { count: activeSelected.size })}
             </span>
-            {activeSelected.size > 0 ? (
+            {selectionMode === 'multiple' && activeSelected.size > 0 ? (
               <button
                 type="button"
                 onClick={() => onSelectionChange(new Set())}
@@ -277,7 +287,7 @@ export function AgentResourceSelect({
                       className={`flex min-h-10 cursor-pointer items-start gap-2.5 border-b border-border/60 px-3 py-2 text-sm transition-colors last:border-b-0 hover:bg-background ${isSelected ? 'bg-background' : ''}`}
                     >
                       <input
-                        type="checkbox"
+                        type={selectionMode === 'single-required' ? 'radio' : 'checkbox'}
                         checked={isSelected}
                         onChange={(event) => {
                           stopFormChange(event);

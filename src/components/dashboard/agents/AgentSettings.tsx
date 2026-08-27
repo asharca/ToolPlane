@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
@@ -10,6 +11,9 @@ import {
   Code2,
   Container,
   FileText,
+  Hammer,
+  MessageSquare,
+  Play,
   Plug,
   Route,
   Settings2,
@@ -27,6 +31,9 @@ import { AgentMarketSetupBanner } from '@/components/dashboard/agents/AgentMarke
 import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
 import type { AgentEndpointView } from '@/components/dashboard/agents/AgentApiPanel';
+import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
+import { startSandboxAction } from '@/lib/sandboxes/actions';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 const AgentMessagingPanel = dynamic(() =>
   import('@/components/dashboard/agents/AgentMessagingPanel').then(
@@ -48,12 +55,13 @@ const AgentApiPanel = dynamic(() =>
 
 type SettingsData = {
   name: string;
+  runtimeKind: string;
   systemPrompt: string;
   providerId: string | null;
   providerIds: string[];
   model: string | null;
   maxSteps: number;
-  providers: Array<{ id: string; name: string; models: string[] }>;
+  providers: Array<{ id: string; name: string; format: string; models: string[] }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
@@ -90,6 +98,7 @@ type InitialSettingsTab = SettingsTab | 'agent';
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   'general',
   'instructions',
+  'builtInTools',
   'mcp',
   'skills',
   'toolkits',
@@ -151,7 +160,21 @@ export function AgentSettings({
   initialSettingsTab?: InitialSettingsTab | null;
 }) {
   const t = useTranslations('console.agents');
-  const isHermesRuntime = settings.runtime?.kind === 'hermes';
+  const tSandboxes = useTranslations('console.sandboxes');
+  const isHermesRuntime = settings.runtimeKind === 'hermes';
+  const selectedSandboxes = settings.sandboxes.filter((sandbox) => sandbox.checked);
+  const managedSandbox = isHermesRuntime && settings.runtime
+    ? { id: settings.runtime.sandboxId, status: settings.runtime.status }
+    : selectedSandboxes[0] ?? null;
+  const canStartSandbox = managedSandbox
+    ? managedSandbox.status === 'stopped' || managedSandbox.status === 'error'
+    : false;
+  const dedicatedSandboxReady = !isDedicatedSandboxRuntimeKind(settings.runtimeKind)
+    || (
+      selectedSandboxes.length === 1
+      && selectedSandboxes[0]?.kind === 'docker'
+      && selectedSandboxes[0]?.network !== 'none'
+    );
   const supportsChannelSettings = !isHermesRuntime;
   const supportsApiSettings = isHermesRuntime && Boolean(apiSettings);
   const requestedTab = resolveSettingsTab({
@@ -177,6 +200,7 @@ export function AgentSettings({
     {
       label: t('tools'),
       items: [
+        { id: 'builtInTools', label: t('builtInTools'), icon: Hammer },
         { id: 'mcp', label: t('mcp'), icon: Plug },
         { id: 'skills', label: t('skills'), icon: Brain },
         { id: 'toolkits', label: t('toolkits'), icon: Wrench },
@@ -203,7 +227,7 @@ export function AgentSettings({
   return (
     <div className="h-full min-h-0">
       <section className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-        <header className="shrink-0 border-b border-border bg-background px-4 py-3 sm:px-6 sm:py-4">
+        <header className="shrink-0 bg-background px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
               {isHermesRuntime ? <Container className="size-[18px]" /> : <Bot className="size-[18px]" />}
@@ -212,23 +236,49 @@ export function AgentSettings({
               <h2 className="truncate text-sm font-semibold text-foreground">{agentName}</h2>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{providerLabel}</p>
             </div>
-            <span
-              className={cx(
-                'ml-auto inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs font-medium',
-                ready
-                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-              )}
-            >
-              {ready ? t('ready2') : t('needsModel')}
-            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {canStartSandbox && managedSandbox ? (
+                <form action={startSandboxAction}>
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="sandboxId" value={managedSandbox.id} />
+                  <SubmitButton
+                    pendingLabel={tSandboxes('starting')}
+                    flash={false}
+                    className="ui-button-secondary h-8 px-2.5 text-xs"
+                  >
+                    <Play className="size-3.5" />
+                    {tSandboxes('start')}
+                  </SubmitButton>
+                </form>
+              ) : null}
+              {ready ? (
+                <Link
+                  href={`/app/${encodeURIComponent(slug)}/chat?agent=${encodeURIComponent(agentId)}`}
+                  aria-label={t('chat')}
+                  title={t('chat')}
+                  className="ui-button-secondary size-8 shrink-0 px-0"
+                >
+                  <MessageSquare className="size-4" />
+                </Link>
+              ) : null}
+              <span
+                className={cx(
+                  'inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs font-medium',
+                  ready
+                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+                )}
+              >
+                {ready ? t('ready2') : dedicatedSandboxReady ? t('needsModel') : t('needsSandbox')}
+              </span>
+            </div>
           </div>
         </header>
 
         {marketSetup ? <AgentMarketSetupBanner slug={slug} setup={marketSetup} /> : null}
 
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <aside className="shrink-0 border-b border-border bg-muted/10 lg:w-52 lg:border-b-0 lg:border-r">
+          <aside className="shrink-0 bg-muted/10 lg:w-52">
             <nav
               aria-label={t('configurationNavigation')}
               className="flex min-w-max gap-4 overflow-x-auto p-2 lg:block lg:min-w-0 lg:space-y-5 lg:overflow-visible lg:p-3"
@@ -284,6 +334,7 @@ export function AgentSettings({
               sandboxes={settings.sandboxes}
               subAgents={settings.subAgents}
               hermesImages={settings.hermesImages}
+              runtimeKind={settings.runtimeKind}
               runtime={settings.runtime}
               activeSection={settingsTab}
               onSectionChange={setSettingsTab}
@@ -299,7 +350,7 @@ export function AgentSettings({
                 ready={ready}
               />
             </div>
-          ) : settingsTab === 'api' && settings.runtime?.kind === 'hermes' && apiSettings ? (
+          ) : settingsTab === 'api' && isHermesRuntime && apiSettings ? (
             <AgentApiPanel
               key={`${apiSettings.endpoint?.id ?? 'draft'}:${apiSettings.endpoint?.revision ?? 0}`}
               workspaceSlug={slug}
@@ -311,7 +362,7 @@ export function AgentSettings({
               deployments={settings.deployments}
               skills={settings.skills}
             />
-          ) : settings.runtime?.kind === 'hermes' ? (
+          ) : isHermesRuntime && settings.runtime ? (
             <HermesRuntimePanel
               view={settingsTab === 'hermes' ? 'web' : 'terminal'}
               agentId={agentId}

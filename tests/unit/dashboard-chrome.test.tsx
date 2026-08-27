@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
@@ -40,6 +40,7 @@ function renderChrome(isAdmin = false) {
       workspaceName="Smoke Workspace"
       userLabel="smoke@example.com"
       supportEmail="support@example.com"
+      currentVersion="0.22.0"
       isAdmin={isAdmin}
       workspaces={workspaces}
     >
@@ -55,6 +56,10 @@ describe('DashboardChrome sidebar', () => {
     setDesktopViewport(true);
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('renders the fixed compact workspace rail', () => {
     renderChrome();
 
@@ -63,15 +68,96 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
     expect(screen.queryByText('Discover', { exact: true })).toBeNull();
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/smoke/chat');
-    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/app/smoke/agents');
+    expect(screen.queryByRole('link', { name: 'Agents' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/smoke/skills');
   });
 
-  it('shows the admin console above the account avatar only for administrators', () => {
+  it('shows the admin console inside the account menu only for administrators', async () => {
+    const user = userEvent.setup();
     renderChrome(true);
 
-    expect(screen.getByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
+    expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
+    expect(await screen.findByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
   });
+
+  it('hides the admin console from member account menus', async () => {
+    const user = userEvent.setup();
+    renderChrome();
+
+    await user.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
+    expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
+  });
+
+  it('shows build details on logo hover and only offers an update after a positive check', async () => {
+    const updateStatus = (updateAvailable: boolean) => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        canUpdate: true,
+        runtimeId: 'runtime-1',
+        currentVersion: '0.22.0',
+        latestVersion: updateAvailable ? '0.23.0' : '0.22.0',
+        updateAvailable,
+        releaseName: null,
+        releaseUrl: null,
+        artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
+        reason: null,
+      }),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(updateStatus(false))
+      .mockResolvedValueOnce(updateStatus(true));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderChrome(true);
+
+    await user.hover(screen.getByRole('link', { name: 'ToolPlane' }));
+
+    expect(await screen.findByText('Version 0.22.0')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Source code/ })).toHaveAttribute(
+      'href',
+      'https://github.com/asharca/ToolPlane',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Update now' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Check update' }));
+    expect(await screen.findByText('Up to date')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update now' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Check update' }));
+    expect(await screen.findByRole('button', { name: 'Update now' })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets members check for updates without offering installation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        canUpdate: true,
+        runtimeId: 'runtime-1',
+        currentVersion: '0.22.0',
+        latestVersion: '0.23.0',
+        updateAvailable: true,
+        releaseName: null,
+        releaseUrl: null,
+        artifactName: 'toolplane-runtime-linux-amd64.tar.gz',
+        reason: null,
+      }),
+    }));
+    const user = userEvent.setup();
+    renderChrome();
+
+    await user.hover(screen.getByRole('link', { name: 'ToolPlane' }));
+    await user.click(await screen.findByRole('button', { name: 'Check update' }));
+
+    expect(await screen.findByText('Update available')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update now' })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith('/api/v1/admin/system/update', { cache: 'no-store' });
+  });
+
   it('opens settings as a modal route', () => {
     renderChrome();
 

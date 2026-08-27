@@ -20,7 +20,7 @@ export default async function MarketLayout({
   ]);
   const user = await getCurrentUser();
   if (!user) {
-    redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market/mcp`)}`);
+    redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market`)}`);
   }
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
@@ -28,7 +28,7 @@ export default async function MarketLayout({
   return (
     <>
       <DashboardHeader title={t('title')} />
-      <div className="border-b border-border bg-card px-4 sm:px-8">
+      <div className="bg-card px-4 sm:px-8">
         <MarketTabs slug={workspace.slug} />
       </div>
       {children}

@@ -448,6 +448,7 @@ function hasExpectedDockerSandboxCaps(info) {
   // allowed, and disallowed sandboxes keep the stricter legacy flag. A flip
   // recreates the container on next start.
   const securityOpts = new Set((hostConfig.SecurityOpt ?? []).map((opt) => String(opt)));
+  const extraHosts = new Set((hostConfig.ExtraHosts ?? []).map((entry) => String(entry)));
   const mountTarget = KIND === 'hermes' ? '/opt/data' : '/workspace';
   const expectedMount = (info?.Mounts ?? []).some(
     (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
@@ -467,6 +468,7 @@ function hasExpectedDockerSandboxCaps(info) {
     && securityOpts.has('no-new-privileges') === expectsNoNewPrivileges
     && info?.Config?.Image === IMAGE
     && expectedMount
+    && extraHosts.has('host.docker.internal:host-gateway')
     && hermesRuntimeConfigured;
 }
 
@@ -482,6 +484,8 @@ function dockerCreateArgs() {
     WORKSPACE_ROOT,
     '--network',
     NETWORK,
+    '--add-host',
+    'host.docker.internal:host-gateway',
     '--memory',
     '2g',
     '--cpus',
@@ -506,8 +510,6 @@ function dockerCreateArgs() {
       ...base,
       '--label',
       `toolplane.agent-runtime=${HERMES_RUNTIME_ID}`,
-      '--add-host',
-      'host.docker.internal:host-gateway',
       '--env',
       'API_SERVER_ENABLED=true',
       '--env',
@@ -834,10 +836,13 @@ function terminalEnv() {
   };
 }
 
-function createTerminal(cols = 80, rows = 24) {
+function createTerminal(cols = 80, rows = 24, cwd = '.') {
   const id = randomUUID();
   const safeCols = Math.min(Math.max(Number(cols) || 80, 20), 240);
   const safeRows = Math.min(Math.max(Number(rows) || 24, 6), 80);
+  const rel = safeRel(cwd);
+  if (rel === null) throw new Error('Invalid terminal cwd.');
+  const workdir = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ''}`;
   const shellCommand = KIND === 'hermes'
     ? HERMES_TERMINAL_SHELL
     : 'if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh; fi';
@@ -853,7 +858,7 @@ function createTerminal(cols = 80, rows = 24) {
     'exec',
     '-it',
     '-w',
-    WORKSPACE_ROOT,
+    workdir,
     CONTAINER,
     ...shellArgs,
   ], {
@@ -971,7 +976,7 @@ async function handleTerminal(req, res) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   if (req.method === 'POST' && url.pathname === '/terminal/session') {
     const body = await readJson(req).catch(() => ({}));
-    const session = createTerminal(body.cols, body.rows);
+    const session = createTerminal(body.cols, body.rows, body.cwd);
     sendJson(res, 201, { id: session.id });
     return true;
   }

@@ -47,6 +47,7 @@ import { disconnectConnector } from './connector-broker';
 import { setConnectorSetupTokenCookie } from './connector-setup-token';
 import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 import {
+  ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance,
   syncHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
@@ -949,8 +950,15 @@ export async function startSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind === 'hermes') return;
+    if (!sandbox) return;
     if (sandboxLifecycleBlocked(sandbox)) return;
+    if (sandbox.kind === 'hermes') {
+      const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
+      if (!agentId) return;
+      await ensureHermesRuntimeReady(ctx.ws.id, agentId);
+      revalidatePath(`/app/${slug}/agents/${agentId}`);
+      return;
+    }
     if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
     if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
     await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
@@ -960,6 +968,7 @@ export async function startSandboxAction(formData: FormData) {
   });
   revalidatePath(`/app/${slug}/sandboxes`);
   revalidatePath(`/app/${slug}/sandboxes/${sandboxId}`);
+  revalidatePath(`/app/${slug}/work`);
 }
 
 export async function generateConnectorCommandAction(formData: FormData) {

@@ -24,7 +24,6 @@ import {
   DashboardPage,
   DashboardPagination,
   DashboardSection,
-  DashboardTable,
 } from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
@@ -47,25 +46,16 @@ function marketHref(workspace: string, input: { q?: string; page?: number }) {
 function McpIcon({
   iconUrl,
   name,
-  size = 'md',
 }: {
   iconUrl: string | null;
   name: string;
-  size?: 'sm' | 'md';
 }) {
-  const className = size === 'sm'
-    ? 'size-5 rounded object-cover'
-    : 'size-11 rounded-xl object-cover';
-  const fallbackClassName = size === 'sm'
-    ? 'size-5 rounded bg-muted'
-    : 'flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-semibold text-muted-foreground';
-
   return iconUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={iconUrl} alt="" width={size === 'sm' ? 20 : 44} height={size === 'sm' ? 20 : 44} className={className} />
+    <img src={iconUrl} alt="" width={40} height={40} className="size-10 shrink-0 rounded-lg object-cover" />
   ) : (
-    <span aria-hidden="true" className={fallbackClassName}>
-      {size === 'md' ? name.slice(0, 1).toUpperCase() : null}
+    <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-sm font-semibold text-muted-foreground">
+      {Array.from(name.trim())[0]?.toUpperCase() ?? 'M'}
     </span>
   );
 }
@@ -75,19 +65,17 @@ function McpMarketplaceAction({
   server,
   deploymentId,
   t,
-  compact = false,
 }: {
   workspace: string;
   server: BrowseServer;
   deploymentId: string | null;
   t: Translate;
-  compact?: boolean;
 }) {
   if (deploymentId) {
     return (
       <Link
         href={`/app/${encodeURIComponent(workspace)}/mcp/${encodeURIComponent(deploymentId)}`}
-        className={compact ? 'ui-button-secondary ui-button-sm' : 'ui-button-secondary h-10 w-full'}
+        className="ui-button-primary h-9 w-full min-w-0 px-3"
       >
         <CheckCircle2 className="size-3.5" />
         {t('manageDeployment')}
@@ -96,13 +84,13 @@ function McpMarketplaceAction({
   }
 
   return (
-    <form action={deployServerAction} className={compact ? 'inline' : 'w-full'}>
+    <form action={deployServerAction} className="w-full min-w-0">
       <input type="hidden" name="workspace" value={workspace} />
       <input type="hidden" name="serverId" value={server.id} />
       <SubmitButton
         flash={false}
         pendingLabel={t('adding')}
-        className={compact ? 'ui-button-primary ui-button-sm' : 'ui-button-primary h-10 w-full'}
+        className="ui-button-primary h-9 w-full min-w-0 px-3"
       >
         <ArrowRight className="size-3.5" />
         {t('addToWorkspace')}
@@ -127,7 +115,7 @@ function McpMarketCard({
   const detailHref = `/app/${encodeURIComponent(workspace)}/market/mcp/${encodeURIComponent(server.slug)}`;
 
   return (
-    <article className="ui-panel flex min-w-0 flex-col p-4 sm:p-5">
+    <article className="ui-panel flex min-w-0 flex-col p-4">
       <div className="flex min-w-0 items-start gap-3">
         <McpIcon iconUrl={server.iconUrl} name={server.name} />
         <div className="min-w-0 flex-1">
@@ -168,7 +156,7 @@ function McpMarketCard({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-4">
-        <Link href={detailHref} className="ui-button-secondary h-10 w-full">
+        <Link href={detailHref} className="ui-button-secondary h-9 min-w-0 px-3">
           {t('viewDetails')}
           <ChevronRight className="size-3.5" />
         </Link>
@@ -216,29 +204,20 @@ export default async function McpMarketPage({
       ? [[deployment.serverId, deployment.id] as const]
       : []),
   );
+  const pageFeatured = page === 1 ? featured : [];
+  const featuredIds = new Set(pageFeatured.map((server) => server.id));
+  const remainingServers = all.filter((server) => !featuredIds.has(server.id));
+  const featuredServers = remainingServers.length > 0 ? pageFeatured : [];
+  const allServers = featuredServers.length > 0 ? remainingServers : all;
   const deployedCatalogCount = deploymentByServerId.size;
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
   if (page > lastPage) redirect(marketHref(slug, { q, page: lastPage }));
 
   return (
-    <DashboardPage className="space-y-8">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {t('verifiedMcpCatalog')}
-          </p>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('mcpTitle')}</h2>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('mcpDescription')}</p>
-        </div>
-        <div className="rounded-lg border border-brand/20 bg-brand-soft/45 p-4">
-          <div className="flex items-start gap-2.5">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden="true" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">{t('deploymentFlowTitle')}</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('deploymentFlowDescription')}</p>
-            </div>
-          </div>
-        </div>
+    <DashboardPage className="space-y-6">
+      <div className="space-y-2">
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('mcpTitle')}</h2>
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('mcpDescription')}</p>
       </div>
 
       <form className="flex w-full flex-col gap-2 rounded-lg border border-border bg-card p-3 sm:flex-row">
@@ -273,10 +252,10 @@ export default async function McpMarketPage({
         ) : null}
       </div>
 
-      {featured.length > 0 ? (
+      {featuredServers.length > 0 ? (
         <DashboardSection title={t('featuredMcp')}>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {featured.map((server) => (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {featuredServers.map((server) => (
               <McpMarketCard
                 key={server.id}
                 workspace={slug}
@@ -291,7 +270,7 @@ export default async function McpMarketPage({
       ) : null}
 
       <DashboardSection title={q ? t('searchResults', { query: q }) : t('allMcp')} count={total}>
-        {all.length === 0 ? (
+        {allServers.length === 0 ? (
           <DashboardEmptyState
             title={t('noMcpTitle')}
             description={q ? t('noSearchResults', { query: q }) : t('noMcpDescription')}
@@ -299,8 +278,8 @@ export default async function McpMarketPage({
           />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:hidden">
-              {all.map((server) => (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {allServers.map((server) => (
                 <McpMarketCard
                   key={server.id}
                   workspace={slug}
@@ -311,74 +290,6 @@ export default async function McpMarketPage({
                 />
               ))}
             </div>
-
-            <DashboardTable
-              className="hidden lg:block"
-              headers={[
-                { label: t('resource') },
-                { label: t('publisher') },
-                { label: t('description') },
-                { label: t('popularity') },
-                { label: t('nextStep'), align: 'right' },
-              ]}
-              minWidth="58rem"
-            >
-              {all.map((server) => {
-                const deploymentId = deploymentByServerId.get(server.id) ?? null;
-                return (
-                  <tr key={server.id} className="hover:bg-muted/35">
-                    <td className="px-4 py-3.5">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <McpIcon iconUrl={server.iconUrl} name={server.name} size="sm" />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <Link
-                              href={`/app/${encodeURIComponent(slug)}/market/mcp/${encodeURIComponent(server.slug)}`}
-                              className="truncate font-medium text-foreground hover:underline"
-                            >
-                              {server.name}
-                            </Link>
-                            {server.isOfficial ? (
-                              <BadgeCheck className="size-4 shrink-0 text-emerald-600" aria-label={t('official')} />
-                            ) : null}
-                          </div>
-                          {deploymentId ? (
-                            <span className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
-                              <CheckCircle2 className="size-3" aria-hidden="true" />
-                              {t('addedToWorkspace')}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 text-muted-foreground">{server.author ?? t('unknownPublisher')}</td>
-                    <td className="px-4 py-3.5 text-muted-foreground">
-                      <span className="line-clamp-2 max-w-xl">{server.description ?? t('noDescription')}</span>
-                    </td>
-                    <td className="px-4 py-3.5 text-muted-foreground">
-                      <span className="inline-flex items-center gap-1"><Star className="size-3.5" aria-hidden="true" />{server.stars.toLocaleString(locale)}</span>
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Link
-                          href={`/app/${encodeURIComponent(slug)}/market/mcp/${encodeURIComponent(server.slug)}`}
-                          className="text-xs font-medium text-muted-foreground hover:text-foreground"
-                        >
-                          {t('viewDetails')}
-                        </Link>
-                        <McpMarketplaceAction
-                          workspace={slug}
-                          server={server}
-                          deploymentId={deploymentId}
-                          t={t}
-                          compact
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </DashboardTable>
             <DashboardPagination
               page={page}
               lastPage={lastPage}

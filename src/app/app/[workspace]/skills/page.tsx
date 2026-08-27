@@ -1,7 +1,7 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { CheckCircle2, Store } from 'lucide-react';
+import { Brain, CheckCircle2, Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getSkillImportSettings } from '@/lib/admin/settings';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
@@ -36,7 +36,7 @@ export default async function SkillsPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ imported?: string | string[] }>;
+  searchParams: Promise<{ create?: string | string[]; imported?: string | string[] }>;
 }) {
   const [t, locale] = await Promise.all([
     getTranslations('console.skills'),
@@ -76,7 +76,11 @@ export default async function SkillsPage({
                 <Store className="size-4" />
                 {t('browseSkillMarket')}
               </Link>
-              <AddSkillDialog slug={slug} maxSkillImportSkills={skillImportSettings.maxSkills} />
+              <AddSkillDialog
+                slug={slug}
+                maxSkillImportSkills={skillImportSettings.maxSkills}
+                defaultOpen={(Array.isArray(query.create) ? query.create[0] : query.create) === '1'}
+              />
             </>
           }
         >
@@ -181,7 +185,12 @@ export default async function SkillsPage({
                           className="size-5 rounded object-cover"
                         />
                       ) : (
-                        <span className="size-5 rounded bg-muted" />
+                        <span
+                          aria-hidden="true"
+                          className="flex size-5 items-center justify-center rounded bg-brand-soft text-foreground"
+                        >
+                          <Brain className="size-3.5" />
+                        </span>
                       )}
                       <Link
                         href={`/app/${slug}/skills/${s.id}`}

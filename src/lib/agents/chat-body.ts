@@ -13,7 +13,6 @@ const ChatBody = z
   .object({
     messages: z.array(ChatMessage).default([]),
     conversationId: z.string().min(1).optional(),
-    workSessionId: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -62,7 +61,6 @@ const AgentMessageBodySchema = z
 export type AgentChatBody = {
   messages: UIMessage[];
   conversationId?: string;
-  workSessionId?: string;
 };
 
 export type AgentMessageBody = {
@@ -100,7 +98,6 @@ export function parseAgentChatBody(raw: unknown): AgentChatBody | null {
   if (!parsed.success) return null;
   return {
     conversationId: parsed.data.conversationId,
-    workSessionId: parsed.data.workSessionId,
     messages: parsed.data.messages as unknown as UIMessage[],
   };
 }
