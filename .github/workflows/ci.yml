@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: mcp
           POSTGRES_PASSWORD: mcp
@@ -94,6 +94,9 @@ jobs:
 
       - name: Generate Prisma client
         run: pnpm exec prisma generate
+
+      - name: Enable pgvector
+        run: psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector'
 
       - name: Push Prisma schema
         run: pnpm exec prisma db push
