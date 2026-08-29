@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.1](https://github.com/asharca/ToolPlane/compare/v0.22.0...v0.22.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **release:** preserve public directory in runtime artifacts ([daa780c](https://github.com/asharca/ToolPlane/commit/daa780c72bae28174ff34eea385341ad462418fc))
+
 ## [0.22.0](https://github.com/asharca/ToolPlane/releases/tag/v0.22.0) (2026-08-20)
 
 ### What's Changed
