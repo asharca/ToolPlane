@@ -199,8 +199,9 @@ await cp(path.join(root, '.next', 'static'), path.join(outputRoot, '.next', 'sta
   recursive: true,
 });
 
+if (await pathExists(path.join(root, 'public'))) await copyEntry('public');
+
 for (const entry of [
-  'public',
   'package.json',
   'next.config.ts',
   'scripts',
