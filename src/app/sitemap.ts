@@ -54,15 +54,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.6,
     })),
-    ...entries.agents.flatMap((agent) =>
-      agent.publisherWorkspace
-        ? [{
-            url: url(`/agents/${encodeURIComponent(agent.publisherWorkspace.slug)}/${encodeURIComponent(agent.slug)}`),
-            lastModified: agent.updatedAt,
-            changeFrequency: 'weekly' as const,
-            priority: 0.7,
-          }]
-        : [],
-    ),
+    ...entries.agents.map((agent) => ({
+      url: url(agent.publisherWorkspace
+        ? `/agents/${encodeURIComponent(agent.publisherWorkspace.slug)}/${encodeURIComponent(agent.slug)}`
+        : `/agents/${encodeURIComponent(agent.directorySlug)}`),
+      lastModified: agent.updatedAt,
+      changeFrequency: 'weekly' as const,
+      priority: 0.7,
+    })),
   ];
 }

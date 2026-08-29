@@ -17,10 +17,15 @@ import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 type Initial = {
   source: string;
   ref: string;
+  sourceUrl: string;
   startCommand: string;
   env: string;
   envValues: string;
   network: boolean;
+  transport?: 'streamable-http' | 'sse';
+  authType?: 'none' | 'bearer' | 'headers';
+  bearerEnv?: string;
+  headerEnv?: string;
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
@@ -103,6 +108,8 @@ export function RecipeEditor({
 }) {
   const t = useTranslations('admin');
   const [dirty, setDirty] = useState(false);
+  const [source, setSource] = useState(initial.source || 'npm');
+  const [authType, setAuthType] = useState(initial.authType ?? 'none');
   const [validationVersion, setValidationVersion] = useState(0);
   const [saveState, saveAction] = useActionState<RecipeActionState, FormData>(setServerRecipeAction, {});
 
@@ -140,68 +147,143 @@ export function RecipeEditor({
               <NativeSelect
                 name="recipeSource"
                 defaultValue={initial.source || 'npm'}
+                onChange={(event) => setSource(event.currentTarget.value)}
                 className="ui-input h-11"
               >
                 <option value="npm">{t('npm')}</option>
                 <option value="pypi">{t('pypi')}</option>
                 <option value="github">{t('github')}</option>
                 <option value="docker">{t('docker')}</option>
+                <option value="remote">{t('connectorRemote')}</option>
               </NativeSelect>
             </label>
             <label className={LABEL_CLASS}>
-              <span>{t('referencePackageImageRepo')}</span>
+              <span>{source === 'remote' ? t('connectorEndpointUrl') : t('referencePackageImageRepo')}</span>
               <input
                 name="recipeRef"
                 defaultValue={initial.ref}
-                placeholder="firecrawl-mcp"
+                placeholder={source === 'remote' ? 'https://mcp.example.com/mcp' : 'firecrawl-mcp'}
                 className={CODE_INPUT_CLASS}
+                inputMode={source === 'remote' ? 'url' : undefined}
                 autoCapitalize="none"
                 spellCheck={false}
               />
             </label>
           </div>
+          {source === 'remote' ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className={LABEL_CLASS}>
+                  <span>{t('transport')}</span>
+                  <NativeSelect
+                    name="recipeTransport"
+                    defaultValue={initial.transport ?? 'streamable-http'}
+                    className="ui-input h-11"
+                  >
+                    <option value="streamable-http">{t('streamableHttp')}</option>
+                    <option value="sse">{t('serverSentEvents')}</option>
+                  </NativeSelect>
+                </label>
+                <label className={LABEL_CLASS}>
+                  <span>{t('authentication')}</span>
+                  <NativeSelect
+                    name="recipeAuthType"
+                    defaultValue={initial.authType ?? 'none'}
+                    onChange={(event) => setAuthType(event.currentTarget.value as typeof authType)}
+                    className="ui-input h-11"
+                  >
+                    <option value="none">{t('authNone')}</option>
+                    <option value="bearer">{t('authBearerToken')}</option>
+                    <option value="headers">{t('authCustomHeaders')}</option>
+                  </NativeSelect>
+                </label>
+              </div>
+              {authType === 'bearer' ? (
+                <label className={LABEL_CLASS}>
+                  <span>{t('bearerTokenEnvKey')}</span>
+                  <input
+                    name="recipeBearerEnv"
+                    defaultValue={initial.bearerEnv ?? 'MCP_BEARER_TOKEN'}
+                    placeholder="MCP_BEARER_TOKEN"
+                    className={CODE_INPUT_CLASS}
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                  />
+                </label>
+              ) : null}
+              {authType === 'headers' ? (
+                <label className={LABEL_CLASS}>
+                  <span>{t('customHeaderEnvMappings')}</span>
+                  <textarea
+                    name="recipeHeaderEnv"
+                    defaultValue={initial.headerEnv ?? ''}
+                    rows={4}
+                    placeholder={'X-API-Key=MCP_API_KEY\nX-Tenant-ID=MCP_TENANT_ID'}
+                    className={CODE_TEXTAREA_CLASS}
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </label>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <label className={LABEL_CLASS}>
+                <span>{t('startCommandDockerOnly')}</span>
+                <input
+                  name="recipeStartCommand"
+                  defaultValue={initial.startCommand}
+                  placeholder="node dist/index.js"
+                  className={CODE_INPUT_CLASS}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+              </label>
+              <label className={LABEL_CLASS}>
+                <span>{t('requiredEnvKeysUserFillsSpaceOrCommaSeparated')}</span>
+                <input
+                  name="recipeEnv"
+                  defaultValue={initial.env}
+                  placeholder="GITHUB_TOKEN"
+                  className={CODE_INPUT_CLASS}
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                />
+              </label>
+              <label className={LABEL_CLASS}>
+                <span>{t('presetEnvValuesFixedWiringKeyvaluePerLine')}</span>
+                <textarea
+                  name="recipeEnvValues"
+                  defaultValue={initial.envValues}
+                  rows={4}
+                  placeholder={'FIRECRAWL_API_URL=http://firecrawl-api:3002\nFIRECRAWL_API_KEY=self-hosted'}
+                  className={CODE_TEXTAREA_CLASS}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
+                <input
+                  type="checkbox"
+                  name="recipeNetwork"
+                  defaultChecked={initial.network}
+                  className="size-4 shrink-0 accent-brand"
+                />
+                {t('disconnectFromNetworkNetworkNone')}
+              </label>
+            </>
+          )}
           <label className={LABEL_CLASS}>
-            <span>{t('startCommandDockerOnly')}</span>
+            <span>{t('sourceUrl')}</span>
             <input
-              name="recipeStartCommand"
-              defaultValue={initial.startCommand}
-              placeholder="node dist/index.js"
+              name="recipeSourceUrl"
+              defaultValue={initial.sourceUrl}
+              placeholder="https://github.com/owner/repository"
               className={CODE_INPUT_CLASS}
+              inputMode="url"
               autoCapitalize="none"
               spellCheck={false}
             />
-          </label>
-          <label className={LABEL_CLASS}>
-            <span>{t('requiredEnvKeysUserFillsSpaceOrCommaSeparated')}</span>
-            <input
-              name="recipeEnv"
-              defaultValue={initial.env}
-              placeholder="GITHUB_TOKEN"
-              className={CODE_INPUT_CLASS}
-              autoCapitalize="characters"
-              spellCheck={false}
-            />
-          </label>
-          <label className={LABEL_CLASS}>
-            <span>{t('presetEnvValuesFixedWiringKeyvaluePerLine')}</span>
-            <textarea
-              name="recipeEnvValues"
-              defaultValue={initial.envValues}
-              rows={4}
-              placeholder={'FIRECRAWL_API_URL=http://firecrawl-api:3002\nFIRECRAWL_API_KEY=self-hosted'}
-              className={CODE_TEXTAREA_CLASS}
-              autoCapitalize="none"
-              spellCheck={false}
-            />
-          </label>
-          <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
-            <input
-              type="checkbox"
-              name="recipeNetwork"
-              defaultChecked={initial.network}
-              className="size-4 shrink-0 accent-brand"
-            />
-            {t('disconnectFromNetworkNetworkNone')}
           </label>
           <div className="flex flex-col items-start gap-3 pt-1 sm:flex-row sm:items-center">
             <SubmitButton

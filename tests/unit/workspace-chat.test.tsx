@@ -83,8 +83,15 @@ describe('WorkspaceChat', () => {
       'href',
       '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fchat%3Fagent%3Dagent-1%26c%3Dconversation-1',
     );
-    expect(screen.getByRole('button', { name: 'Research agent' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: 'Support agent' })).toHaveAttribute('aria-expanded', 'false');
+    const rail = screen.getByRole('complementary', { name: 'Agents' });
+    const researchDisclosure = within(rail).getByRole('button', { name: 'Research agent' });
+    const supportDisclosure = within(rail).getByRole('button', { name: 'Support agent' });
+    expect(researchDisclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(supportDisclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(researchDisclosure.parentElement?.lastElementChild).toBe(researchDisclosure);
+    expect(within(rail).getByText('No conversations yet.')).toBeInTheDocument();
+    fireEvent.click(researchDisclosure);
+    expect(within(rail).queryByText('No conversations yet.')).not.toBeInTheDocument();
     expect(screen.getByText('/api/v1/workspaces/workspace-1/attachments')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New chat · Research agent' }).closest('form')).toHaveFormValues({
       workspace: 'acme',

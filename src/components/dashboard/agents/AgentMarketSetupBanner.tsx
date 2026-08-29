@@ -2,7 +2,7 @@
 
 import { useId } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, Cpu, KeyRound } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Container, Cpu, KeyRound } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
 
@@ -71,6 +71,24 @@ export function AgentMarketSetupBanner({
               className="inline-flex min-h-8 items-center gap-1.5 text-xs font-semibold text-foreground hover:underline"
             >
               {t('marketSetupConfigureMcp')}
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </li>
+        ))}
+        {setup.runtimes.map((runtime) => (
+          <li
+            key={`${runtime.agentId}:${runtime.kind}`}
+            className="grid gap-2 px-4 py-3 sm:grid-cols-[1.25rem_minmax(0,1fr)_auto] sm:items-center"
+          >
+            <Container className="size-4 text-amber-700 dark:text-amber-300" />
+            <span className="min-w-0 text-xs leading-5">
+              {t('marketSetupRuntimeRequirement', { runtime: runtime.kind })}
+            </span>
+            <Link
+              href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(runtime.agentId)}?settings=hermes`}
+              className="inline-flex min-h-8 items-center gap-1.5 text-xs font-semibold text-foreground hover:underline"
+            >
+              {t('marketSetupConfigureRuntime')}
               <ArrowRight className="size-3.5" />
             </Link>
           </li>

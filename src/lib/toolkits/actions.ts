@@ -152,7 +152,22 @@ export async function clonePublicToolkitAction(formData: FormData) {
   if (!ctx || !sourceToolkitId) return;
 
   const source = await db.toolkit.findFirst({
-    where: { id: sourceToolkitId, visibility: 'public', enabled: true },
+    where: {
+      id: sourceToolkitId,
+      visibility: 'public',
+      enabled: true,
+      OR: [
+        { sourceMarketListing: { is: null } },
+        {
+          sourceMarketListing: {
+            is: {
+              status: 'published',
+              latestRelease: { is: { reviewStatus: 'approved' } },
+            },
+          },
+        },
+      ],
+    },
     include: {
       servers: {
         include: {
@@ -302,7 +317,10 @@ export async function renameToolkitAction(formData: FormData) {
   const toolkit = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!toolkit) return;
 
-  await db.toolkit.update({ where: { id: toolkit.id }, data: { name } });
+  await db.$transaction([
+    db.toolkit.update({ where: { id: toolkit.id }, data: { name } }),
+    db.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } }),
+  ]);
   revalidatePath(`/app/${workspaceSlug}/toolkits`);
   revalidatePath(`/app/${workspaceSlug}/toolkits/${toolkitSlug}`);
 }
@@ -410,6 +428,7 @@ export async function deleteToolkitAction(formData: FormData) {
   if (toolkitSlug === 'me') return; // default toolkit is not deletable
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
+  if (await db.marketInstall.findUnique({ where: { toolkitId: tk.id }, select: { id: true } })) return;
 
   await revokeToolkitInstallTokens(tk.id);
   await db.toolkit.delete({ where: { id: tk.id } });
@@ -469,6 +488,9 @@ async function addToolkitResources(
           data: owned.map(({ id }) => ({ toolkitId: toolkit.id, deploymentId: id })),
           skipDuplicates: true,
         });
+        if (created.count) {
+          await tx.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } });
+        }
         return { added: created.count };
       }
 
@@ -481,6 +503,9 @@ async function addToolkitResources(
         data: owned.map(({ id }) => ({ toolkitId: toolkit.id, installedSkillId: id })),
         skipDuplicates: true,
       });
+      if (created.count) {
+        await tx.marketInstall.updateMany({ where: { toolkitId: toolkit.id }, data: { status: 'modified' } });
+      }
       return { added: created.count };
     });
 
@@ -530,8 +555,13 @@ export async function removeServerFromToolkitAction(formData: FormData) {
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
 
-  await db.toolkitServer.deleteMany({
-    where: { toolkitId: tk.id, deploymentId },
+  await db.$transaction(async (tx) => {
+    const removed = await tx.toolkitServer.deleteMany({
+      where: { toolkitId: tk.id, deploymentId },
+    });
+    if (removed.count) {
+      await tx.marketInstall.updateMany({ where: { toolkitId: tk.id }, data: { status: 'modified' } });
+    }
   });
   revalidatePath(`/app/${slug}/toolkits/${toolkitSlug}`);
 }
@@ -545,8 +575,13 @@ export async function removeSkillFromToolkitAction(formData: FormData) {
   const tk = await toolkitInWorkspace(toolkitSlug, ctx.ws.id);
   if (!tk) return;
 
-  await db.toolkitSkill.deleteMany({
-    where: { toolkitId: tk.id, installedSkillId },
+  await db.$transaction(async (tx) => {
+    const removed = await tx.toolkitSkill.deleteMany({
+      where: { toolkitId: tk.id, installedSkillId },
+    });
+    if (removed.count) {
+      await tx.marketInstall.updateMany({ where: { toolkitId: tk.id }, data: { status: 'modified' } });
+    }
   });
   revalidatePath(`/app/${slug}/toolkits/${toolkitSlug}`);
 }

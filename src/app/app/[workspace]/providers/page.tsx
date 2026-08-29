@@ -43,6 +43,18 @@ export default async function ProvidersPage({
           baseUrl: provider.baseUrl,
           modelCount: provider.models.length,
           models: provider.models,
+          modelRecords: provider.modelRecords.map((model) => ({
+            modelId: model.modelId,
+            name: model.name,
+            group: model.group,
+            primaryType: model.primaryType,
+            capabilities: model.capabilities,
+            inputModalities: model.inputModalities,
+            contextWindow: model.contextWindow,
+            maxInputTokens: model.maxInputTokens,
+            maxOutputTokens: model.maxOutputTokens,
+            source: model.source,
+          })),
           modelsFetchedAt: provider.modelsFetchedAt
             ? formatInTimeZone(
                 provider.modelsFetchedAt,

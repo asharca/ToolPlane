@@ -10,18 +10,60 @@ import {
 } from 'react';
 import { useTranslations } from 'next-intl';
 import { Popover } from 'radix-ui';
-import { Loader2, Search, Settings2, X } from 'lucide-react';
+import {
+  ArrowUpDown,
+  AudioLines,
+  Boxes,
+  BrainCircuit,
+  Eye,
+  Image as ImageIcon,
+  Loader2,
+  Search,
+  Settings2,
+  Type,
+  Video,
+  Wrench,
+  X,
+} from 'lucide-react';
+import {
+  MODEL_PRIMARY_TYPES,
+  inferModelPrimaryType,
+  type ModelPrimaryType,
+} from '@/lib/agents/model-catalog';
+
+export type ModelRecordOption = {
+  modelId: string;
+  primaryType: string;
+  capabilities?: string[];
+  inputModalities?: string[];
+};
 
 export type ModelProviderOption = {
   id: string;
   name: string;
   models: string[];
+  modelRecords?: ModelRecordOption[];
 };
 
 export type ModelSelection = {
   providerId: string;
   model: string;
 };
+
+function ModelTypeIcon({ type }: { type: ModelPrimaryType }) {
+  if (type === 'image') return <ImageIcon className="size-3" />;
+  if (type === 'embedding') return <Boxes className="size-3" />;
+  if (type === 'rerank') return <ArrowUpDown className="size-3" />;
+  return <Type className="size-3" />;
+}
+
+function ModelTag({ label, className, children }: { label: string; className: string; children: ReactNode }) {
+  return (
+    <span aria-hidden="true" title={label} className={`inline-flex size-5 shrink-0 items-center justify-center rounded ${className}`}>
+      {children}
+    </span>
+  );
+}
 
 export function ModelPicker({
   providers,
@@ -56,6 +98,12 @@ export function ModelPicker({
   const open = controlledOpen ?? internalOpen;
   const selected = pending && pendingValue ? pendingValue : value;
   const selectedKey = selected ? `${selected.providerId}\0${selected.model}` : '';
+  const typeLabels: Record<ModelPrimaryType, string> = {
+    text: t('modelTypeText'),
+    image: t('modelTypeImage'),
+    embedding: t('modelTypeEmbedding'),
+    rerank: t('modelTypeRerank'),
+  };
 
   const setOpen = useCallback((nextOpen: boolean) => {
     if (controlledOpen === undefined) setInternalOpen(nextOpen);
@@ -66,6 +114,7 @@ export function ModelPicker({
   const visibleProviders = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return providers.flatMap((provider) => {
+      const records = new Map(provider.modelRecords?.map((record) => [record.modelId, record]));
       const cachedModels = [...new Set(provider.models.filter(Boolean))];
       const allModels = provider.id === value?.providerId && value.model && !cachedModels.includes(value.model)
         ? [value.model, ...cachedModels]
@@ -75,7 +124,7 @@ export function ModelPicker({
       const models = !query || providerMatches
         ? allModels
         : allModels.filter((model) => model.toLocaleLowerCase().includes(query));
-      return models.length ? [{ ...provider, models }] : [];
+      return models.length ? [{ ...provider, models, records }] : [];
     });
   }, [providers, search, value]);
 
@@ -163,6 +212,19 @@ export function ModelPicker({
                 {provider.models.map((model) => {
                   const key = `${provider.id}\0${model}`;
                   const isSelected = selectedKey === key;
+                  const record = provider.records.get(model);
+                  const primaryType = MODEL_PRIMARY_TYPES.includes(record?.primaryType as ModelPrimaryType)
+                    ? record?.primaryType as ModelPrimaryType
+                    : inferModelPrimaryType(model);
+                  const labels = [
+                    typeLabels[primaryType],
+                    ...(record?.capabilities?.includes('reasoning') ? [t('capabilityReasoning')] : []),
+                    ...(record?.capabilities?.includes('function_calling') ? [t('capabilityTools')] : []),
+                    ...(record?.inputModalities?.includes('image') ? [t('modalityVision')] : []),
+                    ...(record?.inputModalities?.includes('audio') ? [t('modalityAudio')] : []),
+                    ...(record?.inputModalities?.includes('video') ? [t('modalityVideo')] : []),
+                  ];
+                  const descriptionId = `model-option-${encodeURIComponent(provider.id)}-${encodeURIComponent(model)}-description`;
                   return (
                     <div key={key} className="px-1 py-0.5">
                       <button
@@ -170,6 +232,8 @@ export function ModelPicker({
                         role="option"
                         aria-selected={isSelected}
                         disabled={pending}
+                        aria-label={model}
+                        aria-describedby={descriptionId}
                         onClick={() => {
                           onSelect({ providerId: provider.id, model });
                           if (closeOnSelect) setOpen(false);
@@ -182,6 +246,18 @@ export function ModelPicker({
                           {provider.name.charAt(0).toUpperCase() || 'M'}
                         </span>
                         <span className="min-w-0 flex-1 truncate" title={model}>{model}</span>
+                        <span id={descriptionId} className="sr-only">{labels.join(', ')}</span>
+                        <span className="flex shrink-0 items-center gap-1">
+                          <span aria-hidden="true" title={typeLabels[primaryType]} className="inline-flex h-5 shrink-0 items-center gap-1 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
+                            <ModelTypeIcon type={primaryType} />
+                            {typeLabels[primaryType]}
+                          </span>
+                          {record?.capabilities?.includes('reasoning') ? <ModelTag label={t('capabilityReasoning')} className="bg-amber-500/10 text-amber-700 dark:text-amber-300"><BrainCircuit className="size-3" /></ModelTag> : null}
+                          {record?.capabilities?.includes('function_calling') ? <ModelTag label={t('capabilityTools')} className="bg-blue-500/10 text-blue-700 dark:text-blue-300"><Wrench className="size-3" /></ModelTag> : null}
+                          {record?.inputModalities?.includes('image') ? <ModelTag label={t('modalityVision')} className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"><Eye className="size-3" /></ModelTag> : null}
+                          {record?.inputModalities?.includes('audio') ? <ModelTag label={t('modalityAudio')} className="bg-rose-500/10 text-rose-700 dark:text-rose-300"><AudioLines className="size-3" /></ModelTag> : null}
+                          {record?.inputModalities?.includes('video') ? <ModelTag label={t('modalityVideo')} className="bg-violet-500/10 text-violet-700 dark:text-violet-300"><Video className="size-3" /></ModelTag> : null}
+                        </span>
                         {pending && pendingValue?.providerId === provider.id && pendingValue.model === model
                           ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                           : null}

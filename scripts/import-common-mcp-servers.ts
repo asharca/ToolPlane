@@ -1,5 +1,12 @@
+import 'dotenv/config';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import {
+  hasMcpToolCatalog,
+  parseMcpToolCatalogResult,
+  withMcpToolCatalog,
+} from '../src/lib/process/mcp-tool-catalog';
+import { parseServerRecipe } from '../src/lib/workspace/server-recipe';
 
 type CategorySeed = { slug: string; name: string };
 type ServerSeed = {
@@ -15,7 +22,6 @@ type ServerSeed = {
   envValues?: Record<string, string>;
   startCommand?: string;
   network?: 'none';
-  verifiedTools: number | null;
   sourceUrl: string;
   notes?: string;
 };
@@ -46,7 +52,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['web', 'developer-tools'],
     source: 'pypi',
     ref: 'mcp-server-fetch',
-    verifiedTools: 1,
     sourceUrl: 'https://pypi.org/project/mcp-server-fetch/',
   },
   {
@@ -59,7 +64,6 @@ const servers: ServerSeed[] = [
     source: 'npm',
     ref: 'firecrawl-mcp',
     env: ['FIRECRAWL_API_KEY', 'FIRECRAWL_API_URL'],
-    verifiedTools: 12,
     sourceUrl: 'https://github.com/firecrawl/firecrawl-mcp-server',
     notes: 'FIRECRAWL_API_KEY unlocks the full tool set. FIRECRAWL_API_URL is optional for self-hosted Firecrawl.',
   },
@@ -73,7 +77,6 @@ const servers: ServerSeed[] = [
     source: 'npm',
     ref: '@modelcontextprotocol/server-brave-search',
     env: ['BRAVE_API_KEY'],
-    verifiedTools: 2,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-brave-search',
   },
   {
@@ -86,7 +89,6 @@ const servers: ServerSeed[] = [
     source: 'docker',
     ref: 'ghcr.io/github/github-mcp-server',
     env: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
-    verifiedTools: 40,
     sourceUrl: 'https://github.com/github/github-mcp-server',
   },
   {
@@ -98,7 +100,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['developer-tools'],
     source: 'pypi',
     ref: 'mcp-server-git',
-    verifiedTools: 10,
     sourceUrl: 'https://pypi.org/project/mcp-server-git/',
   },
   {
@@ -110,7 +111,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['memory', 'productivity'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-memory',
-    verifiedTools: 9,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-memory',
   },
   {
@@ -122,7 +122,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['reasoning', 'productivity'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-sequential-thinking',
-    verifiedTools: 1,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-sequential-thinking',
   },
   {
@@ -134,7 +133,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['productivity'],
     source: 'pypi',
     ref: 'mcp-server-time',
-    verifiedTools: 2,
     sourceUrl: 'https://pypi.org/project/mcp-server-time/',
   },
   {
@@ -147,7 +145,6 @@ const servers: ServerSeed[] = [
     source: 'npm',
     ref: '@modelcontextprotocol/server-slack',
     env: ['SLACK_BOT_TOKEN', 'SLACK_TEAM_ID', 'SLACK_CHANNEL_IDS'],
-    verifiedTools: 8,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-slack',
     notes: 'SLACK_CHANNEL_IDS is optional. Leave it empty to allow the server default behavior.',
   },
@@ -160,7 +157,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['browser-automation', 'web', 'testing'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-puppeteer',
-    verifiedTools: 7,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-puppeteer',
   },
   {
@@ -172,7 +168,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['developer-tools', 'testing'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-everything',
-    verifiedTools: 8,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-everything',
   },
   {
@@ -185,7 +180,6 @@ const servers: ServerSeed[] = [
     source: 'npm',
     ref: '@modelcontextprotocol/server-filesystem',
     network: 'none',
-    verifiedTools: null,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem',
     notes: 'Requires allowed directory arguments or MCP Roots support; ToolPlane recipe args support is not enabled yet.',
   },
@@ -198,7 +192,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['databases', 'developer-tools'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-postgres',
-    verifiedTools: null,
     sourceUrl: 'https://www.npmjs.com/package/@modelcontextprotocol/server-postgres',
     notes: 'Requires a PostgreSQL connection string argument; ToolPlane recipe args support is not enabled yet.',
   },
@@ -215,6 +208,7 @@ function recipeFor(server: ServerSeed): Prisma.InputJsonValue | typeof Prisma.Js
   return {
     source: server.source,
     ref: server.ref,
+    sourceUrl: server.sourceUrl,
     env: server.env ?? [],
     ...(server.envValues ? { envValues: server.envValues } : {}),
     ...(server.startCommand ? { startCommand: server.startCommand } : {}),
@@ -260,11 +254,30 @@ function categoryConnections(categoryIds: Map<string, string>, slugs: string[]) 
 }
 
 async function upsertServers(db: PrismaClient | null, categoryIds: Map<string, string>) {
-  const now = new Date();
   const out: { slug: string; deployable: boolean; env: string[] }[] = [];
 
   for (const server of servers) {
-    const deployable = server.verifiedTools !== null;
+    const existing = db
+      ? await db.server.findUnique({
+          where: { slug: server.slug },
+          select: { installCfg: true, verifiedAt: true, verifiedTools: true },
+        })
+      : null;
+    const existingRecipe = parseServerRecipe(existing?.installCfg);
+    const storedCatalog = existing?.installCfg && typeof existing.installCfg === 'object' && !Array.isArray(existing.installCfg)
+      ? (existing.installCfg as Record<string, unknown>).toolCatalog
+      : undefined;
+    const parsedCatalog = parseMcpToolCatalogResult(storedCatalog);
+    const preserveCatalog = Boolean(
+      existing?.verifiedAt
+      && existingRecipe?.source === server.source
+      && existingRecipe?.ref === server.ref
+      && hasMcpToolCatalog(existing.installCfg)
+      && parsedCatalog.ok
+      && parsedCatalog.tools.length === existing.verifiedTools,
+    );
+    const recipe = recipeFor(server);
+    const deployable = preserveCatalog;
     const data = {
       name: server.name,
       author: server.author,
@@ -273,9 +286,11 @@ async function upsertServers(db: PrismaClient | null, categoryIds: Map<string, s
       isOfficial: ['Model Context Protocol', 'GitHub'].includes(server.author),
       isFeatured: deployable,
       curated: true,
-      installCfg: recipeFor(server),
-      verifiedAt: deployable ? now : null,
-      verifiedTools: server.verifiedTools,
+      installCfg: preserveCatalog
+        ? withMcpToolCatalog(recipe, parsedCatalog.tools) as Prisma.InputJsonValue
+        : recipe,
+      verifiedAt: preserveCatalog ? existing!.verifiedAt : null,
+      verifiedTools: preserveCatalog ? parsedCatalog.tools.length : null,
       readme: readmeFor(server),
       categories: { set: categoryConnections(categoryIds, server.categorySlugs) },
     };

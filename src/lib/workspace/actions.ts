@@ -41,6 +41,7 @@ import {
 } from '@/lib/workspace/runtime-files';
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
 import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
+import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -49,6 +50,14 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_DEPLOYMENT_ENV_VARS = 100;
 const MAX_DEPLOYMENT_ENV_VALUE_LENGTH = 16_000;
 const MAX_DEPLOYMENT_ENV_LENGTH = 64_000;
+
+function mcpProcessOptions(workspaceId: string, deploymentId: string) {
+  return {
+    awaitReady: false,
+    workspaceId,
+    onReady: async () => { await listMcpTools(deploymentId); },
+  };
+}
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -65,7 +74,15 @@ async function deploymentInWorkspace(deploymentId: string, workspaceId: string) 
       workspaceId,
       OR: [{ source: null }, { source: { not: 'sandbox' } }],
     },
-    include: { server: { select: { name: true, slug: true, installCfg: true } } },
+    include: {
+      server: { select: { name: true, slug: true, installCfg: true } },
+      marketInstall: { select: { id: true } },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
+    },
   });
 }
 
@@ -141,10 +158,7 @@ export async function deployServerAction(formData: FormData) {
       await markDeploymentSetupRequired(current.id);
       return 'setup_required' as const;
     }
-    await startProcess(current.id, resolveSpawnSpec(current), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
+    await startProcess(current.id, resolveSpawnSpec(current), mcpProcessOptions(ctx.ws.id, current.id));
     return 'started' as const;
   });
 
@@ -215,7 +229,7 @@ export async function deployCustomServerAction(formData: FormData) {
       sourceRef: dep.sourceRef,
       installCfg: dep.installCfg,
     }),
-    { awaitReady: false, workspaceId: ctx.ws.id },
+    mcpProcessOptions(ctx.ws.id, dep.id),
   );
 
   revalidatePath(`/app/${slug}/mcp`);
@@ -305,6 +319,7 @@ export async function updateMcpJsonConfigAction(
     const recipe = parseServerRecipe(catalogServer?.installCfg);
     const requiredEnvironment = recipe?.env
       ?? storedRequiredEnvironment(deployment.installCfg);
+    const toolCatalog = readMcpToolCatalog(deployment.installCfg);
     const nextInstallCfg = {
       ...parsed.installCfg,
       // Credentials have a dedicated Variables view. Keep their current
@@ -312,6 +327,7 @@ export async function updateMcpJsonConfigAction(
       // cannot silently overwrite one another.
       env: deploymentEnvironmentValues(deployment.installCfg),
       ...(requiredEnvironment.length ? { requiredEnv: requiredEnvironment } : {}),
+      ...(hasMcpToolCatalog(deployment.installCfg) ? { toolCatalog } : {}),
     };
     const requiresSetup = missingRequiredEnvironment(
       { env: requiredEnvironment },
@@ -320,24 +336,37 @@ export async function updateMcpJsonConfigAction(
     if (requiresSetup) {
       await markDeploymentSetupRequired(deployment.id);
     }
-    const updated = await db.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        source: parsed.source,
-        sourceRef: parsed.ref,
-        installCfg: nextInstallCfg as Prisma.InputJsonValue,
-        status: requiresSetup ? 'setup_required' : 'provisioning',
-      },
-      include: { server: { select: { name: true } } },
+    const updated = await db.$transaction(async (tx) => {
+      const value = await tx.deployment.update({
+        where: { id: deployment.id },
+        data: {
+          source: parsed.source,
+          sourceRef: parsed.ref,
+          installCfg: nextInstallCfg as Prisma.InputJsonValue,
+          status: requiresSetup ? 'setup_required' : 'provisioning',
+        },
+        include: { server: { select: { name: true } } },
+      });
+      await tx.marketInstall.updateMany({
+        where: {
+          OR: [
+            { deploymentId: deployment.id },
+            { toolkit: { is: { servers: { some: { deploymentId: deployment.id } } } } },
+          ],
+        },
+        data: { status: 'modified' },
+      });
+      return value;
     });
 
     if (requiresSetup) return { savedAt: Date.now(), requiresSetup: true };
 
     try {
-      await restartProcess(updated.id, resolveSpawnSpec(updated, true), {
-        awaitReady: false,
-        workspaceId: ctx.ws.id,
-      });
+      await restartProcess(
+        updated.id,
+        resolveSpawnSpec(updated, true),
+        mcpProcessOptions(ctx.ws.id, updated.id),
+      );
     } catch {
       await db.deployment.update({
         where: { id: deployment.id },
@@ -407,13 +436,24 @@ export async function updateMcpToolExposureAction(
     return { error: 'invalidToolSelection' };
   }
 
-  await db.deployment.update({
-    where: { id: deployment.id },
-    data: {
-      mcpToolExposure: mode,
-      mcpAllowedTools: mode === 'allowlist' ? selected : [],
-      publicInvocable,
-    },
+  await db.$transaction(async (tx) => {
+    await tx.deployment.update({
+      where: { id: deployment.id },
+      data: {
+        mcpToolExposure: mode,
+        mcpAllowedTools: mode === 'allowlist' ? selected : [],
+        publicInvocable,
+      },
+    });
+    await tx.marketInstall.updateMany({
+      where: {
+        OR: [
+          { deploymentId: deployment.id },
+          { toolkit: { is: { servers: { some: { deploymentId: deployment.id } } } } },
+        ],
+      },
+      data: { status: 'modified' },
+    });
   });
   revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
   return { savedAt: Date.now(), revision };
@@ -459,10 +499,18 @@ export async function runMcpConsoleToolAction(input: {
   }
 
   const startedAt = Date.now();
-  const result = await mcpRpc(deployment.id, 'tools/call', {
-    name: toolName,
-    arguments: input.arguments,
-  });
+  let result: Record<string, unknown> | null = null;
+  try {
+    result = await mcpRpc(
+      deployment.id,
+      'tools/call',
+      { name: toolName, arguments: input.arguments },
+      30_000,
+      { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
+    );
+  } catch {
+    result = null;
+  }
   await logRequest({
     workspaceId: ctx.ws.id,
     deploymentId: deployment.id,
@@ -756,10 +804,7 @@ export async function cloneDeploymentAction(formData: FormData) {
       if (!(await deploymentEnvironmentIsReady(current))) {
         return { id: cloned.id, setupRequired: true };
       }
-      await startProcess(current.id, resolveSpawnSpec(current), {
-        awaitReady: false,
-        workspaceId: ctx.ws.id,
-      });
+      await startProcess(current.id, resolveSpawnSpec(current), mcpProcessOptions(ctx.ws.id, current.id));
       return { id: cloned.id, setupRequired: false };
     });
     return targetOperation.accepted ? targetOperation.value : null;
@@ -780,6 +825,7 @@ export async function removeDeploymentAction(formData: FormData) {
   const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
     if (!dep) return null;
+    if (dep.marketInstall || dep.toolkitLinks?.length) return null;
 
     await killProcess(dep.id, { preventRestart: true });
     if (dep.source) {
@@ -816,10 +862,7 @@ export async function startDeploymentAction(formData: FormData) {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
     if (!dep) return 'missing' as const;
     if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
-    await startProcess(dep.id, resolveSpawnSpec(dep), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
+    await startProcess(dep.id, resolveSpawnSpec(dep), mcpProcessOptions(ctx.ws.id, dep.id));
     return 'started' as const;
   });
   revalidatePath(`/app/${slug}/mcp`);
@@ -860,10 +903,7 @@ export async function restartDeploymentAction(formData: FormData) {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
     if (!dep) return 'missing' as const;
     if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
-    await restartProcess(dep.id, resolveSpawnSpec(dep), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
+    await restartProcess(dep.id, resolveSpawnSpec(dep), mcpProcessOptions(ctx.ws.id, dep.id));
     return 'restarted' as const;
   });
   revalidatePath(`/app/${slug}/mcp`);
@@ -887,10 +927,7 @@ export async function rebuildDeploymentAction(formData: FormData) {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
     if (!dep) return 'missing' as const;
     if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
-    await restartProcess(dep.id, resolveSpawnSpec(dep, true), {
-      awaitReady: false,
-      workspaceId: ctx.ws.id,
-    });
+    await restartProcess(dep.id, resolveSpawnSpec(dep, true), mcpProcessOptions(ctx.ws.id, dep.id));
     return 'rebuilt' as const;
   });
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
@@ -936,9 +973,18 @@ export async function uninstallSkillAction(formData: FormData) {
 
   const installed = await db.installedSkill.findFirst({
     where: { id: installId, workspaceId: ctx.ws.id },
-    select: { skill: { select: { slug: true } } },
+    select: {
+      skill: { select: { slug: true } },
+      marketInstall: { select: { id: true } },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
+    },
   });
   if (!installed) return;
+  if (installed.marketInstall || installed.toolkitLinks?.length) return;
 
   await db.installedSkill.deleteMany({
     where: { id: installId, workspaceId: ctx.ws.id },

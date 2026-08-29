@@ -14,21 +14,45 @@ function ReviewActionForm({
   listingId,
   releaseId,
   tone,
+  categories,
+  selectedCategoryIds,
 }: {
   listingId: string;
   releaseId: string;
   tone: 'approve' | 'reject';
+  categories: Array<{ id: string; name: string }>;
+  selectedCategoryIds: string[];
 }) {
   const action = tone === 'approve' ? approveAgentReleaseAction : rejectAgentReleaseAction;
   const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
   const t = useTranslations('admin');
   const noteId = useId();
   const approving = tone === 'approve';
+  const selected = new Set(selectedCategoryIds);
 
   return (
     <form action={formAction} className="space-y-3">
       <input type="hidden" name="listingId" value={listingId} />
       <input type="hidden" name="releaseId" value={releaseId} />
+      {approving ? (
+        <fieldset>
+          <legend className="text-xs font-semibold text-muted-foreground">{t('categories')}</legend>
+          <div className="mt-2 grid max-h-48 gap-1 overflow-y-auto">
+            {categories.map((category) => (
+              <label key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
+                <input
+                  type="checkbox"
+                  name="categoryIds"
+                  value={category.id}
+                  defaultChecked={selected.has(category.id)}
+                  className="size-4 accent-brand"
+                />
+                <span className="truncate">{category.name}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
       <label htmlFor={noteId} className="block text-sm font-medium text-foreground">
         {t('agentReviewNote')}
       </label>
@@ -71,10 +95,14 @@ export function AgentReleaseReviewActions({
   listingId,
   releaseId,
   allowApprove = true,
+  categories = [],
+  selectedCategoryIds = [],
 }: {
   listingId: string;
   releaseId: string;
   allowApprove?: boolean;
+  categories?: Array<{ id: string; name: string }>;
+  selectedCategoryIds?: string[];
 }) {
   const t = useTranslations('admin');
   return (
@@ -84,7 +112,7 @@ export function AgentReleaseReviewActions({
           <h3 className="text-sm font-semibold text-foreground">{t('agentApproveRelease')}</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('agentApproveReleaseDescription')}</p>
           <div className="mt-4">
-            <ReviewActionForm listingId={listingId} releaseId={releaseId} tone="approve" />
+            <ReviewActionForm listingId={listingId} releaseId={releaseId} tone="approve" categories={categories} selectedCategoryIds={selectedCategoryIds} />
           </div>
         </div>
       ) : null}
@@ -92,7 +120,7 @@ export function AgentReleaseReviewActions({
         <h3 className="text-sm font-semibold text-foreground">{t('agentRejectRelease')}</h3>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('agentRejectReleaseDescription')}</p>
         <div className="mt-4">
-          <ReviewActionForm listingId={listingId} releaseId={releaseId} tone="reject" />
+          <ReviewActionForm listingId={listingId} releaseId={releaseId} tone="reject" categories={[]} selectedCategoryIds={[]} />
         </div>
       </div>
     </div>

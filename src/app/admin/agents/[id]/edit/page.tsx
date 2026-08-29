@@ -107,6 +107,7 @@ export default async function EditAgentListingPage({
         tags: listing.pendingRelease.tags,
         checksum: listing.pendingRelease.checksum,
         publishedAt: listing.pendingRelease.publishedAt.toISOString(),
+        categoryIds: listing.pendingRelease.categoryIds,
         manifest,
       }
     : listing.pendingRelease
@@ -121,6 +122,7 @@ export default async function EditAgentListingPage({
               tags: listing.pendingRelease.tags,
               checksum: listing.pendingRelease.checksum,
               publishedAt: listing.pendingRelease.publishedAt.toISOString(),
+              categoryIds: listing.pendingRelease.categoryIds,
               manifest: readAgentReleaseManifest(
                 listing.pendingRelease.manifest,
                 listing.pendingRelease.checksum,
@@ -142,7 +144,7 @@ export default async function EditAgentListingPage({
       />
 
       {pendingRelease ? (
-        <AgentReleaseReview listingId={listing.id} release={pendingRelease} />
+        <AgentReleaseReview listingId={listing.id} release={pendingRelease} categories={categories} />
       ) : listing.pendingRelease ? (
         <AdminPanel
           title={t('agentPendingRelease', { version: listing.pendingRelease.version })}

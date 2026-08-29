@@ -17,8 +17,11 @@ import {
   AGENT_MARKET_MANIFEST_VERSION,
   agentReleaseChecksum,
   buildCatalogAgentManifest,
+  getAgentMarketListing,
+  listAgentMarketListings,
   materializeAgentRelease,
   summarizeAgentReleaseManifest,
+  type AgentReleaseManifestV1,
 } from '@/lib/agents/market';
 
 const stamp = `${process.pid}-${Date.now()}`;
@@ -77,6 +80,25 @@ describe.sequential('admin agent directory management', () => {
   });
 
   it('creates a curated administrator template with an approved immutable release', async () => {
+    await expect(createDirectoryAgentTemplate({
+      directorySlug: `uncategorized-${directorySlug}`,
+      name: 'Uncategorized agent',
+      author: null,
+      summary: null,
+      iconUrl: null,
+      tags: [],
+      curated: true,
+      isFeatured: false,
+      categoryIds: [],
+      status: 'published',
+      systemPrompt: null,
+      maxSteps: 8,
+      modelFormat: null,
+      model: null,
+      serverIds: [],
+      skillIds: [],
+    }, adminId)).rejects.toMatchObject({ code: 'invalid_categories' });
+
     const created = await createDirectoryAgentTemplate({
       directorySlug,
       name: 'Admin Research Agent',
@@ -102,6 +124,7 @@ describe.sequential('admin agent directory management', () => {
       directorySlug,
       name: 'Admin Research Agent',
       author: 'ToolPlane',
+      publisherKind: 'platform',
       publisherWorkspaceId: null,
       publishedById: null,
       curated: true,
@@ -118,6 +141,13 @@ describe.sequential('admin agent directory management', () => {
       reviewedById: adminId,
       name: 'Admin Research Agent',
     });
+
+    const [marketDetail, marketList] = await Promise.all([
+      getAgentMarketListing(listingId),
+      listAgentMarketListings({ q: directorySlug }),
+    ]);
+    expect(marketDetail?.workspace).toBeNull();
+    expect(marketList.items.map(({ id }) => id)).toContain(listingId);
   });
 
   it('lists and searches directory agents with pagination metadata and status filtering', async () => {
@@ -204,6 +234,7 @@ describe.sequential('admin agent directory management', () => {
       releaseId: pending.id,
       reviewedById: adminId,
       reviewNote: 'Reviewed and approved.',
+      categoryIds: [categoryId],
     });
     const listing = await getDirectoryAgentListing(listingId);
     expect(listing).toMatchObject({
@@ -315,6 +346,132 @@ describe.sequential('admin agent directory management', () => {
       reviewedById: adminId,
       reviewNote: 'Invalid checksum.',
     });
+  });
+
+  it('refuses to approve a checksum-valid release containing a credential', async () => {
+    const latest = await db.agentListing.findUniqueOrThrow({
+      where: { id: listingId },
+      select: { latestRelease: { select: { manifest: true, releaseSummary: true } } },
+    });
+    const manifest = structuredClone(latest.latestRelease!.manifest) as AgentReleaseManifestV1;
+    manifest.agents[0].systemPrompt = `Leaked sk-proj-${'q'.repeat(24)}`;
+    const unsafe = await db.agentRelease.create({
+      data: {
+        listingId,
+        version: 6,
+        manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
+        manifest: manifest as Prisma.InputJsonValue,
+        releaseSummary: latest.latestRelease!.releaseSummary as Prisma.InputJsonValue,
+        checksum: agentReleaseChecksum(manifest),
+        name: 'Unsafe release',
+        categoryIds: [categoryId],
+        reviewStatus: 'pending',
+      },
+    });
+    await db.agentListing.update({
+      where: { id: listingId },
+      data: { pendingReleaseId: unsafe.id, latestVersion: 6 },
+    });
+
+    await expect(approvePendingAgentRelease({
+      listingId,
+      releaseId: unsafe.id,
+      reviewedById: adminId,
+      categoryIds: [categoryId],
+    })).rejects.toMatchObject({ code: 'invalid_release' });
+    await rejectPendingAgentRelease({
+      listingId,
+      releaseId: unsafe.id,
+      reviewedById: adminId,
+    });
+  });
+
+  it('keeps orphaned workspace listings visible to admins but only allows disabling them', async () => {
+    const publisher = await db.user.create({
+      data: { email: `orphaned-agent-publisher-${stamp}@test.dev`, passwordHash: 'x' },
+    });
+    const workspace = await db.workspace.create({
+      data: {
+        slug: `orphaned-agent-publisher-${stamp}`,
+        name: 'Removed Agent Publisher',
+        ownerId: publisher.id,
+      },
+    });
+    const approved = await db.agentListing.findUniqueOrThrow({
+      where: { id: listingId },
+      select: {
+        latestRelease: {
+          select: { manifest: true, releaseSummary: true, checksum: true },
+        },
+      },
+    });
+    const orphanSlug = `orphaned-agent-${stamp}`;
+    const orphan = await db.agentListing.create({
+      data: {
+        publisherKind: 'workspace',
+        publisherWorkspaceId: workspace.id,
+        slug: orphanSlug,
+        directorySlug: orphanSlug,
+        name: 'Orphaned Agent',
+        status: 'published',
+        publishedAt: new Date(),
+      },
+    });
+    const release = await db.agentRelease.create({
+      data: {
+        listingId: orphan.id,
+        version: 1,
+        manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
+        manifest: approved.latestRelease!.manifest as Prisma.InputJsonValue,
+        releaseSummary: approved.latestRelease!.releaseSummary as Prisma.InputJsonValue,
+        checksum: approved.latestRelease!.checksum,
+        name: 'Orphaned Agent',
+        reviewStatus: 'approved',
+        reviewedById: adminId,
+        reviewedAt: new Date(),
+      },
+    });
+    const pending = await db.agentRelease.create({
+      data: {
+        listingId: orphan.id,
+        version: 2,
+        manifestVersion: AGENT_MARKET_MANIFEST_VERSION,
+        manifest: approved.latestRelease!.manifest as Prisma.InputJsonValue,
+        releaseSummary: approved.latestRelease!.releaseSummary as Prisma.InputJsonValue,
+        checksum: approved.latestRelease!.checksum,
+        name: 'Orphaned Agent v2',
+        reviewStatus: 'pending',
+      },
+    });
+    await db.agentListing.update({
+      where: { id: orphan.id },
+      data: {
+        latestVersion: 2,
+        latestReleaseId: release.id,
+        pendingReleaseId: pending.id,
+      },
+    });
+    await db.workspace.delete({ where: { id: workspace.id } });
+
+    const listed = await listDirectoryAgentListings({ q: orphanSlug });
+    expect(listed.items[0]).toMatchObject({
+      id: orphan.id,
+      publisherKind: 'workspace',
+      publisherWorkspaceId: null,
+      publisherWorkspace: null,
+    });
+    await expect(setDirectoryAgentListingStatus(orphan.id, 'disabled'))
+      .resolves.toMatchObject({ status: 'disabled' });
+    await expect(setDirectoryAgentListingStatus(orphan.id, 'published'))
+      .rejects.toMatchObject({ code: 'orphaned_publisher' });
+    await expect(approvePendingAgentRelease({
+      listingId: orphan.id,
+      releaseId: pending.id,
+      reviewedById: adminId,
+    })).rejects.toMatchObject({ code: 'orphaned_publisher' });
+
+    await db.agentListing.delete({ where: { id: orphan.id } });
+    await db.user.delete({ where: { id: publisher.id } });
   });
 
   it('refuses deletion while an install references any release', async () => {

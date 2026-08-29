@@ -1,6 +1,6 @@
 'use client';
 
-import { Bot, Plus, Save } from 'lucide-react';
+import { Bot, MessageSquare, Plus, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
@@ -81,6 +81,7 @@ export function AgentListingForm({
   skills,
   configEditable = true,
   submitLabel,
+  mode = 'agent',
 }: {
   action: (previous: AdminActionState, formData: FormData) => Promise<AdminActionState>;
   initial: AgentListingFormInitial;
@@ -89,6 +90,7 @@ export function AgentListingForm({
   skills: Resource[];
   configEditable?: boolean;
   submitLabel: string;
+  mode?: 'agent' | 'assistant';
 }) {
   const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
   const t = useTranslations('admin');
@@ -96,6 +98,8 @@ export function AgentListingForm({
   const selectedServers = new Set(initial.serverIds ?? []);
   const selectedSkills = new Set(initial.skillIds ?? []);
   const SubmitIcon = initial.id ? Save : Plus;
+  const assistantMode = mode === 'assistant';
+  const ConfigIcon = assistantMode ? MessageSquare : Bot;
 
   return (
     <form action={formAction} className="space-y-6">
@@ -103,8 +107,8 @@ export function AgentListingForm({
       <input type="hidden" name="updateConfig" value={configEditable ? 'yes' : 'no'} />
 
       <AdminPanel
-        title={t('agentDirectoryMetadata')}
-        description={t('agentDirectoryMetadataDescription')}
+        title={t(assistantMode ? 'assistantDirectoryMetadata' : 'agentDirectoryMetadata')}
+        description={t(assistantMode ? 'assistantDirectoryMetadataDescription' : 'agentDirectoryMetadataDescription')}
       >
         <div className="grid gap-5 sm:grid-cols-2">
           <label className={LABEL_CLASS}>
@@ -119,7 +123,7 @@ export function AgentListingForm({
           </label>
           {initial.id ? (
             <div className={LABEL_CLASS}>
-              <span>{t('agentDirectorySlug')}</span>
+              <span>{t(assistantMode ? 'assistantTemplateSlug' : 'agentDirectorySlug')}</span>
               <div className="flex min-h-11 min-w-0 items-center justify-between gap-3 rounded-md border border-border bg-muted/45 px-3">
                 <code className="truncate font-mono text-sm text-foreground">{initial.directorySlug}</code>
                 <AdminBadge tone="neutral">{t('immutable')}</AdminBadge>
@@ -128,7 +132,7 @@ export function AgentListingForm({
             </div>
           ) : (
             <label className={LABEL_CLASS}>
-              <span>{t('agentDirectorySlug')}</span>
+              <span>{t(assistantMode ? 'assistantTemplateSlug' : 'agentDirectorySlug')}</span>
               <input
                 name="directorySlug"
                 required
@@ -207,7 +211,9 @@ export function AgentListingForm({
           ) : (
             <div className="flex min-h-11 items-center gap-2 px-2 text-sm font-medium text-foreground">
               <AdminBadge tone="brand">{t('curated')}</AdminBadge>
-              <span className="text-xs font-normal text-muted-foreground">{t('agentAdminTemplatesAreCurated')}</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                {t(assistantMode ? 'assistantAdminTemplatesAreCurated' : 'agentAdminTemplatesAreCurated')}
+              </span>
             </div>
           )}
           <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
@@ -248,16 +254,16 @@ export function AgentListingForm({
       </AdminPanel>
 
       <AdminPanel
-        title={t('agentTemplateConfiguration')}
+        title={t(assistantMode ? 'assistantTemplateConfiguration' : 'agentTemplateConfiguration')}
         description={configEditable
-          ? t('agentTemplateConfigurationDescription')
+          ? t(assistantMode ? 'assistantTemplateConfigurationDescription' : 'agentTemplateConfigurationDescription')
           : t('agentTemplateConfigurationReadOnly')}
-        actions={<Bot className="size-4 text-muted-foreground" />}
+        actions={<ConfigIcon className="size-4 text-muted-foreground" />}
       >
         {configEditable ? (
           <div className="space-y-6">
             <label className={LABEL_CLASS}>
-              <span>{t('agentSystemPrompt')}</span>
+              <span>{t(assistantMode ? 'assistantSystemPrompt' : 'agentSystemPrompt')}</span>
               <textarea
                 name="systemPrompt"
                 defaultValue={initial.systemPrompt ?? ''}
@@ -272,8 +278,8 @@ export function AgentListingForm({
                 <input
                   name="maxSteps"
                   type="number"
-                  min={AGENT_STEP_BOUNDS.min}
-                  max={AGENT_STEP_BOUNDS.max}
+                  min={assistantMode ? 1 : AGENT_STEP_BOUNDS.min}
+                  max={assistantMode ? 20 : AGENT_STEP_BOUNDS.max}
                   defaultValue={initial.maxSteps ?? AGENT_STEP_BOUNDS.default}
                   required
                   className="ui-input h-11"
@@ -285,6 +291,7 @@ export function AgentListingForm({
                   <option value="">{t('agentNoModelRequirement')}</option>
                   <option value="openai">OpenAI</option>
                   <option value="openai-responses">OpenAI Responses</option>
+                  {assistantMode ? <option value="openai-compatible">OpenAI Compatible</option> : null}
                   <option value="anthropic">Anthropic</option>
                 </NativeSelect>
               </label>
@@ -303,7 +310,9 @@ export function AgentListingForm({
             </div>
 
             <fieldset className="border-t border-border pt-5">
-              <legend className="pr-3 text-sm font-semibold text-foreground">{t('agentCatalogServers')}</legend>
+              <legend className="pr-3 text-sm font-semibold text-foreground">
+                {t(assistantMode ? 'assistantCatalogServers' : 'agentCatalogServers')}
+              </legend>
               <div className="mt-2">
                 <ResourceChecklist
                   name="serverIds"
@@ -314,7 +323,7 @@ export function AgentListingForm({
               </div>
             </fieldset>
 
-            <fieldset className="border-t border-border pt-5">
+            {!assistantMode ? <fieldset className="border-t border-border pt-5">
               <legend className="pr-3 text-sm font-semibold text-foreground">{t('agentCatalogSkills')}</legend>
               <div className="mt-2">
                 <ResourceChecklist
@@ -324,7 +333,7 @@ export function AgentListingForm({
                   emptyLabel={t('agentNoCuratedSkills')}
                 />
               </div>
-            </fieldset>
+            </fieldset> : null}
           </div>
         ) : (
           <p className="text-sm leading-6 text-muted-foreground">{t('agentComplexReleasePreserved')}</p>

@@ -49,7 +49,7 @@ afterEach(() => {
 
 describe('Chat, Work, and Knowledge surfaces', () => {
   it('starts Work from the chat composer without a task form', () => {
-    render(<WorkspaceWork
+    const { container } = render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
       agents={[{
@@ -90,12 +90,20 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork',
     );
     expect(screen.queryByRole('link', { name: 'Manage agents' })).not.toBeInTheDocument();
+    const sidebar = container.querySelector('aside')!;
+    const builderDisclosure = screen.getByRole('button', { name: 'Builder' });
+    expect(builderDisclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(builderDisclosure.parentElement?.lastElementChild).toBe(builderDisclosure);
+    expect(sidebar.querySelectorAll('[aria-controls^="agent-work-sessions-"]')).toHaveLength(2);
+    expect(screen.getByText('No work sessions yet.')).toBeInTheDocument();
+    fireEvent.click(builderDisclosure);
+    expect(screen.queryByText('No work sessions yet.')).not.toBeInTheDocument();
     const hermesRow = screen.getByRole('button', { name: 'Hermes researcher' }).parentElement!;
     expect(screen.getByRole('button', { name: 'New work · Hermes researcher' })).toBeInTheDocument();
     fireEvent.contextMenu(hermesRow, { clientX: 80, clientY: 120 });
     expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/chat?agent=agent-hermes');
-    const agentRow = screen.getByRole('button', { name: 'Builder' }).parentElement!;
+    const agentRow = builderDisclosure.parentElement!;
     fireEvent.contextMenu(agentRow, { clientX: 80, clientY: 120 });
     expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/chat?agent=agent-1');
@@ -111,6 +119,50 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
     expect(screen.queryByText('Run budget')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+  });
+
+  it('inserts an attached MCP prompt into the Work composer', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        prompts: [{
+          deploymentId: 'prompt-deployment',
+          serverName: 'Prompt Studio',
+          name: 'summarize_text',
+          title: 'Summarize text',
+          description: 'Turn long text into a concise summary.',
+          arguments: [{ name: 'text', title: 'Text', description: 'Text to summarize', required: true }],
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        text: 'Summarize the following text:\n\nRelease notes',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open MCP prompts' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Summarize text/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Text/ }), { target: { value: 'Release notes' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert prompt' }));
+
+    await waitFor(() => expect(screen.getByPlaceholderText('What should the Agent accomplish?')).toHaveValue(
+      'Summarize the following text:\n\nRelease notes',
+    ));
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/agents/agent-1/prompts', { cache: 'no-store' });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/agents/agent-1/prompts', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        deploymentId: 'prompt-deployment',
+        name: 'summarize_text',
+        arguments: { text: 'Release notes' },
+      }),
+    }));
   });
 
   it('opens separate Work file and terminal drawers for a selected session', () => {

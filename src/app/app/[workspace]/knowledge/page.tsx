@@ -44,7 +44,17 @@ export default async function KnowledgePage({ params }: { params: Promise<{ work
           agentIds: base.agentLinks.map((link) => link.agentId),
           documents: base.documents.map((document) => ({ id: document.id, filename: document.filename, status: document.status, error: document.error })),
         }))}
-        providers={providers.map((provider) => ({ id: provider.id, name: provider.name, models: provider.models }))}
+        providers={providers.map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          models: provider.models,
+          modelRecords: (provider.modelRecords ?? []).map((model) => ({
+            modelId: model.modelId,
+            primaryType: model.primaryType,
+            capabilities: model.capabilities,
+            inputModalities: model.inputModalities,
+          })),
+        }))}
         sandboxes={sandboxes.map((sandbox) => ({ id: sandbox.id, name: sandbox.name, running: sandbox.deployment.status === 'running' }))}
         agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
       />

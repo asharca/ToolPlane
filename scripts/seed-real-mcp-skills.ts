@@ -15,7 +15,6 @@ type ServerSeed = {
   categorySlugs: string[];
   source: 'npm' | 'pypi';
   ref: string;
-  verifiedTools: number | null;
   readmeUrl: string;
 };
 type SkillSeed = {
@@ -64,7 +63,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['files', 'developer-tools'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-filesystem',
-    verifiedTools: null,
     readmeUrl: `${RAW_MCP}/filesystem/README.md`,
   },
   {
@@ -76,7 +74,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['web', 'developer-tools'],
     source: 'pypi',
     ref: 'mcp-server-fetch',
-    verifiedTools: 1,
     readmeUrl: `${RAW_MCP}/fetch/README.md`,
   },
   {
@@ -88,7 +85,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['developer-tools'],
     source: 'pypi',
     ref: 'mcp-server-git',
-    verifiedTools: 10,
     readmeUrl: `${RAW_MCP}/git/README.md`,
   },
   {
@@ -100,7 +96,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['memory', 'productivity'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-memory',
-    verifiedTools: 9,
     readmeUrl: `${RAW_MCP}/memory/README.md`,
   },
   {
@@ -112,7 +107,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['reasoning', 'productivity'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-sequential-thinking',
-    verifiedTools: 1,
     readmeUrl: `${RAW_MCP}/sequentialthinking/README.md`,
   },
   {
@@ -124,7 +118,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['productivity'],
     source: 'pypi',
     ref: 'mcp-server-time',
-    verifiedTools: 2,
     readmeUrl: `${RAW_MCP}/time/README.md`,
   },
   {
@@ -136,7 +129,6 @@ const servers: ServerSeed[] = [
     categorySlugs: ['developer-tools'],
     source: 'npm',
     ref: '@modelcontextprotocol/server-everything',
-    verifiedTools: 8,
     readmeUrl: `${RAW_MCP}/everything/README.md`,
   },
 ];
@@ -294,6 +286,7 @@ async function seedServers(categoryIds: Map<string, string>) {
     const recipe = {
       source: s.source,
       ref: s.ref,
+      sourceUrl: MCP_REPO,
       env: [],
       ...(s.slug === 'modelcontextprotocol-filesystem'
         ? { network: 'none' as const }
@@ -307,11 +300,11 @@ async function seedServers(categoryIds: Map<string, string>) {
         description: s.description,
         stars: s.stars,
         isOfficial: true,
-        isFeatured: s.verifiedTools !== null,
+        isFeatured: false,
         curated: true,
         installCfg: recipe as Prisma.InputJsonValue,
-        verifiedAt: s.verifiedTools === null ? null : new Date(),
-        verifiedTools: s.verifiedTools,
+        verifiedAt: null,
+        verifiedTools: null,
         readme: `Imported from ${s.readmeUrl}\n\nRepository: ${MCP_REPO}`,
         categories: { connect: categoryConnect(categoryIds, s.categorySlugs) },
       },

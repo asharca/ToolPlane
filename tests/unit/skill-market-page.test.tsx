@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -43,7 +43,7 @@ const skill = (id: string, name: string) => ({
 });
 
 describe('Skill market page', () => {
-  it('uses cards at every viewport and does not repeat featured skills in all skills', async () => {
+  it('renders the globally ordered skill page once', async () => {
     const featured = skill('featured', 'Featured Alpha');
     const other = skill('other', 'Other Beta');
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
@@ -61,11 +61,59 @@ describe('Skill market page', () => {
       searchParams: Promise.resolve({}),
     }));
 
-    const grids = screen.getAllByTestId('browse-grid');
-    expect(grids).toHaveLength(2);
-    expect(within(grids[0]).getByText('Featured Alpha')).toBeInTheDocument();
-    expect(within(grids[1]).queryByText('Featured Alpha')).not.toBeInTheDocument();
-    expect(within(grids[1]).getByText('Other Beta')).toBeInTheDocument();
+    const grid = screen.getByTestId('browse-grid');
+    expect(grid).toHaveTextContent('Featured Alpha');
+    expect(grid).toHaveTextContent('Other Beta');
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('keeps reviewed community skill releases visible after removing Discover', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getSkillBrowseCategories.mockResolvedValue([]);
+    mocks.getSkillBrowseCategories.mockResolvedValue([{ slug: 'writing', name: 'Writing', _count: { skills: 1 } }]);
+    mocks.getBrowseSkills.mockResolvedValue({
+      featured: [],
+      all: [{
+        ...skill('listing-1', 'Writer'),
+        author: 'acme-labs',
+        marketListing: { namespace: 'acme-labs', slug: 'writer', releaseId: 'release-1' },
+      }],
+      total: 1, availableTotal: 1, pageSize: 25,
+    });
+
+    render(await SkillMarketPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ q: 'writer', category: 'writing', sort: 'name' }),
+    }));
+
+    expect(mocks.getBrowseSkills).toHaveBeenCalledWith(1, 'writer', expect.objectContaining({
+      category: 'writing',
+      sort: 'name',
+    }));
+    expect(mocks.getSkillBrowseCategories).toHaveBeenCalledWith(true);
+    expect(screen.getByText('Writer')).toBeInTheDocument();
+  });
+
+  it('paginates community skills after page one even when the directory page is empty', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getSkillBrowseCategories.mockResolvedValue([]);
+    mocks.getBrowseSkills.mockResolvedValue({
+      featured: [], all: [skill('listing-26', 'Writer 26')], total: 26, availableTotal: 26, pageSize: 25,
+    });
+
+    render(await SkillMarketPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ page: '2', q: 'writer' }),
+    }));
+
+    expect(mocks.getBrowseSkills).toHaveBeenCalledWith(2, 'writer', expect.any(Object));
+    expect(screen.getByText('Writer 26')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'previous' })).toHaveAttribute(
+      'href',
+      '/app/acme/market/skills?q=writer',
+    );
+    expect(screen.queryByRole('link', { name: 'next' })).not.toBeInTheDocument();
   });
 });

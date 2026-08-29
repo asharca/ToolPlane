@@ -1,10 +1,15 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 
 const actions = vi.hoisted(() => ({
+  addProviderModelAction: vi.fn(async (_state: unknown, formData: FormData) => {
+    formData.get('modelId');
+    return {};
+  }),
   createProviderAction: vi.fn(async () => ({})),
+  deleteProviderModelAction: vi.fn(async () => ({})),
   deleteProviderAction: vi.fn(async (formData: FormData) => {
     formData.get('providerId');
   }),
@@ -13,6 +18,7 @@ const actions = vi.hoisted(() => ({
     return {};
   }),
   testProviderModelAction: vi.fn(async () => ({})),
+  updateProviderModelAction: vi.fn(async () => ({})),
   updateProviderAction: vi.fn(async () => ({})),
 }));
 
@@ -115,6 +121,103 @@ describe('ProvidersPanel', () => {
     const formData = actions.refreshModelsAction.mock.calls[0][1] as FormData;
     expect(formData.get('workspace')).toBe('acme');
     expect(formData.get('providerId')).toBe('provider-2');
+  });
+
+  it('groups models and filters them by their persisted type', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProvidersPanel
+        slug="acme"
+        providers={[{
+          id: 'provider-1',
+          name: 'Acme AI',
+          format: 'openai',
+          baseUrl: 'https://api.acme.test/v1',
+          modelCount: 2,
+          models: ['gpt-5', 'acme/embed-v2'],
+          modelRecords: [
+            {
+              modelId: 'gpt-5',
+              name: 'GPT 5',
+              group: 'ChatGPT',
+              primaryType: 'text',
+              capabilities: ['reasoning'],
+              inputModalities: ['image'],
+              contextWindow: 128000,
+              maxInputTokens: null,
+              maxOutputTokens: 32768,
+              source: 'manual',
+            },
+            {
+              modelId: 'acme/embed-v2',
+              name: 'Acme Embed v2',
+              group: 'Embeddings',
+              primaryType: 'embedding',
+              capabilities: [],
+              inputModalities: [],
+              contextWindow: 8192,
+              maxInputTokens: null,
+              maxOutputTokens: null,
+              source: 'manual',
+            },
+          ],
+          modelsFetchedAt: null,
+        }]}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /ChatGPT/ })).toBeInTheDocument();
+    expect(screen.getByText('GPT 5')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Embedding/ }));
+    expect(screen.getByText('Acme Embed v2')).toBeInTheDocument();
+    expect(screen.queryByText('GPT 5')).not.toBeInTheDocument();
+  });
+
+  it('submits Cherry-style model identity, grouping, and classification fields', async () => {
+    const user = userEvent.setup();
+    actions.addProviderModelAction.mockClear();
+    render(
+      <ProvidersPanel
+        slug="acme"
+        providers={[{
+          id: 'provider-1',
+          name: 'OpenAI production',
+          format: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          modelCount: 0,
+          models: [],
+          modelsFetchedAt: null,
+        }]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add model' });
+    await user.type(within(dialog).getByRole('textbox', { name: /Model ID/ }), 'openai/gpt-image-1');
+    expect(within(dialog).getByRole('textbox', { name: 'Model name' })).toHaveValue('openai/gpt-image-1');
+    expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveValue('openai');
+
+    await user.click(within(dialog).getByRole('button', { name: 'More settings' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Image' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Reasoning' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Vision' }));
+    await user.type(within(dialog).getByRole('spinbutton', { name: 'Context window' }), '32768');
+    await user.click(within(dialog).getByRole('button', { name: 'More settings' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Add model' }));
+
+    await waitFor(() => expect(actions.addProviderModelAction).toHaveBeenCalledTimes(1));
+    const formData = actions.addProviderModelAction.mock.calls[0][1] as FormData;
+    expect(Object.fromEntries(formData)).toMatchObject({
+      workspace: 'acme',
+      providerId: 'provider-1',
+      modelId: 'openai/gpt-image-1',
+      name: 'openai/gpt-image-1',
+      group: 'openai',
+      primaryType: 'image',
+      contextWindow: '32768',
+    });
+    expect(formData.getAll('capabilities')).toEqual(['reasoning']);
+    expect(formData.getAll('inputModalities')).toEqual(['image']);
   });
 
   it('requires confirmation before deleting a provider', async () => {

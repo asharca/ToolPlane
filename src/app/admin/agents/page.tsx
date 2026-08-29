@@ -149,7 +149,9 @@ export default async function AdminAgentsPage({
             { label: <span className="sr-only">{t('edit')}</span> },
           ]}
         >
-          {result.items.map((listing) => (
+          {result.items.map((listing) => {
+            const orphanedPublisher = listing.publisherKind === 'workspace' && !listing.publisherWorkspaceId;
+            return (
             <tr key={listing.id}>
               <td className="px-4 py-3">
                 <AdminEntity
@@ -164,7 +166,9 @@ export default async function AdminAgentsPage({
               </td>
               <td className="max-w-56 px-4 py-3">
                 <p className="truncate text-sm text-foreground">
-                  {listing.author ?? listing.publisherWorkspace?.name ?? t('administrator')}
+                  {orphanedPublisher
+                    ? t('agentPublisherWorkspaceRemoved')
+                    : listing.author ?? listing.publisherWorkspace?.name ?? t('administrator')}
                 </p>
                 {listing.publisherWorkspace ? (
                   <code className="block truncate font-mono text-[11px] text-muted-foreground">
@@ -190,7 +194,8 @@ export default async function AdminAgentsPage({
                 <div className="flex min-w-36 flex-wrap gap-1.5">
                   {listing.isFeatured ? <AdminBadge tone="brand">{t('featured')}</AdminBadge> : null}
                   {listing.curated ? <AdminBadge tone="neutral">{t('curated')}</AdminBadge> : null}
-                  {!listing.isFeatured && !listing.curated ? <span className="text-sm text-muted-foreground">{t('none')}</span> : null}
+                  {orphanedPublisher ? <AdminBadge tone="danger">{t('agentPublisherMissing')}</AdminBadge> : null}
+                  {!listing.isFeatured && !listing.curated && !orphanedPublisher ? <span className="text-sm text-muted-foreground">{t('none')}</span> : null}
                 </div>
               </td>
               <td className="px-2 py-3">
@@ -200,7 +205,8 @@ export default async function AdminAgentsPage({
                 />
               </td>
             </tr>
-          ))}
+            );
+          })}
         </DashboardTable>
       )}
 

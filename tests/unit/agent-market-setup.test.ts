@@ -35,6 +35,7 @@ function install(overrides: Record<string, unknown> = {}) {
           required: true,
         },
       ],
+      runtimes: [] as Array<{ agentKey: string; kind: 'hermes'; setupRequired: true }>,
     },
     resourceMap: {
       agents: {
@@ -89,6 +90,7 @@ describe('parseAgentMarketSetupGuide', () => {
         deploymentId: 'deployment-target-1',
         variable: 'MISSING_API_KEY',
       }],
+      runtimes: [],
     });
     expect(JSON.stringify(guide)).not.toContain('live-secret-value');
     expect(JSON.stringify(guide)).not.toContain('provider-private-id');
@@ -125,6 +127,7 @@ describe('parseAgentMarketSetupGuide', () => {
         deploymentId: 'deployment-target-1',
         variable: 'MISSING_API_KEY',
       }],
+      runtimes: [],
     });
   });
 
@@ -154,5 +157,27 @@ describe('parseAgentMarketSetupGuide', () => {
       agents: [],
       deployments: [],
     })).toBeNull();
+  });
+
+  it('accepts persisted runtime requirements and links unfinished Hermes setup', () => {
+    const value = install();
+    value.requirements.runtimes = [{
+      agentKey: 'agent_2',
+      kind: 'hermes',
+      setupRequired: true,
+    }];
+    const state = current();
+    state.agents[1] = {
+      id: 'agent-target-2',
+      model: null,
+      provider: null,
+      runtimeKind: 'hermes',
+      runtime: { status: 'setup_required' },
+    };
+
+    expect(parseAgentMarketSetupGuide(value, state)?.runtimes).toEqual([{
+      agentId: 'agent-target-2',
+      kind: 'hermes',
+    }]);
   });
 });

@@ -44,10 +44,13 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
+import {
+  ModelPicker,
+  type ModelProviderOption,
+} from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 
-type Provider = { id: string; name: string; format: string; models: string[] };
+type Provider = ModelProviderOption & { format: string };
 type SaveStatus = 'idle' | 'dirty';
 export type AgentSettingsSection = 'general' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits' | 'sandboxes' | 'subAgents' | 'advanced';
 

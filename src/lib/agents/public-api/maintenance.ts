@@ -447,7 +447,7 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
       FROM "AgentPublicConversation" pc
       JOIN "AgentEndpoint" e ON e."id" = pc."endpointId"
       WHERE pc."deletingAt" IS NOT NULL
-         OR pc."createdAt" < (${now} - (e."retentionDays" * INTERVAL '1 day'))
+         OR pc."createdAt" < (CAST(${now} AS timestamp) - (e."retentionDays" * INTERVAL '1 day'))
       ORDER BY pc."updatedAt" ASC
       LIMIT 50
     `;
@@ -497,7 +497,7 @@ export async function runAgentApiMaintenance(now = new Date()): Promise<{
       FROM "AgentRun" r
       JOIN "AgentEndpoint" e ON e."id" = r."endpointId"
       WHERE r."status" IN ('completed', 'failed', 'cancelled')
-        AND r."createdAt" < (${now} - (e."retentionDays" * INTERVAL '1 day'))
+        AND r."createdAt" < (CAST(${now} AS timestamp) - (e."retentionDays" * INTERVAL '1 day'))
       ORDER BY r."createdAt" ASC
       LIMIT 500
     `;

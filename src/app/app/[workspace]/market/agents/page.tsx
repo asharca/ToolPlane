@@ -14,6 +14,7 @@ import {
   DashboardPagination,
 } from '@/components/dashboard/DashboardUI';
 import { NativeSelect } from '@/components/ui/NativeSelect';
+import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,19 +80,26 @@ export default async function AgentMarketPage({
     listAgentMarketListings({ page, pageSize: PAGE_SIZE, q, category, sort }),
   ]);
   const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
+  if (category && !categories.some((item) => item.slug === category)) {
+    redirect(marketHref(slug, { q, sort }));
+  }
   if (page > totalPages) {
     redirect(marketHref(slug, { q, category, sort, page: totalPages }));
   }
   const hasFilters = Boolean(q || category || sort !== 'popular');
+  const sortedCategories = [...categories].sort((a, b) => (
+    b._count.agentListings - a._count.agentListings || a.name.localeCompare(b.name)
+  ));
 
   return (
     <DashboardPage className="space-y-6">
       <div className="flex flex-col gap-2">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('communityAgents')}</h2>
+        <h2 className="text-2xl font-semibold text-foreground">{t('communityAgents')}</h2>
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('heroDescription')}</p>
       </div>
 
-      <form className="grid gap-2 rounded-lg border border-border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_11rem_10rem_auto]">
+      <form className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_10rem_auto]">
+        <input type="hidden" name="category" value={category} />
         <label className="relative min-w-0 sm:col-span-2 lg:col-span-1">
           <span className="sr-only">{t('searchPlaceholder')}</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -102,14 +110,6 @@ export default async function AgentMarketPage({
             className="ui-input ui-input-icon h-10 w-full"
           />
         </label>
-        <NativeSelect name="category" defaultValue={category} aria-label={t('popularUses')} className="ui-input h-10">
-          <option value="">{t('browseAll')}</option>
-          {categories.map((item) => (
-            <option key={item.slug} value={item.slug}>
-              {item.name} ({item._count.agentListings})
-            </option>
-          ))}
-        </NativeSelect>
         <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortLabel')} className="ui-input h-10">
           <option value="popular">{t('mostCloned')}</option>
           <option value="newest">{t('newest')}</option>
@@ -121,27 +121,43 @@ export default async function AgentMarketPage({
         </button>
       </form>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-        <span>{t('resultCount', { count: result.total })}</span>
-        {hasFilters ? (
-          <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">
-            {t('clearFilters')}
-          </Link>
-        ) : null}
-      </div>
-
-      {result.items.length === 0 ? (
-        <DashboardEmptyState
-          icon={Bot}
-          title={hasFilters ? t('noSearchResultsTitle') : t('emptyTitle')}
-          description={hasFilters ? t('noSearchResultsDescription') : t('emptyDescription')}
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
+        <MarketCategorySidebar
+          label={t('popularUses')}
+          allLabel={t('browseAll')}
+          allHref={marketHref(slug, { q, sort })}
+          allCount={result.availableTotal ?? result.total}
+          allActive={!category}
+          categories={sortedCategories.map((item) => ({
+            name: item.name,
+            count: item._count.agentListings,
+            active: item.slug === category,
+            href: marketHref(slug, { q, sort, category: item.slug === category ? undefined : item.slug }),
+          }))}
         />
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {result.items.map((agent) => {
-            const detailHref = `/app/${encodeURIComponent(slug)}/market/agents/${encodeURIComponent(agent.id)}`;
-            return (
-              <article key={agent.id} className="ui-panel flex min-w-0 flex-col p-4">
+
+        <div className="min-w-0 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+            <span>{t('resultCount', { count: result.total })}</span>
+            {hasFilters ? (
+              <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">
+                {t('clearFilters')}
+              </Link>
+            ) : null}
+          </div>
+
+          {result.items.length === 0 ? (
+            <DashboardEmptyState
+              icon={Bot}
+              title={hasFilters ? t('noSearchResultsTitle') : t('emptyTitle')}
+              description={hasFilters ? t('noSearchResultsDescription') : t('emptyDescription')}
+            />
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {result.items.map((agent) => {
+                const detailHref = `/app/${encodeURIComponent(slug)}/market/agents/${encodeURIComponent(agent.id)}`;
+                return (
+                  <article key={agent.id} className="ui-panel flex min-w-0 flex-col p-4">
                 <div className="flex items-start gap-3">
                   {agent.iconUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -199,20 +215,22 @@ export default async function AgentMarketPage({
                     <Plus className="size-4" /> {t('addAgent')}
                   </Link>
                 </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
 
-      <DashboardPagination
-        page={result.page}
-        lastPage={totalPages}
-        summary={t('pageOf', { page: result.page, total: totalPages })}
-        previousLabel={t('previous')}
-        nextLabel={t('next')}
-        hrefForPage={(nextPage) => marketHref(slug, { q, category, sort, page: nextPage })}
-      />
+          <DashboardPagination
+            page={result.page}
+            lastPage={totalPages}
+            summary={t('pageOf', { page: result.page, total: totalPages })}
+            previousLabel={t('previous')}
+            nextLabel={t('next')}
+            hrefForPage={(nextPage) => marketHref(slug, { q, category, sort, page: nextPage })}
+          />
+        </div>
+      </div>
     </DashboardPage>
   );
 }

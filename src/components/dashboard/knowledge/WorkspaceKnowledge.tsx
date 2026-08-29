@@ -4,7 +4,10 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
 import { ChevronDown, Cpu, FileText, FileUp, LibraryBig, Plus, RefreshCw, Search, Settings2, Trash2, Users } from 'lucide-react';
-import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
+import {
+  ModelPicker,
+  type ModelProviderOption,
+} from '@/components/dashboard/models/ModelPicker';
 
 type KnowledgeBase = {
   id: string;
@@ -37,7 +40,7 @@ export function WorkspaceKnowledge({
 }: {
   slug: string;
   initialBases: KnowledgeBase[];
-  providers: Array<{ id: string; name: string; models: string[] }>;
+  providers: ModelProviderOption[];
   sandboxes: Array<{ id: string; name: string; running: boolean }>;
   agents: Array<{ id: string; name: string }>;
 }) {

@@ -12,6 +12,7 @@ import {
   summarizeAgentReleaseManifest,
   type AgentReleaseManifestV1,
 } from '@/lib/agents/market';
+import { scanAgentReleaseManifest } from '@/lib/market/secret-scan';
 
 const PAGE_SIZE = 25;
 
@@ -56,7 +57,9 @@ export class AdminAgentMarketError extends Error {
       | 'pending_release_exists'
       | 'invalid_config'
       | 'invalid_release'
+      | 'invalid_categories'
       | 'publish_without_release'
+      | 'orphaned_publisher'
       | 'installed',
     message: string,
     readonly count?: number,
@@ -89,6 +92,33 @@ export function normalizeAgentListingTags(values: readonly string[]): string[] {
     .map((value) => value.trim().toLocaleLowerCase().slice(0, 40))
     .filter(Boolean))]
     .slice(0, 20);
+}
+
+async function checkedCategoryIds(
+  tx: Prisma.TransactionClient,
+  values: readonly string[],
+): Promise<string[]> {
+  const categoryIds = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  if (categoryIds.length === 0 || categoryIds.length > 20) {
+    throw new AdminAgentMarketError('invalid_categories', 'Select at least one valid category.');
+  }
+  const count = await tx.category.count({ where: { id: { in: categoryIds } } });
+  if (count !== categoryIds.length) {
+    throw new AdminAgentMarketError('invalid_categories', 'One or more selected categories do not exist.');
+  }
+  return categoryIds;
+}
+
+function assertPublishableOrigin(listing: {
+  publisherKind: string;
+  publisherWorkspaceId: string | null;
+}) {
+  if (listing.publisherKind === 'workspace' && !listing.publisherWorkspaceId) {
+    throw new AdminAgentMarketError(
+      'orphaned_publisher',
+      'The publisher workspace no longer exists. Disable this listing instead of publishing it.',
+    );
+  }
 }
 
 export async function listDirectoryAgentListings({
@@ -134,6 +164,8 @@ export async function listDirectoryAgentListings({
         latestVersion: true,
         installCount: true,
         updatedAt: true,
+        publisherKind: true,
+        publisherWorkspaceId: true,
         publisherWorkspace: { select: { slug: true, name: true } },
         pendingRelease: { select: { id: true, version: true, publishedAt: true } },
         _count: { select: { releases: true } },
@@ -155,6 +187,7 @@ const RELEASE_ADMIN_SELECT = {
   summary: true,
   iconUrl: true,
   tags: true,
+  categoryIds: true,
   reviewStatus: true,
   reviewedById: true,
   reviewedAt: true,
@@ -234,6 +267,13 @@ async function buildReleaseArtifact(
     }
     throw error;
   }
+  const scan = scanAgentReleaseManifest(manifest, metadata.summary);
+  if (scan.status === 'blocked') {
+    throw new AdminAgentMarketError(
+      'invalid_config',
+      'Remove possible credentials from the agent before publishing it.',
+    );
+  }
   return {
     manifest,
     releaseSummary: summarizeAgentReleaseManifest(manifest),
@@ -247,9 +287,11 @@ export async function createDirectoryAgentTemplate(
 ) {
   try {
     return await db.$transaction(async (tx) => {
+      const categoryIds = await checkedCategoryIds(tx, input.categoryIds);
       const artifact = await buildReleaseArtifact(tx, input, input);
       const listing = await tx.agentListing.create({
         data: {
+          publisherKind: 'platform',
           publisherWorkspaceId: null,
           publishedById: null,
           sourceAgentId: null,
@@ -263,7 +305,7 @@ export async function createDirectoryAgentTemplate(
           status: input.status,
           curated: input.curated,
           isFeatured: input.isFeatured,
-          categories: { connect: input.categoryIds.map((id) => ({ id })) },
+          categories: { connect: categoryIds.map((id) => ({ id })) },
         },
         select: { id: true },
       });
@@ -279,6 +321,7 @@ export async function createDirectoryAgentTemplate(
           summary: input.summary,
           iconUrl: input.iconUrl,
           tags: normalizeAgentListingTags(input.tags),
+          categoryIds,
           reviewStatus: 'approved',
           reviewedById,
           reviewedAt: new Date(),
@@ -319,10 +362,13 @@ export async function updateDirectoryAgentListing(
 ) {
   try {
     return await db.$transaction(async (tx) => {
+      const categoryIds = await checkedCategoryIds(tx, input.categoryIds);
       const existing = await tx.agentListing.findUnique({
         where: { id },
         select: {
           id: true,
+          publisherKind: true,
+          publisherWorkspaceId: true,
           latestReleaseId: true,
           pendingReleaseId: true,
           publishedAt: true,
@@ -339,6 +385,7 @@ export async function updateDirectoryAgentListing(
         },
       });
       if (!existing) throw new AdminAgentMarketError('not_found', 'Agent listing not found.');
+      if (input.status === 'published') assertPublishableOrigin(existing);
 
       const tags = normalizeAgentListingTags(input.tags);
       let releaseId = existing.latestReleaseId;
@@ -373,6 +420,7 @@ export async function updateDirectoryAgentListing(
               summary: input.summary,
               iconUrl: input.iconUrl,
               tags,
+              categoryIds,
               reviewStatus: 'approved',
               reviewedById,
               reviewedAt: new Date(),
@@ -405,7 +453,7 @@ export async function updateDirectoryAgentListing(
           curated: input.curated,
           isFeatured: input.isFeatured,
           status: input.status,
-          categories: { set: input.categoryIds.map((categoryId) => ({ id: categoryId })) },
+          categories: { set: categoryIds.map((categoryId) => ({ id: categoryId })) },
           ...(releaseId ? { latestReleaseId: releaseId } : {}),
           ...(latestVersion ? { latestVersion } : {}),
           publishedAt,
@@ -428,13 +476,20 @@ export async function approvePendingAgentRelease(input: {
   releaseId: string;
   reviewedById: string;
   reviewNote?: string | null;
+  categoryIds?: string[];
 }) {
   return db.$transaction(async (tx) => {
     const listing = await tx.agentListing.findUnique({
       where: { id: input.listingId },
-      select: { id: true, pendingReleaseId: true },
+      select: {
+        id: true,
+        publisherKind: true,
+        publisherWorkspaceId: true,
+        pendingReleaseId: true,
+      },
     });
     if (!listing) throw new AdminAgentMarketError('not_found', 'Agent listing not found.');
+    assertPublishableOrigin(listing);
     if (listing.pendingReleaseId !== input.releaseId) {
       throw new AdminAgentMarketError('release_not_pending', 'This release is no longer pending review.');
     }
@@ -449,6 +504,7 @@ export async function approvePendingAgentRelease(input: {
         summary: true,
         iconUrl: true,
         tags: true,
+        categoryIds: true,
         manifestVersion: true,
         manifest: true,
         checksum: true,
@@ -470,11 +526,21 @@ export async function approvePendingAgentRelease(input: {
       );
     }
 
+    const scan = scanAgentReleaseManifest(manifest, release.summary);
+    if (scan.status === 'blocked') {
+      throw new AdminAgentMarketError(
+        'invalid_release',
+        'The pending release contains possible credentials.',
+      );
+    }
+    const categoryIds = await checkedCategoryIds(tx, input.categoryIds ?? release.categoryIds);
+
     const reviewedAt = new Date();
     await tx.agentRelease.update({
       where: { id: release.id },
       data: {
         reviewStatus: 'approved',
+        categoryIds,
         releaseSummary: summarizeAgentReleaseManifest(manifest) as Prisma.InputJsonValue,
         reviewedById: input.reviewedById,
         reviewedAt,
@@ -494,6 +560,7 @@ export async function approvePendingAgentRelease(input: {
         latestReleaseId: release.id,
         pendingReleaseId: null,
         publishedAt: reviewedAt,
+        categories: { set: categoryIds.map((id) => ({ id })) },
       },
       select: { id: true, directorySlug: true, status: true },
     });
@@ -553,12 +620,16 @@ export async function setDirectoryAgentListingStatus(
       where: { id },
       select: {
         id: true,
+        publisherKind: true,
+        publisherWorkspaceId: true,
         latestReleaseId: true,
         publishedAt: true,
         latestRelease: { select: { reviewStatus: true } },
+        _count: { select: { categories: true } },
       },
     });
     if (!listing) throw new AdminAgentMarketError('not_found', 'Agent listing not found.');
+    if (status === 'published') assertPublishableOrigin(listing);
     if (
       status === 'published'
       && (!listing.latestReleaseId || listing.latestRelease?.reviewStatus !== 'approved')
@@ -566,6 +637,12 @@ export async function setDirectoryAgentListingStatus(
       throw new AdminAgentMarketError(
         'publish_without_release',
         'An agent listing needs an approved release before it can be published.',
+      );
+    }
+    if (status === 'published' && listing._count.categories === 0) {
+      throw new AdminAgentMarketError(
+        'invalid_categories',
+        'An agent listing needs at least one category before it can be published.',
       );
     }
     return tx.agentListing.update({

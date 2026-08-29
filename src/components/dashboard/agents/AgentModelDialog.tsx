@@ -23,9 +23,13 @@ import {
 } from '@/components/ui/Dialog';
 import { updateAgentModelAction, type ActionState } from '@/lib/agents/actions';
 import { agentRuntimeSupportsProviderFormat } from '@/lib/agents/runtime-kind';
-import { ModelPicker, type ModelSelection } from '@/components/dashboard/models/ModelPicker';
+import {
+  ModelPicker,
+  type ModelProviderOption,
+  type ModelSelection,
+} from '@/components/dashboard/models/ModelPicker';
 
-type Provider = { id: string; name: string; format: string; models: string[] };
+type Provider = ModelProviderOption & { format: string };
 
 type ModelAgent = {
   id: string;

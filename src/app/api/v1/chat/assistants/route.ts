@@ -1,4 +1,4 @@
-import { resolveRequestUser } from '@/lib/auth/request-user';
+import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { CreateChatAssistantSchema } from '@/lib/chat/schemas';
 import {
   ChatServiceError,
@@ -15,7 +15,7 @@ function failure(error: unknown) {
 }
 
 export async function GET(req: Request) {
-  const user = await resolveRequestUser(req);
+  const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const workspaceId = new URL(req.url).searchParams.get('workspaceId')?.trim();
   if (!workspaceId) return Response.json({ error: 'workspaceId is required' }, { status: 400 });
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const user = await resolveRequestUser(req);
+  const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
   try { raw = await req.json(); } catch { return Response.json({ error: 'Bad request' }, { status: 400 }); }

@@ -10,6 +10,16 @@ export async function resolveRequestUser(req: Request) {
   return getCurrentUser();
 }
 
+// Account-level routes accept dashboard sessions and personal API tokens, but
+// toolkit install tokens must stay scoped to their toolkit.
+export async function resolveAccountRequestUser(req: Request) {
+  const authorization = req.headers.get('authorization');
+  if (!authorization) return getCurrentUser();
+  const context = await verifyApiTokenContext(authorization);
+  if (!context || context.token.toolkitId) return null;
+  return context.user;
+}
+
 // Agent-control calls can create resources and invoke tools, so they require an
 // explicit account-level Bearer token. Toolkit tokens and cookie-only browser
 // sessions must never inherit this write capability.

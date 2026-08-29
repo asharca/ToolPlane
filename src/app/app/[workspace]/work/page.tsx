@@ -106,6 +106,12 @@ export default async function WorkspaceWorkPage({
           name: provider.name,
           format: provider.format,
           models: provider.models,
+          modelRecords: (provider.modelRecords ?? []).map((model) => ({
+            modelId: model.modelId,
+            primaryType: model.primaryType,
+            capabilities: model.capabilities,
+            inputModalities: model.inputModalities,
+          })),
         }))}
         agents={agents
           .map((agent) => {

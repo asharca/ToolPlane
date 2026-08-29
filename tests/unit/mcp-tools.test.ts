@@ -10,7 +10,13 @@ type RpcResponse = {
   result?: {
     serverInfo?: { name: string; version: string };
     protocolVersion?: string;
+    capabilities?: { prompts?: { listChanged?: boolean } };
     tools?: unknown[];
+    prompts?: unknown[];
+    messages?: Array<{
+      role?: string;
+      content?: { type?: string; text?: string };
+    }>;
     content?: Array<{ type?: string; text: string }>;
   };
   error?: { code: number; message?: string };
@@ -24,6 +30,11 @@ const createRpcHandler = mcp.createRpcHandler as (
   opts?: { name?: string; version?: string },
 ) => (msg: unknown) => RpcResponse | null;
 const TOOLS = mcp.TOOLS as Array<{ name: string }>;
+const PROMPTS = mcp.PROMPTS as Array<{ name: string }>;
+const getPrompt = mcp.getPrompt as (
+  name: string,
+  args?: Record<string, unknown>,
+) => { messages: Array<{ content: { text: string } }> } | null;
 
 describe('MCP tool dispatch', () => {
   it('exposes the expected tool catalog', () => {
@@ -64,6 +75,25 @@ describe('MCP tool dispatch', () => {
   });
 });
 
+describe('MCP prompt dispatch', () => {
+  it('exposes the expected prompt catalog', () => {
+    expect(PROMPTS.map((prompt) => prompt.name)).toEqual([
+      'summarize_text',
+      'rewrite_for_audience',
+    ]);
+  });
+
+  it('renders a prompt with the supplied arguments', () => {
+    expect(getPrompt('rewrite_for_audience', {
+      text: 'Ship it',
+      audience: 'a product manager',
+    })?.messages[0].content.text).toBe(
+      'Rewrite the following text for a product manager:\n\nShip it',
+    );
+    expect(getPrompt('nope')).toBeNull();
+  });
+});
+
 describe('createRpcHandler', () => {
   const handle = createRpcHandler({ name: 'TestSrv', version: '9.9.9' });
 
@@ -71,6 +101,7 @@ describe('createRpcHandler', () => {
     const res = handle({ jsonrpc: '2.0', id: 1, method: 'initialize' });
     expect(res?.result?.serverInfo).toEqual({ name: 'TestSrv', version: '9.9.9' });
     expect(res?.result?.protocolVersion).toBe('2025-06-18');
+    expect(res?.result?.capabilities?.prompts).toEqual({ listChanged: false });
   });
 
   it('lists tools', () => {
@@ -88,6 +119,19 @@ describe('createRpcHandler', () => {
     expect(res?.result?.content?.[0]?.text).toBe('30');
   });
 
+  it('lists and resolves prompts', () => {
+    const listed = handle({ jsonrpc: '2.0', id: 4, method: 'prompts/list' });
+    expect(listed?.result?.prompts).toHaveLength(2);
+
+    const resolved = handle({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'prompts/get',
+      params: { name: 'summarize_text', arguments: { text: 'A long update' } },
+    });
+    expect(resolved?.result?.messages?.[0]?.content?.text).toContain('A long update');
+  });
+
   it('errors on unknown tool and unknown method', () => {
     const unknownTool = handle({
       jsonrpc: '2.0',
@@ -96,7 +140,14 @@ describe('createRpcHandler', () => {
       params: { name: 'ghost' },
     });
     expect(unknownTool?.error?.code).toBe(-32602);
-    const unknownMethod = handle({ jsonrpc: '2.0', id: 5, method: 'foo/bar' });
+    const unknownPrompt = handle({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'prompts/get',
+      params: { name: 'ghost' },
+    });
+    expect(unknownPrompt?.error?.code).toBe(-32602);
+    const unknownMethod = handle({ jsonrpc: '2.0', id: 6, method: 'foo/bar' });
     expect(unknownMethod?.error?.code).toBe(-32601);
   });
 

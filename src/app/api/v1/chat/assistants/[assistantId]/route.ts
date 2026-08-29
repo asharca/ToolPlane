@@ -1,4 +1,4 @@
-import { resolveRequestUser } from '@/lib/auth/request-user';
+import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { UpdateChatAssistantSchema } from '@/lib/chat/schemas';
 import {
   ChatServiceError,
@@ -16,7 +16,7 @@ function failure(error: unknown) {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
-  const user = await resolveRequestUser(req);
+  const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { assistantId } = await params;
   const assistant = await getChatAssistantForUser(user.id, assistantId);
@@ -26,7 +26,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ assistan
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
-  const user = await resolveRequestUser(req);
+  const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
   try { raw = await req.json(); } catch { return Response.json({ error: 'Bad request' }, { status: 400 }); }
@@ -41,7 +41,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ assist
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
-  const user = await resolveRequestUser(req);
+  const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const { assistantId } = await params;

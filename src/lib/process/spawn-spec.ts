@@ -12,6 +12,14 @@ import { parseDockerJsonArgs } from '@/lib/workspace/docker-json-command';
 export type SpawnSpec =
   | { kind: 'builtin'; name: string }
   | {
+      kind: 'remote';
+      name: string;
+      url: string;
+      transport: 'streamable-http' | 'sse';
+      headers: Record<string, string>;
+      timeoutMs: number;
+    }
+  | {
       kind: 'bridge';
       name: string;
       command: string;
@@ -58,6 +66,105 @@ export type DockerSpawnSpec = {
 
 function splitArgs(s: string | undefined): string[] {
   return s ? s.split(/\s+/).filter(Boolean) : [];
+}
+
+const REMOTE_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const REMOTE_BLOCKED_HEADERS = new Set([
+  'connection',
+  'content-length',
+  'constructor',
+  'host',
+  'mcp-protocol-version',
+  'mcp-session-id',
+  'prototype',
+  'transfer-encoding',
+  'upgrade',
+  '__proto__',
+]);
+
+function hasExplicitPort(value: string): boolean {
+  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
+  const host = authority.slice(authority.lastIndexOf('@') + 1);
+  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
+}
+
+function readRemoteCfg(
+  sourceRef: string | null,
+  installCfg: unknown,
+): Omit<Extract<SpawnSpec, { kind: 'remote' }>, 'kind' | 'name'> {
+  let url: URL;
+  try {
+    url = new URL(sourceRef ?? '');
+  } catch {
+    throw new Error('Remote MCP URL is invalid.');
+  }
+  if (url.protocol !== 'https:') throw new Error('Remote MCP URL must use HTTPS.');
+  if (url.username || url.password || hasExplicitPort(sourceRef ?? '') || url.search || url.hash) {
+    throw new Error('Remote MCP URL cannot contain credentials, a custom port, query parameters, or a fragment.');
+  }
+
+  if (!installCfg || typeof installCfg !== 'object' || Array.isArray(installCfg)) {
+    throw new Error('Remote MCP configuration is invalid.');
+  }
+  const cfg = installCfg as Record<string, unknown>;
+  const transport = cfg.transport ?? 'streamable-http';
+  if (transport !== 'streamable-http' && transport !== 'sse') {
+    throw new Error('Remote MCP transport must be streamable-http or sse.');
+  }
+  const authType = cfg.authType ?? 'none';
+  if (authType !== 'none' && authType !== 'bearer' && authType !== 'headers') {
+    throw new Error('Remote MCP authentication type is invalid.');
+  }
+  const timeoutMs = cfg.timeoutMs ?? 60_000;
+  if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 1_000 || Number(timeoutMs) > 600_000) {
+    throw new Error('Remote MCP timeout must be between 1000 and 600000 milliseconds.');
+  }
+  const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
+    ? cfg.env as Record<string, unknown>
+    : {};
+  const envValue = (key: unknown): string => {
+    if (typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error('Remote MCP credential reference is invalid.');
+    }
+    const value = env[key];
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`Remote MCP credential ${key} is not configured.`);
+    }
+    return value;
+  };
+
+  const headers: Record<string, string> = {};
+  if (authType === 'bearer') {
+    headers.authorization = `Bearer ${envValue(cfg.bearerEnv)}`;
+  } else if (authType === 'headers') {
+    if (!cfg.headerEnv || typeof cfg.headerEnv !== 'object' || Array.isArray(cfg.headerEnv)) {
+      throw new Error('Remote MCP custom header configuration is invalid.');
+    }
+    const entries = Object.entries(cfg.headerEnv as Record<string, unknown>);
+    if (entries.length === 0 || entries.length > 32) {
+      throw new Error('Remote MCP custom headers must contain between 1 and 32 entries.');
+    }
+    const seen = new Set<string>();
+    for (const [rawName, envKey] of entries) {
+      const name = rawName.toLowerCase();
+      if (!REMOTE_HEADER_NAME_RE.test(rawName) || REMOTE_BLOCKED_HEADERS.has(name) || seen.has(name)) {
+        throw new Error('A remote MCP header is not allowed.');
+      }
+      const value = envValue(envKey);
+      if (value.length > 8_192 || /[\r\n]/.test(value)) {
+        throw new Error('A remote MCP header has an invalid value.');
+      }
+      seen.add(name);
+      headers[rawName] = value;
+    }
+  }
+
+  return {
+    url: url.href,
+    transport,
+    headers,
+    timeoutMs: Number(timeoutMs),
+  };
 }
 
 // Every custom MCP runs in its own hardened, throwaway container (see
@@ -253,6 +360,14 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       ...(cfg.runtimeId ? { runtimeId: cfg.runtimeId } : {}),
       ...(cfg.runtimeModelName ? { runtimeModelName: cfg.runtimeModelName } : {}),
       ...(cfg.allowSudo ? { allowSudo: true } : {}),
+    };
+  }
+
+  if (d.source === 'remote') {
+    return {
+      kind: 'remote',
+      name: d.name ?? d.server?.name ?? 'Remote MCP',
+      ...readRemoteCfg(d.sourceRef, d.installCfg),
     };
   }
 

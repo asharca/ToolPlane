@@ -1,9 +1,11 @@
 import { Copy } from 'lucide-react';
+import { SITE } from '@/lib/site';
 import { EntityCard, formatCount } from './EntityCard';
 
 export type AgentListingCardData = {
   id: string;
   slug: string;
+  directorySlug: string;
   name: string;
   author: string | null;
   summary: string | null;
@@ -20,14 +22,16 @@ export function AgentListingCard({
   agent: AgentListingCardData;
   installLabel: string;
 }) {
-  if (!agent.publisherWorkspace) return null;
+  const href = agent.publisherWorkspace
+    ? `/agents/${encodeURIComponent(agent.publisherWorkspace.slug)}/${encodeURIComponent(agent.slug)}`
+    : `/agents/${encodeURIComponent(agent.directorySlug)}`;
 
   return (
     <EntityCard
-      href={`/agents/${encodeURIComponent(agent.publisherWorkspace.slug)}/${encodeURIComponent(agent.slug)}`}
+      href={href}
       name={agent.name}
       description={agent.summary}
-      author={agent.author ?? agent.publisherWorkspace.name}
+      author={agent.author ?? agent.publisherWorkspace?.name ?? SITE.name}
       iconUrl={agent.iconUrl}
       category={agent.categories[0]?.name ?? null}
       stat={

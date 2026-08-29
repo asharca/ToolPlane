@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
-const mocks = vi.hoisted(() => ({ conversation: vi.fn(), refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({ conversation: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh: mocks.refresh }),
+  useRouter: () => ({ push: mocks.push, refresh: mocks.refresh }),
 }));
 
 vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
@@ -31,27 +31,30 @@ function renderChat(
   branch?: Parameters<typeof WorkspaceAssistantChat>[0]['branch'],
   startCreating = false,
   providers: Parameters<typeof WorkspaceAssistantChat>[0]['providers'] = [
-    { id: 'provider-1', name: 'Provider', models: ['model-1'] },
-    { id: 'provider-2', name: 'Second provider', models: ['model-2'] },
+    { id: 'provider-1', name: 'Provider', format: 'openai', models: ['model-1'] },
+    { id: 'provider-2', name: 'Second provider', format: 'anthropic', models: ['model-2'] },
   ],
+  marketTemplate: Parameters<typeof WorkspaceAssistantChat>[0]['marketTemplate'] = null,
+  marketTemplates: Parameters<typeof WorkspaceAssistantChat>[0]['marketTemplates'] = [],
+  assistants: Parameters<typeof WorkspaceAssistantChat>[0]['assistants'] = [{
+    id: 'assistant-1',
+    name: 'Helper',
+    systemPrompt: null,
+    modelProviderId: 'provider-1',
+    model: 'model-1',
+    maxSteps: 8,
+    providerName: 'Provider',
+    deploymentIds: [],
+    threads: [{
+      id: 'thread-1',
+      title: 'First thread',
+      createdAt: '2026-08-25T00:00:00.000Z',
+      lastMessageAt: null,
+    }],
+  }],
 ) {
   return render(<WorkspaceAssistantChat
-    assistants={[{
-      id: 'assistant-1',
-      name: 'Helper',
-      systemPrompt: null,
-      modelProviderId: 'provider-1',
-      model: 'model-1',
-      maxSteps: 8,
-      providerName: 'Provider',
-      deploymentIds: [],
-      threads: [{
-        id: 'thread-1',
-        title: 'First thread',
-        createdAt: '2026-08-25T00:00:00.000Z',
-        lastMessageAt: null,
-      }],
-    }]}
+    assistants={assistants}
     deployments={[]}
     initialMessages={[]}
     providers={providers}
@@ -59,6 +62,8 @@ function renderChat(
     selectedThreadId="thread-1"
     slug="acme"
     startCreating={startCreating}
+    marketTemplate={marketTemplate}
+    marketTemplates={marketTemplates}
     workspaceId="workspace-1"
     branch={branch}
   />);
@@ -79,6 +84,72 @@ describe('WorkspaceAssistantChat', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
     expect(screen.getByRole('spinbutton', { name: 'Maximum MCP steps' })).toHaveAttribute('max', '20');
+  });
+
+  it('moves a dragged chat to another assistant', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      thread: { id: 'thread-1', assistantId: 'assistant-2' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderChat(undefined, false, undefined, null, [], [
+      {
+        id: 'assistant-1',
+        name: 'Helper',
+        systemPrompt: null,
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+        maxSteps: 8,
+        providerName: 'Provider',
+        deploymentIds: [],
+        threads: [{
+          id: 'thread-1',
+          title: 'First thread',
+          createdAt: '2026-08-25T00:00:00.000Z',
+          lastMessageAt: null,
+        }],
+      },
+      {
+        id: 'assistant-2',
+        name: 'Writer',
+        systemPrompt: null,
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+        maxSteps: 8,
+        providerName: 'Provider',
+        deploymentIds: [],
+        threads: [],
+      },
+    ]);
+    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+    const sourceAssistant = screen.getByRole('link', { name: 'Helper' });
+    const targetAssistant = screen.getByRole('link', { name: 'Writer' });
+    const sourceDisclosure = screen.getByRole('button', { name: 'Helper' });
+    const targetDisclosure = screen.getByRole('button', { name: 'Writer' });
+    expect(sourceAssistant.firstElementChild).toHaveClass('size-6');
+    expect(sourceAssistant.parentElement?.lastElementChild).toBe(sourceDisclosure);
+    expect(targetAssistant.parentElement?.lastElementChild).toBe(targetDisclosure);
+    expect(sourceDisclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(targetDisclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('No conversations yet.')).toBeInTheDocument();
+    fireEvent.click(targetDisclosure);
+    expect(targetDisclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('No conversations yet.')).not.toBeInTheDocument();
+    fireEvent.click(targetDisclosure);
+    const source = screen.getByRole('link', { name: 'First thread' }).closest('li')!;
+    const target = targetAssistant.parentElement!;
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/chat/threads/thread-1', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assistantId: 'assistant-2' }),
+      });
+      expect(mocks.push).toHaveBeenCalledWith('/app/acme/chat?assistant=assistant-2&thread=thread-1');
+    });
   });
 
   it('keeps editor values and shows the server error when saving fails', async () => {
@@ -139,6 +210,70 @@ describe('WorkspaceAssistantChat', () => {
     await userEvent.click(next);
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('button', { name: 'Create assistant' })).toBeEnabled();
+  });
+
+  it('prefills a selected market assistant template', async () => {
+    renderChat(undefined, true, undefined, {
+      releaseId: 'release-1',
+      name: 'Market researcher',
+      summary: 'Researches primary sources.',
+      tags: ['research'],
+      systemPrompt: 'Use primary sources.',
+      maxSteps: 12,
+      providerFormat: 'anthropic',
+      model: 'model-2',
+      deploymentIds: [],
+    });
+
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
+    expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Market template selected' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('textbox', { name: 'System prompt' })).toHaveValue('Use primary sources.');
+  });
+
+  it('shows unresolved market template MCP requirements before creation', async () => {
+    renderChat(undefined, true, undefined, {
+      releaseId: 'release-1',
+      name: 'Market researcher',
+      summary: null,
+      tags: [],
+      systemPrompt: null,
+      maxSteps: 8,
+      providerFormat: null,
+      model: null,
+      deploymentIds: [],
+      missingMcpNames: ['Search MCP'],
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Required MCP servers are not installed: Search MCP.');
+    expect(screen.getByRole('link', { name: 'Browse MCP market' })).toHaveAttribute('href', '/app/acme/market/mcp');
+  });
+
+  it('selects an assistant market template without leaving the creator', async () => {
+    const user = userEvent.setup();
+    const template = {
+      releaseId: 'release-1',
+      name: 'Market researcher',
+      summary: 'Researches primary sources.',
+      tags: ['research'],
+      systemPrompt: 'Use primary sources.',
+      maxSteps: 12,
+      providerFormat: 'anthropic',
+      model: 'model-2',
+      deploymentIds: [],
+    };
+    renderChat(undefined, true, undefined, null, [template]);
+
+    expect(screen.queryByRole('link', { name: 'Choose from assistant market' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Choose from assistant market' }));
+    await user.click(screen.getByRole('button', { name: /Market researcher/ }));
+
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
+    expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
   });
 
   it('switches the active assistant model from the shared picker', async () => {

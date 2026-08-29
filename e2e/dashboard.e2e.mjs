@@ -23,7 +23,9 @@ async function step(name, fn) {
 }
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ baseURL: BASE });
+const context = await browser.newContext({ baseURL: BASE, locale: 'en-US' });
+await context.addCookies([{ name: 'NEXT_LOCALE', value: 'en', url: BASE }]);
+const page = await context.newPage();
 page.setDefaultTimeout(20000);
 
 try {
@@ -32,44 +34,45 @@ try {
     await page.fill('input[name="name"]', 'E2E User');
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="password"]', password);
-    await page.getByRole('button', { name: 'Sign up' }).click();
-    await page.waitForURL('**/app/**/mcp', { timeout: 20000 });
+    await page.locator('form button[type="submit"]').click();
+    await page.waitForURL('**/app/**/chat', { timeout: 20000 });
   });
 
   let slug = '';
   await step('bootstrap workspace via /app', async () => {
     await page.goto('/app');
-    await page.waitForURL('**/app/**/mcp', { timeout: 20000 });
-    const m = /\/app\/([^/]+)\/mcp/.exec(page.url());
-    assert(m, `expected /app/<slug>/mcp, got ${page.url()}`);
+    await page.waitForURL('**/app/**/chat', { timeout: 20000 });
+    const m = /\/app\/([^/]+)\//.exec(page.url());
+    assert(m, `expected /app/<slug>/..., got ${page.url()}`);
     slug = m[1];
   });
 
   await step('deploy the first MCP server', async () => {
-    await page.goto(`/app/${slug}/mcp/new`);
-    await page.getByRole('button', { name: 'Deploy' }).first().click();
-    await page.getByText('Deployed').first().waitFor({ timeout: 20000 });
+    await page.goto(`/app/${slug}/market/mcp`);
+    await page.getByRole('button', { name: 'Add to workspace' }).first().click();
+    await page.waitForURL(`**/app/${slug}/mcp/**`, { timeout: 20000 });
   });
 
   await step('deployed server shows Running', async () => {
     await page.goto(`/app/${slug}/mcp`);
-    await page.getByText('Running').first().waitFor({ timeout: 20000 });
+    await page.locator('table').getByText('Running', { exact: true }).waitFor({ timeout: 60000 });
   });
 
   await step('stop the deployment', async () => {
-    await page.getByRole('button', { name: 'Stop' }).first().click();
-    await page.getByText('Stopped').first().waitFor({ timeout: 20000 });
+    await page.locator('table').getByRole('button', { name: 'Stop', exact: true }).click();
+    await page.locator('table').getByText('Stopped', { exact: true }).waitFor({ timeout: 60000 });
   });
 
   await step('start the deployment again', async () => {
-    await page.getByRole('button', { name: 'Start' }).first().click();
-    await page.getByText('Running').first().waitFor({ timeout: 20000 });
+    await page.locator('table').getByRole('button', { name: 'Start', exact: true }).click();
+    await page.waitForURL(new RegExp(`/app/${slug}/mcp/[^/]+`), { timeout: 60000 });
+    await page.locator('dl dd', { hasText: /^running$/ }).first().waitFor({ timeout: 60000 });
   });
 
   await step('install the first skill', async () => {
-    await page.goto(`/app/${slug}/skills/new`);
+    await page.goto(`/app/${slug}/market/skills`);
     await page.getByRole('button', { name: 'Install' }).first().click();
-    await page.getByText('Installed').first().waitFor({ timeout: 20000 });
+    await page.getByText('Installed', { exact: true }).first().waitFor({ timeout: 20000 });
   });
 
   await step('installed skill appears with a download link', async () => {

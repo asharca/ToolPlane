@@ -13,6 +13,7 @@ import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from '@/lib/agents/public-api/tool-
 export type AgentResourceOption = {
   id: string;
   label: string;
+  catalogSlug?: string | null;
   description: string | null;
   source: string;
   status: string;
@@ -130,7 +131,11 @@ const ORDINARY_AGENT_FILTER = {
 } as const;
 
 export async function listProviders(workspaceId: string) {
-  return db.modelProvider.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
+  return db.modelProvider.findMany({
+    where: { workspaceId },
+    include: { modelRecords: { orderBy: [{ group: 'asc' }, { name: 'asc' }] } },
+    orderBy: { createdAt: 'asc' },
+  });
 }
 
 export async function listAgentDeploymentOptions(
@@ -150,7 +155,14 @@ export async function listAgentDeploymentOptions(
       name: true,
       source: true,
       sourceRef: true,
-      server: { select: { name: true, slug: true, description: true } },
+      server: {
+        select: {
+          name: true,
+          slug: true,
+          description: true,
+          categories: { select: { slug: true } },
+        },
+      },
     },
   });
   const statuses = effectiveStatuses(deployments);
@@ -160,10 +172,16 @@ export async function listAgentDeploymentOptions(
     return {
       id: deployment.id,
       label: label.name,
+      catalogSlug: deployment.server?.slug ?? null,
       description: deployment.server?.description ?? label.ref,
       source: label.source,
       status: statuses.get(deployment.id) ?? deployment.status,
-      keywords: [deployment.server?.slug ?? '', deployment.sourceRef ?? '', deployment.source ?? '']
+      keywords: [
+        deployment.server?.slug ?? '',
+        deployment.sourceRef ?? '',
+        deployment.source ?? '',
+        ...(deployment.server?.categories.map((category) => category.slug) ?? []),
+      ]
         .filter((keyword) => keyword.length > 0),
       checked: selectedIds?.has(deployment.id) ?? false,
     };
@@ -300,6 +318,8 @@ export async function resolveAgentMarketSetupGuide(
             id: true,
             model: true,
             provider: { select: { format: true } },
+            runtimeKind: true,
+            runtime: { select: { status: true } },
           },
         })
       : Promise.resolve([]),

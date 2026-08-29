@@ -13,7 +13,47 @@ vi.mock('@/lib/auth/tokens', () => ({
 }));
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 
-import { resolveAgentControlRequestUser } from '@/lib/auth/request-user';
+import {
+  resolveAccountRequestUser,
+  resolveAgentControlRequestUser,
+} from '@/lib/auth/request-user';
+
+describe('Account-level request authentication', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'session-user' });
+  });
+
+  it('accepts a cookie-only browser session', async () => {
+    await expect(resolveAccountRequestUser(new Request('http://localhost')))
+      .resolves.toEqual({ id: 'session-user' });
+    expect(mocks.verifyApiTokenContext).not.toHaveBeenCalled();
+  });
+
+  it('accepts an account-level personal API token', async () => {
+    mocks.verifyApiTokenContext.mockResolvedValue({
+      user: { id: 'token-user' },
+      token: { id: 'token-1', toolkitId: null },
+    });
+
+    await expect(resolveAccountRequestUser(new Request('http://localhost', {
+      headers: { authorization: 'Bearer personal' },
+    }))).resolves.toEqual({ id: 'token-user' });
+    expect(mocks.getCurrentUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a toolkit-scoped token without falling back to the session', async () => {
+    mocks.verifyApiTokenContext.mockResolvedValue({
+      user: { id: 'token-user' },
+      token: { id: 'token-1', toolkitId: 'toolkit-1' },
+    });
+
+    await expect(resolveAccountRequestUser(new Request('http://localhost', {
+      headers: { authorization: 'Bearer toolkit-token' },
+    }))).resolves.toBeNull();
+    expect(mocks.getCurrentUser).not.toHaveBeenCalled();
+  });
+});
 
 describe('Agent Control MCP authentication', () => {
   beforeEach(() => {

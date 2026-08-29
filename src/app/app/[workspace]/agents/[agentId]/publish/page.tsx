@@ -30,6 +30,7 @@ import {
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,10 +38,11 @@ function marketListingHref(workspace: string, listingId: string) {
   return `/app/${encodeURIComponent(workspace)}/market/agents/${encodeURIComponent(listingId)}`;
 }
 
-function errorMessage(t: (key: 'ownerOnlyPublish' | 'confirmRequired' | 'publishError') => string, error?: string) {
+function errorMessage(t: (key: 'ownerOnlyPublish' | 'confirmRequired' | 'publishError' | 'marketCategoryRequired') => string, error?: string) {
   if (!error) return null;
   if (error === 'owner_only') return t('ownerOnlyPublish');
   if (error === 'confirm_required') return t('confirmRequired');
+  if (error === 'invalid_categories') return t('marketCategoryRequired');
   return t('publishError');
 }
 
@@ -61,10 +63,11 @@ export default async function AgentPublishPage({
   const workspace = await getWorkspaceForUser(workspaceSlug, user.id);
   if (!workspace) redirect('/app');
 
-  const [agent, listing, assessment] = await Promise.all([
+  const [agent, listing, assessment, categories] = await Promise.all([
     getAgentPageData(workspace.id, agentId),
     getAgentListingForPublisher(workspace.id, agentId),
     assessAgentPortability({ workspaceId: workspace.id, agentId }),
+    db.category.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ]);
   if (!agent) notFound();
 
@@ -86,6 +89,7 @@ export default async function AgentPublishPage({
   const draftSummary = pendingRelease?.summary ?? currentListing?.summary ?? '';
   const draftIconUrl = pendingRelease?.iconUrl ?? currentListing?.iconUrl ?? '';
   const draftTags = pendingRelease?.tags ?? currentListing?.tags ?? [];
+  const draftCategoryIds = new Set(pendingRelease?.categoryIds ?? currentListing?.categoryIds ?? []);
 
   return (
     <>
@@ -223,6 +227,24 @@ export default async function AgentPublishPage({
                   className="ui-input h-10"
                 />
               </label>
+              <fieldset className="sm:col-span-2">
+                <legend className="text-xs font-semibold text-foreground">{t('marketCategories')}</legend>
+                <p className="mt-1 text-xs text-muted-foreground">{t('marketCategoriesHint')}</p>
+                <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                  {categories.map((category) => (
+                    <label key={category.id} className="flex min-h-10 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
+                      <input
+                        type="checkbox"
+                        name="categoryIds"
+                        value={category.id}
+                        defaultChecked={draftCategoryIds.has(category.id)}
+                        className="size-4 accent-brand"
+                      />
+                      <span className="truncate">{category.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
             </div>
           </section>
 

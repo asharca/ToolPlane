@@ -2,6 +2,7 @@ import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { CheckCircle2, ChevronRight } from 'lucide-react';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { installMarketResourceAction } from '@/lib/market/actions';
 
 type BrowseItem = {
   id: string;
@@ -17,6 +18,11 @@ type BrowseItem = {
   // the action is replaced by a disabled "Demo only" marker. Undefined (e.g. for
   // skills, which are always installable) leaves the action enabled.
   deployable?: boolean;
+  marketListing?: {
+    namespace: string;
+    slug: string;
+    releaseId: string;
+  } | null;
 };
 
 export async function BrowseGrid({
@@ -45,8 +51,12 @@ export async function BrowseGrid({
     getTranslations('console.market'),
   ]);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {items.map((it) => (
+    <div className="grid gap-3 md:grid-cols-2">
+      {items.map((it) => {
+        const detailHref = it.marketListing
+          ? `/app/${encodeURIComponent(slug)}/market/items/${encodeURIComponent(it.marketListing.namespace)}/${encodeURIComponent(it.marketListing.slug)}`
+          : `/app/${encodeURIComponent(slug)}/market/${detailKind}/${encodeURIComponent(it.slug)}`;
+        return (
         <article
           key={it.id}
           className="ui-panel flex min-w-0 flex-col p-4"
@@ -71,7 +81,7 @@ export async function BrowseGrid({
             )}
             <div className="min-w-0 flex-1">
               <Link
-                href={`/app/${encodeURIComponent(slug)}/market/${detailKind}/${encodeURIComponent(it.slug)}`}
+                href={detailHref}
                 className="line-clamp-1 font-semibold text-foreground hover:underline"
               >
                 {it.name}
@@ -94,14 +104,20 @@ export async function BrowseGrid({
                 {it.githubSource ? market('github') : it.curated ? market('curated') : market('catalog')}
               </span>
               {it.categories?.slice(0, 2).map((category) => (
-                <span key={category.slug} className="rounded bg-muted px-2 py-1">{category.name}</span>
+                <Link
+                  key={category.slug}
+                  href={`/app/${encodeURIComponent(slug)}/market/${detailKind}?category=${encodeURIComponent(category.slug)}`}
+                  className="rounded bg-muted px-2 py-1 hover:text-foreground"
+                >
+                  {category.name}
+                </Link>
               ))}
             </div>
           ) : null}
 
           <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-4">
             <Link
-              href={`/app/${encodeURIComponent(slug)}/market/${detailKind}/${encodeURIComponent(it.slug)}`}
+              href={detailHref}
               className="ui-button-secondary h-9 min-w-0 px-3"
             >
               {market('viewDetails')}
@@ -117,9 +133,13 @@ export async function BrowseGrid({
                 {common('demoOnly')}
               </span>
             ) : (
-              <form action={action} className="min-w-0">
+              <form action={it.marketListing ? installMarketResourceAction : action} className="min-w-0">
                 <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name={idField} value={it.id} />
+                {it.marketListing ? (
+                  <input type="hidden" name="releaseId" value={it.marketListing.releaseId} />
+                ) : (
+                  <input type="hidden" name={idField} value={it.id} />
+                )}
                 <SubmitButton
                   flash={false}
                   pendingLabel={pendingLabel}
@@ -131,7 +151,8 @@ export async function BrowseGrid({
             )}
           </div>
         </article>
-      ))}
+        );
+      })}
     </div>
   );
 }

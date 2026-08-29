@@ -232,7 +232,7 @@ describe('persistent Docker sandbox runtime', () => {
     expect(parsed.status, parsed.stderr).toBe(0);
   });
 
-  it('streams Hermes attachments into an atomic temporary file without base64 buffering', () => {
+  it('streams Docker and Hermes uploads into an atomic temporary file', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
     const supervisor = readFileSync(path.join(process.cwd(), 'src/lib/process/supervisor.ts'), 'utf8');
 
@@ -240,6 +240,10 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script).toContain("process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
     expect(script).toContain("req.headers['x-toolplane-max-upload-bytes']");
     expect(script).toContain('size > uploadLimit');
+    expect(script).toContain("if (KIND === 'connector')");
+    expect(script).toContain("connectorRequest('write_file_base64'");
+    expect(script).toContain('realpath -m --');
+    expect(script).not.toContain("KIND !== 'hermes') {\n    sendJson(res, 404, { error: 'Runtime attachment upload");
     expect(supervisor).toContain("TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES");
     expect(script).toContain("req.on('data'");
     expect(script).toContain('cat > ${shQuote(temporary)}');

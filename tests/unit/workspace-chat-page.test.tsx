@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   getConversation: vi.fn(),
   surface: vi.fn(),
   agentSurface: vi.fn(),
+  getAssistantMarketTemplate: vi.fn(),
+  listAssistantMarketTemplates: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
@@ -33,6 +35,10 @@ vi.mock('@/lib/agents/messaging', () => ({ parseMessagingSessionTitle: () => nul
 vi.mock('@/lib/chat/service', () => ({
   listChatAssistantsForWorkspace: mocks.listAssistants,
   getChatThreadForWorkspace: mocks.getThread,
+}));
+vi.mock('@/lib/market/skills', () => ({
+  getAssistantMarketTemplate: mocks.getAssistantMarketTemplate,
+  listAssistantMarketTemplates: mocks.listAssistantMarketTemplates,
 }));
 vi.mock('@/lib/timezone', () => ({
   resolveUserTimeZone: () => 'UTC',
@@ -66,6 +72,8 @@ describe('Workspace chat page', () => {
     mocks.listAgents.mockResolvedValue([]);
     mocks.listConversations.mockResolvedValue([]);
     mocks.getConversation.mockResolvedValue(null);
+    mocks.getAssistantMarketTemplate.mockResolvedValue(null);
+    mocks.listAssistantMarketTemplates.mockResolvedValue([]);
     mocks.listAssistants.mockResolvedValue([{
       id: 'assistant-1',
       name: 'Helper',
@@ -128,6 +136,62 @@ describe('Workspace chat page', () => {
 
     expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
       startCreating: true,
+      marketTemplates: [],
+    }));
+    expect(mocks.listAssistantMarketTemplates).toHaveBeenCalledWith({ limit: 12 });
+  });
+
+  it('resolves a market assistant template and matches portable resources', async () => {
+    mocks.listProviders.mockResolvedValue([{
+      id: 'provider-1', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'],
+    }]);
+    mocks.listDeployments.mockResolvedValue([
+      {
+        id: 'deployment-1',
+        label: 'Catalog search',
+        catalogSlug: 'web-search',
+        status: 'running',
+        keywords: ['search'],
+      },
+      {
+        id: 'deployment-decoy',
+        label: 'Web Search',
+        catalogSlug: 'different-server',
+        status: 'running',
+        keywords: ['web-search'],
+      },
+    ]);
+    mocks.getAssistantMarketTemplate.mockResolvedValue({
+      releaseId: 'release-1',
+      listing: { summary: 'Research assistant', tags: ['research'] },
+      manifest: {
+        assistant: {
+          name: 'Researcher',
+          systemPrompt: 'Use primary sources.',
+          maxSteps: 10,
+          modelRequirement: { providerFormat: 'anthropic', model: 'claude-sonnet' },
+          mcpRequirements: [{ catalogSlug: 'web-search', name: 'Web Search' }],
+        },
+      },
+    });
+
+    render(await WorkspaceChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ newAssistant: '1', template: 'release-1' }),
+    }));
+
+    expect(mocks.getAssistantMarketTemplate).toHaveBeenCalledWith('release-1');
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      marketTemplate: expect.objectContaining({
+        releaseId: 'release-1',
+        providerFormat: 'anthropic',
+        model: 'claude-sonnet',
+        deploymentIds: ['deployment-1'],
+      }),
+      marketTemplates: [expect.objectContaining({
+        releaseId: 'release-1',
+        tags: ['research'],
+      })],
     }));
   });
 

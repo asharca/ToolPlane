@@ -24,12 +24,46 @@ describe('parseServerRecipe', () => {
     expect(r?.env).toEqual(['OK_KEY']);
   });
 
+  it('keeps only safe HTTP source URLs', () => {
+    expect(parseServerRecipe({
+      source: 'npm',
+      ref: 'firecrawl-mcp',
+      sourceUrl: 'https://github.com/firecrawl/firecrawl-mcp-server',
+    })?.sourceUrl).toBe('https://github.com/firecrawl/firecrawl-mcp-server');
+    expect(parseServerRecipe({ source: 'npm', ref: 'firecrawl-mcp', sourceUrl: 'javascript:alert(1)' })?.sourceUrl)
+      .toBeUndefined();
+    expect(parseServerRecipe({ source: 'npm', ref: 'firecrawl-mcp', sourceUrl: 'https://secret@example.com/repo' })?.sourceUrl)
+      .toBeUndefined();
+  });
+
   it('returns null for an unknown source', () => {
     expect(parseServerRecipe({ source: 'cargo', ref: 'x' })).toBeNull();
   });
 
   it('returns null for an invalid ref', () => {
     expect(parseServerRecipe({ source: 'npm', ref: 'Has Spaces!' })).toBeNull();
+  });
+
+  it('parses a remote connector without persisting credentials in its URL', () => {
+    expect(parseServerRecipe({
+      source: 'remote',
+      ref: 'https://mcp.example.com/api/mcp',
+      transport: 'streamable-http',
+      authType: 'headers',
+      headerEnv: { 'X-API-Key': 'MCP_API_KEY' },
+    })).toEqual({
+      source: 'remote',
+      ref: 'https://mcp.example.com/api/mcp',
+      env: ['MCP_API_KEY'],
+      transport: 'streamable-http',
+      authType: 'headers',
+      headerEnv: { 'X-API-Key': 'MCP_API_KEY' },
+    });
+    expect(parseServerRecipe({
+      source: 'remote',
+      ref: 'https://mcp.example.com/api/mcp?token=secret',
+    })).toBeNull();
+    expect(parseServerRecipe({ source: 'remote', ref: 'http://127.0.0.1:3000/mcp' })).toBeNull();
   });
 
   it('returns null for empty / non-object input', () => {
@@ -75,6 +109,28 @@ describe('recipeToDeploymentData', () => {
       FIRECRAWL_API_URL: 'http://firecrawl-api:3002',
       FIRECRAWL_API_KEY: 'self-hosted',
       EXTRA_KEY: '',
+    });
+  });
+
+  it('carries connector transport and auth mapping while seeding the secret variable', () => {
+    const d = recipeToDeploymentData({
+      source: 'remote',
+      ref: 'https://mcp.example.com/mcp',
+      env: ['MCP_BEARER_TOKEN'],
+      transport: 'streamable-http',
+      authType: 'bearer',
+      bearerEnv: 'MCP_BEARER_TOKEN',
+    });
+    expect(d).toEqual({
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg: {
+        env: { MCP_BEARER_TOKEN: '' },
+        requiredEnv: ['MCP_BEARER_TOKEN'],
+        transport: 'streamable-http',
+        authType: 'bearer',
+        bearerEnv: 'MCP_BEARER_TOKEN',
+      },
     });
   });
 });

@@ -168,6 +168,58 @@ describe('toolkit management actions', () => {
     );
   });
 
+  it('marks an installed market toolkit modified and blocks ordinary deletion', async () => {
+    const toolkit = await db.toolkit.create({
+      data: { workspaceId: ownerWorkspaceId, name: 'Market Toolkit', slug: 'market-toolkit' },
+    });
+    const listing = await db.marketListing.create({
+      data: {
+        kind: 'toolkit',
+        namespace: ownerSlug,
+        slug: `market-toolkit-${stamp}`,
+        name: 'Market Toolkit',
+        metadata: {},
+        status: 'published',
+      },
+    });
+    const release = await db.marketRelease.create({
+      data: {
+        listingId: listing.id,
+        version: 1,
+        manifest: {},
+        releaseSummary: {},
+        checksum: 'test',
+        reviewStatus: 'approved',
+      },
+    });
+    await db.marketListing.update({
+      where: { id: listing.id },
+      data: { latestReleaseId: release.id, latestVersion: 1 },
+    });
+    const install = await db.marketInstall.create({
+      data: {
+        listingId: listing.id,
+        currentReleaseId: release.id,
+        requestedReleaseId: release.id,
+        targetWorkspaceId: ownerWorkspaceId,
+        installedById: ownerId,
+        toolkitId: toolkit.id,
+        idempotencyKey: `market-toolkit-${stamp}`,
+        status: 'ready',
+      },
+    });
+
+    await renameToolkitAction(actionForm(ownerSlug, toolkit.slug, 'Locally Changed'));
+    await expect(db.marketInstall.findUnique({ where: { id: install.id } })).resolves.toMatchObject({
+      status: 'modified',
+    });
+    await deleteToolkitAction(actionForm(ownerSlug, toolkit.slug));
+    await expect(db.toolkit.findUnique({ where: { id: toolkit.id } })).resolves.not.toBeNull();
+
+    await db.marketInstall.delete({ where: { id: install.id } });
+    await db.marketListing.delete({ where: { id: listing.id } });
+  });
+
   it('updates marketplace availability for a workspace owner or administrator only', async () => {
     const toolkit = await db.toolkit.create({
       data: {

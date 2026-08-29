@@ -2,6 +2,7 @@ import 'server-only';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
+import { defaultProviderModel, type ProviderModelValues } from '@/lib/agents/model-catalog';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { withoutHermesChannelEnv } from '@/lib/agents/hermes/env-merge-script';
 import {
@@ -12,6 +13,7 @@ import {
 } from '@/lib/agents/runtime-kind';
 import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import { readSandboxEnv, sandboxConfigWithEnv, type SandboxEnv } from '@/lib/sandboxes/env';
+import { parseAgentMarketResourceMap } from '@/lib/agents/market-setup';
 
 const UNAVAILABLE_SANDBOX_STATUSES = [
   'copying',
@@ -1150,7 +1152,267 @@ export async function setAgentTools(
   }
 }
 
+export async function getAgentDeleteTargets(workspaceId: string, agentId: string) {
+  const agent = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: {
+      id: true,
+      marketInstall: { select: { resourceMap: true } },
+    },
+  });
+  if (!agent) return { agentIds: [], sandboxes: [] };
+  const map = agent.marketInstall
+    ? parseAgentMarketResourceMap(agent.marketInstall.resourceMap)
+    : null;
+  if (agent.marketInstall && (!map || !Object.values(map.agents).includes(agentId))) {
+    throw new Error('The marketplace install resource map is invalid.');
+  }
+  const requestedAgentIds = map
+    ? [...new Set([agentId, ...Object.values(map.agents)])]
+    : [agentId];
+  const agents = await db.agent.findMany({
+    where: { workspaceId, id: { in: requestedAgentIds } },
+    select: {
+      id: true,
+      parentLinks: {
+        where: { parentId: { notIn: requestedAgentIds } },
+        take: 1,
+        select: { parentId: true },
+      },
+      marketInstall: { select: { id: true } },
+      unifiedMarketInstall: { select: { id: true } },
+      sourceMarketListing: { select: { id: true } },
+      publicEndpoints: { take: 1, select: { id: true } },
+      sandboxes: {
+        select: {
+          sandbox: {
+            select: {
+              id: true,
+              kind: true,
+              deploymentId: true,
+              deployment: { select: { installCfg: true } },
+              snapshots: { select: { volumeName: true } },
+            },
+          },
+        },
+      },
+      runtime: {
+        select: {
+          sandbox: {
+            select: {
+              id: true,
+              kind: true,
+              deploymentId: true,
+              deployment: { select: { installCfg: true } },
+              snapshots: { select: { volumeName: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const deletableAgents = agents.filter((candidate) => (
+    candidate.id === agentId
+    || (
+      candidate.parentLinks.length === 0
+      && !candidate.marketInstall
+      && !candidate.unifiedMarketInstall
+      && !candidate.sourceMarketListing
+      && candidate.publicEndpoints.length === 0
+    )
+  ));
+  const allowedSandboxIds = new Set(Object.values(map?.sandboxes ?? {}));
+  const sandboxes = new Map<string, {
+    id: string;
+    kind: string;
+    deploymentId: string;
+    volumeName: string;
+    snapshotVolumeNames: string[];
+  }>();
+  for (const candidate of deletableAgents.flatMap((row) => [
+    ...row.sandboxes.map(({ sandbox }) => sandbox),
+    ...(row.runtime ? [row.runtime.sandbox] : []),
+  ])) {
+    if (map && allowedSandboxIds.size > 0 && !allowedSandboxIds.has(candidate.id)) continue;
+    const config = candidate.deployment.installCfg;
+    const volumeName = config && typeof config === 'object' && !Array.isArray(config)
+      && typeof (config as Record<string, unknown>).volumeName === 'string'
+      ? String((config as Record<string, unknown>).volumeName)
+      : sandboxVolumeName(candidate.id);
+    sandboxes.set(candidate.id, {
+      id: candidate.id,
+      kind: candidate.kind,
+      deploymentId: candidate.deploymentId,
+      volumeName,
+      snapshotVolumeNames: candidate.snapshots.map(({ volumeName: name }) => name),
+    });
+  }
+  return { agentIds: deletableAgents.map(({ id }) => id), sandboxes: [...sandboxes.values()] };
+}
+
 export async function deleteAgent(workspaceId: string, agentId: string) {
+  const install = await db.agentInstall.findFirst({
+    where: { agentId, targetWorkspaceId: workspaceId },
+    select: {
+      id: true,
+      resourceMap: true,
+      release: { select: { listingId: true } },
+    },
+  });
+  if (install) {
+    const resourceMap = parseAgentMarketResourceMap(install.resourceMap);
+    if (!resourceMap || !Object.values(resourceMap.agents).includes(agentId)) {
+      throw new Error('The marketplace install resource map is invalid.');
+    }
+    const candidateAgentIds = [...new Set(Object.values(resourceMap.agents))];
+    return db.$transaction(async (tx) => {
+      const candidates = await tx.agent.findMany({
+        where: { workspaceId, id: { in: candidateAgentIds } },
+        select: {
+          id: true,
+          parentLinks: {
+            where: { parentId: { notIn: candidateAgentIds } },
+            take: 1,
+            select: { parentId: true },
+          },
+          marketInstall: { select: { id: true } },
+          unifiedMarketInstall: { select: { id: true } },
+          sourceMarketListing: { select: { id: true } },
+          publicEndpoints: { take: 1, select: { id: true } },
+        },
+      });
+      const deletableAgentIds = candidates.filter((candidate) => (
+        candidate.id === agentId
+        || (
+          candidate.parentLinks.length === 0
+          && !candidate.marketInstall
+          && !candidate.unifiedMarketInstall
+          && !candidate.sourceMarketListing
+          && candidate.publicEndpoints.length === 0
+        )
+      )).map(({ id }) => id);
+
+      const candidateToolkitIds = [...new Set(Object.values(resourceMap.toolkits))];
+      const toolkits = await tx.toolkit.findMany({
+        where: { workspaceId, id: { in: candidateToolkitIds } },
+        select: {
+          id: true,
+          visibility: true,
+          agentLinks: {
+            where: { agentId: { notIn: deletableAgentIds } },
+            take: 1,
+            select: { agentId: true },
+          },
+          sourceMarketListing: { select: { id: true } },
+          marketInstall: { select: { id: true } },
+          installLinks: { take: 1, select: { id: true } },
+          apiTokens: { take: 1, select: { id: true } },
+        },
+      });
+      const deletableToolkitIds = toolkits.filter((toolkit) => (
+        toolkit.visibility === 'private'
+        && toolkit.agentLinks.length === 0
+        && !toolkit.sourceMarketListing
+        && !toolkit.marketInstall
+        && toolkit.installLinks.length === 0
+        && toolkit.apiTokens.length === 0
+      )).map(({ id }) => id);
+
+      const candidateDeploymentIds = [...new Set(Object.values(resourceMap.deployments))];
+      const deployments = await tx.deployment.findMany({
+        where: { workspaceId, id: { in: candidateDeploymentIds } },
+        select: {
+          id: true,
+          serverId: true,
+          publicInvocable: true,
+          agentLinks: {
+            where: { agentId: { notIn: deletableAgentIds } },
+            take: 1,
+            select: { agentId: true },
+          },
+          toolkitLinks: {
+            where: { toolkitId: { notIn: deletableToolkitIds } },
+            take: 1,
+            select: { toolkitId: true },
+          },
+          chatAssistantGrants: { take: 1, select: { assistantId: true } },
+          sourceMarketListing: { select: { id: true } },
+          marketInstall: { select: { id: true } },
+        },
+      });
+      const deletableDeploymentIds = deployments.filter((deployment) => (
+        !deployment.serverId
+        && !deployment.publicInvocable
+        && deployment.agentLinks.length === 0
+        && deployment.toolkitLinks.length === 0
+        && deployment.chatAssistantGrants.length === 0
+        && !deployment.sourceMarketListing
+        && !deployment.marketInstall
+      )).map(({ id }) => id);
+
+      const candidateSkillIds = [...new Set(Object.values(resourceMap.skills))];
+      const skills = await tx.installedSkill.findMany({
+        where: { workspaceId, id: { in: candidateSkillIds } },
+        select: {
+          id: true,
+          skillId: true,
+          agentLinks: {
+            where: { agentId: { notIn: deletableAgentIds } },
+            take: 1,
+            select: { agentId: true },
+          },
+          toolkitLinks: {
+            where: { toolkitId: { notIn: deletableToolkitIds } },
+            take: 1,
+            select: { toolkitId: true },
+          },
+          sourceMarketListing: { select: { id: true } },
+          marketInstall: { select: { id: true } },
+        },
+      });
+      const deletableSkillIds = skills.filter((skill) => (
+        !skill.skillId
+        && skill.agentLinks.length === 0
+        && skill.toolkitLinks.length === 0
+        && !skill.sourceMarketListing
+        && !skill.marketInstall
+      )).map(({ id }) => id);
+
+      const mappedSandboxIds = [...new Set(Object.values(resourceMap.sandboxes))];
+      const legacySandboxes = await tx.sandbox.findMany({
+        where: {
+          workspaceId,
+          AND: [{
+            OR: [
+              { agentLinks: { some: { agentId: { in: deletableAgentIds } } } },
+              { agentRuntime: { is: { agentId: { in: deletableAgentIds } } } },
+            ],
+          }],
+          ...(mappedSandboxIds.length > 0
+            ? { id: { in: mappedSandboxIds } }
+            : {}),
+        },
+        select: { id: true, deploymentId: true },
+      });
+      const sandboxDeploymentIds = legacySandboxes.map(({ deploymentId }) => deploymentId);
+
+      await tx.agentInstall.delete({ where: { id: install.id } });
+      await tx.agent.deleteMany({ where: { workspaceId, id: { in: deletableAgentIds } } });
+      await tx.toolkit.deleteMany({ where: { workspaceId, id: { in: deletableToolkitIds } } });
+      await tx.installedSkill.deleteMany({ where: { workspaceId, id: { in: deletableSkillIds } } });
+      await tx.deployment.deleteMany({
+        where: {
+          workspaceId,
+          id: { in: [...new Set([...deletableDeploymentIds, ...sandboxDeploymentIds])] },
+        },
+      });
+      await tx.agentListing.updateMany({
+        where: { id: install.release.listingId, installCount: { gt: 0 } },
+        data: { installCount: { decrement: 1 } },
+      });
+    }, { isolationLevel: 'Serializable' });
+  }
+
   const runtime = await db.agentRuntime.findFirst({
     where: { agentId, workspaceId },
     select: { sandbox: { select: { deploymentId: true } } },
@@ -1204,9 +1466,139 @@ export async function deleteProvider(workspaceId: string, providerId: string) {
 }
 
 export async function setProviderModels(workspaceId: string, providerId: string, models: string[]) {
-  await db.modelProvider.updateMany({
-    where: { id: providerId, workspaceId },
-    data: { models, modelsFetchedAt: new Date() },
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) return;
+    const remoteModelIds = uniqueIds(models.map((model) => model.trim()).filter(Boolean));
+    await tx.providerModel.deleteMany({
+      where: {
+        providerId,
+        source: 'remote',
+        ...(remoteModelIds.length ? { modelId: { notIn: remoteModelIds } } : {}),
+      },
+    });
+    if (remoteModelIds.length) {
+      await tx.providerModel.createMany({
+        data: remoteModelIds.map((modelId) => ({
+          providerId,
+          ...defaultProviderModel(modelId),
+          source: 'remote',
+        })),
+        skipDuplicates: true,
+      });
+    }
+    const manualModels = await tx.providerModel.findMany({
+      where: { providerId, source: 'manual' },
+      select: { modelId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    await tx.modelProvider.update({
+      where: { id: providerId },
+      data: {
+        models: uniqueIds([...remoteModelIds, ...manualModels.map(({ modelId }) => modelId)]),
+        modelsFetchedAt: new Date(),
+      },
+    });
+  });
+}
+
+export class ProviderModelError extends Error {}
+
+export async function addProviderModels(
+  workspaceId: string,
+  providerId: string,
+  models: ProviderModelValues[],
+) {
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) {
+      throw new ProviderModelError('Provider not found.');
+    }
+    const provider = await tx.modelProvider.findUnique({
+      where: { id: providerId },
+      select: { models: true },
+    });
+    const requestedIds = models.map(({ modelId }) => modelId);
+    if (new Set(requestedIds).size !== requestedIds.length
+      || requestedIds.some((modelId) => provider?.models.includes(modelId))) {
+      throw new ProviderModelError('A model with that ID already exists.');
+    }
+    await tx.providerModel.createMany({
+      data: models.map((model) => ({ ...model, providerId, source: 'manual' })),
+    });
+    await tx.modelProvider.update({
+      where: { id: providerId },
+      data: { models: [...(provider?.models ?? []), ...requestedIds] },
+    });
+  });
+}
+
+export async function updateProviderModel(
+  workspaceId: string,
+  providerId: string,
+  model: ProviderModelValues,
+) {
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) {
+      throw new ProviderModelError('Provider not found.');
+    }
+    const provider = await tx.modelProvider.findUnique({
+      where: { id: providerId },
+      select: { models: true },
+    });
+    if (!provider?.models.includes(model.modelId)) {
+      throw new ProviderModelError('Model not found.');
+    }
+    const { modelId, ...values } = model;
+    await tx.providerModel.upsert({
+      where: { providerId_modelId: { providerId, modelId } },
+      create: { providerId, modelId, ...values, source: 'manual' },
+      update: { ...values, source: 'manual' },
+    });
+  });
+}
+
+export async function deleteProviderModel(
+  workspaceId: string,
+  providerId: string,
+  modelId: string,
+) {
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) {
+      throw new ProviderModelError('Provider not found.');
+    }
+    const provider = await tx.modelProvider.findUnique({
+      where: { id: providerId },
+      select: { models: true },
+    });
+    if (!provider?.models.includes(modelId)) throw new ProviderModelError('Model not found.');
+    const [agent, assistant, knowledgeBase, workspace] = await Promise.all([
+      tx.agent.findFirst({ where: { workspaceId, providerId, model: modelId }, select: { id: true } }),
+      tx.chatAssistant.findFirst({
+        where: { workspaceId, modelProviderId: providerId, model: modelId },
+        select: { id: true },
+      }),
+      tx.knowledgeBase.findFirst({
+        where: { workspaceId, providerId, embeddingModel: modelId },
+        select: { id: true },
+      }),
+      tx.workspace.findFirst({
+        where: {
+          id: workspaceId,
+          OR: [
+            { defaultModelProviderId: providerId, defaultModel: modelId },
+            { titleModelProviderId: providerId, titleModel: modelId },
+          ],
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (agent || assistant || knowledgeBase || workspace) {
+      throw new ProviderModelError('This model is in use and cannot be removed.');
+    }
+    await tx.providerModel.deleteMany({ where: { providerId, modelId } });
+    await tx.modelProvider.update({
+      where: { id: providerId },
+      data: { models: provider.models.filter((model) => model !== modelId) },
+    });
   });
 }
 

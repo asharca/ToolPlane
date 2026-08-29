@@ -42,6 +42,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
+import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import {
   ConversationAttachmentChip,
   ConversationAttachmentPicker,
@@ -54,6 +55,7 @@ import {
   useConversationComposerExpansion,
 } from '@/components/dashboard/ConversationComposer';
 import { CopyButton } from '@/components/dashboard/CopyButton';
+import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import {
   AssistantMarkdown,
   AssistantReply,
@@ -678,7 +680,7 @@ export function WorkspaceWork({
   workspaceId: string;
   agents: WorkAgent[];
   sessions: WorkItem[];
-  providers?: Array<{ id: string; name: string; format: string; models: string[] }>;
+  providers?: Array<ModelProviderOption & { format: string }>;
   selectedWorkSessionId: string | null;
   selectedSession?: WorkItem | null;
   requestedAgentId?: string;
@@ -1062,17 +1064,10 @@ export function WorkspaceWork({
                   'group flex h-8 min-w-0 items-center rounded-lg transition-colors',
                   itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
                 )}>
-                  <button
-                    type="button"
-                    aria-expanded={expanded}
-                    aria-controls={`agent-work-sessions-${itemAgent.id}`}
-                    onClick={() => setExpandedAgents((current) => ({ ...current, [itemAgent.id]: !expanded }))}
-                    className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]"
-                  >
-                    <ChevronRight className={cx('size-3 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
+                  <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
                     <span className={cx('min-w-0 flex-1 truncate', itemAgent.id === activeAgentId && 'font-medium')}>{itemAgent.name}</span>
-                  </button>
+                  </div>
                   <span
                     className={cx(
                       'mr-0.5 size-1.5 shrink-0 rounded-full',
@@ -1102,6 +1097,17 @@ export function WorkspaceWork({
                       <Plus className="size-3.5" />
                     </button>
                   ) : null}
+                  <button
+                    type="button"
+                    aria-label={itemAgent.name}
+                    aria-expanded={expanded}
+                    aria-controls={`agent-work-sessions-${itemAgent.id}`}
+                    title={expanded ? tAgents('hideConversations') : tAgents('showConversations')}
+                    onClick={() => setExpandedAgents((current) => ({ ...current, [itemAgent.id]: !expanded }))}
+                    className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                  >
+                    <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                  </button>
                 </div>
               );
               return (
@@ -1147,7 +1153,7 @@ export function WorkspaceWork({
                   </ContextMenu.Root>
                   {expanded ? (
                     <ul id={`agent-work-sessions-${itemAgent.id}`} className="ml-4 py-0.5 pl-1">
-                      {agentSessions.map((item) => (
+                      {agentSessions.length > 0 ? agentSessions.map((item) => (
                         <li key={item.id} className="group/session relative py-0.5">
                           <Link
                             href={workHref(slug, item.id)}
@@ -1168,7 +1174,9 @@ export function WorkspaceWork({
                             </button>
                           ) : null}
                         </li>
-                      ))}
+                      )) : (
+                        <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noSessions')}</li>
+                      )}
                     </ul>
                   ) : null}
                 </li>
@@ -1407,6 +1415,15 @@ export function WorkspaceWork({
                         const next = [...attachments, ...files];
                         if (next.length > 5) setError(tAgents('attachmentLimitReached', { count: 5 }));
                         setAttachments(next.slice(0, 5));
+                      }}
+                    />
+                    <McpPromptPickerButton
+                      apiPath={controlAgent ? `/api/v1/agents/${controlAgent.id}/prompts` : undefined}
+                      disabled={!controlAgent?.ready || Boolean(busy) || running}
+                      onError={setError}
+                      onInsert={(text) => {
+                        setDraft((current) => current ? `${text}\n${current}` : text);
+                        window.requestAnimationFrame(() => composerInputRef.current?.focus());
                       }}
                     />
                     <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">

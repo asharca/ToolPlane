@@ -15,6 +15,7 @@ const assistantFields = {
 
 export const CreateChatAssistantSchema = z.object({
   workspaceId: z.string().trim().min(1),
+  marketTemplateReleaseId: z.string().trim().min(1).max(240).optional(),
   ...assistantFields,
 });
 
@@ -28,9 +29,12 @@ export const CreateChatThreadSchema = z.object({
 });
 
 export const UpdateChatThreadSchema = z.object({
+  assistantId: z.string().trim().min(1).optional(),
   title: nullableTrimmedString(200).optional(),
   activeMessageId: z.string().trim().min(1).optional(),
-}).refine((value) => value.title !== undefined || value.activeMessageId !== undefined, {
+}).refine((value) => (
+  value.assistantId !== undefined || value.title !== undefined || value.activeMessageId !== undefined
+), {
   message: 'At least one field is required',
 });
 
@@ -48,6 +52,7 @@ export const CreateChatTurnSchema = z.object({
   messages: z.array(ChatMessageSchema).min(1).max(500),
   trigger: z.enum(['submit-message', 'regenerate-message']).default('submit-message'),
   messageId: z.string().min(1).optional(),
+  webSearchEnabled: z.boolean().default(false),
 }).refine(
   (value) => value.messages.at(-1)?.role === 'user',
   { message: 'The last message must be from the user' },
@@ -61,6 +66,7 @@ export type CreateChatTurnInput = {
   messages: UIMessage[];
   trigger: 'submit-message' | 'regenerate-message';
   messageId?: string;
+  webSearchEnabled: boolean;
 };
 
 export function parseChatTurn(raw: unknown): CreateChatTurnInput | null {

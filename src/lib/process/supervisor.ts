@@ -101,6 +101,12 @@ export type DeploymentRuntimeLogChunk = {
   truncated?: boolean;
 };
 
+export type LiveMcpRuntimeSnapshot = {
+  port: number;
+  generation: string;
+  redactionValues: string[];
+};
+
 type RuntimeRecord = DeploymentRuntimeSnapshot & {
   deploymentId: string;
   pid?: number;
@@ -181,6 +187,7 @@ function enqueueLifecycle<T>(deploymentId: string, operation: () => Promise<T>):
 
 const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
+const REMOTE_BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-http-bridge.mjs');
 const SANDBOX_SERVER = path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs');
 const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir(), 'toolplane-supervisor');
 
@@ -539,9 +546,18 @@ function sensitiveArgValues(args: readonly string[]): string[] {
 }
 
 function redactionValuesForSpec(spec: SpawnSpec): string[] {
-  const values = new Set(secretValuesFromEnv(spec.kind === 'builtin' ? {} : spec.env));
+  const values = new Set(spec.kind === 'bridge' || spec.kind === 'sandbox'
+    ? secretValuesFromEnv(spec.env)
+    : []);
   if (spec.kind === 'bridge') {
     for (const value of sensitiveArgValues(spec.args)) values.add(value);
+  } else if (spec.kind === 'remote') {
+    for (const value of Object.values(spec.headers)) {
+      if (!value) continue;
+      values.add(value);
+      const auth = /^(?:Bearer|Basic)\s+(.+)$/i.exec(value);
+      if (auth?.[1]) values.add(auth[1]);
+    }
   }
   return [...values].sort((a, b) => b.length - a.length);
 }
@@ -1195,9 +1211,39 @@ export function livePort(deploymentId: string): number | null {
   return liveRegistry(deploymentId)?.port ?? null;
 }
 
+/**
+ * Return one launch-consistent MCP connection snapshot. Secrets only exist in
+ * the worker that owns the child process, so a newer cross-worker registry
+ * generation must fail closed instead of pairing its port with stale secrets.
+ */
+export function liveMcpRuntimeSnapshot(deploymentId: string): LiveMcpRuntimeSnapshot | null {
+  const entry = localLiveEntry(deploymentId);
+  if (!entry || entry.status !== 'running' || !entry.port) return null;
+  const persisted = readRegistry(deploymentId);
+  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime)) return null;
+  return {
+    port: entry.port,
+    generation: entry.runtime.generation,
+    redactionValues: [...entry.redactionValues],
+  };
+}
+
+/**
+ * Return a copy of the launch-private values used to redact this deployment's
+ * runtime output. Callers must never persist or log these plaintext values.
+ */
+export function liveRedactionValues(deploymentId: string): string[] | null {
+  const entry = localLiveEntry(deploymentId);
+  if (!entry) return null;
+  const persisted = readRegistry(deploymentId);
+  if (persisted && registryDiffersFromRuntime(persisted, entry.runtime)) return null;
+  return [...entry.redactionValues];
+}
+
 type StartProcessOptions = {
   awaitReady?: boolean;
   workspaceId?: string;
+  onReady?: () => void | Promise<void>;
 };
 
 type LaunchResult = {
@@ -1299,14 +1345,22 @@ async function launchProcess(
         args: ['run', '--name', deploymentContainerName(deploymentId), ...launchSpec.args.slice(1)],
       }
     : launchSpec;
-  const script = managedSpec.kind === 'bridge' ? BRIDGE : managedSpec.kind === 'sandbox' ? SANDBOX_SERVER : BUILTIN;
+  const script = managedSpec.kind === 'bridge'
+    ? BRIDGE
+    : managedSpec.kind === 'remote'
+      ? REMOTE_BRIDGE
+      : managedSpec.kind === 'sandbox'
+        ? SANDBOX_SERVER
+        : BUILTIN;
   const managedBridgeImage = managedSpec.kind === 'bridge' ? bridgeImage(managedSpec) : '';
   const startupTimeouts = managedSpec.kind === 'bridge'
     ? await resolveMcpStartupTimeoutSettings()
     : null;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
-  const runtimeEventToken = managedSpec.kind === 'bridge' ? randomUUID() : '';
+  const runtimeEventToken = managedSpec.kind === 'bridge' || managedSpec.kind === 'remote'
+    ? randomUUID()
+    : '';
   // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
   // down to an allowlist before spawning the docker CLI. The MCP's own env is
   // already baked into spec.args as `-e` flags, so it is NOT injected here.
@@ -1326,7 +1380,21 @@ async function launchProcess(
           MCP_STARTUP_MAX_TIMEOUT_MS: String(startupTimeouts!.maxTimeoutMs),
           MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
         }
-      : managedSpec.kind === 'sandbox'
+      : managedSpec.kind === 'remote'
+        ? {
+            PATH: process.env.PATH ?? '',
+            NODE_ENV: process.env.NODE_ENV ?? 'production',
+            MCP_PORT: '0',
+            MCP_NAME: managedSpec.name,
+            MCP_REMOTE_CONFIG: JSON.stringify({
+              url: managedSpec.url,
+              transport: managedSpec.transport,
+              headers: managedSpec.headers,
+              timeoutMs: managedSpec.timeoutMs,
+            }),
+            MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
+          }
+        : managedSpec.kind === 'sandbox'
         ? {
             PATH: process.env.PATH ?? '',
             NODE_ENV: process.env.NODE_ENV ?? 'production',
@@ -1490,6 +1558,9 @@ export async function startProcess(
   const { ready } = await enqueueLifecycle(deploymentId, () => (
     launchProcess(deploymentId, spec, options.workspaceId)
   ));
+  if (ready && options.onReady) {
+    void ready.then(() => liveStatus(deploymentId) === 'running' && options.onReady?.()).catch(() => undefined);
+  }
   if ((options.awaitReady ?? true) && ready) await ready;
 }
 
@@ -1538,6 +1609,9 @@ export async function restartProcess(
     await stopProcessUnlocked(deploymentId);
     return launchProcess(deploymentId, spec, options.workspaceId);
   });
+  if (ready && options.onReady) {
+    void ready.then(() => liveStatus(deploymentId) === 'running' && options.onReady?.()).catch(() => undefined);
+  }
   if ((options.awaitReady ?? true) && ready) await ready;
 }
 

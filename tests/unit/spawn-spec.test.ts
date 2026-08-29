@@ -355,6 +355,47 @@ describe('resolveSpawnSpec', () => {
     }
   });
 
+  it('resolves remote MCP auth from private env references', () => {
+    expect(resolveSpawnSpec({
+      serverId: 'remote-1',
+      server: { name: 'Hosted search' },
+      name: null,
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg: {
+        transport: 'streamable-http',
+        authType: 'headers',
+        env: { API_TOKEN: 'secret-value', UNUSED: 'not-forwarded' },
+        headerEnv: { 'X-Api-Key': 'API_TOKEN' },
+        timeoutMs: 15_000,
+      },
+    })).toEqual({
+      kind: 'remote',
+      name: 'Hosted search',
+      url: 'https://mcp.example.com/mcp',
+      transport: 'streamable-http',
+      headers: { 'X-Api-Key': 'secret-value' },
+      timeoutMs: 15_000,
+    });
+  });
+
+  it('rejects unsafe remote MCP URLs and missing credential references', () => {
+    const deployment = {
+      serverId: null,
+      server: null,
+      name: 'Remote',
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com:443/mcp',
+      installCfg: { authType: 'none' },
+    };
+    expect(() => resolveSpawnSpec(deployment)).toThrow(/custom port/);
+    expect(() => resolveSpawnSpec({
+      ...deployment,
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg: { authType: 'bearer', env: {}, bearerEnv: 'TOKEN' },
+    })).toThrow(/TOKEN is not configured/);
+  });
+
   it('sandbox source resolves to the sandbox MCP server spec', () => {
     const spec = resolveSpawnSpec({
       serverId: null,

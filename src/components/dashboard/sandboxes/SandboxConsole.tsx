@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
-import { ArrowLeft, ChevronRight, Download, FileText, Folder, FolderOpen, Loader2, RefreshCw, TerminalIcon, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Download, FileText, Folder, FolderOpen, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 
@@ -189,7 +189,9 @@ export function SandboxConsole({
   const t = useTranslations('console.sandboxes');
   const terminalBase = terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
   const rpcBase = rpcApiBase ?? `/api/v1/mcp/${deploymentId}/rpc`;
+  const uploadBase = `/api/v1/mcp/${deploymentId}/files/upload`;
   const terminalElementRef = useRef<HTMLDivElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const terminalRef = useRef<XtermTerminal | null>(null);
   const fitRef = useRef<XtermFitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -205,7 +207,9 @@ export function SandboxConsole({
     initialEntries.length ? { [rootPath]: sortedEntries(initialEntries) } : {},
   );
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const [selectedDirectory, setSelectedDirectory] = useState(rootPath);
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [selectedPath, setSelectedPath] = useState('');
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [terminalStatus, setTerminalStatus] = useState(
@@ -234,6 +238,7 @@ export function SandboxConsole({
       setLoadingPath(rootPath);
       setEntriesByPath({});
       setExpandedPaths(new Set());
+      setSelectedDirectory(rootPath);
       setPreview(null);
       setSelectedPath('');
       setFileError('');
@@ -256,6 +261,7 @@ export function SandboxConsole({
       loadedDirectoryRef.current = '';
       setEntriesByPath({});
       setExpandedPaths(new Set());
+      setSelectedDirectory(rootPath);
       setPreview(null);
       setSelectedPath('');
       setFileError('');
@@ -477,8 +483,50 @@ export function SandboxConsole({
     }
   }
 
+  async function uploadFiles(files: File[]) {
+    if (!files.length || uploading) return;
+    const directoryEntries = entriesByPath[selectedDirectory] ?? [];
+    const existingNames = new Set(directoryEntries.map((entry) => entry.name));
+    if (files.some((file) => existingNames.has(file.name)) && !window.confirm(t('replaceExistingFiles'))) return;
+
+    setUploading(true);
+    setFileError('');
+    const errors: string[] = [];
+    try {
+      for (const file of files) {
+        try {
+          if (!file.name || file.name.includes('/') || file.name.includes('\\')) {
+            throw new Error(t('invalidUploadFilename'));
+          }
+          const url = new URL(uploadBase, window.location.origin);
+          url.searchParams.set('path', joinPath(selectedDirectory, file.name));
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': file.type || 'application/octet-stream' },
+            body: file,
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({})) as { error?: string };
+            throw new Error(payload.error || t('toolCallFailed'));
+          }
+        } catch (error) {
+          errors.push(`${file.name}: ${String(error instanceof Error ? error.message : error)}`);
+        }
+      }
+      const listing = await loadDirectory(selectedDirectory);
+      setEntriesByPath((current) => ({ ...current, [listing.path]: listing.entries }));
+      if (errors.length) setFileError(errors.join('\n'));
+    } catch (error) {
+      setFileError(String(error instanceof Error ? error.message : error));
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  }
+
   async function toggleDirectory(path: string) {
     setFileError('');
+    setSelectedDirectory(path);
     if (expandedPaths.has(path)) {
       setExpandedPaths((current) => {
         const next = new Set(current);
@@ -513,6 +561,7 @@ export function SandboxConsole({
       const isFolder = entry.type === 'dir';
       const expanded = isFolder && expandedPaths.has(fullPath);
       const selected = selectedPath === fullPath;
+      const selectedFolder = isFolder && selectedDirectory === fullPath;
       const loading = loadingPath === fullPath;
       const children = entriesByPath[fullPath];
 
@@ -521,9 +570,9 @@ export function SandboxConsole({
           key={`${entry.type}:${fullPath}`}
           role="treeitem"
           aria-expanded={isFolder ? expanded : undefined}
-          aria-selected={selected}
+          aria-selected={selected || selectedFolder}
         >
-          <div className={`group flex min-h-7 items-center rounded-md transition-colors ${selected ? 'bg-brand-soft text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
+          <div className={`group flex min-h-7 items-center rounded-md transition-colors ${selected || selectedFolder ? 'bg-brand-soft text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
             <button
               type="button"
               onClick={() => (isFolder ? void toggleDirectory(fullPath) : void openFile(fullPath))}
@@ -616,17 +665,29 @@ export function SandboxConsole({
           <Folder className="size-4 text-muted-foreground" />
           {t('files')}
         </div>
-        <button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>
-          {loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <input
+            ref={uploadInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => void uploadFiles(Array.from(event.target.files ?? []))}
+          />
+          <button type="button" onClick={() => uploadInputRef.current?.click()} disabled={!running || loadingPath !== null || uploading} className="ui-button-ghost ui-button-sm" title={t('uploadFilesTo', { path: displayWorkspacePath(selectedDirectory, workspaceRoot) })} aria-label={t('uploadFiles')}>
+            {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+          </button>
+          <button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null || uploading} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>
+            {loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          </button>
+        </div>
       </div>
       <div role="tree" aria-label={t('files')} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        <div role="treeitem" aria-expanded="true" aria-selected="false">
-          <div title={displayedRootPath} className="flex min-h-7 items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-sm font-medium text-foreground">
+        <div role="treeitem" aria-expanded="true" aria-selected={selectedDirectory === rootPath}>
+          <button type="button" onClick={() => setSelectedDirectory(rootPath)} title={displayedRootPath} className={`flex min-h-7 w-full items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-left text-sm font-medium ${selectedDirectory === rootPath ? 'bg-brand-soft text-accent-foreground' : 'text-foreground hover:bg-muted/70'}`}>
             <ChevronRight className="size-[11px] shrink-0 rotate-90" />
             <FolderOpen className="size-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{rootName}</span>
-          </div>
+          </button>
           {fileError && rootEntries ? <p role="alert" className="px-5 py-1 text-xs text-destructive">{fileError}</p> : null}
           <div role="group">
             {rootEntries?.length ? renderTreeEntries(rootPath, 1) : (

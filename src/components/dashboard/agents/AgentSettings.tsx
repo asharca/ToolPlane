@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
+import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import {
   AgentSettingsForm,
   type AgentSettingsSection,
@@ -61,7 +62,7 @@ type SettingsData = {
   providerIds: string[];
   model: string | null;
   maxSteps: number;
-  providers: Array<{ id: string; name: string; format: string; models: string[] }>;
+  providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];

@@ -15,17 +15,31 @@ import {
   AgentConfigurationError,
   updateAgent,
   setAgentTools,
-  deleteAgent,
   createProvider,
   updateProvider,
   updateAgentModelSelection,
   deleteProvider,
   setProviderModels,
+  addProviderModels,
+  updateProviderModel,
+  deleteProviderModel,
+  ProviderModelError,
   createConversation,
   renameConsoleConversation,
   deleteConsoleConversation,
   setHermesRuntimeEnv,
 } from '@/lib/agents/mutations';
+import {
+  MODEL_CAPABILITIES,
+  MODEL_INPUT_MODALITIES,
+  MODEL_PRIMARY_TYPES,
+  defaultProviderModel,
+  inferModelGroup,
+  type ModelCapability,
+  type ModelInputModality,
+  type ModelPrimaryType,
+  type ProviderModelValues,
+} from '@/lib/agents/model-catalog';
 import {
   fetchProviderModels,
   type ProviderModelFetchConfig,
@@ -44,7 +58,6 @@ import {
 import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/platforms';
 import {
   copyHermesRuntimeVolume,
-  cleanupHermesRuntime,
   ensureHermesRuntimeReady,
   stopHermesRuntime,
   syncHermesRuntime,
@@ -59,10 +72,10 @@ import {
   withdrawPendingAgentRelease,
 } from '@/lib/agents/market';
 import { safeRelativePath } from '@/lib/auth/safe-redirect';
-import { cleanupAgentEndpointRuntimesForSource } from '@/lib/agents/public-api/maintenance';
 import { implementedAgentRuntimeKind } from '@/lib/agents/runtime-kind';
 import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 import { db } from '@/lib/db';
+import { deleteManagedAgent } from '@/lib/agents/deletion';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -88,6 +101,12 @@ async function isManageableAgent(workspaceId: string, agentId: string): Promise<
 }
 
 export type ActionState = { error?: string; warning?: string; savedAt?: number };
+
+function revalidateProviderViews(slug: string) {
+  for (const path of ['agents', 'chat', 'knowledge', 'providers', 'settings', 'settings/providers']) {
+    revalidatePath(`/app/${slug}/${path}`);
+  }
+}
 
 function providerFormValue(format: string, baseUrl: string) {
   const selectedFormat = providerPreset(format) ? format : 'openai';
@@ -157,7 +176,7 @@ export async function createProviderAction(
     return { error: 'A provider with that name already exists.' };
   }
   const refreshError = await refreshProviderModels(ctx.ws.id, provider.id, { name, format, baseUrl, apiKey });
-  revalidatePath(`/app/${slug}/agents`);
+  revalidateProviderViews(slug);
   if (refreshError) {
     return { warning: `Provider added, but models were not refreshed: ${refreshError}`, savedAt: Date.now() };
   }
@@ -207,7 +226,7 @@ export async function updateProviderAction(
     });
     if (refreshError) warning = `Provider updated, but models were not refreshed: ${refreshError}`;
   }
-  revalidatePath(`/app/${slug}/agents`);
+  revalidateProviderViews(slug);
   return { ...(warning ? { warning } : {}), savedAt: Date.now() };
 }
 
@@ -217,7 +236,7 @@ export async function deleteProviderAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   await deleteProvider(ctx.ws.id, providerId);
-  revalidatePath(`/app/${slug}/agents`);
+  revalidateProviderViews(slug);
 }
 
 export async function refreshModelsAction(
@@ -232,7 +251,122 @@ export async function refreshModelsAction(
   if (!provider) return { error: 'Provider not found.' };
   const refreshError = await refreshProviderModels(ctx.ws.id, providerId, provider);
   if (refreshError) return { error: refreshError };
-  revalidatePath(`/app/${slug}/agents`);
+  revalidateProviderViews(slug);
+  return { savedAt: Date.now() };
+}
+
+function optionalPositiveInteger(formData: FormData, name: string): number | null | undefined {
+  const raw = String(formData.get(name) ?? '').trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 && value <= 100_000_000 ? value : undefined;
+}
+
+function selectedValues<T extends string>(formData: FormData, name: string, allowed: readonly T[]): T[] {
+  return [...new Set(formData.getAll(name).map(String).filter((value): value is T => allowed.includes(value as T)))];
+}
+
+function providerModelValues(formData: FormData, modelId: string): ProviderModelValues | null {
+  const primaryTypeValue = String(formData.get('primaryType') ?? 'text');
+  if (!MODEL_PRIMARY_TYPES.includes(primaryTypeValue as ModelPrimaryType)) return null;
+  const contextWindow = optionalPositiveInteger(formData, 'contextWindow');
+  const maxInputTokens = optionalPositiveInteger(formData, 'maxInputTokens');
+  const maxOutputTokens = optionalPositiveInteger(formData, 'maxOutputTokens');
+  if ([contextWindow, maxInputTokens, maxOutputTokens].includes(undefined)) return null;
+  const defaults = defaultProviderModel(modelId);
+  const name = String(formData.get('name') ?? '').trim();
+  const group = String(formData.get('group') ?? '').trim();
+  if (name.length > 200 || group.length > 120) return null;
+  return {
+    ...defaults,
+    name: name || modelId,
+    group: group || inferModelGroup(modelId),
+    primaryType: primaryTypeValue as ModelPrimaryType,
+    capabilities: selectedValues<ModelCapability>(formData, 'capabilities', MODEL_CAPABILITIES),
+    inputModalities: selectedValues<ModelInputModality>(formData, 'inputModalities', MODEL_INPUT_MODALITIES),
+    contextWindow: contextWindow ?? null,
+    maxInputTokens: maxInputTokens ?? null,
+    maxOutputTokens: maxOutputTokens ?? null,
+  };
+}
+
+function providerModelError(error: unknown): ActionState {
+  return {
+    error: error instanceof ProviderModelError ? error.message : 'Could not save the model.',
+  };
+}
+
+export async function addProviderModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const rawModelIds = String(formData.get('modelId') ?? '').trim().replaceAll('，', ',');
+  const modelIds = rawModelIds.split(',').map((modelId) => modelId.trim()).filter(Boolean);
+  if (!providerId || !modelIds.length || modelIds.length > 50
+    || modelIds.some((modelId) => modelId.length > 200)) {
+    return { error: 'Enter between 1 and 50 valid model IDs.' };
+  }
+  const base = providerModelValues(formData, modelIds[0]!);
+  if (!base) return { error: 'Check the model classification and token limits.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  const models = modelIds.length === 1
+    ? [base]
+    : modelIds.map((modelId) => ({
+        ...base,
+        ...defaultProviderModel(modelId),
+        primaryType: base.primaryType,
+        capabilities: base.capabilities,
+        inputModalities: base.inputModalities,
+      }));
+  try {
+    await addProviderModels(ctx.ws.id, providerId, models);
+  } catch (error) {
+    return providerModelError(error);
+  }
+  revalidateProviderViews(slug);
+  return { savedAt: Date.now() };
+}
+
+export async function updateProviderModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const modelId = String(formData.get('modelId') ?? '').trim();
+  const model = providerModelValues(formData, modelId);
+  if (!providerId || !modelId || modelId.length > 200 || !model) {
+    return { error: 'Check the model fields and token limits.' };
+  }
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  try {
+    await updateProviderModel(ctx.ws.id, providerId, model);
+  } catch (error) {
+    return providerModelError(error);
+  }
+  revalidateProviderViews(slug);
+  return { savedAt: Date.now() };
+}
+
+export async function deleteProviderModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const providerId = String(formData.get('providerId') ?? '');
+  const modelId = String(formData.get('modelId') ?? '').trim();
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  try {
+    await deleteProviderModel(ctx.ws.id, providerId, modelId);
+  } catch (error) {
+    return providerModelError(error);
+  }
+  revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
 
@@ -349,23 +483,18 @@ export async function deleteAgentAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
   if (!await isManageableAgent(ctx.ws.id, agentId)) return;
-  const publicEndpoint = await db.agentEndpoint.findFirst({
-    where: { workspaceId: ctx.ws.id, sourceAgentId: agentId },
-    select: { id: true },
-  });
-  if (publicEndpoint && ctx.ws.ownerId !== ctx.user.id) {
-    const membership = await db.membership.findUnique({
-      where: { workspaceId_userId: { workspaceId: ctx.ws.id, userId: ctx.user.id } },
-      select: { role: true },
-    });
-    if (membership?.role !== 'admin') return;
-  }
-  if (!await cleanupAgentEndpointRuntimesForSource(ctx.ws.id, agentId)) return;
-  if (!await cleanupHermesRuntime(ctx.ws.id, agentId)) return;
-  await deleteAgent(ctx.ws.id, agentId);
+  if (!await deleteManagedAgent({
+    workspaceId: ctx.ws.id,
+    agentId,
+    actorId: ctx.user.id,
+  })) return;
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
   redirect(safeRelativePath(formData.get('returnTo')) ?? `/app/${slug}/agents`);
+}
+
+export async function uninstallAgentMarketCopyAction(formData: FormData) {
+  return deleteAgentAction(formData);
 }
 
 export async function cloneAgentAction(formData: FormData) {
@@ -449,6 +578,7 @@ export async function publishAgentReleaseAction(formData: FormData) {
         summary,
         iconUrl: String(formData.get('iconUrl') ?? '').trim().slice(0, 2000) || null,
         tags: marketTags(formData.get('tags')),
+        categoryIds: formData.getAll('categoryIds').map(String).filter(Boolean),
       },
     });
   } catch (error) {

@@ -3,9 +3,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { approvePendingAgentRelease } from '@/lib/admin/agent-market';
 import {
+  agentReleaseChecksum,
   assessAgentPortability,
+  getAgentMarketListing,
+  listAgentMarketListings,
   materializeAgentRelease,
   publishAgentRelease,
+  summarizeAgentReleaseManifest,
   withdrawPendingAgentRelease,
   type AgentReleaseManifestV1,
 } from '@/lib/agents/market';
@@ -17,6 +21,7 @@ const SOURCE_PROVIDER_KEY = `source-provider-key-${stamp}`;
 const SOURCE_PROVIDER_BASE_URL = `https://source-provider-${stamp}.example.test/v1`;
 const TARGET_PROVIDER_KEY = `target-provider-key-${stamp}`;
 const DEPLOYMENT_ENV_CANARY = `source-deployment-env-${stamp}`;
+const ENCODED_DEPLOYMENT_ENV_CANARY = Buffer.from(DEPLOYMENT_ENV_CANARY).toString('base64url');
 const CHANNEL_CREDENTIAL_CANARY = `source-channel-credential-${stamp}`;
 const CHANNEL_TOKEN_CANARY = `source-channel-token-${stamp}`;
 const MESSAGE_CANARY = `source-message-${stamp}`;
@@ -48,10 +53,13 @@ let sourceCustomSkillId = '';
 let sourceToolkitId = '';
 let sourceSandboxId = '';
 let sourceSandboxDeploymentId = '';
+let categoryId = '';
+let updateCategoryId = '';
 let firstListingId = '';
 let firstReleaseId = '';
 let firstReleaseManifest: AgentReleaseManifestV1;
 let firstReleaseChecksum = '';
+let legacyAgentListingId = '';
 
 function manifestOf(value: unknown): AgentReleaseManifestV1 {
   return value as AgentReleaseManifestV1;
@@ -109,6 +117,16 @@ describe.sequential('agent marketplace releases and installs', () => {
     sourceWorkspaceId = sourceWorkspace.id;
     targetWorkspaceId = targetWorkspace.id;
     foreignWorkspaceId = foreignWorkspace.id;
+    const [category, updateCategory] = await Promise.all([
+      db.category.create({
+        data: { slug: `agent-market-${stamp}`, name: `Agent Market ${stamp}` },
+      }),
+      db.category.create({
+        data: { slug: `agent-market-update-${stamp}`, name: `Agent Market Update ${stamp}` },
+      }),
+    ]);
+    categoryId = category.id;
+    updateCategoryId = updateCategory.id;
 
     const [sourceProvider, targetProvider] = await Promise.all([
       db.modelProvider.create({
@@ -141,11 +159,12 @@ describe.sequential('agent marketplace releases and installs', () => {
         slug: catalogServerSlug,
         name: 'Portable Catalog MCP',
         verifiedAt: new Date(),
-        installCfg: {
-          source: 'npm',
-          ref: '@modelcontextprotocol/server-memory',
-          env: [REQUIRED_ENV],
-          envValues: { MARKET_PUBLIC_MODE: '1' },
+          installCfg: {
+            source: 'npm',
+            ref: '@modelcontextprotocol/server-memory',
+            env: [REQUIRED_ENV],
+            envValues: { MARKET_PUBLIC_MODE: '1' },
+            toolCatalog: [{ name: 'read_graph' }],
         },
       },
     });
@@ -165,7 +184,7 @@ describe.sequential('agent marketplace releases and installs', () => {
           },
         },
         mcpToolExposure: 'allowlist',
-        mcpAllowedTools: ['read_graph'],
+        mcpAllowedTools: ['read_graph', ENCODED_DEPLOYMENT_ENV_CANARY],
       },
     });
     sourceDeploymentId = sourceDeployment.id;
@@ -316,6 +335,7 @@ describe.sequential('agent marketplace releases and installs', () => {
         name: 'Portable Research Agent',
         summary: 'A safe immutable marketplace release.',
         tags: ['research', 'portable'],
+        categoryIds: [categoryId],
       },
     });
     firstListingId = published.listing.id;
@@ -330,13 +350,18 @@ describe.sequential('agent marketplace releases and installs', () => {
         where: { id: { in: [sourceWorkspaceId, targetWorkspaceId, foreignWorkspaceId].filter(Boolean) } },
       });
     }
-    if (firstListingId) await db.agentListing.deleteMany({ where: { id: firstListingId } });
+    await db.agentListing.deleteMany({
+      where: { id: { in: [firstListingId, legacyAgentListingId].filter(Boolean) } },
+    });
     if (sourceUserId || targetUserId || foreignUserId) {
       await db.user.deleteMany({
         where: { id: { in: [sourceUserId, targetUserId, foreignUserId].filter(Boolean) } },
       });
     }
     if (catalogServerId) await db.server.deleteMany({ where: { id: catalogServerId } });
+    if (categoryId || updateCategoryId) {
+      await db.category.deleteMany({ where: { id: { in: [categoryId, updateCategoryId].filter(Boolean) } } });
+    }
     await db.$disconnect();
   });
 
@@ -345,12 +370,19 @@ describe.sequential('agent marketplace releases and installs', () => {
 
     const pendingListing = await db.agentListing.findFirstOrThrow({
       where: { sourceAgentId },
-      select: { id: true, status: true, latestReleaseId: true, pendingReleaseId: true },
+      select: {
+        id: true,
+        status: true,
+        latestReleaseId: true,
+        pendingReleaseId: true,
+        categories: { select: { id: true } },
+      },
     });
     expect(pendingListing).toMatchObject({
       status: 'draft',
       latestReleaseId: null,
       pendingReleaseId: firstReleaseId,
+      categories: [],
     });
     await expect(materializeAgentRelease({
       releaseId: firstReleaseId,
@@ -402,6 +434,7 @@ describe.sequential('agent marketplace releases and installs', () => {
     expect(firstReleaseManifest.agents[0].runtime).toEqual({ kind: 'pi' });
     expect(serialized).not.toContain(sourceProviderId);
     expect(serialized).not.toContain(sourceDeploymentId);
+    expect(serialized).not.toContain(ENCODED_DEPLOYMENT_ENV_CANARY);
     expect(serialized).not.toContain(sourceCustomSkillId);
     expect(serialized).not.toContain(sourceToolkitId);
     expect(serialized).not.toContain(sourceSandboxId);
@@ -414,7 +447,46 @@ describe.sequential('agent marketplace releases and installs', () => {
       reviewNote: 'Approved by the integration test administrator.',
     });
     await expect(db.agentRelease.findUniqueOrThrow({ where: { id: firstReleaseId } }))
-      .resolves.toMatchObject({ reviewStatus: 'approved', reviewedById: sourceUserId });
+      .resolves.toMatchObject({
+        reviewStatus: 'approved',
+        reviewedById: sourceUserId,
+        categoryIds: [categoryId],
+      });
+    await expect(db.agentListing.findUniqueOrThrow({
+      where: { id: pendingListing.id },
+      select: { categories: { select: { id: true } } },
+    })).resolves.toEqual({ categories: [{ id: categoryId }] });
+  });
+
+  it('rejects a publisher release whose system prompt contains a credential', async () => {
+    await expect(publishAgentRelease({
+      workspaceId: sourceWorkspaceId,
+      agentId: sourceAgentId,
+      publishedById: sourceUserId,
+      listing: { name: 'Uncategorized release', summary: 'Must be blocked.' },
+    })).rejects.toMatchObject({ code: 'invalid_categories' });
+
+    const secret = `sk-proj-${'z'.repeat(24)}`;
+    await db.agent.update({
+      where: { id: sourceAgentId },
+      data: { systemPrompt: `Never publish ${secret}` },
+    });
+    await expect(publishAgentRelease({
+      workspaceId: sourceWorkspaceId,
+      agentId: sourceAgentId,
+      publishedById: sourceUserId,
+      listing: {
+        name: 'Unsafe release',
+        summary: 'Must be blocked.',
+        categoryIds: [categoryId],
+      },
+    })).rejects.toMatchObject({ code: 'invalid_manifest' });
+    await db.agent.update({
+      where: { id: sourceAgentId },
+      data: { systemPrompt: ORIGINAL_PROMPT },
+    });
+    await expect(db.agentListing.findUniqueOrThrow({ where: { id: firstListingId } }))
+      .resolves.toMatchObject({ pendingReleaseId: null, latestReleaseId: firstReleaseId });
   });
 
   it('keeps an old release immutable after the source agent and dependencies change', async () => {
@@ -442,6 +514,14 @@ describe.sequential('agent marketplace releases and installs', () => {
       workspaceId: sourceWorkspaceId,
       agentId: sourceAgentId,
       publishedById: sourceUserId,
+      listing: {
+        slug: `pending-rename-${stamp}`,
+        name: 'Pending Rename',
+        summary: 'Pending summary',
+        iconUrl: 'https://example.test/pending.png',
+        tags: ['pending'],
+        categoryIds: [updateCategoryId],
+      },
     });
     const rereadFirst = await db.agentRelease.findUniqueOrThrow({
       where: { id: firstReleaseId },
@@ -458,12 +538,33 @@ describe.sequential('agent marketplace releases and installs', () => {
     });
     await expect(db.agentListing.findFirstOrThrow({
       where: { sourceAgentId },
-      select: { status: true, latestReleaseId: true, pendingReleaseId: true },
+      select: {
+        publisherKind: true,
+        slug: true,
+        name: true,
+        author: true,
+        summary: true,
+        iconUrl: true,
+        tags: true,
+        status: true,
+        latestReleaseId: true,
+        pendingReleaseId: true,
+        categories: { select: { id: true } },
+      },
     })).resolves.toEqual({
+      publisherKind: 'workspace',
+      slug: `portable-research-${stamp}`,
+      name: 'Portable Research Agent',
+      author: 'Agent Market Source',
+      summary: 'A safe immutable marketplace release.',
+      iconUrl: null,
+      tags: ['research', 'portable'],
       status: 'published',
       latestReleaseId: firstReleaseId,
       pendingReleaseId: second.release.id,
+      categories: [{ id: categoryId }],
     });
+    expect(second.release.categoryIds).toEqual([updateCategoryId]);
   });
 
   it('withdraws a pending update without taking the approved version offline', async () => {
@@ -742,7 +843,11 @@ describe.sequential('agent marketplace releases and installs', () => {
       workspaceId: sourceWorkspaceId,
       agentId: hermesAgent.id,
       publishedById: sourceUserId,
-      listing: { name: 'Portable Hermes Agent', tags: ['hermes', 'portable'] },
+      listing: {
+        name: 'Portable Hermes Agent',
+        tags: ['hermes', 'portable'],
+        categoryIds: [categoryId],
+      },
     });
     const manifest = manifestOf(published.release.manifest);
     const serializedManifest = JSON.stringify(manifest);
@@ -989,5 +1094,114 @@ describe.sequential('agent marketplace releases and installs', () => {
     expect(missingSandbox.issues.map(({ code }) => code)).toContain('invalid_definition');
     expect(hermesSandbox.issues.map(({ code }) => code)).toContain('external_sandbox');
     expect(foreign.issues.map(({ code }) => code)).toContain('cross_workspace_deployment');
+  });
+
+  it('projects legacy agent MCP allowlists through current verified catalogs', async () => {
+    const canary = `credential-${stamp}`;
+    const suffix = `legacy-${stamp}`.slice(-40);
+    const legacyManifest: AgentReleaseManifestV1 = {
+      ...firstReleaseManifest,
+      agents: firstReleaseManifest.agents.map((agent) => ({
+        ...agent,
+        name: `${agent.name} legacy`,
+        slug: `${agent.slug}-${suffix}`.slice(0, 120),
+      })),
+      deployments: firstReleaseManifest.deployments.map((deployment) => ({
+        ...deployment,
+        mcpAllowedTools: ['read_graph', canary],
+      })),
+      skills: firstReleaseManifest.skills.map((skill) => ({
+        ...skill,
+        slug: `${skill.slug}-${suffix}`.slice(0, 120),
+      })),
+      toolkits: firstReleaseManifest.toolkits.map((toolkit) => ({
+        ...toolkit,
+        slug: `${toolkit.slug}-${suffix}`.slice(0, 120),
+      })),
+    };
+    const listing = await db.agentListing.create({
+      data: {
+        publisherKind: 'platform',
+        slug: `legacy-agent-${stamp}`.slice(0, 120),
+        directorySlug: `legacy-agent-directory-${stamp}`.slice(0, 120),
+        name: 'Legacy agent allowlist',
+        status: 'draft',
+        curated: true,
+      },
+    });
+    legacyAgentListingId = listing.id;
+    const release = await db.agentRelease.create({
+      data: {
+        listingId: listing.id,
+        version: 1,
+        manifestVersion: 1,
+        manifest: legacyManifest,
+        releaseSummary: summarizeAgentReleaseManifest(legacyManifest),
+        checksum: agentReleaseChecksum(legacyManifest),
+        name: listing.name,
+        tags: [],
+        reviewStatus: 'approved',
+      },
+    });
+    await db.agentListing.update({
+      where: { id: listing.id },
+      data: {
+        status: 'published',
+        latestVersion: 1,
+        latestReleaseId: release.id,
+        publishedAt: new Date(),
+      },
+    });
+
+    const detail = await getAgentMarketListing(listing.id);
+    expect(detail?.manifest.deployments[0].mcpAllowedTools).toEqual(['read_graph']);
+    expect(detail?.release.checksum).toBe(agentReleaseChecksum(detail!.manifest));
+    expect(JSON.stringify(detail)).not.toContain(canary);
+
+    const installed = await materializeAgentRelease({
+      releaseId: release.id,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey: `legacy-agent-${stamp}`,
+      name: 'Installed legacy-safe agent',
+    });
+    const deploymentId = Object.values(installed.resourceMap.deployments)[0];
+    const deployment = await db.deployment.findUniqueOrThrow({ where: { id: deploymentId } });
+    expect(deployment.mcpAllowedTools).toEqual(['read_graph']);
+    expect(JSON.stringify(deployment)).not.toContain(canary);
+  });
+
+  it('keeps a workspace listing private after deleting its publisher clears every origin relation', async () => {
+    await expect(getAgentMarketListing(firstListingId)).resolves.not.toBeNull();
+
+    await db.user.delete({ where: { id: sourceUserId } });
+
+    await expect(db.agentListing.findUniqueOrThrow({
+      where: { id: firstListingId },
+      select: {
+        publisherKind: true,
+        publisherWorkspaceId: true,
+        sourceAgentId: true,
+        publishedById: true,
+      },
+    })).resolves.toEqual({
+      publisherKind: 'workspace',
+      publisherWorkspaceId: null,
+      sourceAgentId: null,
+      publishedById: null,
+    });
+
+    const [detail, listings] = await Promise.all([
+      getAgentMarketListing(firstListingId),
+      listAgentMarketListings({ q: `portable-research-${stamp}` }),
+    ]);
+    expect(detail).toBeNull();
+    expect(listings.items.map(({ id }) => id)).not.toContain(firstListingId);
+    await expect(materializeAgentRelease({
+      releaseId: firstReleaseId,
+      targetWorkspaceId,
+      installedById: targetUserId,
+      idempotencyKey: `orphan-release-${stamp}`,
+    })).rejects.toMatchObject({ code: 'listing_unavailable' });
   });
 });

@@ -6,6 +6,7 @@ import {
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { buildToolSet } from '@/lib/agents/tools';
 import { runNativeAgent, uiMessagesToPi } from '@/lib/agents/native';
+import { createNativeUiStreamBridge } from '@/lib/agents/ui-stream';
 import {
   AttachmentMessageError,
   hydrateWorkspaceAttachmentMessages,
@@ -21,6 +22,8 @@ import {
   getChatHistoryForExecution,
   getChatThreadForExecution,
 } from '@/lib/chat/service';
+import { isWebSearchDeployment } from '@/lib/chat/web-search';
+import { buildKeylessWebSearchToolSet } from '@/lib/chat/keyless-web-search';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -62,6 +65,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
         messageId: targetMessageId,
         clientLastMessageId: last.id,
         modelId,
+        expectedAssistantId: assistant.id,
       },
     );
   } catch (error) {
@@ -73,12 +77,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
       : Response.json({ error: 'Chat request failed' }, { status: 500 });
   }
 
+  const webDeploymentIds = assistant.mcpGrants
+    .filter((grant) => isWebSearchDeployment(grant.deployment))
+    .map((grant) => grant.deploymentId);
+  const webDeploymentIdSet = new Set(webDeploymentIds);
+  const regularDeploymentIds = assistant.mcpGrants
+    .map((grant) => grant.deploymentId)
+    .filter((deploymentId) => !webDeploymentIdSet.has(deploymentId));
   let tools: Awaited<ReturnType<typeof buildToolSet>>;
   try {
-    tools = await buildToolSet(
-      assistant.mcpGrants.map((grant) => grant.deploymentId),
-      thread.workspaceId,
-    );
+    const [regularTools, webTools] = await Promise.all([
+      buildToolSet(regularDeploymentIds, thread.workspaceId),
+      input.webSearchEnabled
+        ? buildToolSet(webDeploymentIds, thread.workspaceId)
+        : Promise.resolve({}),
+    ]);
+    tools = {
+      ...regularTools,
+      ...webTools,
+      ...(input.webSearchEnabled ? buildKeylessWebSearchToolSet(req.signal) : {}),
+    };
   } catch (error) {
     await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'MCP discovery failed', turn.assistantMessageId);
     return Response.json({ error: 'MCP discovery failed' }, { status: 503 });
@@ -114,7 +132,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
     originalMessages: input.messages as HermesUIMessage[],
     execute: async ({ writer }) => {
       writer.write({ type: 'start', messageId: turn.assistantMessageId });
-      const textPartIds = new Map<number, string>();
+      const uiStream = createNativeUiStreamBridge(writer, `chat-${turn.id}`);
       const contextUsage: { current: ContextUsageSnapshot | null } = { current: null };
       try {
         await runNativeAgent({
@@ -125,45 +143,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
           tools,
           maxSteps: assistant.maxSteps,
           signal: req.signal,
-          onEvent: (event) => {
-            if (event.type === 'text_start') {
-              const id = `chat-${turn.id}-${event.contentIndex}`;
-              textPartIds.set(event.contentIndex, id);
-              writer.write({ type: 'text-start', id });
-            } else if (event.type === 'text_delta') {
-              let id = textPartIds.get(event.contentIndex);
-              if (!id) {
-                id = `chat-${turn.id}-${event.contentIndex}`;
-                textPartIds.set(event.contentIndex, id);
-                writer.write({ type: 'text-start', id });
-              }
-              writer.write({ type: 'text-delta', id, delta: event.delta });
-            } else if (event.type === 'text_end') {
-              const id = textPartIds.get(event.contentIndex);
-              if (id) writer.write({ type: 'text-end', id });
-            } else if (event.type === 'toolcall_end') {
-              writer.write({ type: 'tool-input-start', toolCallId: event.toolCall.id, toolName: event.toolCall.name });
-              writer.write({
-                type: 'tool-input-available',
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.name,
-                input: event.toolCall.arguments,
-              });
-            }
-          },
-          onToolResult: (toolCall, output, isError) => {
-            if (isError) {
-              writer.write({
-                type: 'tool-output-error',
-                toolCallId: toolCall.id,
-                errorText: output instanceof Error ? output.message : JSON.stringify(output),
-              });
-            } else {
-              writer.write({ type: 'tool-output-available', toolCallId: toolCall.id, output });
-            }
-          },
+          onEvent: uiStream.onEvent,
+          onToolResult: uiStream.onToolResult,
           onContextUsage: (usage) => { contextUsage.current = usage; },
         });
+        uiStream.finish();
         const usage = contextUsage.current;
         if (usage) {
           writer.write({

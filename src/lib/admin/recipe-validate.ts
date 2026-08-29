@@ -1,12 +1,17 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import { buildSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
+import { resolveSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
 import { startProcess, killProcess, livePort, liveStatus } from '@/lib/process/supervisor';
-import { mcpRpc } from '@/lib/process/mcp-client';
-import type { ServerRecipe } from '@/lib/workspace/server-recipe';
+import { McpPayloadTooLargeError, mcpRpc } from '@/lib/process/mcp-client';
+import {
+  parseMcpToolCatalogResult,
+  redactMcpToolCatalogResult,
+  type McpToolDefinition,
+} from '@/lib/process/mcp-tool-catalog';
+import { recipeToDeploymentData, type ServerRecipe } from '@/lib/workspace/server-recipe';
 
 export type ValidateResult =
-  | { ok: true; toolCount: number; tools: string[] }
+  | { ok: true; toolCount: number; tools: string[]; toolCatalog: McpToolDefinition[] }
   | { ok: false; error: string };
 
 // The probe spins up a throwaway sandbox container, so first-run cold start
@@ -33,15 +38,15 @@ export async function validateServerRecipe(
 
   let spec: SpawnSpec;
   try {
-    const { command, args } = buildSpawnSpec(
-      recipe.source,
-      recipe.ref,
-      recipe.startCommand,
-      env,
-      false,
-      recipe.network ?? 'isolated',
-    );
-    spec = { kind: 'bridge', name: recipe.ref, command, args, env };
+    const data = recipeToDeploymentData(recipe);
+    data.installCfg.env = env;
+    spec = resolveSpawnSpec({
+      serverId: null,
+      name: recipe.ref,
+      source: data.source,
+      sourceRef: data.sourceRef,
+      installCfg: data.installCfg,
+    }, true);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Bad recipe.' };
   }
@@ -68,13 +73,80 @@ export async function validateServerRecipe(
       return { ok: false, error: 'Timed out starting. First run can take ~1 minute while the image is pulled — try again.' };
     }
 
-    const result = await mcpRpc(id, 'tools/list', undefined, TOOLS_TIMEOUT_MS);
-    if (!result) {
-      return { ok: false, error: 'Server started but did not answer tools/list as an MCP server.' };
+    let toolCatalog: McpToolDefinition[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    let remainingResponseBytes = 4_000_000;
+    const toolsDeadline = Date.now() + 30_000;
+    for (let page = 0; page < 10; page += 1) {
+      const remainingMs = toolsDeadline - Date.now();
+      if (remainingMs <= 0) {
+        return { ok: false, error: 'Timed out while reading the paginated tool catalog.' };
+      }
+      let result: Record<string, unknown> | null;
+      let responseBytes = 0;
+      try {
+        result = await mcpRpc(
+          id,
+          'tools/list',
+          cursor ? { cursor } : undefined,
+          Math.min(TOOLS_TIMEOUT_MS, remainingMs),
+          {
+            maxResponseBytes: remainingResponseBytes,
+            onResponseBytes: (bytes) => { responseBytes = bytes; },
+          },
+        );
+      } catch (error) {
+        if (error instanceof McpPayloadTooLargeError) {
+          return { ok: false, error: 'The MCP tool catalog response is too large.' };
+        }
+        throw error;
+      }
+      if (!result) {
+        if (!page) return { ok: false, error: 'Server started but did not answer tools/list as an MCP server.' };
+        return { ok: false, error: 'Server stopped responding while its paginated tool catalog was being read.' };
+      }
+      remainingResponseBytes -= responseBytes;
+      if (!Array.isArray(result.tools) || result.tools.length > 1_000 - toolCatalog.length) {
+        return { ok: false, error: 'Server returned an invalid or incomplete MCP tool catalog.' };
+      }
+      const pageCatalog = redactMcpToolCatalogResult(result.tools, Object.values(env));
+      if (!pageCatalog.ok) {
+        return { ok: false, error: 'Server returned an invalid or unsafe MCP tool catalog.' };
+      }
+      const combined = parseMcpToolCatalogResult([
+        ...toolCatalog,
+        ...pageCatalog.tools,
+      ]);
+      if (!combined.ok) {
+        return { ok: false, error: 'Server returned a duplicate or oversized MCP tool catalog.' };
+      }
+      toolCatalog = combined.tools;
+
+      if (result.nextCursor === undefined) {
+        return {
+          ok: true,
+          toolCount: toolCatalog.length,
+          tools: toolCatalog.map(({ name }) => name).slice(0, 50),
+          toolCatalog,
+        };
+      }
+      const nextCursor = result.nextCursor;
+      if (
+        typeof nextCursor !== 'string'
+        || !nextCursor
+        || nextCursor.length > 4_000
+        || seenCursors.has(nextCursor)
+        || page === 9
+        || toolCatalog.length >= 1_000
+        || remainingResponseBytes <= 0
+      ) {
+        return { ok: false, error: 'Server returned an incomplete paginated MCP tool catalog.' };
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
     }
-    const tools = Array.isArray(result.tools) ? (result.tools as { name?: string }[]) : [];
-    const names = tools.map((t) => t.name).filter((n): n is string => typeof n === 'string');
-    return { ok: true, toolCount: names.length, tools: names.slice(0, 50) };
+    return { ok: false, error: 'Server returned an incomplete paginated MCP tool catalog.' };
   } finally {
     await killProcess(id, { preventRestart: true });
   }

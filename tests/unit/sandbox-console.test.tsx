@@ -104,4 +104,54 @@ describe('SandboxConsole files', () => {
     expect(createObjectURL).toHaveBeenCalledOnce();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
+
+  it('uploads files into the selected directory and refreshes it', async () => {
+    const calls: { name: string; path: string; body?: BodyInit | null }[] = [];
+    let srcListings = 0;
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes('/files/upload')) {
+        calls.push({
+          name: 'upload_file',
+          path: new URL(String(url)).searchParams.get('path') ?? '',
+          body: init?.body,
+        });
+        return Response.json({ relativePath: 'src/notes.txt', size: 5 }, { status: 201 });
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        params: { name: string; arguments: { path: string } };
+      };
+      calls.push({ name: body.params.name, ...body.params.arguments });
+      srcListings += 1;
+      return rpcResponse({
+        path: 'src',
+        entries: srcListings === 1 ? [] : [{ name: 'notes.txt', type: 'file', size: 5 }],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <SandboxConsole
+        compact
+        filesOnly
+        deploymentId="deployment-1"
+        running
+        initialPath="."
+        initialEntries={[{ name: 'src', type: 'dir', size: null }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /src/ }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+    const uploadInput = document.querySelector('input[type="file"]');
+    expect(uploadInput).toBeInstanceOf(HTMLInputElement);
+    fireEvent.change(uploadInput as HTMLInputElement, { target: { files: [file] } });
+
+    expect(await screen.findByRole('button', { name: /notes\.txt/ })).toBeInTheDocument();
+    expect(calls.slice(0, 2)).toEqual([
+      { name: 'list_dir', path: 'src' },
+      { name: 'upload_file', path: 'src/notes.txt', body: file },
+    ]);
+    expect(calls.at(2)).toEqual({ name: 'list_dir', path: 'src' });
+  });
 });

@@ -10,7 +10,7 @@ describe('RuntimeSettingsForm', () => {
   it('shows the active admin override and allows restoring the environment default', () => {
     render(<RuntimeSettingsForm bytes={250_000_000} source="database" minMegabytes={1} maxMegabytes={10_000} />);
 
-    expect(screen.getByRole('spinbutton', { name: 'Maximum attachment size' })).toHaveValue(250);
+    expect(screen.getByRole('spinbutton', { name: 'Maximum file size' })).toHaveValue(250);
     expect(screen.getByText('Admin override')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Restore environment default' })).toBeInTheDocument();

@@ -5,6 +5,7 @@ import {
   attachmentIdsFromParts,
   claimWorkspaceAttachments,
 } from '@/lib/attachments/messages';
+import { getAssistantMarketTemplate } from '@/lib/market/skills';
 import {
   chatBranchNavigation,
   chatMessagePath,
@@ -33,7 +34,13 @@ const grantForClient = {
         name: true,
         source: true,
         status: true,
-        server: { select: { name: true, slug: true } },
+        server: {
+          select: {
+            name: true,
+            slug: true,
+            categories: { select: { slug: true } },
+          },
+        },
       },
     },
   },
@@ -134,14 +141,17 @@ async function validateAssistantResources(
         id: { in: input.deploymentIds },
         workspaceId,
         sandbox: { is: null },
+        server: { is: { verifiedAt: { not: null } } },
         OR: [{ source: null }, { source: { not: 'sandbox' } }],
       },
-      select: { id: true },
+      select: { id: true, server: { select: { slug: true } } },
     });
     if (deployments.length !== input.deploymentIds.length) {
       throw new ChatServiceError(400, 'One or more MCP deployments are invalid');
     }
+    return deployments;
   }
+  return [];
 }
 
 // Server Components call this after resolving an authorized workspace.
@@ -213,20 +223,136 @@ export async function getChatAssistantForUser(userId: string, assistantId: strin
 
 export async function createChatAssistant(userId: string, input: CreateChatAssistantInput) {
   await requireWorkspace(userId, input.workspaceId);
-  await validateAssistantResources(input.workspaceId, input);
-  return db.chatAssistant.create({
-    data: {
-      workspaceId: input.workspaceId,
-      name: input.name,
-      systemPrompt: input.systemPrompt ?? null,
-      modelProviderId: input.modelProviderId ?? null,
-      model: input.model ?? null,
-      maxSteps: input.maxSteps ?? 8,
-      mcpGrants: {
-        create: (input.deploymentIds ?? []).map((deploymentId) => ({ deploymentId })),
-      },
+  const template = input.marketTemplateReleaseId
+    ? await getAssistantMarketTemplate(input.marketTemplateReleaseId)
+    : null;
+  if (input.marketTemplateReleaseId && !template) {
+    throw new ChatServiceError(400, 'Assistant market template not found');
+  }
+  const deployments = await validateAssistantResources(input.workspaceId, input);
+  if (template) {
+    const selectedSlugs = new Set(deployments.flatMap(({ server }) => server?.slug ? [server.slug] : []));
+    const missing = template.manifest.assistant.mcpRequirements
+      .filter(({ catalogSlug }) => !selectedSlugs.has(catalogSlug));
+    if (missing.length) {
+      throw new ChatServiceError(400, `Install and select the required MCP servers: ${missing.map(({ name }) => name).join(', ')}`);
+    }
+  }
+  const data = {
+    workspaceId: input.workspaceId,
+    name: input.name,
+    systemPrompt: input.systemPrompt ?? null,
+    modelProviderId: input.modelProviderId ?? null,
+    model: input.model ?? null,
+    maxSteps: input.maxSteps ?? 8,
+    marketTemplateReleaseId: input.marketTemplateReleaseId ?? null,
+    mcpGrants: {
+      create: (input.deploymentIds ?? []).map((deploymentId) => ({ deploymentId })),
     },
-    include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+  };
+  if (!template) {
+    return db.chatAssistant.create({
+      data,
+      include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+    });
+  }
+  return db.$transaction(async (tx) => {
+    const assistant = await tx.chatAssistant.create({
+      data,
+      include: { modelProvider: providerForClient, mcpGrants: grantForClient },
+    });
+    const attributed = await tx.marketListing.updateMany({
+      where: {
+        kind: 'assistant',
+        status: 'published',
+        latestReleaseId: template.releaseId,
+        latestRelease: { is: { reviewStatus: 'approved' } },
+      },
+      data: { installCount: { increment: 1 } },
+    });
+    if (attributed.count !== 1) throw new ChatServiceError(400, 'Assistant market template not found');
+    return assistant;
+  });
+}
+
+export async function installAssistantMarketRelease(
+  userId: string,
+  input: Omit<CreateChatAssistantInput, 'workspaceId' | 'marketTemplateReleaseId' | 'name'> & {
+    workspaceId: string;
+    releaseId: string;
+    name?: string;
+  },
+) {
+  await requireWorkspace(userId, input.workspaceId);
+  const template = await getAssistantMarketTemplate(input.releaseId);
+  if (!template) throw new ChatServiceError(404, 'Assistant market template not found');
+  const definition = template.manifest.assistant;
+  const model = input.model !== undefined ? input.model : definition.modelRequirement?.model ?? null;
+  let modelProviderId = input.modelProviderId ?? null;
+  if (modelProviderId) {
+    const provider = await db.modelProvider.findFirst({
+      where: { id: modelProviderId, workspaceId: input.workspaceId },
+      select: { id: true, format: true, models: true },
+    });
+    if (
+      !provider
+      || (
+        definition.modelRequirement
+        && input.model === undefined
+        && provider.format !== definition.modelRequirement.providerFormat
+      )
+      || (model && provider.models.length > 0 && !provider.models.includes(model))
+    ) {
+      throw new ChatServiceError(400, 'Model provider does not support the selected model');
+    }
+  } else if (definition.modelRequirement) {
+    const providers = await db.modelProvider.findMany({
+      where: { workspaceId: input.workspaceId, format: definition.modelRequirement.providerFormat },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, models: true },
+    });
+    modelProviderId = providers.find((provider) => (
+      !model || provider.models.length === 0 || provider.models.includes(model)
+    ))?.id ?? null;
+    if (!modelProviderId) {
+      throw new ChatServiceError(409, 'Install a compatible model provider before installing this assistant');
+    }
+  }
+  if (model && !modelProviderId) {
+    throw new ChatServiceError(400, 'Select a model provider for the selected model');
+  }
+
+  let deploymentIds = input.deploymentIds;
+  if (deploymentIds === undefined && definition.mcpRequirements.length > 0) {
+    const requiredSlugs = definition.mcpRequirements.map(({ catalogSlug }) => catalogSlug);
+    const deployments = await db.deployment.findMany({
+      where: {
+        workspaceId: input.workspaceId,
+        sandbox: { is: null },
+        server: { is: { slug: { in: requiredSlugs }, verifiedAt: { not: null } } },
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, server: { select: { slug: true } } },
+    });
+    const deploymentBySlug = new Map(deployments.flatMap((deployment) => (
+      deployment.server ? [[deployment.server.slug, deployment.id] as const] : []
+    )));
+    deploymentIds = requiredSlugs.flatMap((slug) => {
+      const id = deploymentBySlug.get(slug);
+      return id ? [id] : [];
+    });
+  }
+
+  return createChatAssistant(userId, {
+    workspaceId: input.workspaceId,
+    marketTemplateReleaseId: input.releaseId,
+    name: input.name?.trim() || definition.name,
+    systemPrompt: input.systemPrompt !== undefined ? input.systemPrompt : definition.systemPrompt,
+    modelProviderId,
+    model,
+    maxSteps: input.maxSteps ?? definition.maxSteps,
+    deploymentIds,
   });
 }
 
@@ -271,13 +397,23 @@ export async function updateChatAssistant(
 }
 
 export async function deleteChatAssistant(userId: string, assistantId: string) {
-  const result = await db.chatAssistant.deleteMany({
-    where: {
-      id: assistantId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    },
+  return db.$transaction(async (tx) => {
+    const assistant = await tx.chatAssistant.findFirst({
+      where: {
+        id: assistantId,
+        workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      },
+      select: { id: true, marketTemplateRelease: { select: { listingId: true } } },
+    });
+    if (!assistant) throw new ChatServiceError(404, 'Chat assistant not found');
+    await tx.chatAssistant.delete({ where: { id: assistant.id } });
+    if (assistant.marketTemplateRelease) {
+      await tx.marketListing.updateMany({
+        where: { id: assistant.marketTemplateRelease.listingId, installCount: { gt: 0 } },
+        data: { installCount: { decrement: 1 } },
+      });
+    }
   });
-  if (!result.count) throw new ChatServiceError(404, 'Chat assistant not found');
 }
 
 export async function createChatThread(
@@ -348,7 +484,9 @@ export async function updateChatThread(userId: string, threadId: string, input: 
     const thread = await tx.chatThread.findUnique({
       where: { id: threadId },
       select: {
+        assistantId: true,
         id: true,
+        workspaceId: true,
         messages: {
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           select: { id: true, parentId: true, siblingGroupId: true, role: true },
@@ -356,6 +494,18 @@ export async function updateChatThread(userId: string, threadId: string, input: 
       },
     });
     if (!thread) throw new ChatServiceError(404, 'Chat thread not found');
+    if (input.assistantId && input.assistantId !== thread.assistantId) {
+      const target = await tx.chatAssistant.findFirst({
+        where: { id: input.assistantId, workspaceId: thread.workspaceId },
+        select: { id: true },
+      });
+      if (!target) throw new ChatServiceError(404, 'Chat assistant not found');
+      const pendingTurn = await tx.chatTurn.findFirst({
+        where: { threadId, status: 'pending' },
+        select: { id: true },
+      });
+      if (pendingTurn) throw new ChatServiceError(409, 'A chat turn is still running');
+    }
     const activeMessageId = input.activeMessageId
       ? latestChatBranchLeaf(thread.messages, input.activeMessageId)
       : null;
@@ -365,6 +515,7 @@ export async function updateChatThread(userId: string, threadId: string, input: 
     return tx.chatThread.update({
       where: { id: threadId },
       data: {
+        ...(input.assistantId !== undefined ? { assistantId: input.assistantId } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.activeMessageId !== undefined ? { activeMessageId } : {}),
       },
@@ -514,7 +665,17 @@ export async function getChatThreadForExecution(userId: string, threadId: string
                 OR: [{ source: null }, { source: { not: 'sandbox' } }],
               },
             },
-            select: { deploymentId: true },
+            select: {
+              deploymentId: true,
+              deployment: {
+                select: {
+                  sourceRef: true,
+                  server: {
+                    select: { categories: { select: { slug: true } } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -543,6 +704,7 @@ export async function beginChatTurn(
     messageId?: string;
     clientLastMessageId?: string;
     modelId?: string;
+    expectedAssistantId?: string;
   } = {},
 ) {
   const trigger = request.trigger ?? 'submit-message';
@@ -575,10 +737,13 @@ export async function beginChatTurn(
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "ChatThread" WHERE "id" = ${threadId} FOR UPDATE`);
       const thread = await tx.chatThread.findUnique({
         where: { id: threadId },
-        select: { activeMessageId: true, title: true, workspaceId: true },
+        select: { activeMessageId: true, assistantId: true, title: true, workspaceId: true },
       });
       if (!thread || thread.workspaceId !== attachmentOwner.workspaceId) {
         throw new ChatServiceError(404, 'Chat thread not found');
+      }
+      if (request.expectedAssistantId && thread.assistantId !== request.expectedAssistantId) {
+        throw new ChatServiceError(409, 'Chat assistant changed; retry the message');
       }
 
       const targetId = request.messageId

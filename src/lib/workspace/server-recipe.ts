@@ -1,4 +1,9 @@
 import { isValidMcpRef, type McpSource } from './custom-mcp';
+import {
+  hasMcpToolCatalog,
+  readMcpToolCatalog,
+  type McpToolDefinition,
+} from '@/lib/process/mcp-tool-catalog';
 
 // A directory server's "deploy recipe" — the real package to run when an admin
 // has wired one up. Stored on `Server.installCfg`. `env` lists the REQUIRED
@@ -7,6 +12,7 @@ import { isValidMcpRef, type McpSource } from './custom-mcp';
 export type ServerRecipe = {
   source: McpSource;
   ref: string;
+  sourceUrl?: string;
   startCommand?: string;
   env: string[];
   // Preset fixed env values baked into the recipe (infra wiring like a
@@ -14,10 +20,46 @@ export type ServerRecipe = {
   // These are applied at deploy time and are NOT user secrets.
   envValues?: Record<string, string>;
   network?: 'none';
+  transport?: 'streamable-http' | 'sse';
+  authType?: 'none' | 'bearer' | 'headers';
+  bearerEnv?: string;
+  headerEnv?: Record<string, string>;
+  toolCatalog?: McpToolDefinition[];
 };
 
-const SOURCES: McpSource[] = ['npm', 'pypi', 'github', 'docker'];
+const SOURCES: McpSource[] = ['npm', 'pypi', 'github', 'docker', 'remote'];
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
+const FORBIDDEN_HEADERS = new Set([
+  'authorization', 'connection', 'content-length', 'cookie', 'host',
+  'proxy-authorization', 'set-cookie', 'transfer-encoding', 'upgrade',
+]);
+
+function parseHeaderEnvironment(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const headers: Record<string, string> = {};
+  for (const [name, envKey] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      HEADER_NAME.test(name)
+      && !FORBIDDEN_HEADERS.has(name.toLowerCase())
+      && typeof envKey === 'string'
+      && ENV_KEY.test(envKey)
+    ) headers[name] = envKey;
+  }
+  return headers;
+}
+
+function safeSourceUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
+      ? value.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Parse + validate a recipe out of an arbitrary `Server.installCfg` value.
 // Returns null when there is no usable recipe (so the server is non-deployable).
@@ -42,14 +84,47 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
   const startCommand =
     typeof c.startCommand === 'string' && c.startCommand.trim() ? c.startCommand.trim() : undefined;
   const network = c.network === 'none' ? ('none' as const) : undefined;
+  const sourceUrl = safeSourceUrl(c.sourceUrl);
+  const toolCatalog = readMcpToolCatalog(c);
+  const transport = source === 'remote' && c.transport === 'sse'
+    ? ('sse' as const)
+    : source === 'remote'
+      ? ('streamable-http' as const)
+      : undefined;
+  const authType = source === 'remote'
+    && (c.authType === 'bearer' || c.authType === 'headers')
+    ? c.authType
+    : source === 'remote'
+      ? ('none' as const)
+      : undefined;
+  const bearerEnv = authType === 'bearer'
+    && typeof c.bearerEnv === 'string'
+    && ENV_KEY.test(c.bearerEnv)
+    ? c.bearerEnv
+    : authType === 'bearer'
+      ? 'MCP_BEARER_TOKEN'
+      : undefined;
+  const headerEnv = authType === 'headers' ? parseHeaderEnvironment(c.headerEnv) : {};
+  if (authType === 'headers' && Object.keys(headerEnv).length === 0) return null;
+  const requiredEnv = [...new Set([
+    ...env,
+    ...(bearerEnv ? [bearerEnv] : []),
+    ...Object.values(headerEnv),
+  ])];
 
   return {
     source: source as McpSource,
     ref,
-    env,
+    env: requiredEnv,
+    ...(sourceUrl ? { sourceUrl } : {}),
     ...(Object.keys(envValues).length ? { envValues } : {}),
     ...(startCommand ? { startCommand } : {}),
     ...(network ? { network } : {}),
+    ...(transport ? { transport } : {}),
+    ...(authType ? { authType } : {}),
+    ...(bearerEnv ? { bearerEnv } : {}),
+    ...(Object.keys(headerEnv).length ? { headerEnv } : {}),
+    ...(hasMcpToolCatalog(c) ? { toolCatalog } : {}),
   };
 }
 
@@ -61,6 +136,11 @@ export type DeploymentRecipeData = {
     requiredEnv?: string[];
     startCommand?: string;
     network?: 'none';
+    transport?: 'streamable-http' | 'sse';
+    authType?: 'none' | 'bearer' | 'headers';
+    bearerEnv?: string;
+    headerEnv?: Record<string, string>;
+    toolCatalog?: McpToolDefinition[];
   };
 };
 
@@ -119,5 +199,12 @@ export function recipeToDeploymentData(recipe: ServerRecipe): DeploymentRecipeDa
   };
   if (recipe.startCommand) installCfg.startCommand = recipe.startCommand;
   if (recipe.network === 'none') installCfg.network = 'none';
+  if (recipe.source === 'remote') {
+    installCfg.transport = recipe.transport ?? 'streamable-http';
+    installCfg.authType = recipe.authType ?? 'none';
+    if (recipe.bearerEnv) installCfg.bearerEnv = recipe.bearerEnv;
+    if (recipe.headerEnv) installCfg.headerEnv = recipe.headerEnv;
+  }
+  if (recipe.toolCatalog !== undefined) installCfg.toolCatalog = recipe.toolCatalog;
   return { source: recipe.source, sourceRef: recipe.ref, installCfg };
 }

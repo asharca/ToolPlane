@@ -17,6 +17,7 @@ const RESOURCE_RENDER_LIMIT = 100;
 export type AgentResourceOption = {
   id: string;
   label: string;
+  catalogSlug?: string | null;
   kind?: string;
   network?: string;
   checked?: boolean;

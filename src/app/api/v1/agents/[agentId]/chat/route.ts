@@ -15,6 +15,10 @@ import { resolveAgentTools } from '@/lib/agents/resolve';
 import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { buildAgentToolSet } from '@/lib/agents/run';
 import { uiMessagesToPi, runNativeAgent } from '@/lib/agents/native';
+import {
+  createNativeUiStreamBridge,
+  createSandboxUiStreamBridge,
+} from '@/lib/agents/ui-stream';
 import { parseAgentChatBody } from '@/lib/agents/chat-body';
 import { writeHermesChatStream } from '@/lib/agents/hermes/client';
 import {
@@ -212,8 +216,7 @@ export async function POST(
       originalMessages: messages,
       execute: async ({ writer }) => {
         if (sandboxRuntime) {
-          const id = `sandbox-${agent.id}`;
-          writer.write({ type: 'text-start', id });
+          const uiStream = createSandboxUiStreamBridge(writer, `sandbox-${agent.id}`);
           await runDedicatedSandboxTurn({
             agent,
             systemPrompt: system,
@@ -221,12 +224,13 @@ export async function POST(
             skills: resolved.skills,
             deploymentIds: resolved.deploymentIds,
             signal: req.signal,
-            onTextDelta: (delta) => writer.write({ type: 'text-delta', id, delta }),
+            onTextDelta: uiStream.onTextDelta,
+            onActivity: uiStream.onActivity,
           });
-          writer.write({ type: 'text-end', id });
+          uiStream.finish();
           return;
         }
-        const textPartIds = new Map<number, string>();
+        const uiStream = createNativeUiStreamBridge(writer, `native-${agent.id}`);
         await runNativeAgent({
           provider: agent.provider!,
           modelId: agent.model!,
@@ -235,44 +239,10 @@ export async function POST(
           tools: tools!,
           maxSteps: agent.maxSteps,
           signal: req.signal,
-          onEvent: (event) => {
-            if (event.type === 'text_start') {
-              const id = `native-${agent.id}-${event.contentIndex}`;
-              textPartIds.set(event.contentIndex, id);
-              writer.write({ type: 'text-start', id });
-            } else if (event.type === 'text_delta') {
-              let id = textPartIds.get(event.contentIndex);
-              if (!id) {
-                id = `native-${agent.id}-${event.contentIndex}`;
-                textPartIds.set(event.contentIndex, id);
-                writer.write({ type: 'text-start', id });
-              }
-              writer.write({ type: 'text-delta', id, delta: event.delta });
-            } else if (event.type === 'text_end') {
-              const id = textPartIds.get(event.contentIndex);
-              if (id) writer.write({ type: 'text-end', id });
-            } else if (event.type === 'toolcall_end') {
-              writer.write({ type: 'tool-input-start', toolCallId: event.toolCall.id, toolName: event.toolCall.name });
-              writer.write({
-                type: 'tool-input-available',
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.name,
-                input: event.toolCall.arguments,
-              });
-            }
-          },
-          onToolResult: (toolCall, output, isError) => {
-            if (isError) {
-              writer.write({
-                type: 'tool-output-error',
-                toolCallId: toolCall.id,
-                errorText: output instanceof Error ? output.message : JSON.stringify(output),
-              });
-              return;
-            }
-            writer.write({ type: 'tool-output-available', toolCallId: toolCall.id, output });
-          },
+          onEvent: uiStream.onEvent,
+          onToolResult: uiStream.onToolResult,
         });
+        uiStream.finish();
       },
       onError: (error) => {
         return error instanceof Error ? error.message : 'Agent request failed.';

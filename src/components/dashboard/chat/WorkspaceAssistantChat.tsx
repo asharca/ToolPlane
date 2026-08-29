@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
+import { ContextMenu } from 'radix-ui';
 import {
   Bot,
   ChevronDown,
@@ -13,10 +14,12 @@ import {
   GitBranch,
   MessageSquare,
   MoreHorizontal,
+  MoveRight,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
+  Store,
   Trash2,
   X,
 } from 'lucide-react';
@@ -25,7 +28,11 @@ import {
   ChatBranchPanel,
   type ChatBranchState,
 } from '@/components/dashboard/chat/ChatBranchFlow';
-import { ModelPicker, type ModelSelection } from '@/components/dashboard/models/ModelPicker';
+import {
+  ModelPicker,
+  type ModelProviderOption,
+  type ModelSelection,
+} from '@/components/dashboard/models/ModelPicker';
 import {
   Dialog,
   DialogContent,
@@ -36,9 +43,22 @@ import {
 } from '@/components/ui/Dialog';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
-type ProviderOption = { id: string; name: string; models: string[] };
-type McpOption = { id: string; name: string; status: string };
+type ProviderOption = ModelProviderOption & { format: string };
+type McpOption = { id: string; name: string; status: string; keywords?: string[] };
 type AssistantCreateStep = 'basic' | 'instructions' | 'tools';
+
+export type AssistantMarketTemplate = {
+  releaseId: string;
+  name: string;
+  summary: string | null;
+  tags: string[];
+  systemPrompt: string | null;
+  maxSteps: number;
+  providerFormat: string | null;
+  model: string | null;
+  deploymentIds: string[];
+  missingMcpNames?: string[];
+};
 
 export type ChatAssistantItem = {
   id: string;
@@ -51,6 +71,7 @@ export type ChatAssistantItem = {
   contextWindow?: number | null;
   contextWindowEstimated?: boolean;
   deploymentIds: string[];
+  webSearchAvailable?: boolean;
   threads: Array<{
     id: string;
     title: string | null;
@@ -72,9 +93,12 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
 function AssistantEditor({
   assistant,
   deployments,
+  marketTemplate,
+  marketTemplates,
   onClose,
   onDelete,
   onSaved,
+  onTemplateSelect,
   open,
   providers,
   slug,
@@ -82,9 +106,12 @@ function AssistantEditor({
 }: {
   assistant: ChatAssistantItem | null;
   deployments: McpOption[];
+  marketTemplate: AssistantMarketTemplate | null;
+  marketTemplates: AssistantMarketTemplate[];
   onClose: () => void;
   onDelete: (assistantId: string) => Promise<void>;
   onSaved: (assistantId: string, created: boolean) => Promise<void>;
+  onTemplateSelect: (template: AssistantMarketTemplate | null) => void;
   open: boolean;
   providers: ProviderOption[];
   slug: string;
@@ -94,11 +121,23 @@ function AssistantEditor({
   const common = useTranslations('common');
   const creating = !assistant;
   const [createStep, setCreateStep] = useState<AssistantCreateStep>('basic');
-  const [name, setName] = useState(assistant?.name ?? '');
-  const initialProviderId = assistant?.modelProviderId ?? providers[0]?.id ?? '';
+  const [name, setName] = useState(assistant?.name ?? marketTemplate?.name ?? '');
+  const templateProvider = marketTemplate?.providerFormat
+    ? providers.find((provider) => (
+      provider.format === marketTemplate.providerFormat
+      && (!marketTemplate.model || provider.models.includes(marketTemplate.model))
+    ))
+    : null;
+  const initialProviderId = assistant?.modelProviderId ?? templateProvider?.id ?? providers[0]?.id ?? '';
   const [providerId, setProviderId] = useState(initialProviderId);
   const selectedProvider = providers.find((provider) => provider.id === providerId) ?? null;
-  const [model, setModel] = useState(assistant?.model ?? selectedProvider?.models[0] ?? '');
+  const [model, setModel] = useState(
+    assistant?.model
+    ?? (templateProvider ? marketTemplate?.model : null)
+    ?? selectedProvider?.models[0]
+    ?? '',
+  );
+  const [showMarketTemplates, setShowMarketTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const createSteps: Array<{ id: AssistantCreateStep; label: string }> = [
@@ -127,6 +166,7 @@ function AssistantEditor({
             model: model || null,
             maxSteps: Number(formData.get('maxSteps') ?? 8),
             deploymentIds,
+            ...(!assistant && marketTemplate ? { marketTemplateReleaseId: marketTemplate.releaseId } : {}),
           }),
         },
       );
@@ -230,10 +270,68 @@ function AssistantEditor({
                   className={creating ? 'mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8' : 'space-y-5'}
                 >
                   {creating ? (
-                    <div>
-                      <h3 id="assistant-create-basic-title" className="text-base font-semibold text-foreground">{t('basic')}</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">{t('boundaryDescription')}</p>
-                    </div>
+                    <>
+                      <div>
+                        <h3 id="assistant-create-basic-title" className="text-base font-semibold text-foreground">{t('basic')}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">{t('boundaryDescription')}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
+                        <button
+                          type="button"
+                          onClick={() => onTemplateSelect(null)}
+                          className={cx('ui-button-secondary h-8 px-3 text-xs', !marketTemplate && 'bg-background text-foreground')}
+                        >
+                          <Plus className="size-3.5" />
+                          {t('blankAssistant')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowMarketTemplates((current) => !current)}
+                          className={cx('ui-button-secondary h-8 px-3 text-xs', marketTemplate && 'bg-background text-foreground')}
+                        >
+                          <Store className="size-3.5" />
+                          {marketTemplate ? t('marketTemplateSelected') : t('chooseFromMarket')}
+                        </button>
+                        {marketTemplate ? (
+                          <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground" title={marketTemplate.summary ?? marketTemplate.name}>
+                            {marketTemplate.name}
+                          </span>
+                        ) : null}
+                      </div>
+                      {showMarketTemplates ? (
+                        marketTemplates.length ? (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {marketTemplates.map((template) => (
+                              <button
+                                key={template.releaseId}
+                                type="button"
+                                aria-pressed={marketTemplate?.releaseId === template.releaseId}
+                                onClick={() => onTemplateSelect(template)}
+                                className={cx(
+                                  'min-w-0 rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                                  marketTemplate?.releaseId === template.releaseId
+                                    ? 'border-foreground/30 bg-muted/40'
+                                    : 'border-border bg-card',
+                                )}
+                              >
+                                <span className="block truncate text-sm font-semibold text-foreground">{template.name}</span>
+                                <span className="mt-1 line-clamp-2 block min-h-10 text-xs leading-5 text-muted-foreground">
+                                  {template.summary ?? t('boundaryDescription')}
+                                </span>
+                                <span className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                                  {template.model ? <span className="rounded bg-muted px-1.5 py-0.5">{template.model}</span> : null}
+                                  {template.tags.slice(0, 2).map((tag) => (
+                                    <span key={tag} className="rounded bg-muted px-1.5 py-0.5">{tag}</span>
+                                  ))}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-lg bg-muted/35 px-3 py-4 text-sm text-muted-foreground">{t('noMarketTemplates')}</p>
+                        )
+                      ) : null}
+                    </>
                   ) : null}
 
                   <label className={cx('block text-xs', creating ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
@@ -291,7 +389,7 @@ function AssistantEditor({
                     {t('systemPrompt')}
                     <textarea
                       name="systemPrompt"
-                      defaultValue={assistant?.systemPrompt ?? ''}
+                      defaultValue={assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? ''}
                       rows={creating ? 12 : 5}
                       maxLength={20_000}
                       className={cx('ui-input mt-1.5 w-full resize-y py-2', creating ? 'min-h-72' : '!h-28')}
@@ -319,7 +417,7 @@ function AssistantEditor({
                       type="number"
                       min={1}
                       max={20}
-                      defaultValue={assistant?.maxSteps ?? 8}
+                      defaultValue={assistant?.maxSteps ?? marketTemplate?.maxSteps ?? 8}
                       className="ui-input mt-1.5 h-9 w-full"
                     />
                   </label>
@@ -327,6 +425,14 @@ function AssistantEditor({
                   <fieldset>
                     <legend className={creating ? 'sr-only' : 'text-xs font-medium text-muted-foreground'}>{t('mcpAccess')}</legend>
                     {!creating ? <p className="mt-1 text-xs text-muted-foreground">{t('mcpDescription')}</p> : null}
+                    {marketTemplate?.missingMcpNames?.length ? (
+                      <p role="alert" className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                        {t('marketTemplateMissingMcp', { names: marketTemplate.missingMcpNames.join(', ') })}{' '}
+                        <Link href={`/app/${encodeURIComponent(slug)}/market/mcp`} className="font-medium underline">
+                          {t('browseMcpMarket')}
+                        </Link>
+                      </p>
+                    ) : null}
                     <div className="mt-2 divide-y divide-border border-y border-border">
                       {deployments.length ? deployments.map((deployment) => (
                         <label key={deployment.id} className="flex min-h-10 items-center gap-3 py-2 text-sm">
@@ -334,7 +440,7 @@ function AssistantEditor({
                             type="checkbox"
                             name="deploymentIds"
                             value={deployment.id}
-                            defaultChecked={assistant?.deploymentIds.includes(deployment.id)}
+                            defaultChecked={assistant?.deploymentIds.includes(deployment.id) || marketTemplate?.deploymentIds.includes(deployment.id)}
                             className="size-4 accent-[var(--brand)]"
                           />
                           <span className="min-w-0 flex-1 truncate">{deployment.name}</span>
@@ -419,6 +525,8 @@ export function WorkspaceAssistantChat({
   branch = null,
   deployments,
   initialMessages,
+  marketTemplate = null,
+  marketTemplates = [],
   providers,
   selectedAssistantId,
   selectedThreadId,
@@ -430,6 +538,8 @@ export function WorkspaceAssistantChat({
   branch?: ChatBranchState | null;
   deployments: McpOption[];
   initialMessages: HermesUIMessage[];
+  marketTemplate?: AssistantMarketTemplate | null;
+  marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];
   selectedAssistantId: string | null;
   selectedThreadId: string | null;
@@ -443,6 +553,7 @@ export function WorkspaceAssistantChat({
   const activeAssistant = assistants.find((assistant) => assistant.id === selectedAssistantId) ?? assistants[0] ?? null;
   const activeThread = activeAssistant?.threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const [query, setQuery] = useState('');
+  const [expandedAssistants, setExpandedAssistants] = useState<Record<string, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [branchOpen, setBranchOpen] = useState(false);
   const [branchMaximized, setBranchMaximized] = useState(false);
@@ -451,8 +562,12 @@ export function WorkspaceAssistantChat({
   const [branchRefreshPending, startBranchRefresh] = useTransition();
   const [mobilePane, setMobilePane] = useState<'sidebar' | 'chat'>(activeThread ? 'chat' : 'sidebar');
   const [editing, setEditing] = useState<ChatAssistantItem | null | 'new'>(startCreating ? 'new' : null);
+  const [selectedMarketTemplate, setSelectedMarketTemplate] = useState(marketTemplate);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draggingThread, setDraggingThread] = useState<{ id: string; assistantId: string } | null>(null);
+  const draggingThreadRef = useRef<{ id: string; assistantId: string } | null>(null);
+  const [dropAssistantId, setDropAssistantId] = useState<string | null>(null);
   const branchBusy = branchMutating || branchRefreshPending;
   const refreshChat = useCallback(() => {
     startBranchRefresh(() => router.refresh());
@@ -564,6 +679,29 @@ export function WorkspaceAssistantChat({
     }
   }
 
+  async function moveThread(threadId: string, targetAssistantId: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/v1/chat/threads/${threadId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assistantId: targetAssistantId }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || t('moveThreadError'));
+      router.push(chatHref(slug, targetAssistantId, threadId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('moveThreadError'));
+    } finally {
+      setBusy(false);
+      draggingThreadRef.current = null;
+      setDraggingThread(null);
+      setDropAssistantId(null);
+    }
+  }
+
   async function deleteThread(threadId: string) {
     if (!window.confirm(t('deleteThreadConfirm'))) return;
     const response = await fetch(`/api/v1/chat/threads/${threadId}`, { method: 'DELETE' });
@@ -644,59 +782,146 @@ export function WorkspaceAssistantChat({
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
               <div className="flex h-8 items-center justify-between px-2.5">
                 <p className="text-xs font-medium text-muted-foreground">{t('assistants')}</p>
-                <button type="button" onClick={() => setEditing('new')} aria-label={t('newAssistant')} title={t('newAssistant')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                <button type="button" onClick={() => { setSelectedMarketTemplate(null); setEditing('new'); }} aria-label={t('newAssistant')} title={t('newAssistant')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
                   <Plus className="size-3.5" />
                 </button>
               </div>
               <ul>
-                {visibleAssistants.map((assistant) => (
-                  <li key={assistant.id} className="py-0.5">
-                    <div className={cx(
-                      'group flex h-8 items-center rounded-lg',
-                      assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
-                    )}>
-                      <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 text-[13px]">
-                        <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
-                        <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
-                      </Link>
-                      <button type="button" onClick={() => setEditing(assistant)} aria-label={`${t('settings')} · ${assistant.name}`} title={t('settings')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
-                        <MoreHorizontal className="size-3.5" />
-                      </button>
-                      <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="mr-0.5 flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
-                        <Plus className="size-3.5" />
-                      </button>
-                    </div>
-                    <ul className="ml-4 py-0.5 pl-1">
-                      {assistant.threads.map((thread) => (
-                        <li key={thread.id} className="group/thread relative py-0.5">
-                          <Link
-                            href={chatHref(slug, assistant.id, thread.id)}
-                            onClick={() => setMobilePane('chat')}
-                            aria-current={thread.id === activeThread?.id ? 'page' : undefined}
-                            title={thread.lastMessageAt ?? thread.createdAt}
-                            className={cx(
-                              'flex h-8 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px]',
-                              thread.id === activeThread?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
-                            )}
-                          >
-                            <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
-                            <span className="truncate">{thread.title || t('newChat')}</span>
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => void deleteThread(thread.id)}
-                            aria-label={t('deleteThread')}
-                            title={t('deleteThread')}
-                            className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-destructive group-hover/thread:opacity-100 focus:opacity-100"
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
+                {visibleAssistants.map((assistant) => {
+                  const expanded = Boolean(query) || (expandedAssistants[assistant.id] ?? true);
+                  return (
+                    <li key={assistant.id} className="py-0.5">
+                      <div
+                        onDragOver={(event) => {
+                          const dragged = draggingThreadRef.current;
+                          if (!dragged || dragged.assistantId === assistant.id || busy) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                          setDropAssistantId(assistant.id);
+                        }}
+                        onDrop={(event) => {
+                          const dragged = draggingThreadRef.current;
+                          if (!dragged || dragged.assistantId === assistant.id || busy) return;
+                          event.preventDefault();
+                          const threadId = dragged.id;
+                          draggingThreadRef.current = null;
+                          setDraggingThread(null);
+                          setDropAssistantId(null);
+                          void moveThread(threadId, assistant.id);
+                        }}
+                        className={cx(
+                          'group flex h-8 items-center rounded-lg',
+                          assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
+                          dropAssistantId === assistant.id && 'ring-1 ring-inset ring-brand/50',
+                        )}
+                      >
+                        <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 text-[13px]">
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
+                          <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
+                        </Link>
+                        <button type="button" onClick={() => setEditing(assistant)} aria-label={`${t('settings')} · ${assistant.name}`} title={t('settings')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
+                          <MoreHorizontal className="size-3.5" />
+                        </button>
+                        <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
+                          <Plus className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={assistant.name}
+                          aria-expanded={expanded}
+                          aria-controls={`assistant-chat-threads-${assistant.id}`}
+                          title={expanded ? t('hideConversations') : t('showConversations')}
+                          onClick={() => setExpandedAssistants((current) => ({ ...current, [assistant.id]: !expanded }))}
+                          className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                        >
+                          <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                        </button>
+                      </div>
+                      {expanded ? (
+                        <ul id={`assistant-chat-threads-${assistant.id}`} className="ml-4 py-0.5 pl-1">
+                          {assistant.threads.length > 0 ? assistant.threads.map((thread) => (
+                          <ContextMenu.Root key={thread.id} modal={false}>
+                            <ContextMenu.Trigger asChild>
+                              <li
+                                draggable={!busy}
+                                onDragStart={(event) => {
+                                  event.dataTransfer.effectAllowed = 'move';
+                                  event.dataTransfer.setData('text/plain', thread.id);
+                                  draggingThreadRef.current = { id: thread.id, assistantId: assistant.id };
+                                  setDraggingThread({ id: thread.id, assistantId: assistant.id });
+                                }}
+                                onDragEnd={() => {
+                                  draggingThreadRef.current = null;
+                                  setDraggingThread(null);
+                                  setDropAssistantId(null);
+                                }}
+                                className={cx(
+                                  'group/thread relative py-0.5',
+                                  draggingThread?.id === thread.id && 'opacity-50',
+                                )}
+                              >
+                                <Link
+                                  draggable={false}
+                                  href={chatHref(slug, assistant.id, thread.id)}
+                                  onClick={() => setMobilePane('chat')}
+                                  aria-current={thread.id === activeThread?.id ? 'page' : undefined}
+                                  title={thread.lastMessageAt ?? thread.createdAt}
+                                  className={cx(
+                                    'flex h-8 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px]',
+                                    thread.id === activeThread?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
+                                  )}
+                                >
+                                  <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
+                                  <span className="truncate">{thread.title || t('newChat')}</span>
+                                </Link>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteThread(thread.id)}
+                                  aria-label={t('deleteThread')}
+                                  title={t('deleteThread')}
+                                  className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-destructive group-hover/thread:opacity-100 focus:opacity-100"
+                                >
+                                  <X className="size-3.5" />
+                                </button>
+                              </li>
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Portal>
+                              <ContextMenu.Content className="z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+                                <ContextMenu.Sub>
+                                  <ContextMenu.SubTrigger
+                                    disabled={assistants.length < 2 || busy}
+                                    className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                                  >
+                                    <MoveRight className="size-3.5 shrink-0 text-muted-foreground" />
+                                    {t('moveThreadTo')}
+                                    <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                                  </ContextMenu.SubTrigger>
+                                  <ContextMenu.Portal>
+                                    <ContextMenu.SubContent className="z-50 min-w-36 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+                                      {assistants.filter((target) => target.id !== assistant.id).map((target) => (
+                                        <ContextMenu.Item
+                                          key={target.id}
+                                          onSelect={() => void moveThread(thread.id, target.id)}
+                                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                                        >
+                                          <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                                          <span className="truncate">{target.name}</span>
+                                        </ContextMenu.Item>
+                                      ))}
+                                    </ContextMenu.SubContent>
+                                  </ContextMenu.Portal>
+                                </ContextMenu.Sub>
+                              </ContextMenu.Content>
+                            </ContextMenu.Portal>
+                          </ContextMenu.Root>
+                          )) : (
+                            <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noConversations')}</li>
+                          )}
+                        </ul>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
@@ -782,10 +1007,12 @@ export function WorkspaceAssistantChat({
                 ensureConversation={async () => activeThread.id}
                 includeConversationIdInBody={false}
                 initialMessages={initialMessages}
+                mcpPromptApiPath={`/api/v1/chat/threads/${activeThread.id}/prompts`}
                 modelName={activeAssistant.model}
                 ready={Boolean(activeAssistant.modelProviderId && activeAssistant.model)}
                 runtimeKind={null}
                 supportsAttachments
+                webSearchAvailable={activeAssistant.webSearchAvailable}
                 branchBusy={branchBusy}
                 branchNavigation={branch?.navigation ?? []}
                 onBranchChange={(messageId) => void switchBranch(messageId)}
@@ -858,12 +1085,15 @@ export function WorkspaceAssistantChat({
 
       {editing ? (
         <AssistantEditor
-          key={editing === 'new' ? 'new' : editing.id}
+          key={editing === 'new' ? `new:${selectedMarketTemplate?.releaseId ?? 'blank'}` : editing.id}
           assistant={editing === 'new' ? null : editing}
           deployments={deployments}
+          marketTemplate={editing === 'new' ? selectedMarketTemplate : null}
+          marketTemplates={marketTemplates}
           onClose={() => setEditing(null)}
           onDelete={deleteAssistant}
           onSaved={assistantSaved}
+          onTemplateSelect={setSelectedMarketTemplate}
           open
           providers={providers}
           slug={slug}

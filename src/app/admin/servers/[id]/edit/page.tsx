@@ -19,6 +19,10 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
   const [server, categories] = await Promise.all([getDirectoryServer(id), listCategories()]);
   if (!server) notFound();
   const recipe = parseServerRecipe(server.installCfg);
+  const connectorEnv = new Set([
+    ...(recipe?.bearerEnv ? [recipe.bearerEnv] : []),
+    ...Object.values(recipe?.headerEnv ?? {}),
+  ]);
 
   return (
     <AdminPage className="max-w-5xl">
@@ -34,10 +38,15 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
           initial={{
             id: server.id, slug: server.slug, name: server.name, author: server.author, description: server.description,
             iconUrl: server.iconUrl, stars: server.stars, isOfficial: server.isOfficial, isFeatured: server.isFeatured,
-            categoryIds: server.categories.map((c) => c.id),
+            categoryIds: server.categories.map((c) => c.id), readme: server.readme,
+            source: recipe?.source === 'npm' || recipe?.source === 'pypi' || recipe?.source === 'github'
+              ? recipe.source
+              : undefined,
+            sourceRef: recipe?.ref, sourceUrl: recipe?.sourceUrl,
           }}
           categories={categories}
           submitLabel={t('saveChanges')}
+          showSourceMetadata={recipe?.source !== 'remote'}
         />
       </section>
       <RecipeEditor
@@ -46,12 +55,19 @@ export default async function EditServerPage({ params }: { params: Promise<{ id:
         initial={{
           source: recipe?.source ?? 'npm',
           ref: recipe?.ref ?? '',
+          sourceUrl: recipe?.sourceUrl ?? '',
           startCommand: recipe?.startCommand ?? '',
-          env: (recipe?.env ?? []).join(' '),
+          env: (recipe?.env ?? []).filter((key) => !connectorEnv.has(key)).join(' '),
           envValues: Object.entries(recipe?.envValues ?? {})
             .map(([k, v]) => `${k}=${v}`)
             .join('\n'),
           network: recipe?.network === 'none',
+          transport: recipe?.transport,
+          authType: recipe?.authType,
+          bearerEnv: recipe?.bearerEnv,
+          headerEnv: Object.entries(recipe?.headerEnv ?? {})
+            .map(([header, envKey]) => `${header}=${envKey}`)
+            .join('\n'),
         }}
         verifiedAt={server.verifiedAt ? server.verifiedAt.toISOString() : null}
         verifiedTools={server.verifiedTools ?? null}

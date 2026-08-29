@@ -22,24 +22,25 @@ enum McpToolExposure {
 }
 
 model Server {
-  id            String       @id @default(cuid())
-  slug          String       @unique
+  id            String         @id @default(cuid())
+  slug          String         @unique
   name          String
   author        String?
   description   String?
   iconUrl       String?
-  stars         Int          @default(0)
-  isOfficial    Boolean      @default(false)
-  isFeatured    Boolean      @default(false)
-  curated       Boolean      @default(false)
+  stars         Int            @default(0)
+  isOfficial    Boolean        @default(false)
+  isFeatured    Boolean        @default(false)
+  curated       Boolean        @default(false)
   installCfg    Json?
   verifiedAt    DateTime?
   verifiedTools Int?
   readme        String?
-  categories    Category[]   @relation("ServerCategories")
+  categories    Category[]     @relation("ServerCategories")
   deployments   Deployment[]
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  marketListing MarketListing? @relation("MarketListingSourceServer")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 }
 
 model User {
@@ -60,6 +61,9 @@ model User {
   agentListings          AgentListing[]        @relation("AgentListingPublisher")
   reviewedAgentReleases  AgentRelease[]        @relation("AgentReleaseReviewer")
   agentInstalls          AgentInstall[]        @relation("AgentInstallActor")
+  marketListings         MarketListing[]       @relation("MarketListingPublisher")
+  reviewedMarketReleases MarketRelease[]       @relation("MarketReleaseReviewer")
+  marketInstalls         MarketInstall[]       @relation("MarketInstallActor")
   createdAgentEndpoints  AgentEndpoint[]       @relation("AgentEndpointCreator")
   createdAgentApiClients AgentApiClient[]      @relation("AgentApiClientCreator")
   resolvedWorkApprovals  WorkApproval[]        @relation("WorkApprovalResolver")
@@ -131,18 +135,21 @@ model Skill {
   curated        Boolean          @default(false)
   categories     Category[]       @relation("SkillCategories")
   installs       InstalledSkill[]
+  marketListing  MarketListing?   @relation("MarketListingSourceSkill")
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 }
 
 model Category {
-  id            String         @id @default(cuid())
-  slug          String         @unique
-  name          String
-  servers       Server[]       @relation("ServerCategories")
-  clients       Client[]       @relation("ClientCategories")
-  skills        Skill[]        @relation("SkillCategories")
-  agentListings AgentListing[] @relation("AgentListingCategories")
+  id             String          @id @default(cuid())
+  slug           String          @unique
+  name           String
+  servers        Server[]        @relation("ServerCategories")
+  clients        Client[]        @relation("ClientCategories")
+  skills         Skill[]         @relation("SkillCategories")
+  agentListings  AgentListing[]  @relation("AgentListingCategories")
+  marketListings MarketListing[] @relation("MarketListingCategories")
+  toolkits       Toolkit[]       @relation("ToolkitCategories")
 }
 
 model DailySnapshot {
@@ -184,6 +191,8 @@ model Workspace {
   knowledgeBases         KnowledgeBase[]
   agentListings          AgentListing[]           @relation("AgentListingWorkspace")
   agentInstalls          AgentInstall[]           @relation("AgentInstallWorkspace")
+  marketListings         MarketListing[]          @relation("MarketListingPublisherWorkspace")
+  marketInstalls         MarketInstall[]          @relation("MarketInstallWorkspace")
   agentEndpoints         AgentEndpoint[]
   skillInvocations       SkillInvocation[]
   syncEvents             SyncEvent[]
@@ -226,6 +235,8 @@ model Deployment {
   chatAssistantGrants ChatAssistantMcpGrant[]
   configFiles         DeploymentConfigFile[]
   sandbox             Sandbox?
+  sourceMarketListing MarketListing?          @relation("MarketListingSourceDeployment")
+  marketInstall       MarketInstall?          @relation("MarketInstallDeployment")
 
   @@unique([workspaceId, serverId])
 }
@@ -284,25 +295,27 @@ model SandboxSnapshot {
 }
 
 model InstalledSkill {
-  id             String         @id @default(cuid())
-  workspaceId    String
-  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  skillId        String?
-  skill          Skill?         @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  name           String?
-  slug           String?
-  description    String?
-  content        String?
-  source         String?
-  sourceRef      String?
-  status         String         @default("published")
-  userInvocable  Boolean        @default(true)
-  agentInvocable Boolean        @default(true)
-  effort         String         @default("default")
-  files          Json?
-  createdAt      DateTime       @default(now())
-  toolkitLinks   ToolkitSkill[]
-  agentLinks     AgentSkill[]
+  id                  String         @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillId             String?
+  skill               Skill?         @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  name                String?
+  slug                String?
+  description         String?
+  content             String?
+  source              String?
+  sourceRef           String?
+  status              String         @default("published")
+  userInvocable       Boolean        @default(true)
+  agentInvocable      Boolean        @default(true)
+  effort              String         @default("default")
+  files               Json?
+  createdAt           DateTime       @default(now())
+  toolkitLinks        ToolkitSkill[]
+  agentLinks          AgentSkill[]
+  sourceMarketListing MarketListing? @relation("MarketListingSourceInstalledSkill")
+  marketInstall       MarketInstall? @relation("MarketInstallInstalledSkill")
 
   @@unique([workspaceId, skillId])
 }
@@ -325,22 +338,25 @@ model RequestLog {
 }
 
 model Toolkit {
-  id               String               @id @default(cuid())
-  workspaceId      String
-  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name             String
-  slug             String
-  visibility       String               @default("private")
-  enabled          Boolean              @default(true)
-  servers          ToolkitServer[]
-  skills           ToolkitSkill[]
-  agentLinks       AgentToolkit[]
-  installLinks     ToolkitInstallLink[]
-  apiTokens        ApiToken[]
-  skillInvocations SkillInvocation[]
-  syncEvents       SyncEvent[]
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  id                  String               @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                String
+  slug                String
+  visibility          String               @default("private")
+  enabled             Boolean              @default(true)
+  categories          Category[]           @relation("ToolkitCategories")
+  servers             ToolkitServer[]
+  skills              ToolkitSkill[]
+  agentLinks          AgentToolkit[]
+  installLinks        ToolkitInstallLink[]
+  apiTokens           ApiToken[]
+  skillInvocations    SkillInvocation[]
+  syncEvents          SyncEvent[]
+  sourceMarketListing MarketListing?       @relation("MarketListingSourceToolkit")
+  marketInstall       MarketInstall?       @relation("MarketInstallToolkit")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@unique([workspaceId, slug])
 }
@@ -396,8 +412,30 @@ model ModelProvider {
   agentLinks      AgentModelProvider[]
   knowledgeBases  KnowledgeBase[]
   chatAssistants  ChatAssistant[]
+  modelRecords    ProviderModel[]
 
   @@unique([workspaceId, name])
+}
+
+model ProviderModel {
+  id              String        @id @default(cuid())
+  providerId      String
+  provider        ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId         String
+  name            String
+  group           String        @default("")
+  primaryType     String        @default("text")
+  capabilities    String[]      @default([])
+  inputModalities String[]      @default([])
+  contextWindow   Int?
+  maxInputTokens  Int?
+  maxOutputTokens Int?
+  source          String        @default("remote")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId, primaryType])
 }
 
 model Agent {
@@ -428,6 +466,8 @@ model Agent {
   attachments             AgentAttachment[]
   marketListing           AgentListing?            @relation("AgentListingSource")
   marketInstall           AgentInstall?            @relation("AgentInstallAgent")
+  sourceMarketListing     MarketListing?           @relation("MarketListingSourceAgent")
+  unifiedMarketInstall    MarketInstall?           @relation("MarketInstallAgent")
   modelProviders          AgentModelProvider[]
   publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
@@ -451,6 +491,7 @@ model AgentModelProvider {
 // workspace-owned tool id is exposed through this model.
 model AgentListing {
   id                   String         @id @default(cuid())
+  publisherKind        String         @default("workspace")
   publisherWorkspaceId String?
   publisherWorkspace   Workspace?     @relation("AgentListingWorkspace", fields: [publisherWorkspaceId], references: [id], onDelete: SetNull)
   sourceAgentId        String?        @unique
@@ -500,6 +541,7 @@ model AgentRelease {
   summary         String?
   iconUrl         String?
   tags            String[]       @default([])
+  categoryIds     String[]       @default([])
   reviewStatus    String         @default("pending")
   reviewedById    String?
   reviewedBy      User?          @relation("AgentReleaseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
@@ -539,6 +581,135 @@ model AgentInstall {
   @@unique([targetWorkspaceId, idempotencyKey])
   @@index([releaseId, createdAt])
   @@index([targetWorkspaceId, createdAt])
+}
+
+// Shared marketplace metadata for MCP servers, skills, toolkits, agents, and assistants.
+// A listing may retain its public identity after its workspace source is removed.
+model MarketListing {
+  id                     String          @id @default(cuid())
+  kind                   String
+  namespace              String
+  slug                   String
+  publisherKind          String          @default("workspace")
+  publisherWorkspaceId   String?
+  publisherWorkspace     Workspace?      @relation("MarketListingPublisherWorkspace", fields: [publisherWorkspaceId], references: [id], onDelete: SetNull)
+  publishedById          String?
+  publishedBy            User?           @relation("MarketListingPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  sourceServerId         String?         @unique
+  sourceServer           Server?         @relation("MarketListingSourceServer", fields: [sourceServerId], references: [id], onDelete: SetNull)
+  sourceSkillId          String?         @unique
+  sourceSkill            Skill?          @relation("MarketListingSourceSkill", fields: [sourceSkillId], references: [id], onDelete: SetNull)
+  sourceDeploymentId     String?         @unique
+  sourceDeployment       Deployment?     @relation("MarketListingSourceDeployment", fields: [sourceDeploymentId], references: [id], onDelete: SetNull)
+  sourceInstalledSkillId String?         @unique
+  sourceInstalledSkill   InstalledSkill? @relation("MarketListingSourceInstalledSkill", fields: [sourceInstalledSkillId], references: [id], onDelete: SetNull)
+  sourceToolkitId        String?         @unique
+  sourceToolkit          Toolkit?        @relation("MarketListingSourceToolkit", fields: [sourceToolkitId], references: [id], onDelete: SetNull)
+  sourceAgentId          String?         @unique
+  sourceAgent            Agent?          @relation("MarketListingSourceAgent", fields: [sourceAgentId], references: [id], onDelete: SetNull)
+  sourceChatAssistantId  String?         @unique
+  sourceChatAssistant    ChatAssistant?  @relation("MarketListingSourceChatAssistant", fields: [sourceChatAssistantId], references: [id], onDelete: SetNull)
+  name                   String
+  summary                String?
+  iconUrl                String?
+  tags                   String[]        @default([])
+  categories             Category[]      @relation("MarketListingCategories")
+  metadata               Json
+  status                 String          @default("draft")
+  curated                Boolean         @default(false)
+  isFeatured             Boolean         @default(false)
+  latestVersion          Int             @default(0)
+  latestReleaseId        String?         @unique
+  latestRelease          MarketRelease?  @relation("MarketListingLatestRelease", fields: [latestReleaseId], references: [id], onDelete: SetNull)
+  pendingReleaseId       String?         @unique
+  pendingRelease         MarketRelease?  @relation("MarketListingPendingRelease", fields: [pendingReleaseId], references: [id], onDelete: SetNull)
+  installCount           Int             @default(0)
+  publishedAt            DateTime?
+  releases               MarketRelease[] @relation("MarketListingReleases")
+  installs               MarketInstall[]
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  @@unique([namespace, slug])
+  @@index([kind, status, isFeatured, installCount, publishedAt])
+  @@index([publisherWorkspaceId, status, updatedAt])
+  @@index([pendingReleaseId, updatedAt])
+}
+
+// Append-only release artifact. The manifest is portable and must contain no
+// provider keys, environment values, credentials, conversations, or runtime state.
+model MarketRelease {
+  id              String          @id @default(cuid())
+  listingId       String
+  listing         MarketListing   @relation("MarketListingReleases", fields: [listingId], references: [id], onDelete: Cascade)
+  version         Int
+  manifestVersion Int             @default(1)
+  manifest        Json
+  releaseSummary  Json
+  checksum        String
+  releaseNotes    String?
+  categoryIds     String[]        @default([])
+  scanResult      Json?
+  reviewStatus    String          @default("pending")
+  reviewedById    String?
+  reviewedBy      User?           @relation("MarketReleaseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  reviewNote      String?
+  publishedAt     DateTime?
+  latestFor       MarketListing?  @relation("MarketListingLatestRelease")
+  pendingFor      MarketListing?  @relation("MarketListingPendingRelease")
+  currentInstalls MarketInstall[] @relation("MarketInstallCurrentRelease")
+  ignoredBy       MarketInstall[] @relation("MarketInstallIgnoredRelease")
+  requestedBy     MarketInstall[] @relation("MarketInstallRequestedRelease")
+  chatAssistants  ChatAssistant[] @relation("ChatAssistantMarketTemplate")
+  createdAt       DateTime        @default(now())
+
+  @@unique([listingId, version])
+  @@index([listingId, publishedAt])
+  @@index([reviewStatus, createdAt])
+  @@index([reviewedById])
+}
+
+// Tracks one installed listing per workspace. requirements and resourceMap may
+// contain names and target resource ids, but never credential values.
+model MarketInstall {
+  id                 String          @id @default(cuid())
+  listingId          String
+  listing            MarketListing   @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  currentReleaseId   String
+  currentRelease     MarketRelease   @relation("MarketInstallCurrentRelease", fields: [currentReleaseId], references: [id], onDelete: Restrict)
+  requestedReleaseId String
+  requestedRelease   MarketRelease   @relation("MarketInstallRequestedRelease", fields: [requestedReleaseId], references: [id], onDelete: Restrict)
+  ignoredReleaseId   String?
+  ignoredRelease     MarketRelease?  @relation("MarketInstallIgnoredRelease", fields: [ignoredReleaseId], references: [id], onDelete: SetNull)
+  targetWorkspaceId  String
+  targetWorkspace    Workspace       @relation("MarketInstallWorkspace", fields: [targetWorkspaceId], references: [id], onDelete: Cascade)
+  installedById      String?
+  installedBy        User?           @relation("MarketInstallActor", fields: [installedById], references: [id], onDelete: SetNull)
+  deploymentId       String?         @unique
+  deployment         Deployment?     @relation("MarketInstallDeployment", fields: [deploymentId], references: [id], onDelete: SetNull)
+  installedSkillId   String?         @unique
+  installedSkill     InstalledSkill? @relation("MarketInstallInstalledSkill", fields: [installedSkillId], references: [id], onDelete: SetNull)
+  toolkitId          String?         @unique
+  toolkit            Toolkit?        @relation("MarketInstallToolkit", fields: [toolkitId], references: [id], onDelete: SetNull)
+  agentId            String?         @unique
+  agent              Agent?          @relation("MarketInstallAgent", fields: [agentId], references: [id], onDelete: SetNull)
+  idempotencyKey     String
+  status             String          @default("installing")
+  updatePolicy       String          @default("manual")
+  requirements       Json?
+  resourceMap        Json?
+  lastCheckedAt      DateTime?
+  lastError          String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([targetWorkspaceId, listingId])
+  @@unique([targetWorkspaceId, idempotencyKey])
+  @@index([listingId, status, updatedAt])
+  @@index([currentReleaseId, createdAt])
+  @@index([requestedReleaseId, createdAt])
+  @@index([targetWorkspaceId, status, updatedAt])
 }
 
 model AgentRuntime {
@@ -841,22 +1012,26 @@ model Message {
 // a prompt, and direct MCP deployments; there are no Skill, Sandbox, Toolkit,
 // sub-agent, or Runtime relations in this bounded context.
 model ChatAssistant {
-  id              String                  @id @default(cuid())
-  workspaceId     String
-  workspace       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name            String
-  systemPrompt    String?
-  modelProviderId String?
-  modelProvider   ModelProvider?          @relation(fields: [modelProviderId], references: [id], onDelete: SetNull)
-  model           String?
-  maxSteps        Int                     @default(8)
-  mcpGrants       ChatAssistantMcpGrant[]
-  threads         ChatThread[]
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  id                      String                  @id @default(cuid())
+  workspaceId             String
+  workspace               Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                    String
+  systemPrompt            String?
+  modelProviderId         String?
+  modelProvider           ModelProvider?          @relation(fields: [modelProviderId], references: [id], onDelete: SetNull)
+  model                   String?
+  maxSteps                Int                     @default(8)
+  marketTemplateReleaseId String?
+  marketTemplateRelease   MarketRelease?          @relation("ChatAssistantMarketTemplate", fields: [marketTemplateReleaseId], references: [id], onDelete: SetNull)
+  sourceMarketListing     MarketListing?          @relation("MarketListingSourceChatAssistant")
+  mcpGrants               ChatAssistantMcpGrant[]
+  threads                 ChatThread[]
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
 
   @@index([workspaceId, updatedAt])
   @@index([modelProviderId])
+  @@index([marketTemplateReleaseId])
 }
 
 model ChatAssistantMcpGrant {

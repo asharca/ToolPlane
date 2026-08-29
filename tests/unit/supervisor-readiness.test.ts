@@ -175,6 +175,23 @@ describe('supervisor readiness races', () => {
     expect(mocks.resolveMcpStartupTimeoutSettings).not.toHaveBeenCalled();
   });
 
+  it('runs the ready callback only after the deployment is listening', async () => {
+    const child = createChild();
+    const onReady = vi.fn();
+    mocks.spawn.mockReturnValue(child);
+
+    await supervisor.startProcess(
+      'ready-callback',
+      { kind: 'builtin', name: 'Ready callback' },
+      { awaitReady: false, onReady },
+    );
+    expect(onReady).not.toHaveBeenCalled();
+
+    child.stdout.emit('data', Buffer.from('LISTENING 4566\n'));
+    await Promise.resolve();
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a buffered LISTENING line after stop begins', async () => {
     const child = createChild();
     mocks.spawn.mockReturnValue(child);
@@ -717,6 +734,8 @@ describe('supervisor readiness races', () => {
       { awaitReady: false },
     );
 
+    expect(supervisor.liveRedactionValues('ssh-config-bridge')).toContain('{abc=P100s0}');
+
     expect(mocks.materializeDeploymentConfigVolume).toHaveBeenCalledWith('ssh-config-bridge');
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
@@ -796,6 +815,12 @@ describe('supervisor readiness races', () => {
       { awaitReady: false },
     );
 
+    expect(supervisor.liveRedactionValues('runtime-progress')).toEqual(expect.arrayContaining([
+      'super-secret-value',
+      'argv-password',
+      'url-password',
+    ]));
+
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     expect(options.env).toMatchObject({
       MCP_CONTAINER_NAME: 'toolplane-mcp-runtime-progress',
@@ -861,6 +886,15 @@ describe('supervisor readiness races', () => {
     expect(supervisor.getDeploymentRuntimeSnapshot('runtime-progress')).toMatchObject({
       status: 'running',
       phase: 'ready',
+    });
+    expect(supervisor.liveMcpRuntimeSnapshot('runtime-progress')).toEqual({
+      port: 4580,
+      generation: starting?.generation,
+      redactionValues: expect.arrayContaining([
+        'super-secret-value',
+        'argv-password',
+        'url-password',
+      ]),
     });
   });
 
@@ -1046,6 +1080,48 @@ describe('supervisor readiness races', () => {
     });
     expect(supervisor.effectiveStatuses([{ id: deploymentId, status: 'error' }]).get(deploymentId))
       .toBe('provisioning');
+  });
+
+  it('does not pair a newer cross-worker port with stale local redaction values', async () => {
+    const deploymentId = 'cross-worker-mcp-snapshot';
+    const child = createChild();
+    mocks.spawn.mockReturnValue(child);
+    await supervisor.startProcess(
+      deploymentId,
+      {
+        kind: 'bridge',
+        name: 'Old worker',
+        command: 'docker',
+        args: ['run', '--rm', 'example/mcp', '--password', 'old-worker-secret'],
+        env: {},
+      },
+      { awaitReady: false },
+    );
+    child.stdout.emit('data', Buffer.from('LISTENING 4590\n'));
+    const oldGeneration = supervisor.getDeploymentRuntimeSnapshot(deploymentId)?.generation;
+    expect(supervisor.liveMcpRuntimeSnapshot(deploymentId)).toMatchObject({
+      port: 4590,
+      generation: oldGeneration,
+      redactionValues: expect.arrayContaining(['old-worker-secret']),
+    });
+
+    writeFileSync(
+      path.join(registryDir, `${deploymentId}.json`),
+      JSON.stringify({
+        deploymentId,
+        name: 'New worker',
+        pid: child.pid! + 1,
+        port: 4591,
+        status: 'running',
+        generation: 'new-worker-generation',
+        phase: 'ready',
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    expect(supervisor.livePort(deploymentId)).toBe(4591);
+    expect(supervisor.liveMcpRuntimeSnapshot(deploymentId)).toBeNull();
+    expect(supervisor.liveRedactionValues(deploymentId)).toBeNull();
   });
 
   it('reads live Docker output for the deployment container', async () => {

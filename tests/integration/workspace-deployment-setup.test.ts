@@ -137,7 +137,11 @@ describe('catalog MCP deployment setup', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       deployment.id,
       expect.any(Object),
-      { awaitReady: false, workspaceId },
+      expect.objectContaining({
+        awaitReady: false,
+        workspaceId,
+        onReady: expect.any(Function),
+      }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith(
       `/app/${workspaceSlug}/mcp/${deployment.id}`,

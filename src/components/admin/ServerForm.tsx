@@ -2,15 +2,21 @@
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
-import { Plus, Save } from 'lucide-react';
+import { Download, Plus, Save } from 'lucide-react';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { AdminBadge } from '@/components/admin/AdminUI';
+import { NativeSelect } from '@/components/ui/NativeSelect';
+import {
+  fetchServerSourceMetadataAction,
+  type ServerSourceMetadataActionState,
+} from '@/lib/admin/market-actions';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 type Category = { id: string; name: string };
 type Initial = {
   id?: string; slug?: string; name?: string; author?: string | null; description?: string | null;
   iconUrl?: string | null; stars?: number; isOfficial?: boolean; isFeatured?: boolean; categoryIds?: string[];
+  readme?: string | null; source?: 'github' | 'npm' | 'pypi'; sourceRef?: string; sourceUrl?: string | null;
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
@@ -18,26 +24,84 @@ const TEXTAREA_CLASS = 'ui-input h-auto min-h-28 resize-y py-2.5';
 const CHECKBOX_CLASS = 'size-4 shrink-0 accent-brand';
 
 export function ServerForm({
-  action, initial, categories, submitLabel,
+  action, initial, categories, submitLabel, showSourceMetadata = true,
 }: {
   action: (prev: AdminActionState, fd: FormData) => Promise<AdminActionState>;
   initial: Initial;
   categories: Category[];
   submitLabel: string;
+  showSourceMetadata?: boolean;
 }) {
   const [state, formAction] = useActionState<AdminActionState, FormData>(action, {});
+  const [sourceState, sourceAction, sourcePending] = useActionState<ServerSourceMetadataActionState, FormData>(
+    fetchServerSourceMetadataAction,
+    {},
+  );
   const t = useTranslations('admin');
   const sel = new Set(initial.categoryIds ?? []);
   const SubmitIcon = initial.id ? Save : Plus;
+  const metadata = sourceState.metadata;
+  const source = metadata?.source ?? initial.source ?? 'npm';
+  const sourceRef = metadata?.ref ?? initial.sourceRef ?? '';
+  const sourceUrl = metadata?.canonicalSourceUrl ?? initial.sourceUrl ?? '';
+  const metadataKey = metadata
+    ? `${metadata.canonicalSourceUrl}:${metadata.name}:${metadata.readme?.length ?? 0}`
+    : 'initial';
+  const suggestedSlug = metadata?.name
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ?? '';
 
   return (
     <form action={formAction} className="max-w-3xl space-y-6">
       {initial.id ? <input type="hidden" name="id" value={initial.id} /> : null}
 
+      {showSourceMetadata ? <fieldset className="rounded-md bg-muted/35 p-4">
+        <legend className="px-1 text-sm font-semibold text-foreground">{t('fetchSourceMetadata')}</legend>
+        <div className="mt-2 grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]">
+          <label className={LABEL_CLASS}>
+            <span>{t('metadataSource')}</span>
+            <NativeSelect name="sourceMetadataSource" defaultValue={source} className="ui-input h-11">
+              <option value="npm">{t('npm')}</option>
+              <option value="pypi">{t('pypi')}</option>
+              <option value="github">{t('github')}</option>
+            </NativeSelect>
+          </label>
+          <label className={LABEL_CLASS}>
+            <span>{t('packageOrGithubRepository')}</span>
+            <input
+              name="sourceMetadataRef"
+              defaultValue={sourceRef}
+              placeholder="@modelcontextprotocol/server-memory"
+              className="ui-input h-11 font-mono"
+              autoCapitalize="none"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-col items-start gap-3 sm:flex-row sm:items-end">
+          <label className={`${LABEL_CLASS} min-w-0 flex-1`}>
+            <span>{t('sourceUrl')}</span>
+            <input value={sourceUrl} readOnly className="ui-input h-11 truncate font-mono text-xs" />
+          </label>
+          <input type="hidden" name="sourceMetadataCanonicalUrl" value={sourceUrl} />
+          <button
+            type="submit"
+            formAction={sourceAction}
+            formNoValidate
+            disabled={sourcePending}
+            className="ui-button-secondary h-11 shrink-0 disabled:cursor-wait disabled:opacity-70"
+          >
+            <Download className="size-4" />
+            {sourcePending ? t('fetchingMetadata') : t('fetchMetadata')}
+          </button>
+        </div>
+        {sourceState.error ? <p className="mt-3 text-sm text-destructive-text" role="alert">{sourceState.error}</p> : null}
+        {metadata ? <p className="mt-3 text-sm text-muted-foreground" role="status">{t('metadataFetched')}</p> : null}
+      </fieldset> : null}
+
       <div className="grid gap-5 sm:grid-cols-2">
         <label className={LABEL_CLASS}>
           <span>{t('name')}</span>
-          <input name="name" defaultValue={initial.name ?? ''} required className="ui-input h-11" />
+          <input key={`name-${metadataKey}`} name="name" defaultValue={metadata?.name ?? initial.name ?? ''} required className="ui-input h-11" />
         </label>
         {initial.id ? (
           <div className={LABEL_CLASS}>
@@ -53,6 +117,8 @@ export function ServerForm({
             <input
               name="slug"
               required
+              key={`slug-${metadataKey}`}
+              defaultValue={initial.slug ?? suggestedSlug}
               placeholder="my-server"
               className="ui-input h-11 font-mono"
               autoCapitalize="none"
@@ -62,19 +128,30 @@ export function ServerForm({
         )}
         <label className={LABEL_CLASS}>
           <span>{t('author')}</span>
-          <input name="author" defaultValue={initial.author ?? ''} className="ui-input h-11" />
+          <input key={`author-${metadataKey}`} name="author" defaultValue={metadata?.author ?? initial.author ?? ''} className="ui-input h-11" />
         </label>
         <label className={LABEL_CLASS}>
           <span>{t('stars')}</span>
-          <input name="stars" type="number" defaultValue={initial.stars ?? 0} className="ui-input h-11" />
+          <input key={`stars-${metadataKey}`} name="stars" type="number" defaultValue={metadata?.stars ?? initial.stars ?? 0} className="ui-input h-11" />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('description')}</span>
           <textarea
             name="description"
-            defaultValue={initial.description ?? ''}
+            key={`description-${metadataKey}`}
+            defaultValue={metadata?.description ?? initial.description ?? ''}
             rows={4}
             className={TEXTAREA_CLASS}
+          />
+        </label>
+        <label className={`${LABEL_CLASS} sm:col-span-2`}>
+          <span>{t('readme')}</span>
+          <textarea
+            name="readme"
+            key={`readme-${metadataKey}`}
+            defaultValue={metadata?.readme ?? initial.readme ?? ''}
+            rows={12}
+            className={`${TEXTAREA_CLASS} min-h-64 font-mono text-xs leading-5`}
           />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>

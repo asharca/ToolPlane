@@ -143,7 +143,18 @@ export default async function AgentDetailPage({
           providerIds: agent.modelProviders.map((link) => link.providerId),
           model: agent.model,
           maxSteps: agent.maxSteps,
-          providers: providers.map((p) => ({ id: p.id, name: p.name, format: p.format, models: p.models })),
+          providers: providers.map((provider) => ({
+            id: provider.id,
+            name: provider.name,
+            format: provider.format,
+            models: provider.models,
+            modelRecords: (provider.modelRecords ?? []).map((model) => ({
+              modelId: model.modelId,
+              primaryType: model.primaryType,
+              capabilities: model.capabilities,
+              inputModalities: model.inputModalities,
+            })),
+          })),
           deployments,
           skills,
           toolkits: toolkits.map((t) => ({

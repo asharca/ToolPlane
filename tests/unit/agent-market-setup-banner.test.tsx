@@ -13,6 +13,7 @@ describe('AgentMarketSetupBanner', () => {
             { deploymentId: 'deployment/1', variable: 'FIRST_API_KEY' },
             { deploymentId: 'deployment-2', variable: 'SECOND_API_KEY' },
           ],
+          runtimes: [{ agentId: 'runtime/agent', kind: 'hermes' }],
         }}
       />,
     );
@@ -24,5 +25,9 @@ describe('AgentMarketSetupBanner', () => {
     const mcpLinks = screen.getAllByRole('link', { name: /Configure MCP/i });
     expect(mcpLinks[0]).toHaveAttribute('href', '/app/acme%20team/mcp/deployment%2F1');
     expect(mcpLinks[1]).toHaveAttribute('href', '/app/acme%20team/mcp/deployment-2');
+    expect(screen.getByRole('link', { name: /Configure runtime/i })).toHaveAttribute(
+      'href',
+      '/app/acme%20team/agents/runtime%2Fagent?settings=hermes',
+    );
   });
 });

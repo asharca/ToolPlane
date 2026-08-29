@@ -6,7 +6,9 @@ import {
   Bot,
   Brain,
   Building2,
+  ClipboardCheck,
   LayoutDashboard,
+  MessageSquare,
   Plug,
   Settings,
   ShieldCheck,
@@ -28,6 +30,8 @@ type AdminPageLabelKey =
   | 'adminNavMcpServers'
   | 'adminNavSkills'
   | 'adminNavAgents'
+  | 'adminNavAssistants'
+  | 'adminNavMarketReviews'
   | 'adminNavCategories';
 
 type AdminSectionLabelKey =
@@ -75,12 +79,22 @@ const NAV_SECTIONS: NavSection[] = [
     labelKey: 'adminNavDirectory',
     items: [
       {
+        labelKey: 'adminNavMarketReviews',
+        href: '/admin/market',
+        icon: ClipboardCheck,
+      },
+      {
         labelKey: 'adminNavMcpServers',
         href: '/admin/servers',
         icon: Plug,
       },
       { labelKey: 'adminNavSkills', href: '/admin/skills', icon: Brain },
       { labelKey: 'adminNavAgents', href: '/admin/agents', icon: Bot },
+      {
+        labelKey: 'adminNavAssistants',
+        href: '/admin/assistants',
+        icon: MessageSquare,
+      },
       {
         labelKey: 'adminNavCategories',
         href: '/admin/categories',

@@ -38,11 +38,15 @@ import {
   type AgentResourceOption,
 } from '@/components/dashboard/agents/AgentResourceSelect';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import { ModelPicker } from '@/components/dashboard/models/ModelPicker';
+import {
+  ModelPicker,
+  type ModelProviderOption,
+} from '@/components/dashboard/models/ModelPicker';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton';
 import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
+import { AgentMarketInstallForm } from '@/components/dashboard/market/AgentMarketInstallForm';
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
@@ -64,14 +68,30 @@ export type AgentRow = {
 };
 
 type CreateOptions = {
-  providers: Array<{ id: string; name: string; format: string; models: string[] }>;
+  providers: Array<ModelProviderOption & { format: string }>;
   defaultModel?: { providerId: string; model: string } | null;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
 };
 
+export type AgentMarketOption = {
+  id: string;
+  releaseId: string;
+  idempotencyKey: string;
+  name: string;
+  summary: string | null;
+  iconUrl: string | null;
+  publisher: string | null;
+  tags: string[];
+  runtimes: string[];
+  resourceCount: number;
+  sandboxCount: number;
+  installCount: number;
+};
+
 type CreateStep = 'basic' | 'instructions' | 'tools';
+type CreateSource = 'choose' | 'blank' | 'market';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -109,14 +129,17 @@ export function AgentsBrowser({
   agents,
   createOptions,
   hermesImages,
+  marketAgents = [],
 }: {
   slug: string;
   agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
   hermesImages?: string[];
+  marketAgents?: AgentMarketOption[];
 }) {
   const t = useTranslations('console.agents');
+  const marketT = useTranslations('agentMarket');
   const router = useRouter();
   const pathname = usePathname() ?? `/app/${encodeURIComponent(slug)}/agents`;
   const searchParams = useSearchParams();
@@ -125,6 +148,9 @@ export function AgentsBrowser({
   const requestedReturnTo = searchParams.get('returnTo') ?? '';
   const createOnly = searchParams.get('create') === '1';
   const [creating, setCreating] = useState(createOnly);
+  const [createSource, setCreateSource] = useState<CreateSource>(
+    createOnly && searchParams.get('source') === 'market' ? 'market' : 'choose',
+  );
   const [createStep, setCreateStep] = useState<CreateStep>('basic');
   const [agentName, setAgentName] = useState('');
   const [runtime, setRuntime] = useState<AgentRuntimeKind | null>(null);
@@ -162,6 +188,12 @@ export function AgentsBrowser({
   const createStepIndex = Math.max(0, createSteps.findIndex((step) => step.id === createStep));
   const activeCreateStep = createSteps[createStepIndex]?.id ?? 'basic';
   const lastCreateStep = createStepIndex === createSteps.length - 1;
+  const marketReturnParams = new URLSearchParams(searchParams.toString());
+  marketReturnParams.set('create', '1');
+  marketReturnParams.set('source', 'market');
+  marketReturnParams.delete('cloneError');
+  const marketReturnTo = `${pathname}?${marketReturnParams}`;
+  const cloneError = searchParams.get('cloneError');
 
   function selectRuntime(nextRuntime: AgentRuntimeKind) {
     setRuntime(nextRuntime);
@@ -178,6 +210,7 @@ export function AgentsBrowser({
       return;
     }
     setCreating(false);
+    setCreateSource('choose');
     setCreateStep('basic');
     setAgentName('');
     setRuntime(null);
@@ -216,9 +249,16 @@ export function AgentsBrowser({
             type="button"
             onClick={() => {
               if (creating) closeCreateForm();
-              else setCreating(true);
+              else {
+                setCreateSource('choose');
+                setCreating(true);
+              }
             }}
-            aria-controls="agent-create-form"
+            aria-controls={createSource === 'blank'
+              ? 'agent-create-form'
+              : createSource === 'market'
+                ? 'agent-market-source'
+                : 'agent-create-source'}
             aria-expanded={creating}
             className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
           >
@@ -245,7 +285,157 @@ export function AgentsBrowser({
         </div>
       ) : null}
 
-      {creating ? (
+      {creating && createSource === 'choose' ? (
+        <section
+          id="agent-create-source"
+          className={cx(
+            'flex min-h-0 flex-col bg-background',
+            createOnly ? 'h-full' : 'ui-panel min-h-[32rem]',
+          )}
+        >
+          <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-5 py-10 sm:px-8">
+            <div>
+              <h3 className="text-xl font-semibold text-foreground">{t('chooseAgentStartingPoint')}</h3>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('chooseAgentStartingPointDescription')}</p>
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setCreateSource('blank')}
+                aria-label={t('createBlankAgent')}
+                className="group flex min-h-32 items-start gap-4 rounded-lg border border-border bg-card p-5 text-left transition-colors hover:bg-muted/40"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-accent-foreground">
+                  <Plus className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-foreground">{t('createBlankAgent')}</span>
+                  <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{t('createBlankAgentDescription')}</span>
+                </span>
+                <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateSource('market')}
+                aria-label={t('chooseFromAgentMarket')}
+                className="group flex min-h-32 items-start gap-4 rounded-lg border border-border bg-card p-5 text-left transition-colors hover:bg-muted/40"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Store className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-foreground">{t('chooseFromAgentMarket')}</span>
+                  <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{t('chooseFromAgentMarketDescription')}</span>
+                </span>
+                <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
+            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+              <X className="size-4 shrink-0" />
+              {t('cancel')}
+            </button>
+          </div>
+        </section>
+      ) : creating && createSource === 'market' ? (
+        <section
+          id="agent-market-source"
+          className={cx(
+            'flex min-h-0 flex-col overflow-hidden bg-background',
+            createOnly ? 'h-full' : 'ui-panel min-h-[38rem] max-h-[calc(100dvh-10rem)]',
+          )}
+        >
+          <header className="flex shrink-0 items-start gap-3 px-5 py-4 sm:px-6">
+            <button
+              type="button"
+              onClick={() => setCreateSource('choose')}
+              aria-label={t('back')}
+              className="ui-button-ghost ui-icon-button shrink-0"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-lg font-semibold text-foreground">{t('chooseFromAgentMarket')}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{t('chooseFromAgentMarketDescription')}</p>
+            </div>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 sm:px-6">
+            {cloneError ? (
+              <p role="alert" className="mb-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                {cloneError === 'release_not_found' || cloneError === 'listing_unavailable'
+                  ? marketT('releaseUnavailable')
+                  : marketT('invalidInstall')}
+              </p>
+            ) : null}
+            {marketAgents.length ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {marketAgents.map((agent) => (
+                  <article key={agent.id} className="flex min-w-0 flex-col rounded-lg border border-border bg-card p-4">
+                    <div className="flex items-start gap-3">
+                      {agent.iconUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={agent.iconUrl} alt="" width={40} height={40} className="size-10 rounded-lg object-cover" />
+                      ) : (
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-semibold text-accent-foreground">
+                          {Array.from(agent.name.trim())[0]?.toUpperCase() ?? 'A'}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <h4 className="truncate text-sm font-semibold text-foreground">{agent.name}</h4>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {agent.publisher ?? agent.runtimes.map(agentRuntimeDisplayName).join(' · ')}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+                      {agent.summary ?? t('chooseFromAgentMarketDescription')}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {agent.runtimes.map((runtimeKind) => (
+                        <span key={runtimeKind} className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                          {agentRuntimeDisplayName(runtimeKind)}
+                        </span>
+                      ))}
+                      {agent.tags.slice(0, 2).map((tag) => (
+                        <span key={tag} className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">{tag}</span>
+                      ))}
+                    </div>
+                    <dl className="mt-4 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+                      <div><dt>{marketT('resources')}</dt><dd className="mt-0.5 font-semibold text-foreground">{agent.resourceCount}</dd></div>
+                      <div><dt>{marketT('sandboxes')}</dt><dd className="mt-0.5 font-semibold text-foreground">{agent.sandboxCount}</dd></div>
+                      <div className="text-right"><dt>{marketT('clones')}</dt><dd className="mt-0.5 font-semibold text-foreground">{agent.installCount}</dd></div>
+                    </dl>
+                    <div className="mt-auto pt-4">
+                      <AgentMarketInstallForm
+                        workspace={slug}
+                        releaseId={agent.releaseId}
+                        idempotencyKey={agent.idempotencyKey}
+                        returnTo={marketReturnTo}
+                        labels={{ submit: marketT('cloneAgent'), pending: marketT('cloningAgent') }}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <DashboardEmptyState
+                icon={Store}
+                title={marketT('emptyTitle')}
+                description={marketT('emptyDescription')}
+              />
+            )}
+          </div>
+
+          <footer className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
+            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+              <X className="size-4 shrink-0" />
+              {t('cancel')}
+            </button>
+          </footer>
+        </section>
+      ) : creating ? (
         <form
           id="agent-create-form"
           action={createAgentAction}
@@ -514,16 +704,17 @@ export function AgentsBrowser({
               <X className="size-4 shrink-0" />
               {t('cancel')}
             </button>
-            {createStepIndex > 0 ? (
-              <button
-                type="button"
-                onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
-                className="ui-button-secondary h-10 gap-2 px-4"
-              >
-                <ChevronLeft className="size-4 shrink-0" />
-                {t('back')}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                if (createStepIndex > 0) setCreateStep(createSteps[createStepIndex - 1]!.id);
+                else setCreateSource('choose');
+              }}
+              className="ui-button-secondary h-10 gap-2 px-4"
+            >
+              <ChevronLeft className="size-4 shrink-0" />
+              {t('back')}
+            </button>
             {lastCreateStep ? (
               <SubmitButton
                 pendingLabel={t('creatingAgent')}

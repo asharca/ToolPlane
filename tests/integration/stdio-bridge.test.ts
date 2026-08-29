@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
+const REMOTE_BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-http-bridge.mjs');
 const FIXTURE = path.join(process.cwd(), 'tests', 'fixtures', 'fake-stdio-mcp.mjs');
 const DELAYED_FIXTURE = path.join(process.cwd(), 'tests', 'fixtures', 'delayed-stdio-mcp.mjs');
 const processes = new Set<ChildProcess>();
@@ -75,6 +76,38 @@ async function rpc(port: number, method: string, params?: unknown) {
   return res.json();
 }
 
+function runRemoteBridge(
+  config: unknown,
+  nodeArgs: string[] = [],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const proc = spawn(process.execPath, [...nodeArgs, REMOTE_BRIDGE], {
+      env: {
+        ...process.env,
+        MCP_PORT: '0',
+        MCP_NAME: 'remote-test',
+        MCP_REMOTE_CONFIG: JSON.stringify(config),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    processes.add(proc);
+    proc.stdout.on('data', (buffer: Buffer) => { stdout += buffer.toString(); });
+    proc.stderr.on('data', (buffer: Buffer) => { stderr += buffer.toString(); });
+    proc.once('error', reject);
+    proc.once('exit', (code) => {
+      processes.delete(proc);
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('remote bridge did not exit'));
+    }, 8000);
+  });
+}
+
 afterAll(() => {
   for (const proc of processes) proc.kill('SIGKILL');
   processes.clear();
@@ -115,5 +148,41 @@ describe('mcp-stdio-bridge', () => {
         MCP_STARTUP_MAX_TIMEOUT_MS: '3000',
       },
     })).rejects.toThrow(/startup idle timeout/);
+  });
+});
+
+describe('mcp-http-bridge', () => {
+  it('blocks private endpoints without logging credentials', async () => {
+    const secret = 'connector-secret-that-must-not-leak';
+    const result = await runRemoteBridge({
+      url: 'https://127.0.0.1/mcp',
+      transport: 'streamable-http',
+      headers: { authorization: `Bearer ${secret}` },
+      timeoutMs: 1000,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).not.toContain('LISTENING');
+    expect(result.stderr).toContain('non-public address');
+    expect(result.stderr).not.toContain(secret);
+  });
+
+  it('bounds an SSE connection that never completes startup', async () => {
+    const preload = `data:text/javascript,${encodeURIComponent(`
+      import dns from 'node:dns/promises';
+      import { syncBuiltinESMExports } from 'node:module';
+      dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+      syncBuiltinESMExports();
+      globalThis.fetch = () => new Promise(() => {});
+    `)}`;
+    const result = await runRemoteBridge({
+      url: 'https://example.com/mcp',
+      transport: 'sse',
+      headers: {},
+      timeoutMs: 1000,
+    }, ['--import', preload]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('connection timed out');
   });
 });

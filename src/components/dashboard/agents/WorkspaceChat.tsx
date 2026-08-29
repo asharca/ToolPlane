@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
+import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import {
   Dialog,
   DialogContent,
@@ -93,7 +94,7 @@ export function WorkspaceChat({
   conversationId: string | null;
   initialMessages: HermesUIMessage[];
   agents: ChatAgent[];
-  providers?: Array<{ id: string; name: string; format: string; models: string[] }>;
+  providers?: Array<ModelProviderOption & { format: string }>;
   conversations: ChatConversation[];
   startInChat?: boolean;
 }) {
@@ -310,17 +311,10 @@ export function WorkspaceChat({
                       'group flex h-8 min-w-0 items-center rounded-lg transition-colors',
                       agent.id === activeAgent.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60 hover:text-foreground',
                     )}>
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-controls={`agent-conversations-${agent.id}`}
-                        onClick={() => setExpandedAgents((current) => ({ ...current, [agent.id]: !expanded }))}
-                        className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]"
-                      >
-                        <ChevronRight className={cx('size-3 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
+                      <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]">
                         <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-3.5" /></span>
                         <span className={cx('min-w-0 flex-1 truncate', agent.id === activeAgent.id && 'font-medium')}>{agent.name}</span>
-                      </button>
+                      </div>
                       <span className={cx('mr-1 size-1.5 shrink-0 rounded-full', agent.ready ? 'bg-emerald-500' : 'bg-amber-500')} title={agent.ready ? t('ready1') : t('needsModel')} />
                       <form
                         action={createConversationAction}
@@ -328,7 +322,7 @@ export function WorkspaceChat({
                           setExpandedAgents((current) => ({ ...current, [agent.id]: true }));
                           showChatOnNarrow();
                         }}
-                        className="mr-1 shrink-0"
+                        className="shrink-0"
                       >
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="agentId" value={agent.id} />
@@ -341,12 +335,23 @@ export function WorkspaceChat({
                           <Plus className="size-3.5" />
                         </button>
                       </form>
+                      <button
+                        type="button"
+                        aria-label={agent.name}
+                        aria-expanded={expanded}
+                        aria-controls={`agent-conversations-${agent.id}`}
+                        title={expanded ? t('hideConversations') : t('showConversations')}
+                        onClick={() => setExpandedAgents((current) => ({ ...current, [agent.id]: !expanded }))}
+                        className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                      >
+                        <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                      </button>
                     </div>
 
                     {expanded ? (
                       <div id={`agent-conversations-${agent.id}`} className="ml-4 pl-1">
                         <ul className="py-0.5">
-                          {items.map((item) => {
+                          {items.length > 0 ? items.map((item) => {
                             const label = conversationLabel(item, t('newChat'));
                             const renaming = inlineRenameId === item.id;
                             const confirmingDelete = deleteConfirmId === item.id;
@@ -483,7 +488,9 @@ export function WorkspaceChat({
                                 ) : row}
                               </li>
                             );
-                          })}
+                          }) : !conversationQuery ? (
+                            <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noConversations')}</li>
+                          ) : null}
                         </ul>
                       </div>
                     ) : null}
@@ -571,6 +578,7 @@ export function WorkspaceChat({
             creatingConversation={creatingConversation}
             ensureConversation={ensureConversation}
             initialMessages={initialMessages}
+            mcpPromptApiPath={`/api/v1/agents/${activeAgent.id}/prompts`}
             ready={activeAgent.ready}
             runtimeKind={activeAgent.runtimeKind}
             onConversationChanged={handleConversationChanged}

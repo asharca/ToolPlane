@@ -74,8 +74,11 @@ function actionErrorKey(error: unknown):
   | 'errorAgentReleaseNotPending'
   | 'errorAgentReleasePendingBeforeConfig'
   | 'errorAgentApprovedReleaseRequired'
+  | 'errorAgentPublisherWorkspaceMissing'
   | 'errorInvalidAgentTemplateConfig'
   | 'errorInvalidAgentRelease'
+  | 'errorMarketCategoryRequired'
+  | 'errorInvalidMarketCategories'
   | 'errorActionFailed' {
   if (!(error instanceof AdminAgentMarketError)) return 'errorActionFailed';
   if (error.code === 'slug_conflict') return 'errorAgentDirectorySlugExists';
@@ -86,7 +89,9 @@ function actionErrorKey(error: unknown):
   if (error.code === 'pending_release_exists') return 'errorAgentReleasePendingBeforeConfig';
   if (error.code === 'invalid_config') return 'errorInvalidAgentTemplateConfig';
   if (error.code === 'invalid_release') return 'errorInvalidAgentRelease';
+  if (error.code === 'invalid_categories') return 'errorInvalidMarketCategories';
   if (error.code === 'publish_without_release') return 'errorAgentApprovedReleaseRequired';
+  if (error.code === 'orphaned_publisher') return 'errorAgentPublisherWorkspaceMissing';
   return 'errorActionFailed';
 }
 
@@ -179,15 +184,18 @@ export async function approveAgentReleaseAction(
   const t = await getTranslations('admin');
   const listingId = str(formData, 'listingId');
   const releaseId = str(formData, 'releaseId');
+  const categoryIds = ids(formData, 'categoryIds');
   if (formData.get('reviewConfirmed') !== 'yes') {
     return { error: t('errorAgentReviewConfirmationRequired') };
   }
+  if (categoryIds.length === 0) return { error: t('errorMarketCategoryRequired') };
   try {
     await approvePendingAgentRelease({
       listingId,
       releaseId,
       reviewedById: admin.id,
       reviewNote: nullable(str(formData, 'reviewNote').slice(0, 4000)),
+      categoryIds,
     });
   } catch (error) {
     return { error: t(actionErrorKey(error)) };

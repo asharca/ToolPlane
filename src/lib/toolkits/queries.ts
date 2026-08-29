@@ -1,5 +1,7 @@
 import 'server-only';
+import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { parseToolkitMarketManifest } from '@/lib/market/resources';
 
 export async function listToolkits(workspaceId: string) {
   const toolkits = await db.toolkit.findMany({
@@ -151,44 +153,79 @@ export type PublicToolkitBrowseItem = {
   customServerCount: number;
   serverNames: string[];
   skillNames: string[];
+  categories: { slug: string; name: string }[];
+  marketListing: { namespace: string; slug: string; releaseId: string } | null;
   createdAt: Date;
 };
 
-export async function getBrowseToolkits(workspaceId: string, page: number, q = '') {
+export type ToolkitBrowseFilters = {
+  category?: string;
+  sort?: 'newest' | 'name';
+};
+
+type ToolkitBrowseCandidate = PublicToolkitBrowseItem & { marketReleaseId?: string };
+
+function marketCount(value: Prisma.JsonValue, key: 'mcpCount' | 'skillCount'): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
+  const count = (value as Record<string, Prisma.JsonValue>)[key];
+  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : 0;
+}
+
+export async function getBrowseToolkits(
+  workspaceId: string,
+  page: number,
+  q = '',
+  filters: ToolkitBrowseFilters = {},
+) {
   const safePage = Number.isSafeInteger(page) && page > 0 ? page : 1;
   const term = q.trim().slice(0, 160);
-  const where = {
+  const category = filters.category?.trim().toLocaleLowerCase().slice(0, 120) ?? '';
+  const legacyWhere: Prisma.ToolkitWhereInput = {
     visibility: 'public',
     enabled: true,
     workspaceId: { not: workspaceId },
-    ...(term
-      ? {
+    sourceMarketListing: { is: null },
+    AND: [
+      ...(term
+        ? [{
           OR: [
             { name: { contains: term, mode: 'insensitive' as const } },
             { slug: { contains: term, mode: 'insensitive' as const } },
             { workspace: { name: { contains: term, mode: 'insensitive' as const } } },
             { workspace: { slug: { contains: term, mode: 'insensitive' as const } } },
           ],
-        }
-      : {}),
+        }]
+        : []),
+    ],
   };
-
-  const total = await db.toolkit.count({ where });
-  const lastPage = Math.max(1, Math.ceil(total / TOOLKIT_MARKET_PAGE_SIZE));
-  if (safePage > lastPage) {
-    return { items: [], total, pageSize: TOOLKIT_MARKET_PAGE_SIZE };
-  }
-
-  const rows = await db.toolkit.findMany({
-    where,
-    orderBy: { updatedAt: 'desc' },
-    skip: (safePage - 1) * TOOLKIT_MARKET_PAGE_SIZE,
-    take: TOOLKIT_MARKET_PAGE_SIZE,
-    select: {
+  const marketWhere: Prisma.MarketListingWhereInput = {
+    kind: 'toolkit',
+    status: 'published',
+    latestReleaseId: { not: null },
+    latestRelease: { is: { reviewStatus: 'approved' } },
+    sourceToolkit: { is: { visibility: 'public', enabled: true } },
+    AND: [
+      { OR: [{ publisherWorkspaceId: null }, { publisherWorkspaceId: { not: workspaceId } }] },
+      ...(term ? [{
+        OR: [
+          { name: { contains: term, mode: 'insensitive' as const } },
+          { slug: { contains: term, mode: 'insensitive' as const } },
+          { namespace: { contains: term, mode: 'insensitive' as const } },
+          { sourceToolkit: { is: { name: { contains: term, mode: 'insensitive' as const } } } },
+          { sourceToolkit: { is: { slug: { contains: term, mode: 'insensitive' as const } } } },
+        ],
+      }] : []),
+    ],
+  };
+  const [rows, marketRows] = await Promise.all([
+    db.toolkit.findMany({
+      where: legacyWhere,
+      select: {
       id: true,
       name: true,
       slug: true,
       createdAt: true,
+      categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
       workspace: { select: { name: true, slug: true } },
       _count: { select: { servers: true, skills: true } },
       servers: {
@@ -217,8 +254,27 @@ export async function getBrowseToolkits(workspaceId: string, page: number, q = '
           },
         },
       },
-    },
-  });
+      },
+    }),
+    db.marketListing.findMany({
+      where: marketWhere,
+      select: {
+        id: true,
+        namespace: true,
+        slug: true,
+        name: true,
+        metadata: true,
+        publishedAt: true,
+        createdAt: true,
+        categories: { select: { slug: true, name: true }, orderBy: { name: 'asc' } },
+        sourceToolkit: { select: { id: true, slug: true } },
+        publisherWorkspace: { select: { name: true, slug: true } },
+        latestRelease: {
+          select: { id: true, reviewStatus: true, publishedAt: true },
+        },
+      },
+    }),
+  ]);
 
   const customServerCounts = rows.length > 0
     ? await db.toolkitServer.groupBy({
@@ -234,7 +290,7 @@ export async function getBrowseToolkits(workspaceId: string, page: number, q = '
     customServerCounts.map((row) => [row.toolkitId, row._count._all]),
   );
 
-  const items: PublicToolkitBrowseItem[] = rows.map((t) => {
+  const legacyItems: PublicToolkitBrowseItem[] = rows.map((t) => {
     const serverNames = t.servers
       .map((s) => s.deployment.server?.name ?? s.deployment.name ?? s.deployment.sourceRef)
       .filter((name): name is string => Boolean(name));
@@ -253,9 +309,88 @@ export async function getBrowseToolkits(workspaceId: string, page: number, q = '
       toolCount: t._count.servers + t._count.skills,
       serverNames,
       skillNames,
+      categories: t.categories,
+      marketListing: null,
       createdAt: t.createdAt,
     };
   });
-
-  return { items, total, pageSize: TOOLKIT_MARKET_PAGE_SIZE };
+  const marketItems = marketRows.flatMap((listing): ToolkitBrowseCandidate[] => {
+    if (!listing.latestRelease || !listing.sourceToolkit) return [];
+    const serverCount = marketCount(listing.metadata, 'mcpCount');
+    const skillCount = marketCount(listing.metadata, 'skillCount');
+    return [{
+        id: listing.sourceToolkit.id,
+        name: listing.name,
+        slug: listing.sourceToolkit.slug,
+        workspaceName: listing.publisherWorkspace?.name ?? listing.namespace,
+        workspaceSlug: listing.publisherWorkspace?.slug ?? listing.namespace,
+        serverCount,
+        skillCount,
+        customServerCount: 0,
+        toolCount: serverCount + skillCount,
+        serverNames: [],
+        skillNames: [],
+        categories: listing.categories,
+        marketListing: {
+          namespace: listing.namespace,
+          slug: listing.slug,
+          releaseId: listing.latestRelease.id,
+        },
+        marketReleaseId: listing.latestRelease.id,
+        createdAt: listing.latestRelease.publishedAt ?? listing.publishedAt ?? listing.createdAt,
+      }];
+  });
+  const allCandidates: ToolkitBrowseCandidate[] = [...legacyItems, ...marketItems];
+  const available: ToolkitBrowseCandidate[] = allCandidates
+    .sort((a, b) => filters.sort === 'name'
+      ? a.name.localeCompare(b.name)
+      : b.createdAt.getTime() - a.createdAt.getTime())
+    .filter((item) => !category || item.categories.some(({ slug }) => slug === category));
+  const categoryCounts = new Map<string, { name: string; count: number }>();
+  for (const item of allCandidates) {
+    for (const itemCategory of item.categories) {
+      const current = categoryCounts.get(itemCategory.slug);
+      categoryCounts.set(itemCategory.slug, {
+        name: itemCategory.name,
+        count: (current?.count ?? 0) + 1,
+      });
+    }
+  }
+  const categories = [...categoryCounts.entries()]
+    .map(([slug, item]) => ({ slug, ...item }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const skip = (safePage - 1) * TOOLKIT_MARKET_PAGE_SIZE;
+  const pageItems = available.slice(skip, skip + TOOLKIT_MARKET_PAGE_SIZE);
+  const releaseIds = pageItems.flatMap(({ marketReleaseId }) => marketReleaseId ? [marketReleaseId] : []);
+  const releases = releaseIds.length
+    ? await db.marketRelease.findMany({
+        where: { id: { in: releaseIds }, reviewStatus: 'approved' },
+        select: { id: true, manifest: true, checksum: true },
+      })
+    : [];
+  const manifests = new Map(releases.flatMap((release) => {
+    try {
+      return [[release.id, parseToolkitMarketManifest(release.manifest, release.checksum)] as const];
+    } catch {
+      return [];
+    }
+  }));
+  return {
+    items: pageItems.flatMap(({ marketReleaseId, ...item }) => {
+      if (!marketReleaseId) return [item];
+      const manifest = manifests.get(marketReleaseId);
+      return manifest ? [{
+        ...item,
+        serverCount: manifest.mcps.length,
+        skillCount: manifest.skills.length,
+        toolCount: manifest.mcps.length + manifest.skills.length,
+        serverNames: manifest.mcps.slice(0, 4).map(({ name }) => name),
+        skillNames: manifest.skills.slice(0, 4).map(({ snapshot }) => snapshot.name),
+      }] : [];
+    }),
+    total: available.length,
+    availableTotal: legacyItems.length + marketItems.length,
+    categories,
+    pageSize: TOOLKIT_MARKET_PAGE_SIZE,
+  };
 }

@@ -8,7 +8,8 @@ const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/;
 
-export type McpSource = 'npm' | 'pypi' | 'github' | 'docker';
+export type LocalMcpSource = 'npm' | 'pypi' | 'github' | 'docker';
+export type McpSource = LocalMcpSource | 'remote';
 export type StdioMcpCommand = 'npx' | 'uvx' | 'uv' | 'docker';
 export const EDITABLE_MCP_SOURCES = ['npm', 'pypi', 'github', 'docker', 'config'] as const;
 export type EditableMcpSource = (typeof EDITABLE_MCP_SOURCES)[number];
@@ -99,7 +100,36 @@ export function isValidMcpRef(source: McpSource, ref: string): boolean {
   return source === 'npm' ? NPM_NAME.test(ref)
     : source === 'pypi' ? PYPI_NAME.test(ref)
     : source === 'github' ? GITHUB_URL.test(ref)
-    : isValidDockerImageRef(ref);
+    : source === 'docker' ? isValidDockerImageRef(ref)
+    : isValidRemoteMcpUrl(ref);
+}
+
+export function isValidRemoteMcpUrl(value: string): boolean {
+  if (!value || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== 'https:'
+      || url.username
+      || url.password
+      || url.search
+      || url.hash
+      || url.port
+    ) return false;
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return host !== 'localhost'
+      && host !== '0.0.0.0'
+      && host !== '::'
+      && host !== '::1'
+      && !host.endsWith('.localhost')
+      && !/^127\./.test(host)
+      && !/^10\./.test(host)
+      && !/^192\.168\./.test(host)
+      && !/^169\.254\./.test(host)
+      && !/^172\.(?:1[6-9]|2\d|3[01])\./.test(host);
+  } catch {
+    return false;
+  }
 }
 
 const schema = z

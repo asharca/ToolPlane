@@ -93,6 +93,7 @@ describe('entity cards', () => {
         agent={{
           id: 'listing-1',
           slug: 'research-copilot',
+          directorySlug: 'acme-labs-research-copilot',
           name: 'Research Copilot',
           summary: 'Research with reviewed sources',
           author: null,
@@ -111,5 +112,30 @@ describe('entity cards', () => {
     expect(screen.getByText('Acme Labs')).toBeInTheDocument();
     expect(screen.getByText('1.2k')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Installs: 1,200/ })).toBeInTheDocument();
+  });
+
+  it('links platform agents by their directory slug', () => {
+    render(
+      <AgentListingCard
+        installLabel="Installs"
+        agent={{
+          id: 'listing-2',
+          slug: 'research-copilot',
+          directorySlug: 'research-copilot',
+          name: 'Research Copilot',
+          summary: null,
+          author: 'ToolPlane',
+          iconUrl: null,
+          installCount: 0,
+          categories: [],
+          publisherWorkspace: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Research Copilot/ })).toHaveAttribute(
+      'href',
+      '/agents/research-copilot',
+    );
   });
 });

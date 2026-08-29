@@ -9,6 +9,10 @@ import {
   createConfiguredAgent,
   deleteAgent,
   deleteProvider,
+  addProviderModels,
+  updateProviderModel,
+  deleteProviderModel,
+  ProviderModelError,
   updateAgent,
   updateAgentModelSelection,
   setAgentTools,
@@ -849,6 +853,92 @@ describe('agents mutations', () => {
     const p = await db.modelProvider.findUnique({ where: { id: providerId } });
     expect(p?.models).toEqual(['gpt-x', 'gpt-y']);
     expect(p?.modelsFetchedAt).toBeInstanceOf(Date);
+  });
+
+  it('keeps manually classified models when refreshing remote models', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Catalog provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://catalog.test/v1',
+        apiKey: 'k',
+      },
+    });
+    const manualModel = {
+      modelId: 'acme/embed-v2',
+      name: 'Acme Embed v2',
+      group: 'Acme',
+      primaryType: 'embedding' as const,
+      capabilities: [],
+      inputModalities: [],
+      contextWindow: 8192,
+      maxInputTokens: 8192,
+      maxOutputTokens: null,
+    };
+
+    await addProviderModels(workspaceId, provider.id, [manualModel]);
+    await expect(addProviderModels(workspaceId, provider.id, [manualModel]))
+      .rejects.toThrow(ProviderModelError);
+    await setProviderModels(workspaceId, provider.id, ['remote-chat-v1']);
+    await updateProviderModel(workspaceId, provider.id, { ...manualModel, group: 'Embeddings' });
+
+    const reread = await db.modelProvider.findUnique({
+      where: { id: provider.id },
+      include: { modelRecords: true },
+    });
+    expect(reread?.models).toEqual(['remote-chat-v1', 'acme/embed-v2']);
+    expect(reread?.modelRecords.find(({ modelId }) => modelId === manualModel.modelId)).toMatchObject({
+      name: 'Acme Embed v2',
+      group: 'Embeddings',
+      primaryType: 'embedding',
+      source: 'manual',
+    });
+
+    await deleteProviderModel(workspaceId, provider.id, manualModel.modelId);
+    await expect(db.modelProvider.findUnique({ where: { id: provider.id } }))
+      .resolves.toMatchObject({ models: ['remote-chat-v1'] });
+    await deleteProvider(workspaceId, provider.id);
+  });
+
+  it('rejects cross-workspace model writes and removal of an in-use model', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Protected model provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://protected.test/v1',
+        apiKey: 'k',
+      },
+    });
+    const model = {
+      modelId: 'protected-chat-v1',
+      name: 'Protected Chat',
+      group: 'Protected',
+      primaryType: 'text' as const,
+      capabilities: ['reasoning' as const],
+      inputModalities: [],
+      contextWindow: null,
+      maxInputTokens: null,
+      maxOutputTokens: null,
+    };
+    await expect(addProviderModels('foreign-workspace', provider.id, [model]))
+      .rejects.toThrow('Provider not found.');
+    await addProviderModels(workspaceId, provider.id, [model]);
+    const agent = await createAgent(workspaceId, 'Protected model agent', { runtime: 'pi' });
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: provider.id,
+      model: model.modelId,
+      maxSteps: 8,
+    });
+
+    await expect(deleteProviderModel(workspaceId, provider.id, model.modelId))
+      .rejects.toThrow('This model is in use and cannot be removed.');
+
+    await deleteAgent(workspaceId, agent.id);
+    await deleteProvider(workspaceId, provider.id);
   });
 
   it('clears the model from linked agents when deleting a provider', async () => {

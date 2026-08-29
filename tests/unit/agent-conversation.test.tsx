@@ -224,6 +224,7 @@ describe('AgentConversation', () => {
     await userEvent.hover(meter);
     expect((await screen.findAllByText('42 / 100 (42%)')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('gpt-test').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('syncs local messages when the active conversation changes', async () => {
@@ -395,8 +396,11 @@ describe('AgentConversation', () => {
   });
 
   it('stops a streaming response', async () => {
+    const streamingMessages: HermesUIMessage[] = [
+      { id: 'm-streaming', role: 'assistant', parts: [] },
+    ];
     chatMocks.useChat.mockReturnValue({
-      messages: initialMessages,
+      messages: streamingMessages,
       sendMessage: chatMocks.sendMessage,
       setMessages: chatMocks.setMessages,
       stop: chatMocks.stop,
@@ -407,14 +411,72 @@ describe('AgentConversation', () => {
       status: 'streaming',
       error: undefined,
     });
-    renderConversation();
+    renderConversation({ initialMessages: streamingMessages });
 
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
 
     expect(chatMocks.stop).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Stop' })).toHaveClass('text-destructive');
     expect(screen.getByRole('button', { name: 'Stop' }).querySelector('svg')).toHaveClass('lucide-circle-pause');
-    expect(screen.getByRole('status')).toHaveTextContent('Agent is responding');
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Preparing');
+    expect(status.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
     expect(document.querySelectorAll('[data-ui="conversation-pending-dot"]')).toHaveLength(3);
+  });
+
+  it('renders reasoning and tool activity inside the assistant message', () => {
+    const messages = [{
+      id: 'm-process',
+      role: 'assistant' as const,
+      parts: [
+        { type: 'reasoning', text: 'Checking the available sources.' },
+        {
+          type: 'tool-web_search',
+          toolCallId: 'call-1',
+          state: 'output-available',
+          input: { query: 'ToolPlane' },
+          output: { content: [{ type: 'text', text: 'Search result with citation' }] },
+        },
+        { type: 'text', text: 'Here is the answer.' },
+      ],
+    }] as HermesUIMessage[];
+    chatMocks.useChat.mockReturnValue({
+      messages,
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: chatMocks.regenerate,
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      status: 'ready',
+      error: undefined,
+    });
+
+    renderConversation({ initialMessages: messages });
+
+    const process = screen.getByText('Processed').closest('[data-ui="assistant-process"]');
+    expect(process).toBeInTheDocument();
+    expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
+    expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Here is the answer.');
+    expect(screen.getByText('Checking the available sources.')).toBeInTheDocument();
+    expect(screen.getByText('Search result with citation')).toBeInTheDocument();
+    expect(screen.queryByText('Agent is responding')).not.toBeInTheDocument();
+  });
+
+  it('sends the Cherry-style web search toggle with the turn', async () => {
+    renderConversation({ webSearchAvailable: true });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Enable web search' }));
+    expect(screen.getByRole('button', { name: 'Disable web search' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Find current sources');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user' }),
+      expect.objectContaining({
+        body: expect.objectContaining({ webSearchEnabled: true }),
+      }),
+    ));
   });
 });

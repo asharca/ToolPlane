@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { access, chmod, cp, lstat, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, lstat, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputRoot = path.resolve(
@@ -39,6 +39,40 @@ async function copyEntry(entry) {
     dereference: false,
     verbatimSymlinks: true,
   });
+}
+
+function enclosingNodeModules(packageRoot) {
+  let current = path.dirname(packageRoot);
+  while (current !== path.dirname(current)) {
+    if (path.basename(current) === 'node_modules') return current;
+    current = path.dirname(current);
+  }
+  throw new Error(`Cannot resolve node_modules for ${packageRoot}`);
+}
+
+async function copyRuntimePackage(
+  name,
+  sourceNodeModules = path.join(root, 'node_modules'),
+  targetNodeModules = path.join(outputRoot, 'node_modules'),
+  ancestors = new Set(),
+  directDependencies,
+) {
+  const source = await realpath(path.join(sourceNodeModules, name));
+  if (ancestors.has(source)) return;
+  const target = path.join(targetNodeModules, name);
+  await mkdir(path.dirname(target), { recursive: true });
+  await rm(target, { recursive: true, force: true });
+  await cp(source, target, { recursive: true, dereference: false });
+
+  const manifest = JSON.parse(await readFile(path.join(source, 'package.json'), 'utf8'));
+  const dependencies = directDependencies ?? Object.keys(manifest.dependencies ?? {});
+  if (dependencies.length === 0) return;
+  const nextAncestors = new Set(ancestors).add(source);
+  const dependencySource = enclosingNodeModules(source);
+  const dependencyTarget = path.join(target, 'node_modules');
+  for (const dependency of dependencies) {
+    await copyRuntimePackage(dependency, dependencySource, dependencyTarget, nextAncestors);
+  }
 }
 
 function run(command, args, extraEnv = {}) {
@@ -202,6 +236,31 @@ for (const entry of ['packages', 'messages']) {
   );
 }
 await writeLegacyEntrypointShims(outputRoot);
+// The client entry imports this subset. Copying every SDK dependency would also
+// ship its unused Express/Hono server stack and consume the release size budget.
+await copyRuntimePackage(
+  '@modelcontextprotocol/sdk',
+  path.join(root, 'node_modules'),
+  path.join(outputRoot, 'node_modules'),
+  new Set(),
+  [
+    'ajv',
+    'ajv-formats',
+    'content-type',
+    'eventsource',
+    'eventsource-parser',
+    'pkce-challenge',
+    'zod',
+    'zod-to-json-schema',
+  ],
+);
+const remoteMcpSdkRoot = path.join(outputRoot, 'node_modules/@modelcontextprotocol/sdk/dist/esm');
+await Promise.all([
+  'client/index.js',
+  'client/sse.js',
+  'client/streamableHttp.js',
+  'types.js',
+].map((entry) => import(pathToFileURL(path.join(remoteMcpSdkRoot, entry)).href)));
 await pruneNodePty(outputRoot);
 
 await writeFile(
@@ -215,6 +274,7 @@ for (const [entry, description] of [
   ['.next/static', 'client static assets'],
   ['messages', 'internationalization messages'],
   ['node_modules/node-pty', 'sandbox PTY runtime'],
+  ['node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', 'remote MCP client runtime'],
   ['node_modules/ws', 'connector WebSocket runtime'],
   ['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim'],
   ['node_modules/.bin/next', 'legacy entrypoint Next shim'],
@@ -225,6 +285,7 @@ for (const [entry, description] of [
   ['node_modules/.toolplane-runtime/messages/en.json', 'embedded English messages'],
   ['node_modules/.toolplane-runtime/messages/zh.json', 'embedded Chinese messages'],
   ['scripts/mcp-server.mjs', 'built-in MCP runtime'],
+  ['scripts/mcp-http-bridge.mjs', 'remote MCP runtime'],
   ['scripts/sandbox-mcp-server.mjs', 'sandbox MCP runtime'],
   ['packages/connector/bin/runtime.mjs', 'connector package runtime'],
   ['prisma/schema.prisma', 'Prisma schema'],

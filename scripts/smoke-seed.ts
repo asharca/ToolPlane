@@ -1,7 +1,9 @@
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { agentReleaseChecksum } from '@/lib/agents/market-artifact';
+import { marketReleaseChecksum } from '@/lib/market/artifact';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { hashPassword } from '@/lib/auth/password';
 import { DEFAULT_SANDBOX_IMAGE } from '@/lib/sandboxes/images';
@@ -10,8 +12,12 @@ import {
   hashToken,
   tokenPrefix,
 } from '@/lib/auth/token-format';
+import {
+  withMcpToolCatalog,
+  type McpToolDefinition,
+} from '@/lib/process/mcp-tool-catalog';
 
-const MCP_SOURCE_TYPES = ['npm', 'pypi', 'github', 'docker', 'config'] as const;
+const MCP_SOURCE_TYPES = ['npm', 'pypi', 'github', 'docker', 'config', 'remote'] as const;
 const CATALOG_SERVER_SLUG = 'smoke-catalog-memory';
 const SMOKE_AGENT_LISTINGS = [
   'smoke-research-copilot',
@@ -20,6 +26,30 @@ const SMOKE_AGENT_LISTINGS = [
   'smoke-incident-response-lead',
 ] as const;
 
+const MARKET_CATEGORIES = [
+  { slug: 'files', name: 'Files' },
+  { slug: 'web', name: 'Web' },
+  { slug: 'search', name: 'Search' },
+  { slug: 'developer-tools', name: 'Developer Tools' },
+  { slug: 'memory', name: 'Memory' },
+  { slug: 'reasoning', name: 'Reasoning' },
+  { slug: 'productivity', name: 'Productivity' },
+  { slug: 'databases', name: 'Databases' },
+  { slug: 'communication', name: 'Communication' },
+  { slug: 'browser-automation', name: 'Browser Automation' },
+  { slug: 'testing', name: 'Testing' },
+  { slug: 'security', name: 'Security' },
+  { slug: 'observability', name: 'Observability' },
+  { slug: 'design', name: 'Design' },
+  { slug: 'deployment', name: 'Deployment' },
+  { slug: 'documents', name: 'Documents' },
+  { slug: 'research', name: 'Research' },
+  { slug: 'data-analysis', name: 'Data Analysis' },
+  { slug: 'operations', name: 'Operations' },
+] as const;
+
+type MarketCategorySlug = (typeof MARKET_CATEGORIES)[number]['slug'];
+
 type SmokeMcpSeed = {
   name: string;
   source: (typeof MCP_SOURCE_TYPES)[number];
@@ -27,10 +57,13 @@ type SmokeMcpSeed = {
   installCfg: Prisma.InputJsonValue;
   catalog?: {
     slug: string;
+    sourceUrl?: string;
     author: string;
     description: string;
     stars: number;
     verifiedTools: number;
+    categorySlugs: MarketCategorySlug[];
+    toolCatalog: McpToolDefinition[];
   };
 };
 
@@ -39,6 +72,7 @@ type SmokeSkillSeed = {
   slug: string;
   description: string;
   content: string;
+  categorySlugs: MarketCategorySlug[];
 };
 
 type SmokeAgentManifest = {
@@ -107,7 +141,19 @@ type SmokeAgentReleaseSummary = {
   runtimes: Array<'pi' | 'hermes'>;
 };
 
-const mcpSeeds: SmokeMcpSeed[] = [
+function objectInputSchema(
+  properties: Record<string, Record<string, unknown>>,
+  required: string[] = Object.keys(properties),
+): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties,
+    ...(required.length ? { required } : {}),
+    additionalProperties: false,
+  };
+}
+
+export const mcpSeeds: SmokeMcpSeed[] = [
   {
     name: 'Everything (editable JSON)',
     source: 'config',
@@ -125,10 +171,163 @@ const mcpSeeds: SmokeMcpSeed[] = [
     installCfg: { env: {} },
     catalog: {
       slug: CATALOG_SERVER_SLUG,
+      sourceUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/memory',
       author: 'Model Context Protocol',
       description: 'Store and recall durable knowledge as a graph of entities, relations, and observations.',
       stars: 14_800,
       verifiedTools: 9,
+      categorySlugs: ['memory', 'productivity'],
+      toolCatalog: [
+        {
+          name: 'create_entities',
+          title: 'Create Entities',
+          description: 'Create new entities in the knowledge graph.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              entities: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: 'Entity name.' },
+                    entityType: { type: 'string', description: 'Entity type.' },
+                    observations: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['name', 'entityType', 'observations'],
+                },
+              },
+            },
+            required: ['entities'],
+          },
+        },
+        {
+          name: 'create_relations',
+          title: 'Create Relations',
+          description: 'Create relations between knowledge graph entities.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              relations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    from: { type: 'string' },
+                    to: { type: 'string' },
+                    relationType: { type: 'string' },
+                  },
+                  required: ['from', 'to', 'relationType'],
+                },
+              },
+            },
+            required: ['relations'],
+          },
+        },
+        {
+          name: 'add_observations',
+          title: 'Add Observations',
+          description: 'Add observations to existing entities.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              observations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    entityName: { type: 'string' },
+                    contents: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['entityName', 'contents'],
+                },
+              },
+            },
+            required: ['observations'],
+          },
+        },
+        {
+          name: 'delete_entities',
+          title: 'Delete Entities',
+          description: 'Delete entities and their associated relations.',
+          inputSchema: {
+            type: 'object',
+            properties: { entityNames: { type: 'array', items: { type: 'string' } } },
+            required: ['entityNames'],
+          },
+        },
+        {
+          name: 'delete_observations',
+          title: 'Delete Observations',
+          description: 'Delete observations from existing entities.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              deletions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    entityName: { type: 'string' },
+                    observations: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['entityName', 'observations'],
+                },
+              },
+            },
+            required: ['deletions'],
+          },
+        },
+        {
+          name: 'delete_relations',
+          title: 'Delete Relations',
+          description: 'Delete relations from the knowledge graph.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              relations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    from: { type: 'string' },
+                    to: { type: 'string' },
+                    relationType: { type: 'string' },
+                  },
+                  required: ['from', 'to', 'relationType'],
+                },
+              },
+            },
+            required: ['relations'],
+          },
+        },
+        {
+          name: 'read_graph',
+          title: 'Read Graph',
+          description: 'Read the complete knowledge graph.',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'search_nodes',
+          title: 'Search Nodes',
+          description: 'Search entities and observations by query.',
+          inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string', description: 'Search query.' } },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'open_nodes',
+          title: 'Open Nodes',
+          description: 'Open specific knowledge graph nodes by name.',
+          inputSchema: {
+            type: 'object',
+            properties: { names: { type: 'array', items: { type: 'string' } } },
+            required: ['names'],
+          },
+        },
+      ],
     },
   },
   {
@@ -138,10 +337,45 @@ const mcpSeeds: SmokeMcpSeed[] = [
     installCfg: { env: {} },
     catalog: {
       slug: 'smoke-catalog-sequential-thinking',
+      sourceUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking',
       author: 'Model Context Protocol',
       description: 'Break complex work into explicit, revisable reasoning steps before taking action.',
       stars: 12_400,
       verifiedTools: 1,
+      categorySlugs: ['reasoning', 'productivity'],
+      toolCatalog: [
+        {
+          name: 'sequentialthinking',
+          description: 'Work through a problem using revisable sequential reasoning steps.',
+          inputSchema: objectInputSchema({
+            thought: { type: 'string', description: 'Your current thinking step' },
+            nextThoughtNeeded: { type: 'boolean', description: 'Whether another thought step is needed' },
+            thoughtNumber: {
+              type: 'integer',
+              minimum: 1,
+              description: 'Current thought number (numeric value, e.g., 1, 2, 3)',
+            },
+            totalThoughts: {
+              type: 'integer',
+              minimum: 1,
+              description: 'Estimated total thoughts needed (numeric value, e.g., 5, 10)',
+            },
+            isRevision: { type: 'boolean', description: 'Whether this revises previous thinking' },
+            revisesThought: {
+              type: 'integer',
+              minimum: 1,
+              description: 'Which thought is being reconsidered',
+            },
+            branchFromThought: {
+              type: 'integer',
+              minimum: 1,
+              description: 'Branching point thought number',
+            },
+            branchId: { type: 'string', description: 'Branch identifier' },
+            needsMoreThoughts: { type: 'boolean', description: 'If more thoughts are needed' },
+          }, ['thought', 'nextThoughtNeeded', 'thoughtNumber', 'totalThoughts']),
+        },
+      ],
     },
   },
   {
@@ -151,10 +385,39 @@ const mcpSeeds: SmokeMcpSeed[] = [
     installCfg: { env: {} },
     catalog: {
       slug: 'smoke-catalog-fetch',
+      sourceUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/fetch',
       author: 'Model Context Protocol',
       description: 'Retrieve web pages and convert their content into a model-friendly representation.',
       stars: 9_600,
       verifiedTools: 1,
+      categorySlugs: ['web', 'search'],
+      toolCatalog: [
+        {
+          name: 'fetch',
+          description: 'Fetch a URL and return its content in a model-friendly form.',
+          inputSchema: objectInputSchema({
+            url: { type: 'string', format: 'uri', minLength: 1, description: 'URL to fetch' },
+            max_length: {
+              type: 'integer',
+              exclusiveMinimum: 0,
+              exclusiveMaximum: 1_000_000,
+              default: 5_000,
+              description: 'Maximum number of characters to return.',
+            },
+            start_index: {
+              type: 'integer',
+              minimum: 0,
+              default: 0,
+              description: 'Character index at which to start the returned content.',
+            },
+            raw: {
+              type: 'boolean',
+              default: false,
+              description: 'Return the original HTML without simplifying it.',
+            },
+          }, ['url']),
+        },
+      ],
     },
   },
   {
@@ -164,10 +427,91 @@ const mcpSeeds: SmokeMcpSeed[] = [
     installCfg: { env: {} },
     catalog: {
       slug: 'smoke-catalog-time',
+      sourceUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/time',
       author: 'Model Context Protocol',
       description: 'Read current time and convert times accurately across IANA time zones.',
       stars: 7_900,
       verifiedTools: 2,
+      categorySlugs: ['productivity'],
+      toolCatalog: [
+        {
+          name: 'get_current_time',
+          description: 'Get the current time in an IANA timezone.',
+          inputSchema: objectInputSchema({
+            timezone: {
+              type: 'string',
+              description: "IANA timezone name (for example, 'America/New_York' or 'Europe/London').",
+            },
+          }),
+        },
+        {
+          name: 'convert_time',
+          description: 'Convert a time between IANA timezones.',
+          inputSchema: objectInputSchema({
+            source_timezone: { type: 'string', description: 'Source IANA timezone name.' },
+            time: { type: 'string', description: 'Time to convert in 24-hour HH:MM format.' },
+            target_timezone: { type: 'string', description: 'Target IANA timezone name.' },
+          }),
+        },
+      ],
+    },
+  },
+  {
+    name: 'DeepWiki Connector',
+    source: 'remote',
+    sourceRef: 'https://mcp.deepwiki.com/mcp',
+    installCfg: {
+      transport: 'streamable-http',
+      authType: 'none',
+      env: {},
+    },
+    catalog: {
+      slug: 'smoke-catalog-deepwiki',
+      sourceUrl: 'https://github.com/mcp/cognitionai/deepwiki',
+      author: 'Cognition AI',
+      description: 'Ask questions and browse generated documentation for public GitHub repositories.',
+      stars: 0,
+      verifiedTools: 3,
+      categorySlugs: ['research', 'developer-tools'],
+      toolCatalog: [
+        {
+          name: 'ask_question',
+          description: 'Ask any question about a GitHub repository and get a context-grounded response.',
+          inputSchema: objectInputSchema({
+            repoName: {
+              anyOf: [
+                { type: 'string' },
+                { type: 'array', items: { type: 'string' } },
+              ],
+              description: 'GitHub repository or list of repositories (max 10) in owner/repo format.',
+            },
+            question: { type: 'string', description: 'Question to ask about the repository.' },
+          }),
+          outputSchema: objectInputSchema({ result: { type: 'string' } }),
+        },
+        {
+          name: 'read_wiki_contents',
+          description: 'View documentation about a GitHub repository.',
+          inputSchema: objectInputSchema({
+            repoName: {
+              type: 'string',
+              description: 'GitHub repository in owner/repo format.',
+            },
+          }),
+          outputSchema: objectInputSchema({ result: { type: 'string' } }),
+        },
+        {
+          name: 'read_wiki_structure',
+          description: 'Get a list of documentation topics for a GitHub repository.',
+          inputSchema: objectInputSchema({
+            repoName: {
+              type: 'string',
+              description: 'GitHub repository in owner/repo format.',
+            },
+          }),
+          outputSchema: objectInputSchema({ result: { type: 'string' } }),
+        },
+      ],
     },
   },
   {
@@ -187,10 +531,148 @@ const mcpSeeds: SmokeMcpSeed[] = [
     },
     catalog: {
       slug: 'smoke-catalog-filesystem',
+      sourceUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem',
       author: 'Model Context Protocol',
       description: 'Read, write, search, and organize files within explicitly allowed directories.',
       stars: 13_100,
       verifiedTools: 14,
+      categorySlugs: ['files', 'developer-tools'],
+      toolCatalog: [
+        {
+          name: 'read_file',
+          title: 'Read File (Deprecated)',
+          description: 'Read a text file; use read_text_file for new calls.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            tail: { type: 'number', description: 'If provided, returns only the last N lines of the file' },
+            head: { type: 'number', description: 'If provided, returns only the first N lines of the file' },
+          }, ['path']),
+        },
+        {
+          name: 'read_text_file',
+          title: 'Read Text File',
+          description: 'Read all, the head, or the tail of a text file.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            tail: { type: 'number', description: 'If provided, returns only the last N lines of the file' },
+            head: { type: 'number', description: 'If provided, returns only the first N lines of the file' },
+          }, ['path']),
+        },
+        {
+          name: 'read_media_file',
+          title: 'Read Media File',
+          description: 'Read an image, audio, or binary file as encoded content.',
+          inputSchema: objectInputSchema({ path: { type: 'string' } }),
+        },
+        {
+          name: 'read_multiple_files',
+          title: 'Read Multiple Files',
+          description: 'Read multiple files in one call.',
+          inputSchema: objectInputSchema({
+            paths: {
+              type: 'array',
+              items: { type: 'string' },
+              minItems: 1,
+              description: 'File paths to read within the allowed directories.',
+            },
+          }),
+        },
+        {
+          name: 'write_file',
+          title: 'Write File',
+          description: 'Create a file or overwrite an existing file.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            content: { type: 'string' },
+          }),
+        },
+        {
+          name: 'edit_file',
+          title: 'Edit File',
+          description: 'Apply exact text replacements, optionally as a dry run.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            edits: {
+              type: 'array',
+              items: objectInputSchema({
+                oldText: { type: 'string', description: 'Text to search for - must match exactly' },
+                newText: { type: 'string', description: 'Text to replace with' },
+              }),
+            },
+            dryRun: {
+              type: 'boolean',
+              default: false,
+              description: 'Preview changes using git-style diff format',
+            },
+          }, ['path', 'edits']),
+        },
+        {
+          name: 'create_directory',
+          title: 'Create Directory',
+          description: 'Create a directory and any missing parents.',
+          inputSchema: objectInputSchema({ path: { type: 'string' } }),
+        },
+        {
+          name: 'list_directory',
+          title: 'List Directory',
+          description: 'List files and directories at a path.',
+          inputSchema: objectInputSchema({ path: { type: 'string' } }),
+        },
+        {
+          name: 'list_directory_with_sizes',
+          title: 'List Directory With Sizes',
+          description: 'List directory entries with sizes.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            sortBy: {
+              type: 'string',
+              enum: ['name', 'size'],
+              default: 'name',
+              description: 'Sort entries by name or size',
+            },
+          }, ['path']),
+        },
+        {
+          name: 'directory_tree',
+          title: 'Directory Tree',
+          description: 'Return a recursive directory tree.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            excludePatterns: { type: 'array', items: { type: 'string' }, default: [] },
+          }, ['path']),
+        },
+        {
+          name: 'move_file',
+          title: 'Move File',
+          description: 'Move or rename a file or directory.',
+          inputSchema: objectInputSchema({
+            source: { type: 'string' },
+            destination: { type: 'string' },
+          }),
+        },
+        {
+          name: 'search_files',
+          title: 'Search Files',
+          description: 'Search for files recursively by pattern.',
+          inputSchema: objectInputSchema({
+            path: { type: 'string' },
+            pattern: { type: 'string' },
+            excludePatterns: { type: 'array', items: { type: 'string' }, default: [] },
+          }, ['path', 'pattern']),
+        },
+        {
+          name: 'get_file_info',
+          title: 'Get File Info',
+          description: 'Read file or directory metadata.',
+          inputSchema: objectInputSchema({ path: { type: 'string' } }),
+        },
+        {
+          name: 'list_allowed_directories',
+          title: 'List Allowed Directories',
+          description: 'List directories this server may access.',
+          inputSchema: objectInputSchema({}, []),
+        },
+      ],
     },
   },
 ];
@@ -206,6 +688,7 @@ const skillSeeds: SmokeSkillSeed[] = [
     name: 'Code Review',
     slug: 'code-review',
     description: 'Review changes for correctness, regressions, security risks, and missing tests.',
+    categorySlugs: ['developer-tools', 'testing', 'security'],
     content: `---
 name: code-review
 description: Review changes for correctness, regressions, security risks, and missing tests.
@@ -228,6 +711,7 @@ Inspect the relevant diff and surrounding code before making claims.
     name: 'Web Research',
     slug: 'web-research',
     description: 'Research current technical topics using primary sources and concise citations.',
+    categorySlugs: ['research', 'web', 'search'],
     content: `---
 name: web-research
 description: Research current technical topics using primary sources and concise citations.
@@ -248,6 +732,7 @@ agent-invocable: true
     name: 'Incident Triage',
     slug: 'incident-triage',
     description: 'Triage production failures using evidence, impact, hypotheses, and next actions.',
+    categorySlugs: ['operations', 'observability'],
     content: `---
 name: incident-triage
 description: Triage production failures using evidence, impact, hypotheses, and next actions.
@@ -268,6 +753,7 @@ agent-invocable: true
     name: 'Release Notes',
     slug: 'release-notes',
     description: 'Turn commits and pull requests into user-focused release notes.',
+    categorySlugs: ['developer-tools', 'deployment', 'documents'],
     content: `---
 name: release-notes
 description: Turn commits and pull requests into user-focused release notes.
@@ -288,6 +774,7 @@ agent-invocable: true
     name: 'Data Analysis',
     slug: 'data-analysis',
     description: 'Turn structured data into reproducible findings, checks, and decision-ready summaries.',
+    categorySlugs: ['data-analysis', 'reasoning'],
     content: `---
 name: data-analysis
 description: Turn structured data into reproducible findings, checks, and decision-ready summaries.
@@ -308,6 +795,27 @@ agent-invocable: true
 
 function smokeSandboxVolumeName(sandboxId: string): string {
   return `toolplane_sandbox_${sandboxId.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+}
+
+async function ensureMarketCategories(): Promise<Map<MarketCategorySlug, string>> {
+  const rows = await Promise.all(MARKET_CATEGORIES.map((category) => db.category.upsert({
+    where: { slug: category.slug },
+    update: { name: category.name },
+    create: category,
+    select: { id: true, slug: true },
+  })));
+  return new Map(rows.map((category) => [category.slug as MarketCategorySlug, category.id]));
+}
+
+function categoryConnections(
+  categoryIds: Map<MarketCategorySlug, string>,
+  slugs: readonly MarketCategorySlug[],
+) {
+  return slugs.map((slug) => {
+    const id = categoryIds.get(slug);
+    if (!id) throw new Error(`Smoke category was not seeded: ${slug}`);
+    return { id };
+  });
 }
 
 function portableSkill(
@@ -366,11 +874,13 @@ async function createPublishedAgentListing(input: {
   name: string;
   summary: string;
   tags: string[];
+  categoryIds: string[];
   manifest: SmokeAgentManifest;
 }): Promise<void> {
   await db.$transaction(async (tx) => {
     const publishedAt = new Date();
     const listingData = {
+      publisherKind: 'workspace',
       publisherWorkspaceId: input.workspaceId,
       sourceAgentId: input.sourceAgentId,
       publishedById: input.publishedById,
@@ -389,13 +899,17 @@ async function createPublishedAgentListing(input: {
     const listing = existing
       ? await tx.agentListing.update({
           where: { id: existing.id },
-          data: listingData,
+          data: {
+            ...listingData,
+            categories: { set: input.categoryIds.map((id) => ({ id })) },
+          },
           select: { id: true, latestVersion: true },
         })
       : await tx.agentListing.create({
           data: {
             ...listingData,
             directorySlug: input.directorySlug,
+            categories: { connect: input.categoryIds.map((id) => ({ id })) },
           },
           select: { id: true, latestVersion: true },
         });
@@ -464,6 +978,10 @@ async function main(): Promise<void> {
     await db.skill.deleteMany({ where: { id: { in: leakedSkillIds } } });
   }
   await db.user.deleteMany({ where: { email } });
+  await db.marketListing.deleteMany({
+    where: { kind: 'assistant', namespace: 'smoke', slug: 'research-assistant' },
+  });
+  const categoryIds = await ensureMarketCategories();
 
   const user = await db.user.create({
     data: {
@@ -515,8 +1033,10 @@ async function main(): Promise<void> {
     const recipe = {
       source: seed.source,
       ref: seed.sourceRef,
+      ...(seed.catalog.sourceUrl ? { sourceUrl: seed.catalog.sourceUrl } : {}),
       env: [],
       ...(seed.source === 'docker' ? { startCommand: '/tmp', network: 'none' } : {}),
+      ...(seed.source === 'remote' ? { transport: 'streamable-http', authType: 'none' } : {}),
     };
     const data = {
       name: seed.name.replace(/ \((?:Docker|GitHub)\)$/, ''),
@@ -526,15 +1046,22 @@ async function main(): Promise<void> {
       isOfficial: true,
       isFeatured: true,
       curated: true,
-      installCfg: recipe,
+      installCfg: withMcpToolCatalog(recipe, seed.catalog.toolCatalog) as Prisma.InputJsonValue,
       verifiedAt: new Date(),
       verifiedTools: seed.catalog.verifiedTools,
-      readme: `# ${seed.name}\n\n${seed.catalog.description}`,
+      readme: `# ${seed.name}\n\n${seed.catalog.description}${seed.catalog.sourceUrl ? `\n\nRepository: ${seed.catalog.sourceUrl}` : ''}`,
     };
     const server = await db.server.upsert({
       where: { slug: seed.catalog.slug },
-      update: data,
-      create: { slug: seed.catalog.slug, ...data },
+      update: {
+        ...data,
+        categories: { set: categoryConnections(categoryIds, seed.catalog.categorySlugs) },
+      },
+      create: {
+        slug: seed.catalog.slug,
+        ...data,
+        categories: { connect: categoryConnections(categoryIds, seed.catalog.categorySlugs) },
+      },
       select: { id: true, slug: true, name: true },
     });
     catalogMcps.push({ seed, server });
@@ -553,8 +1080,15 @@ async function main(): Promise<void> {
     };
     return db.skill.upsert({
       where: { slug: `smoke-catalog-${seed.slug}` },
-      update: data,
-      create: { slug: `smoke-catalog-${seed.slug}`, ...data },
+      update: {
+        ...data,
+        categories: { set: categoryConnections(categoryIds, seed.categorySlugs) },
+      },
+      create: {
+        slug: `smoke-catalog-${seed.slug}`,
+        ...data,
+        categories: { connect: categoryConnections(categoryIds, seed.categorySlugs) },
+      },
       select: { id: true, slug: true },
     });
   }));
@@ -566,7 +1100,9 @@ async function main(): Promise<void> {
         name: seed.name,
         source: seed.source,
         sourceRef: seed.sourceRef,
-        installCfg: seed.installCfg,
+        installCfg: (seed.catalog
+          ? withMcpToolCatalog(seed.installCfg, seed.catalog.toolCatalog)
+          : seed.installCfg) as Prisma.InputJsonValue,
         status: 'stopped',
       },
       select: { id: true },
@@ -578,7 +1114,19 @@ async function main(): Promise<void> {
       serverId: catalogServer.id,
       source: 'npm',
       sourceRef: '@modelcontextprotocol/server-memory',
-      installCfg: { env: {} },
+      installCfg: withMcpToolCatalog(
+        { env: {} },
+        mcpSeeds.find((seed) => seed.catalog?.slug === CATALOG_SERVER_SLUG)?.catalog?.toolCatalog ?? [],
+      ) as Prisma.InputJsonValue,
+      status: 'stopped',
+    },
+    select: { id: true },
+  });
+  const promptStudioDeployment = await db.deployment.create({
+    data: {
+      workspaceId: ws.id,
+      name: 'Prompt Studio',
+      source: null,
       status: 'stopped',
     },
     select: { id: true },
@@ -644,7 +1192,7 @@ async function main(): Promise<void> {
         serverId: server.id,
         source: seed.source,
         sourceRef: seed.sourceRef,
-        installCfg: seed.installCfg,
+        installCfg: withMcpToolCatalog(seed.installCfg, seed.catalog!.toolCatalog) as Prisma.InputJsonValue,
         status: 'stopped',
       },
       select: { id: true },
@@ -664,6 +1212,9 @@ async function main(): Promise<void> {
         name: 'Developer Essentials',
         visibility: 'public',
         enabled: true,
+        categories: {
+          connect: categoryConnections(categoryIds, ['developer-tools', 'productivity']),
+        },
         servers: {
           create: [0, 1, 4].map((index) => ({ deploymentId: libraryDeployments[index].id })),
         },
@@ -679,6 +1230,9 @@ async function main(): Promise<void> {
         name: 'Research Desk',
         visibility: 'public',
         enabled: true,
+        categories: {
+          connect: categoryConnections(categoryIds, ['research', 'web', 'search']),
+        },
         servers: {
           create: [0, 2, 3].map((index) => ({ deploymentId: libraryDeployments[index].id })),
         },
@@ -689,7 +1243,7 @@ async function main(): Promise<void> {
     }),
   ]);
 
-  await Promise.all([
+  const [researchAssistant, engineeringAssistant, operationsAssistant] = await Promise.all([
     db.chatAssistant.create({
       data: {
         workspaceId: ws.id,
@@ -700,6 +1254,7 @@ async function main(): Promise<void> {
           create: [catalogDeployment.id, customDeployments[3].id].map((deploymentId) => ({ deploymentId })),
         },
       },
+      select: { id: true, name: true, systemPrompt: true, maxSteps: true },
     }),
     db.chatAssistant.create({
       data: {
@@ -711,6 +1266,7 @@ async function main(): Promise<void> {
           create: [customDeployments[2].id, customDeployments[6].id].map((deploymentId) => ({ deploymentId })),
         },
       },
+      select: { id: true },
     }),
     db.chatAssistant.create({
       data: {
@@ -722,8 +1278,68 @@ async function main(): Promise<void> {
           create: [catalogDeployment.id, customDeployments[4].id].map((deploymentId) => ({ deploymentId })),
         },
       },
+      select: { id: true },
     }),
   ]);
+
+  const assistantManifest = {
+    schemaVersion: 1,
+    kind: 'assistant',
+    listing: {
+      slug: 'research-assistant',
+      name: researchAssistant.name,
+      summary: 'A source-focused assistant with access to the verified Memory MCP.',
+      iconUrl: null,
+      tags: ['research', 'memory'],
+      author: 'Smoke Test',
+    },
+    assistant: {
+      name: researchAssistant.name,
+      systemPrompt: researchAssistant.systemPrompt,
+      maxSteps: researchAssistant.maxSteps,
+      modelRequirement: null,
+      mcpRequirements: [{ catalogSlug: catalogServer.slug, name: catalogServer.name }],
+    },
+  } as const;
+  await db.$transaction(async (tx) => {
+    const publishedAt = new Date();
+    const listing = await tx.marketListing.create({
+      data: {
+        kind: 'assistant',
+        namespace: 'smoke',
+        slug: 'research-assistant',
+        publisherWorkspaceId: ws.id,
+        publishedById: user.id,
+        sourceChatAssistantId: researchAssistant.id,
+        name: researchAssistant.name,
+        summary: assistantManifest.listing.summary,
+        tags: [...assistantManifest.listing.tags],
+        categories: { connect: categoryConnections(categoryIds, ['research', 'memory']) },
+        metadata: { origin: 'smoke-seed' },
+        status: 'published',
+        curated: true,
+        isFeatured: true,
+        latestVersion: 1,
+        publishedAt,
+      },
+      select: { id: true },
+    });
+    const release = await tx.marketRelease.create({
+      data: {
+        listingId: listing.id,
+        version: 1,
+        manifest: assistantManifest as Prisma.InputJsonValue,
+        releaseSummary: { mcpCount: assistantManifest.assistant.mcpRequirements.length },
+        checksum: marketReleaseChecksum(assistantManifest),
+        reviewStatus: 'approved',
+        reviewedById: user.id,
+        reviewedAt: publishedAt,
+        publishedAt,
+      },
+      select: { id: true },
+    });
+    await tx.marketListing.update({ where: { id: listing.id }, data: { latestReleaseId: release.id } });
+  });
 
   // Keep the smoke workspace useful for visually checking the Logs page. The
   // rows are intentionally spread across the last 24 hours so the hourly
@@ -880,6 +1496,20 @@ async function main(): Promise<void> {
     },
     select: { id: true, name: true, slug: true, systemPrompt: true, maxSteps: true },
   });
+  await Promise.all([
+    db.agentServer.createMany({
+      data: [piAgent, hermesAgent, qualityAgent, incidentAgent].map(({ id: agentId }) => ({
+        agentId,
+        deploymentId: promptStudioDeployment.id,
+      })),
+    }),
+    db.chatAssistantMcpGrant.createMany({
+      data: [researchAssistant, engineeringAssistant, operationsAssistant].map(({ id: assistantId }) => ({
+        assistantId,
+        deploymentId: promptStudioDeployment.id,
+      })),
+    }),
+  ]);
   for (const agent of [piAgent, qualityAgent, incidentAgent]) {
     const deployment = await db.deployment.create({
       data: {
@@ -1065,6 +1695,7 @@ async function main(): Promise<void> {
       name: piAgent.name,
       summary: 'A portable research workflow with a verified catalog MCP and reusable review guidance.',
       tags: ['seed', 'research', 'pi'],
+      categoryIds: categoryConnections(categoryIds, ['research', 'productivity']).map(({ id }) => id),
       manifest: piManifest,
     }),
     createPublishedAgentListing({
@@ -1076,6 +1707,7 @@ async function main(): Promise<void> {
       name: hermesAgent.name,
       summary: 'A Hermes runtime template that starts from an isolated, credential-free setup state.',
       tags: ['seed', 'hermes', 'operations'],
+      categoryIds: categoryConnections(categoryIds, ['operations', 'productivity']).map(({ id }) => id),
       manifest: hermesManifest,
     }),
     createPublishedAgentListing({
@@ -1087,6 +1719,7 @@ async function main(): Promise<void> {
       name: qualityAgent.name,
       summary: 'A focused code review agent for regressions, security boundaries, and missing verification.',
       tags: ['seed', 'engineering', 'review'],
+      categoryIds: categoryConnections(categoryIds, ['developer-tools', 'testing', 'security']).map(({ id }) => id),
       manifest: qualityManifest,
     }),
     createPublishedAgentListing({
@@ -1098,6 +1731,7 @@ async function main(): Promise<void> {
       name: incidentAgent.name,
       summary: 'An incident lead that prioritizes evidence, reversible mitigation, and clear operational handoffs.',
       tags: ['seed', 'operations', 'incident'],
+      categoryIds: categoryConnections(categoryIds, ['operations', 'observability']).map(({ id }) => id),
       manifest: incidentManifest,
     }),
   ]);
@@ -1105,15 +1739,17 @@ async function main(): Promise<void> {
   console.log(`TOKEN=${token}`);
   console.log(
     `Seeded ${catalogMcps.length} market MCPs, ${catalogSkills.length} market skills, `
-      + '2 public toolkits, 4 agents/listings, 3 chat assistants, '
+      + '2 public toolkits, 4 agents/listings, 3 chat assistants, 1 assistant listing, '
       + '3 Docker workspaces, the Hermes runtime, and observability test data.',
   );
   await db.$disconnect();
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

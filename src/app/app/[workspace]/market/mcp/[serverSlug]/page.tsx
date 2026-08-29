@@ -2,36 +2,38 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import {
-  ArrowLeft,
   ArrowRight,
-  BadgeCheck,
   Box,
   CheckCircle2,
-  ChevronRight,
+  ExternalLink,
   FileText,
-  Network,
   PackageCheck,
   ShieldCheck,
-  Star,
   Wrench,
 } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getMarketServer, getWorkspaceForUser } from '@/lib/workspace/queries';
+import { listSandboxes } from '@/lib/sandboxes/queries';
+import { effectiveStatus } from '@/lib/process/supervisor';
 import { deployServerAction } from '@/lib/workspace/actions';
-import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
+import { DashboardPage } from '@/components/dashboard/DashboardUI';
+import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
+import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
+import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
+import { MarketDetailHeader } from '@/components/dashboard/market/MarketDetailShell';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 
-function ServerIcon({ iconUrl, name }: { iconUrl: string | null; name: string }) {
-  return iconUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={iconUrl} alt="" width={56} height={56} className="size-14 shrink-0 rounded-xl object-cover" />
-  ) : (
-    <span aria-hidden="true" className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-muted text-lg font-semibold text-muted-foreground">
-      {name.slice(0, 1).toUpperCase()}
-    </span>
-  );
+function externalUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export default async function McpMarketDetailPage({
@@ -39,204 +41,292 @@ export default async function McpMarketDetailPage({
 }: {
   params: Promise<{ workspace: string; serverSlug: string }>;
 }) {
-  const [{ workspace: slug, serverSlug }, t, locale] = await Promise.all([
+  const [{ workspace: slug, serverSlug }, t, mcpT, locale] = await Promise.all([
     params,
     getTranslations('console.market'),
+    getTranslations('console.mcp'),
     getLocale(),
   ]);
   const user = await getCurrentUser();
-  if (!user) {
-    redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market/mcp/${serverSlug}`)}`);
-  }
+  if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market/mcp/${serverSlug}`)}`);
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
   const server = await getMarketServer(serverSlug, workspace.id);
   if (!server) notFound();
 
   const deploymentHref = server.deploymentId
-    ? `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}`
+    ? `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(server.deploymentId)}${
+        server.deploymentStatus === 'setup_required' ? '?tab=variables' : ''
+      }`
     : null;
   const requiredEnvironmentCount = server.recipe.requiredEnv.length;
-  const requiresConfiguration = requiredEnvironmentCount > 0;
-  const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
+  const marketBase = `/app/${encodeURIComponent(slug)}/market/mcp`;
+  const marketHref = `${marketBase}${server.mcpKind === 'connector' ? '?type=connector' : ''}`;
+  const network = server.recipe.network === 'none' ? t('networkNone') : t('networkIsolated');
+  const inspectorRunning = Boolean(
+    server.inspectorSandbox
+    && effectiveStatus(server.inspectorSandbox.deploymentId, server.inspectorSandbox.status) === 'running',
+  );
+  const tools = server.mcpKind === 'server' || inspectorRunning ? server.tools : [];
+  const inspectorSandboxes = server.mcpKind === 'connector' && server.deploymentId
+    ? (await listSandboxes(workspace.id))
+      .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
+      .map((sandbox) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        kind: sandbox.kind,
+        running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
+        networkEnabled: sandbox.network !== 'none',
+      }))
+    : [];
+  const toolCount = tools.length;
+  const sourceHref = externalUrl(
+    server.sourceUrl ?? (server.recipe.source === 'github' ? server.recipe.ref : ''),
+  );
+  const sourceLabel = sourceHref && new URL(sourceHref).hostname.toLowerCase() === 'github.com'
+    ? 'GitHub'
+    : server.recipe.source;
+  const toolCatalogLabels = {
+    title: mcpT('schemaJson'),
+    description: mcpT('toolCatalogDescription'),
+    count: mcpT('toolsCount', { count: tools.length }),
+    instructions: mcpT('instructions'),
+    inputSchema: mcpT('inputSchema'),
+    schemaJson: mcpT('schemaJson'),
+    parameter: mcpT('parameter'),
+    type: mcpT('type'),
+    descriptionColumn: mcpT('descriptionColumn'),
+    required: mcpT('required'),
+    defaultValue: mcpT('defaultValue'),
+    noDescription: mcpT('noDescription'),
+    noArguments: mcpT('noArguments'),
+  };
 
   return (
-    <DashboardPage className="space-y-6 lg:space-y-8">
-      <Link href={marketHref} className="ui-button-ghost w-fit">
-        <ArrowLeft className="size-4" />
-        {t('backToMcp')}
-      </Link>
+    <DashboardPage className="space-y-7">
+      <MarketDetailHeader
+        backHref={marketHref}
+        backLabel={t('backToMcp')}
+        iconUrl={server.iconUrl}
+        icon={<Box className="size-7" />}
+        type={t(server.mcpKind === 'connector' ? 'kindMcpConnector' : 'kindMcp')}
+        title={server.name}
+        publisher={t('publishedBy', { name: server.author ?? t('unknownPublisher') })}
+        summary={server.description ?? t('noDescription')}
+        facts={[
+          { label: t('popularity'), value: server.stars.toLocaleString(locale) },
+          ...(toolCount ? [{ label: t('tools'), value: toolCount }] : []),
+          {
+            label: t('source'),
+            value: sourceHref ? (
+              <a
+                href={sourceHref}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 hover:underline"
+              >
+                {sourceLabel} <ExternalLink className="size-3" />
+              </a>
+            ) : server.recipe.source,
+          },
+          ...(server.connector ? [
+            { label: t('connectorEndpoint'), value: server.connector.endpointHost },
+            {
+              label: t('connectorTransport'),
+              value: t(server.connector.transport === 'sse' ? 'transportSse' : 'transportStreamableHttp'),
+            },
+            {
+              label: t('connectorAuthentication'),
+              value: t(server.connector.authType === 'bearer'
+                ? 'authBearer'
+                : server.connector.authType === 'headers'
+                  ? 'authHeaders'
+                  : 'authNone'),
+            },
+          ] : [{ label: t('network'), value: network }]),
+        ]}
+        tags={[
+          { label: t('verified') },
+          ...(server.isOfficial ? [{ label: t('official') }] : []),
+          ...server.categories.map((category) => ({
+            label: category.name,
+            href: `${marketBase}?${server.mcpKind === 'connector' ? 'type=connector&' : ''}category=${encodeURIComponent(category.slug)}`,
+          })),
+        ]}
+      />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-stretch">
-        <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
-          <div className="flex min-w-0 items-start gap-4">
-            <ServerIcon iconUrl={server.iconUrl} name={server.name} />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="min-w-0 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{server.name}</h2>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                  <BadgeCheck className="size-3.5" aria-hidden="true" />
-                  {t('verified')}
-                </span>
-                {server.isOfficial ? (
-                  <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                    {t('official')}
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">{server.author ?? t('unknownPublisher')}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><Star className="size-3.5" aria-hidden="true" />{server.stars.toLocaleString(locale)}</span>
-                {typeof server.verifiedTools === 'number' ? (
-                  <span className="inline-flex items-center gap-1"><Wrench className="size-3.5" aria-hidden="true" />{t('verifiedTools', { count: server.verifiedTools })}</span>
-                ) : null}
-              </div>
+      <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <main className="min-w-0 space-y-10">
+          <section>
+            <div className="flex items-center gap-2.5">
+              <FileText className="size-[18px] text-muted-foreground" />
+              <h2 className="font-semibold text-foreground">{t('about')}</h2>
             </div>
-          </div>
-          <p className="mt-5 max-w-4xl text-sm leading-7 text-muted-foreground">
-            {server.description ?? t('noDescription')}
-          </p>
-          {server.categories.length > 0 ? (
-            <div className="mt-5 flex flex-wrap gap-2">
-              {server.categories.map((category) => (
-                <Link
-                  key={category.slug}
-                  href={`${marketHref}?q=${encodeURIComponent(category.name)}`}
-                  className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  {category.name}
-                </Link>
-              ))}
-            </div>
+            {server.readme ? (
+              <SafeStreamdown className="mt-4 max-w-none text-sm leading-7 text-foreground">
+                {server.readme}
+              </SafeStreamdown>
+            ) : (
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">{server.description ?? t('noDescription')}</p>
+            )}
+          </section>
+
+          {server.mcpKind === 'server' || inspectorRunning ? (
+            tools.length ? (
+              <McpToolCatalog
+                tools={tools}
+                labels={toolCatalogLabels}
+                hrefForTool={(name) => `${marketBase}/${encodeURIComponent(server.slug)}/tools/${encodeURIComponent(name)}`}
+              />
+            ) : (
+              <section className="rounded-lg bg-muted/25 px-5 py-5">
+                <div className="flex items-start gap-2.5">
+                  <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">{mcpT('schemaJson')}</h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {mcpT(server.mcpKind === 'server' ? 'mcpReportedNoTools' : 'startMcpToSelectTools')}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            )
           ) : null}
-        </section>
 
-        <aside className="rounded-xl border border-brand/25 bg-brand-soft/45 p-5 sm:p-6">
-          {deploymentHref ? (
-            <>
-              <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{t('alreadyAddedTitle')}</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('alreadyAddedDescription')}</p>
-                </div>
+          {server.mcpKind === 'connector' && server.deploymentId ? (
+            <section className="ui-panel overflow-hidden">
+              <header className="border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-foreground">{t('inspector')}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('inspectorDescription')}</p>
+              </header>
+              <div className="px-5 py-5">
+                <ToolPlayground
+                  workspace={slug}
+                  deploymentId={server.deploymentId}
+                  tools={tools}
+                  sandboxes={inspectorSandboxes}
+                  connectedSandboxId={server.inspectorSandbox?.id}
+                  credentialsRequired={server.deploymentStatus === 'setup_required'}
+                />
               </div>
-              <Link href={deploymentHref} className="ui-button-primary mt-5 h-10 w-full">
-                {t('manageDeployment')}
-                <ArrowRight className="size-4" />
-              </Link>
-            </>
-          ) : (
-            <>
-              <div className="flex items-start gap-2.5">
-                <ShieldCheck className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden="true" />
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{t('readyToDeploy')}</p>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    {requiresConfiguration
-                      ? t('deploymentNeedsConfiguration', { count: requiredEnvironmentCount })
-                      : t('deploymentNoConfiguration')}
-                  </p>
+            </section>
+          ) : null}
+        </main>
+
+        <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
+          {server.mcpKind === 'connector' ? <section className="rounded-lg bg-muted/35 p-5">
+            {deploymentHref ? (
+              <>
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">{t('alreadyAddedTitle')}</h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('alreadyAddedDescription')}</p>
+                  </div>
                 </div>
+                <Link href={deploymentHref} className="ui-button-primary mt-5 h-10 w-full">
+                  {t('manageDeployment')} <ArrowRight className="size-4" />
+                </Link>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">
+                      {t(server.mcpKind === 'connector' ? 'readyToConnect' : 'readyToDeploy')}
+                    </h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {requiredEnvironmentCount
+                        ? t(server.mcpKind === 'connector' ? 'connectorNeedsConfiguration' : 'deploymentNeedsConfiguration', { count: requiredEnvironmentCount })
+                        : t(server.mcpKind === 'connector' ? 'connectorNoConfiguration' : 'deploymentNoConfiguration')}
+                    </p>
+                  </div>
+                </div>
+                <form action={deployServerAction} className="mt-5">
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input type="hidden" name="serverId" value={server.id} />
+                  <SubmitButton
+                    flash={false}
+                    pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
+                    className="ui-button-primary h-10 w-full"
+                  >
+                    {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')} <ArrowRight className="size-4" />
+                  </SubmitButton>
+                </form>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  {t(server.mcpKind === 'connector' ? 'connectorRedirectHint' : 'deploymentRedirectHint')}
+                </p>
+              </>
+            )}
+          </section> : null}
+
+          <section className="px-1 py-2">
+            <div className="flex items-center gap-2.5">
+              <Wrench className="size-[18px] text-muted-foreground" />
+              <h2 className="font-semibold text-foreground">
+                {t(server.mcpKind === 'connector' ? 'connectorConfiguration' : 'deploymentRecipe')}
+              </h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {t(server.mcpKind === 'connector' ? 'connectorConfigurationDescription' : 'deploymentRecipeDescription')}
+            </p>
+            <dl className="mt-5 space-y-4 text-sm">
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">{t('source')}</dt>
+                <dd className="mt-1.5 font-medium text-foreground">{server.recipe.source}</dd>
               </div>
-              <form action={deployServerAction} className="mt-5">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="serverId" value={server.id} />
-                <SubmitButton flash={false} pendingLabel={t('adding')} className="ui-button-primary h-10 w-full">
-                  {t('addToWorkspace')}
-                  <ArrowRight className="size-4" />
-                </SubmitButton>
-              </form>
-              <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('deploymentRedirectHint')}</p>
-            </>
-          )}
+              {server.connector ? (
+                <>
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">{t('connectorTransport')}</dt>
+                    <dd className="mt-1.5 font-medium text-foreground">
+                      {t(server.connector.transport === 'sse' ? 'transportSse' : 'transportStreamableHttp')}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">{t('connectorAuthentication')}</dt>
+                    <dd className="mt-1.5 font-medium text-foreground">
+                      {t(server.connector.authType === 'bearer'
+                        ? 'authBearer'
+                        : server.connector.authType === 'headers'
+                          ? 'authHeaders'
+                          : 'authNone')}
+                    </dd>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <dt className="text-xs font-medium text-muted-foreground">{t('network')}</dt>
+                  <dd className="mt-1.5 font-medium text-foreground">{network}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  {t(server.mcpKind === 'connector' ? 'connectorEndpoint' : 'packageReference')}
+                </dt>
+                <dd className="mt-1.5 break-all rounded-md bg-muted/35 px-3 py-2 font-mono text-xs text-foreground">
+                  {server.connector?.endpointHost ?? server.recipe.ref}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <PackageCheck className="size-3.5" /> {t('requiredEnvironment')}
+                </dt>
+                <dd className="mt-2">
+                  {requiredEnvironmentCount ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {server.recipe.requiredEnv.map((key) => (
+                        <code key={key} className="rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground">{key}</code>
+                      ))}
+                    </div>
+                  ) : <span className="text-muted-foreground">{t('none')}</span>}
+                </dd>
+              </div>
+            </dl>
+          </section>
         </aside>
       </div>
-
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.78fr)]">
-        <DashboardPanel title={t('deploymentRecipe')} description={t('deploymentRecipeDescription')}>
-          <dl className="grid gap-5 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <Wrench className="size-3.5" aria-hidden="true" />
-                {t('source')}
-              </dt>
-              <dd className="mt-1.5 font-medium text-foreground">{server.recipe.source}</dd>
-            </div>
-            <div>
-              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <Network className="size-3.5" aria-hidden="true" />
-                {t('network')}
-              </dt>
-              <dd className="mt-1.5 font-medium text-foreground">
-                {server.recipe.network === 'none' ? t('networkNone') : t('networkIsolated')}
-              </dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <Box className="size-3.5" aria-hidden="true" />
-                {t('packageReference')}
-              </dt>
-              <dd className="mt-1.5 break-all rounded-md border border-border bg-muted/35 px-3 py-2 font-mono text-xs text-foreground">
-                {server.recipe.ref}
-              </dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <PackageCheck className="size-3.5" aria-hidden="true" />
-                {t('requiredEnvironment')}
-              </dt>
-              <dd className="mt-2">
-                {requiredEnvironmentCount > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {server.recipe.requiredEnv.map((key) => (
-                      <code key={key} className="rounded-md border border-border bg-muted px-2 py-1 font-mono text-xs text-foreground">{key}</code>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-muted-foreground">{t('none')}</span>
-                )}
-              </dd>
-            </div>
-          </dl>
-        </DashboardPanel>
-
-        <DashboardPanel title={t('whatHappensNext')} description={t('deploymentFlowDescription')}>
-          <ol className="space-y-4">
-            {[
-              [t('deploymentStepReviewTitle'), t('deploymentStepReviewDescription')],
-              [t('deploymentStepAddTitle'), t('deploymentStepAddDescription')],
-              [t('deploymentStepManageTitle'), t('deploymentStepManageDescription')],
-            ].map(([title, description], index) => (
-              <li key={title} className="flex gap-3">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
-                  {index + 1}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">{title}</p>
-                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{description}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </DashboardPanel>
-      </section>
-
-      <DashboardPanel title={t('about')}>
-        {server.readme ? (
-          <details className="group rounded-lg border border-border bg-muted/20" open>
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-foreground">
-              <span className="inline-flex items-center gap-2"><FileText className="size-4 text-muted-foreground" aria-hidden="true" />{t('readme')}</span>
-              <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true" />
-            </summary>
-            <pre className="max-h-[38rem] overflow-auto border-t border-border px-4 py-4 whitespace-pre-wrap break-words font-sans text-sm leading-7 text-foreground">
-              {server.readme}
-            </pre>
-          </details>
-        ) : (
-          <p className="text-sm leading-7 text-muted-foreground">{server.description ?? t('noDescription')}</p>
-        )}
-      </DashboardPanel>
     </DashboardPage>
   );
 }

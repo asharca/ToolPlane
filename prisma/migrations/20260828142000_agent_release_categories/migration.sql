@@ -1,0 +1,1 @@
+ALTER TABLE "AgentRelease" ADD COLUMN "categoryIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

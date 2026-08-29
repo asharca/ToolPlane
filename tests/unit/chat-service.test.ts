@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   turnUpdateMany: vi.fn(),
   turnCreate: vi.fn(),
+  turnFindFirst: vi.fn(),
+  assistantFindFirst: vi.fn(),
   queryRaw: vi.fn(),
   messageCreate: vi.fn(),
   messageDelete: vi.fn(),
@@ -23,7 +25,8 @@ const mocks = vi.hoisted(() => ({
 
 const tx = {
   $queryRaw: mocks.queryRaw,
-  chatTurn: { create: mocks.turnCreate, updateMany: mocks.turnUpdateMany },
+  chatAssistant: { findFirst: mocks.assistantFindFirst },
+  chatTurn: { create: mocks.turnCreate, findFirst: mocks.turnFindFirst, updateMany: mocks.turnUpdateMany },
   chatMessage: {
     create: mocks.messageCreate,
     delete: mocks.messageDelete,
@@ -72,6 +75,8 @@ describe('Chat turn admission', () => {
     mocks.threadFindFirst.mockResolvedValue({ id: 'thread-1' });
     mocks.turnUpdateMany.mockResolvedValue({ count: 0 });
     mocks.turnCreate.mockResolvedValue({ id: 'turn-1', threadId: 'thread-1', status: 'pending' });
+    mocks.turnFindFirst.mockResolvedValue(null);
+    mocks.assistantFindFirst.mockResolvedValue({ id: 'assistant-2' });
     mocks.queryRaw.mockResolvedValue([]);
     mocks.messageCreate.mockImplementation(async ({ data }: { data: { role: string } }) => ({
       id: data.role === 'assistant' ? 'assistant-1' : 'user-1',
@@ -472,5 +477,70 @@ describe('Chat turn admission', () => {
       data: { activeMessageId: 'a-new-leaf' },
     });
     expect(mocks.queryRaw).toHaveBeenCalledOnce();
+  });
+
+  it('moves a thread only to an assistant in the same workspace', async () => {
+    mocks.threadFindUnique.mockResolvedValue({
+      assistantId: 'assistant-1',
+      id: 'thread-1',
+      messages: [],
+      workspaceId: 'workspace-1',
+    });
+
+    await updateChatThread('user-1', 'thread-1', { assistantId: 'assistant-2' });
+
+    expect(mocks.assistantFindFirst).toHaveBeenCalledWith({
+      where: { id: 'assistant-2', workspaceId: 'workspace-1' },
+      select: { id: true },
+    });
+    expect(mocks.threadUpdate).toHaveBeenCalledWith({
+      where: { id: 'thread-1' },
+      data: { assistantId: 'assistant-2' },
+    });
+  });
+
+  it('rejects moving a thread while a turn is running', async () => {
+    mocks.threadFindUnique.mockResolvedValue({
+      assistantId: 'assistant-1',
+      id: 'thread-1',
+      messages: [],
+      workspaceId: 'workspace-1',
+    });
+    mocks.turnFindFirst.mockResolvedValue({ id: 'turn-1' });
+
+    await expect(updateChatThread('user-1', 'thread-1', { assistantId: 'assistant-2' }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(mocks.threadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects moving a thread to an assistant outside its workspace', async () => {
+    mocks.threadFindUnique.mockResolvedValue({
+      assistantId: 'assistant-1',
+      id: 'thread-1',
+      messages: [],
+      workspaceId: 'workspace-1',
+    });
+    mocks.assistantFindFirst.mockResolvedValue(null);
+
+    await expect(updateChatThread('user-1', 'thread-1', { assistantId: 'assistant-other' }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(mocks.threadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a turn when the thread moved after assistant resolution', async () => {
+    mocks.threadFindUnique.mockResolvedValue({
+      activeMessageId: null,
+      assistantId: 'assistant-2',
+      title: null,
+      workspaceId: 'workspace-1',
+    });
+
+    await expect(beginChatTurn(
+      'thread-1',
+      [{ type: 'text', text: 'Hello' }],
+      { workspaceId: 'workspace-1', userId: 'user-1' },
+      { expectedAssistantId: 'assistant-1' },
+    )).rejects.toMatchObject({ status: 409 });
+    expect(mocks.turnCreate).not.toHaveBeenCalled();
   });
 });

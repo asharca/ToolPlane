@@ -8,8 +8,10 @@ import { SITE } from '@/lib/site';
 import { getPublicAgentListing } from '../../_lib/catalog';
 import { siteMetadata } from '../../_lib/metadata';
 
-function legacyIdentity(segments: string[]): [string, string] | null {
-  return segments.length === 2 ? [segments[0], segments[1]] : null;
+function listingIdentity(segments: string[]): [string] | [string, string] | null {
+  return segments.length === 1 || segments.length === 2
+    ? segments as [string] | [string, string]
+    : null;
 }
 
 export async function generateMetadata({
@@ -18,7 +20,7 @@ export async function generateMetadata({
   params: Promise<{ segments: string[] }>;
 }): Promise<Metadata> {
   const [{ segments }, locale] = await Promise.all([params, getLocale()]);
-  const identity = legacyIdentity(segments);
+  const identity = listingIdentity(segments);
   const fallback = getMarketingContent(locale).capabilities.agents.description;
   const path = `/agents/${segments.map(encodeURIComponent).join('/')}`;
   if (!identity) {
@@ -29,7 +31,9 @@ export async function generateMetadata({
       index: false,
     });
   }
-  const detail = await getPublicAgentListing(...identity);
+  const detail = identity.length === 1
+    ? await getPublicAgentListing(identity[0])
+    : await getPublicAgentListing(identity[0], identity[1]);
   if (!detail) {
     return siteMetadata({
       title: `Page not found | ${SITE.name}`,
@@ -54,9 +58,11 @@ export default async function Page({
     params,
     getTranslations('agentMarket'),
   ]);
-  const identity = legacyIdentity(segments);
+  const identity = listingIdentity(segments);
   if (!identity) notFound();
-  const detail = await getPublicAgentListing(...identity);
+  const detail = identity.length === 1
+    ? await getPublicAgentListing(identity[0])
+    : await getPublicAgentListing(identity[0], identity[1]);
   if (!detail) notFound();
   const { listing, release, workspace } = detail;
 

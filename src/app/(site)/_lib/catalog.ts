@@ -16,6 +16,7 @@ import {
 } from '@/lib/queries/skills';
 import { getCategory, listCategories } from '@/lib/queries/categories';
 import { listPublicAgentDirectory } from '@/lib/queries/public-agents';
+import { VISIBLE_AGENT_LISTING_ORIGIN } from '@/lib/agents/market-visibility';
 
 const FIVE_MINUTES = 300;
 
@@ -115,14 +116,24 @@ export const getPublicCategory = unstable_cache(
 );
 
 export const getPublicAgentListing = unstable_cache(
-  async (workspaceSlug: string, listingSlug: string) => {
+  async (publisherOrDirectorySlug: string, listingSlug?: string) => {
     const result = await db.agentListing.findFirst({
       where: {
-        slug: listingSlug,
         status: 'published',
         latestReleaseId: { not: null },
-        publisherWorkspace: { is: { slug: workspaceSlug } },
         latestRelease: { is: { reviewStatus: 'approved' } },
+        AND: [
+          VISIBLE_AGENT_LISTING_ORIGIN,
+          listingSlug
+            ? {
+                slug: listingSlug,
+                publisherWorkspace: { is: { slug: publisherOrDirectorySlug } },
+              }
+            : {
+                directorySlug: publisherOrDirectorySlug,
+                publisherKind: 'platform',
+              },
+        ],
       },
       select: {
         directorySlug: true,
@@ -137,7 +148,7 @@ export const getPublicAgentListing = unstable_cache(
         },
       },
     });
-    if (!result?.publisherWorkspace || !result.latestRelease) return null;
+    if (!result?.latestRelease) return null;
     const raw = result.latestRelease.releaseSummary;
     const summary = raw && typeof raw === 'object' && !Array.isArray(raw)
       ? raw as Record<string, unknown>
@@ -188,11 +199,12 @@ export const getPublicSitemapEntries = unstable_cache(
         where: {
           status: 'published',
           latestReleaseId: { not: null },
-          publisherWorkspace: { is: {} },
+          AND: [VISIBLE_AGENT_LISTING_ORIGIN],
           latestRelease: { is: { reviewStatus: 'approved' } },
         },
         select: {
           slug: true,
+          directorySlug: true,
           updatedAt: true,
           publisherWorkspace: { select: { slug: true } },
         },

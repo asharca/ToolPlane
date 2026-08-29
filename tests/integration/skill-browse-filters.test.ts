@@ -16,6 +16,7 @@ const skillSlugs = [
   `${query}-other`,
   `${query}-uncategorized`,
   `${query}-hidden`,
+  `${query}-unified`,
 ];
 
 let ownerWorkspaceId = '';
@@ -90,6 +91,41 @@ describe('skill browse filters', () => {
         categories: { connect: { id: docsCategory.id } },
       },
     });
+    const unifiedSkill = await db.skill.create({
+      data: {
+        slug: skillSlugs[4],
+        name: `${query} Unified`,
+        description: 'Published through the unified market',
+        curated: true,
+        score: 200,
+        categories: { connect: { id: docsCategory.id } },
+      },
+    });
+    const listing = await db.marketListing.create({
+      data: {
+        kind: 'skill',
+        namespace: foreignSlug,
+        slug: skillSlugs[4],
+        name: `${query} Unified`,
+        sourceSkillId: unifiedSkill.id,
+        metadata: {},
+      },
+    });
+    const release = await db.marketRelease.create({
+      data: {
+        listingId: listing.id,
+        version: 1,
+        manifest: {},
+        releaseSummary: {},
+        checksum: '0'.repeat(64),
+        reviewStatus: 'approved',
+        publishedAt: new Date(),
+      },
+    });
+    await db.marketListing.update({
+      where: { id: listing.id },
+      data: { status: 'published', latestReleaseId: release.id, publishedAt: new Date() },
+    });
     await Promise.all([
       db.installedSkill.create({ data: { workspaceId: ownerWorkspace.id, skillId: githubSkill.id } }),
       db.installedSkill.create({ data: { workspaceId: foreignWorkspace.id, skillId: otherSkill.id } }),
@@ -98,6 +134,7 @@ describe('skill browse filters', () => {
 
   afterAll(async () => {
     await db.workspace.deleteMany({ where: { slug: { in: [ownerSlug, foreignSlug] } } });
+    await db.marketListing.deleteMany({ where: { namespace: foreignSlug, slug: skillSlugs[4] } });
     await db.skill.deleteMany({ where: { slug: { in: skillSlugs } } });
     await db.category.deleteMany({ where: { slug: { in: [networkCategorySlug, docsCategorySlug] } } });
     await db.user.deleteMany({ where: { email: { in: [ownerEmail, foreignEmail] } } });
@@ -138,7 +175,7 @@ describe('skill browse filters', () => {
 
   it('supports uncategorized filtering and name sorting', async () => {
     const uncategorized = await getBrowseSkills(1, query, filters({ category: 'uncategorized' }));
-    expect(uncategorized.all.map((skill) => skill.slug)).toEqual([skillSlugs[2]]);
+    expect(uncategorized.all.map((skill) => skill.slug)).toEqual([skillSlugs[2], skillSlugs[4]]);
 
     const sorted = await getBrowseSkills(1, query, filters({ sort: 'name' }));
     expect(sorted.all.map((skill) => skill.name)).toEqual(
@@ -149,7 +186,8 @@ describe('skill browse filters', () => {
   it('never returns non-curated skills from the workspace market', async () => {
     const result = await getBrowseSkills(1, query, filters());
     expect(result.all.map((skill) => skill.slug)).not.toContain(skillSlugs[3]);
-    expect(result.total).toBe(3);
+    expect(result.all.map((skill) => skill.slug)).toContain(skillSlugs[4]);
+    expect(result.total).toBe(4);
   });
 
   it('lists only categories that contain skills', async () => {

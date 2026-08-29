@@ -97,6 +97,12 @@ export default async function SettingsPage({
               id: provider.id,
               name: provider.name,
               models: provider.models,
+              modelRecords: (provider.modelRecords ?? []).map((model) => ({
+                modelId: model.modelId,
+                primaryType: model.primaryType,
+                capabilities: model.capabilities,
+                inputModalities: model.inputModalities,
+              })),
             }))}
             defaultModel={modelSelection(ws.defaultModelProviderId, ws.defaultModel)}
             titleModel={modelSelection(ws.titleModelProviderId, ws.titleModel)}

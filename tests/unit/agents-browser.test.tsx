@@ -7,6 +7,7 @@ const actions = vi.hoisted(() => ({
   cloneAgentAction: vi.fn(),
   createAgentAction: vi.fn(),
   deleteAgentAction: vi.fn(),
+  installAgentFromMarketAction: vi.fn(),
 }));
 const navigation = vi.hoisted(() => ({ search: '__dashboardTab=agents-tab', push: vi.fn() }));
 
@@ -17,16 +18,23 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
+async function openBlankCreate(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
+}
+
 describe('AgentsBrowser', () => {
   beforeEach(() => {
     actions.cloneAgentAction.mockReset();
     actions.createAgentAction.mockReset();
     actions.deleteAgentAction.mockReset();
+    actions.installAgentFromMarketAction.mockReset();
     navigation.search = '__dashboardTab=agents-tab';
     navigation.push.mockReset();
   });
 
-  it('opens the create form from Work and preserves its return path', () => {
+  it('offers blank and market starts from Work, then preserves its return path', async () => {
+    const user = userEvent.setup();
     navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
     render(
       <AgentsBrowser
@@ -36,8 +44,47 @@ describe('AgentsBrowser', () => {
       />,
     );
 
+    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Choose from the agent market' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Choose from the agent market' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
     expect(screen.getByLabelText('Name')).toBeInTheDocument();
     expect(document.querySelector<HTMLInputElement>('input[name="returnTo"]')).toHaveValue('/app/acme/work');
+  });
+
+  it('shows and installs agent market data inside the creator', async () => {
+    const user = userEvent.setup();
+    navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+        marketAgents={[{
+          id: 'listing-1',
+          releaseId: 'release-1',
+          idempotencyKey: 'request-1',
+          name: 'Market researcher',
+          summary: 'Researches primary sources.',
+          iconUrl: null,
+          publisher: 'ToolPlane',
+          tags: ['research'],
+          runtimes: ['hermes'],
+          resourceCount: 3,
+          sandboxCount: 1,
+          installCount: 12,
+        }]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Choose from the agent market' }));
+    expect(screen.getByText('Market researcher')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Market researcher/ })).not.toBeInTheDocument();
+    expect(document.querySelector<HTMLInputElement>('input[name="releaseId"]')).toHaveValue('release-1');
+    expect(document.querySelector<HTMLInputElement>('input[name="idempotencyKey"]')).toHaveValue('request-1');
+    expect(document.querySelector<HTMLInputElement>('input[name="returnTo"]')).toHaveValue(
+      '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork&source=market',
+    );
   });
 
   it('keeps the Work add flow focused on creation instead of existing Agent management', () => {
@@ -54,10 +101,24 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
     expect(screen.queryByText('Existing Agent')).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Browse market' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
+  });
+
+  it('cancels the Work create-only flow back to its caller', async () => {
+    const user = userEvent.setup();
+    navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{ providers: [], deployments: [], skills: [], toolkits: [] }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(navigation.push).toHaveBeenCalledWith('/app/acme/work');
   });
 
   it('keeps the market entry inside the authenticated workspace console', () => {
@@ -90,7 +151,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /DeepSeek Harness/ })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /^Pi/ })).toBeEnabled();
@@ -129,7 +190,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.type(screen.getByLabelText('Name'), 'Harness agent');
     await user.click(screen.getByRole('radio', { name: /Claude Code/ }));
     await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
@@ -171,7 +232,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.click(screen.getByRole('button', { name: 'Model: Select model' }));
     await user.click(screen.getByRole('option', { name: 'gpt-4.1' }));
@@ -186,7 +247,7 @@ describe('AgentsBrowser', () => {
     await user.click(cancel);
 
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     expect(screen.getByRole('button', { name: 'Model: Select model' })).toBeInTheDocument();
     expect(document.querySelector('input[name="providerId"]')).toHaveValue('');
@@ -206,7 +267,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     const basicStep = screen.getByRole('button', { name: /Basic/ });
     expect(basicStep).toHaveAttribute('aria-current', 'step');
     await user.type(screen.getByLabelText('Name'), 'Research agent');
@@ -218,6 +279,11 @@ describe('AgentsBrowser', () => {
 
     expect(basicStep).toHaveAttribute('aria-current', 'step');
     expect(screen.getByLabelText('Name')).toBeVisible();
+    expect(screen.getByLabelText('Name')).toHaveValue('Research agent');
+
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
     expect(screen.getByLabelText('Name')).toHaveValue('Research agent');
   });
 
@@ -239,7 +305,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(userEvent.setup());
     await userEvent.click(screen.getByRole('radio', { name: /^Pi/ }));
     await userEvent.type(screen.getByLabelText('Name'), 'Research agent');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
@@ -268,7 +334,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(userEvent.setup());
     await userEvent.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select OpenAI' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
@@ -292,7 +358,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     const version = screen.getByLabelText('Hermes version');
     expect(version).toHaveValue('nousresearch/hermes-agent:latest');
@@ -332,7 +398,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.type(screen.getByLabelText('Name'), 'Harness');
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -360,7 +426,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.type(screen.getByLabelText('Name'), 'Researcher');
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -388,7 +454,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'New agent' }));
+    await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     await user.type(screen.getByLabelText('Name'), 'Pinned Hermes');
     await user.selectOptions(

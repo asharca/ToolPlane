@@ -26,7 +26,9 @@ export default async function AppIndexPage({
   const skill = intentSlug(query.skill);
   const agent = intentSlug(query.agent);
   const rawMarket = Array.isArray(query.market) ? query.market[0] : query.market;
-  const market = rawMarket === 'mcp' || rawMarket === 'skills' ? rawMarket : null;
+  const market = ['mcp', 'skills', 'assistants', 'toolkits'].includes(rawMarket ?? '')
+    ? rawMarket as 'mcp' | 'skills' | 'assistants' | 'toolkits'
+    : null;
   const rawTerm = Array.isArray(query.q) ? query.q[0] : query.q;
   const term = rawTerm?.trim().slice(0, 160) ?? '';
   const marketIntent = market

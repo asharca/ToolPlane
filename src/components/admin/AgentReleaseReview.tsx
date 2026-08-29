@@ -12,6 +12,7 @@ type PendingRelease = {
   tags: string[];
   checksum: string;
   publishedAt: string;
+  categoryIds: string[];
   manifest: {
     rootAgentKey: string;
     agents: Array<{
@@ -29,9 +30,11 @@ type PendingRelease = {
 export async function AgentReleaseReview({
   listingId,
   release,
+  categories,
 }: {
   listingId: string;
   release: PendingRelease;
+  categories: Array<{ id: string; name: string }>;
 }) {
   const t = await getTranslations('admin');
   const rootAgent = release.manifest.agents.find(({ key }) => key === release.manifest.rootAgentKey);
@@ -150,7 +153,12 @@ export async function AgentReleaseReview({
           </div>
         </div>
 
-        <AgentReleaseReviewActions listingId={listingId} releaseId={release.id} />
+        <AgentReleaseReviewActions
+          listingId={listingId}
+          releaseId={release.id}
+          categories={categories}
+          selectedCategoryIds={release.categoryIds}
+        />
       </div>
     </AdminPanel>
   );

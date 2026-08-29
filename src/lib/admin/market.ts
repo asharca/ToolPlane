@@ -2,13 +2,20 @@ import 'server-only';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
-import type { ServerRecipe } from '@/lib/workspace/server-recipe';
+import { parseServerRecipe, type ServerRecipe } from '@/lib/workspace/server-recipe';
+import {
+  parseMcpToolCatalogResult,
+  withMcpToolCatalog,
+  type McpToolDefinition,
+} from '@/lib/process/mcp-tool-catalog';
 
 const PAGE_SIZE = 25;
 
 export type ServerInput = {
   slug: string; name: string; author: string | null; description: string | null;
   iconUrl: string | null; stars: number; isOfficial: boolean; isFeatured: boolean; categoryIds: string[];
+  readme?: string | null;
+  sourceMetadata?: Pick<ServerRecipe, 'source' | 'ref' | 'sourceUrl'>;
 };
 
 export type SkillInput = {
@@ -38,13 +45,45 @@ export function getDirectoryServer(id: string) {
 }
 
 export function createDirectoryServer(input: ServerInput) {
-  const { categoryIds, ...rest } = input;
-  return db.server.create({ data: { ...rest, curated: true, categories: { connect: categoryIds.map((id) => ({ id })) } } });
+  const { categoryIds, sourceMetadata, ...rest } = input;
+  return db.server.create({
+    data: {
+      ...rest,
+      curated: true,
+      ...(sourceMetadata ? { installCfg: { ...sourceMetadata, env: [] } as Prisma.InputJsonValue } : {}),
+      categories: { connect: categoryIds.map((id) => ({ id })) },
+    },
+  });
 }
 
-export function updateDirectoryServer(id: string, input: Omit<ServerInput, 'slug'>) {
-  const { categoryIds, ...rest } = input;
-  return db.server.update({ where: { id }, data: { ...rest, curated: true, categories: { set: categoryIds.map((cid) => ({ id: cid })) } } });
+export async function updateDirectoryServer(id: string, input: Omit<ServerInput, 'slug'>) {
+  const { categoryIds, sourceMetadata, ...rest } = input;
+  const server = sourceMetadata
+    ? await db.server.findUniqueOrThrow({ where: { id }, select: { installCfg: true } })
+    : null;
+  const recipe = parseServerRecipe(server?.installCfg);
+  const sameRecipe = Boolean(
+    sourceMetadata && recipe
+    && sourceMetadata.source === recipe.source
+    && sourceMetadata.ref === recipe.ref,
+  );
+  const storedConfig = server?.installCfg && typeof server.installCfg === 'object' && !Array.isArray(server.installCfg)
+    ? server.installCfg as Record<string, unknown>
+    : {};
+  return db.server.update({
+    where: { id },
+    data: {
+      ...rest,
+      curated: true,
+      ...(sourceMetadata ? {
+        installCfg: (sameRecipe
+          ? { ...storedConfig, sourceUrl: sourceMetadata.sourceUrl }
+          : { ...sourceMetadata, env: [] }) as Prisma.InputJsonValue,
+        ...(!sameRecipe ? { verifiedAt: null, verifiedTools: null } : {}),
+      } : {}),
+      categories: { set: categoryIds.map((cid) => ({ id: cid })) },
+    },
+  });
 }
 
 export async function deleteDirectoryServer(id: string) {
@@ -69,8 +108,26 @@ export function setServerRecipe(id: string, recipe: ServerRecipe | null) {
 }
 
 // Mark a server's recipe as validated (call after a successful live probe).
-export function setServerVerified(id: string, toolCount: number) {
-  return db.server.update({ where: { id }, data: { verifiedAt: new Date(), verifiedTools: toolCount } });
+export async function setServerVerified(
+  id: string,
+  toolCount: number,
+  toolCatalog: McpToolDefinition[],
+  expectedUpdatedAt?: Date,
+) {
+  const catalog = parseMcpToolCatalogResult(toolCatalog);
+  if (!Number.isInteger(toolCount) || toolCount < 0 || !catalog.ok || catalog.tools.length !== toolCount) {
+    throw new Error('Server validation did not return a complete tool catalog.');
+  }
+  const server = await db.server.findUniqueOrThrow({ where: { id }, select: { installCfg: true, updatedAt: true } });
+  const updated = await db.server.updateMany({
+    where: { id, updatedAt: expectedUpdatedAt ?? server.updatedAt },
+    data: {
+      installCfg: withMcpToolCatalog(server.installCfg, catalog.tools) as Prisma.InputJsonValue,
+      verifiedAt: new Date(),
+      verifiedTools: toolCount,
+    },
+  });
+  if (updated.count !== 1) throw new Error('Server recipe changed during validation.');
 }
 
 // ---- Skills ----

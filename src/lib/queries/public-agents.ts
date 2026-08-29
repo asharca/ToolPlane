@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import { VISIBLE_AGENT_LISTING_ORIGIN } from '@/lib/agents/market-visibility';
 
 export async function listPublicAgentDirectory(input: {
   query?: string;
@@ -12,7 +13,7 @@ export async function listPublicAgentDirectory(input: {
     where: {
       status: 'published',
       latestReleaseId: { not: null },
-      publisherWorkspace: { is: {} },
+      AND: [VISIBLE_AGENT_LISTING_ORIGIN],
       latestRelease: { is: { reviewStatus: 'approved' } },
       ...(query
         ? {
@@ -39,6 +40,7 @@ export async function listPublicAgentDirectory(input: {
     select: {
       id: true,
       slug: true,
+      directorySlug: true,
       name: true,
       author: true,
       summary: true,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getTranslations } from 'next-intl/server';
@@ -15,6 +16,7 @@ import { effectiveStatus } from '@/lib/process/supervisor';
 import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { SettingsModal } from '@/components/dashboard/SettingsModal';
 import { originFromHeaders } from '@/lib/http/origin';
+import { listAgentMarketListings } from '@/lib/agents/market';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,12 +39,13 @@ export default async function AgentsPage({
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [agents, providers, deployments, skills, toolkits] = await Promise.all([
+  const [agents, providers, deployments, skills, toolkits, marketAgents] = await Promise.all([
     listAgents(ws.id),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id),
     listAgentSkillOptions(ws.id),
     listToolkits(ws.id),
+    listAgentMarketListings({ pageSize: 12, sort: 'popular' }),
   ]);
   const defaultModelProviderId = ws.defaultModelProviderId;
   const defaultModelId = ws.defaultModel;
@@ -75,6 +78,20 @@ export default async function AgentsPage({
               : effectiveStatus(a.runtime.sandbox.deploymentId, a.runtime.sandbox.deployment.status)
             : null,
         }))}
+        marketAgents={marketAgents.items.map((agent) => ({
+          id: agent.id,
+          releaseId: agent.latestReleaseId,
+          idempotencyKey: randomUUID(),
+          name: agent.name,
+          summary: agent.summary,
+          iconUrl: agent.iconUrl,
+          publisher: agent.author ?? agent.workspaceName ?? agent.workspaceSlug,
+          tags: [...agent.categories.map((category) => category.name), ...agent.tags].slice(0, 3),
+          runtimes: agent.releaseSummary.runtimes,
+          resourceCount: agent.releaseSummary.resourceCount,
+          sandboxCount: agent.releaseSummary.agentCount,
+          installCount: agent.installCount,
+        }))}
         hermesImages={hermesImages}
         createOptions={{
           providers: providers.map((provider) => ({
@@ -82,6 +99,12 @@ export default async function AgentsPage({
             name: provider.name,
             format: provider.format,
             models: provider.models,
+            modelRecords: (provider.modelRecords ?? []).map((model) => ({
+              modelId: model.modelId,
+              primaryType: model.primaryType,
+              capabilities: model.capabilities,
+              inputModalities: model.inputModalities,
+            })),
           })),
           defaultModel,
           deployments,

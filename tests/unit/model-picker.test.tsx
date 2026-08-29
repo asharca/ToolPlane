@@ -31,4 +31,35 @@ describe('ModelPicker', () => {
     expect(onSelect).toHaveBeenCalledWith({ providerId: 'anthropic', model: 'claude-sonnet' });
     expect(screen.queryByRole('listbox', { name: 'Select model' })).not.toBeInTheDocument();
   });
+
+  it('shows stored model capabilities and infers a missing model type', async () => {
+    render(
+      <ModelPicker
+        providers={[{
+          id: 'openai',
+          name: 'OpenAI',
+          models: ['plain-model', 'text-embedding-3-small'],
+          modelRecords: [{
+            modelId: 'plain-model',
+            primaryType: 'image',
+            capabilities: ['reasoning', 'function_calling'],
+            inputModalities: ['image', 'audio', 'video'],
+          }],
+        }]}
+        value={null}
+        onSelect={vi.fn()}
+        trigger={<button type="button">Choose typed model</button>}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Choose typed model' }));
+
+    expect(screen.getByText('Image')).toBeInTheDocument();
+    expect(screen.getByTitle('Embedding')).toBeInTheDocument();
+    expect(screen.getByTitle('Reasoning')).toBeInTheDocument();
+    expect(screen.getByTitle('Tools')).toBeInTheDocument();
+    expect(screen.getByTitle('Vision')).toBeInTheDocument();
+    expect(screen.getByTitle('Audio')).toBeInTheDocument();
+    expect(screen.getByTitle('Video')).toBeInTheDocument();
+  });
 });

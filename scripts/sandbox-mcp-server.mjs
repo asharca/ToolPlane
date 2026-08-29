@@ -376,6 +376,30 @@ function readBuffer(req, max = MAX_BODY) {
   });
 }
 
+function readUploadBuffer(req, max) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let failed = false;
+    req.on('data', (chunk) => {
+      if (failed) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > max) {
+        failed = true;
+        chunks.length = 0;
+        reject(new Error('File is too large.'));
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on('error', reject);
+    req.on('end', () => {
+      if (!failed) resolve(Buffer.concat(chunks));
+    });
+  });
+}
+
 async function readJson(req) {
   const body = await readBody(req);
   if (!body) return {};
@@ -1035,11 +1059,6 @@ async function handleRuntimeFiles(req, res) {
     sendJson(res, 405, { error: 'method not allowed' });
     return true;
   }
-  if (KIND !== 'hermes') {
-    sendJson(res, 404, { error: 'Runtime attachment upload is only available for Hermes agents.' });
-    return true;
-  }
-
   const rel = safeRel(url.searchParams.get('path'));
   if (!rel) {
     sendJson(res, 400, { error: 'A safe relative path is required.' });
@@ -1056,11 +1075,39 @@ async function handleRuntimeFiles(req, res) {
     return true;
   }
 
+  if (KIND === 'connector') {
+    const connectorLimit = Math.min(uploadLimit, MAX_WRITE);
+    if (announcedSize > connectorLimit) {
+      req.resume();
+      sendJson(res, 413, { error: `Connector sandbox uploads are limited to ${connectorLimit} bytes.` });
+      return true;
+    }
+    try {
+      const content = await readUploadBuffer(req, connectorLimit);
+      if (!content.length) {
+        sendJson(res, 400, { error: 'A non-empty file is required.' });
+        return true;
+      }
+      await connectorRequest('write_file_base64', {
+        path: rel,
+        content: content.toString('base64'),
+      }, 30_000);
+      sendJson(res, 201, { path: rel, relativePath: rel, size: content.length });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(res, message === 'File is too large.' ? 413 : 409, { error: message });
+    }
+    return true;
+  }
+
   const target = workspacePath(rel);
   const parent = path.posix.dirname(target);
   const temporary = `${target}.toolplane-upload-${randomUUID()}`;
+  const guardParent = `resolved_parent="$(realpath -m -- ${shQuote(parent)})" && case "$resolved_parent" in ${shQuote(WORKSPACE_ROOT)}|${shQuote(WORKSPACE_ROOT)}/*) ;; *) echo 'Upload path leaves the workspace.' >&2; exit 73 ;; esac`;
   const command = [
-    `mkdir -p ${shQuote(parent)}`,
+    guardParent,
+    'mkdir -p -- "$resolved_parent"',
+    `test ! -L ${shQuote(target)} && test ! -d ${shQuote(target)}`,
     `cat > ${shQuote(temporary)}`,
   ].join(' && ');
   const result = await new Promise((resolve) => {
@@ -1152,7 +1199,9 @@ async function handleRuntimeFiles(req, res) {
     return true;
   }
   const finalizeCommand = [
+    guardParent,
     `test -f ${shQuote(temporary)}`,
+    `test ! -L ${shQuote(target)} && test ! -d ${shQuote(target)}`,
     `if id hermes >/dev/null 2>&1; then chown "$(id -u hermes):$(id -g hermes)" ${shQuote(parent)} ${shQuote(temporary)}; fi`,
     `mv -f ${shQuote(temporary)} ${shQuote(target)}`,
   ].join(' && ');

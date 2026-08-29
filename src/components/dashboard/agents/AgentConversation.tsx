@@ -7,9 +7,11 @@ import {
   ActionBarPrimitive,
   AssistantRuntimeProvider,
   AttachmentPrimitive,
+  ChainOfThoughtPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAuiState,
   useComposerRuntime,
   type AppendMessage,
   type AssistantRuntime,
@@ -17,6 +19,7 @@ import {
   type AttachmentAdapter,
   type CompleteAttachment,
   type FileMessagePartProps,
+  type ReasoningMessagePartProps,
   type TextMessagePartProps,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
@@ -34,6 +37,7 @@ import {
   CircleAlert,
   CirclePause,
   Copy,
+  Globe2,
   Loader2,
   Paperclip,
   Pencil,
@@ -57,6 +61,7 @@ import {
   conversationComposerToolbarClassName,
   useConversationComposerExpansion,
 } from '@/components/dashboard/ConversationComposer';
+import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import {
   AssistantMarkdown,
   AssistantReply,
@@ -122,6 +127,14 @@ function toEditableCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
 
 function formatToolResult(result: unknown) {
   if (typeof result === 'string') return result;
+  if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
+    const text = result.content.flatMap((part) => (
+      part && typeof part === 'object' && 'text' in part && typeof part.text === 'string'
+        ? [part.text]
+        : []
+    )).join('\n\n');
+    if (text) return text;
+  }
   try {
     return JSON.stringify(result, null, 2);
   } catch {
@@ -129,9 +142,10 @@ function formatToolResult(result: unknown) {
   }
 }
 
-type ToolKind = 'skill' | 'sandbox' | 'mcp' | 'subagent' | 'tool';
+type ToolKind = 'web' | 'skill' | 'sandbox' | 'mcp' | 'subagent' | 'tool';
 
 function toolKind(toolName: string): ToolKind {
+  if (/(?:^|__)(?:brave|web|firecrawl|fetch|search|crawl|scrape|extract|browser)/i.test(toolName)) return 'web';
   if (toolName === 'skill_read_file' || toolName === 'skill_run_script') return 'skill';
   if (/sandbox|terminal|shell|process|filesystem/i.test(toolName)) return 'sandbox';
   if (/sub.?agent|delegate/i.test(toolName)) return 'subagent';
@@ -141,6 +155,7 @@ function toolKind(toolName: string): ToolKind {
 
 function toolKindLabel(kind: ToolKind, t: ReturnType<typeof useTranslations>) {
   const labels: Record<ToolKind, string> = {
+    web: t('toolKindWeb'),
     skill: t('toolKindSkill'),
     sandbox: t('toolKindSandbox'),
     mcp: t('toolKindMcp'),
@@ -235,6 +250,28 @@ function AssistantText({ text, status }: TextMessagePartProps) {
   return <AssistantMarkdown text={text} streaming={status.type === 'running'} />;
 }
 
+function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
+  const t = useTranslations('console.work');
+  const running = status.type === 'running';
+  return (
+    <details open={running} className="group/reasoning rounded-md">
+      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
+        {running
+          ? <Loader2 className="size-3.5 shrink-0 animate-spin" />
+          : <CheckCircle2 className="size-3.5 shrink-0" />}
+        <Brain className="size-3.5 shrink-0" />
+        <span>{running ? t('thinking') : t('thought')}</span>
+        {text ? <ChevronRight className="ml-auto size-3.5 transition-transform group-open/reasoning:rotate-90" /> : null}
+      </summary>
+      {text ? (
+        <pre className="ml-5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground">
+          {text}
+        </pre>
+      ) : null}
+    </details>
+  );
+}
+
 function FilePart({ data, filename }: FileMessagePartProps) {
   const t = useTranslations('console.agents');
   return (
@@ -263,6 +300,8 @@ function ToolPart({
   const kind = toolKind(toolName);
   const Icon = kind === 'skill'
     ? Brain
+    : kind === 'web'
+      ? Globe2
     : kind === 'sandbox'
       ? Box
       : kind === 'mcp'
@@ -357,6 +396,56 @@ function ToolPart({
   );
 }
 
+function AssistantProcess() {
+  const t = useTranslations('console.work');
+  const running = useAuiState((state) => state.chainOfThought.status.type === 'running');
+  const failed = useAuiState((state) => state.chainOfThought.parts.some((part) => (
+    part.type === 'tool-call' && part.isError
+  )));
+  const activeLabel = useAuiState((state) => {
+    const part = state.chainOfThought.parts.at(-1);
+    if (!running || !part) return '';
+    return part.type === 'tool-call' ? t('usingTool', { tool: part.toolName }) : t('thinking');
+  });
+
+  return (
+    <ChainOfThoughtPrimitive.Root asChild>
+      <details open={running || failed} data-ui="assistant-process" className="group/process my-1.5 text-xs">
+        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
+          <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
+          {running
+            ? <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            : failed
+              ? <CircleAlert className="size-3.5 shrink-0 text-red-600" />
+              : <CheckCircle2 className="size-3.5 shrink-0" />}
+          <span className="shrink-0 font-medium text-foreground">
+            {running ? t('processing') : failed ? t('processFailed') : t('processed')}
+          </span>
+          {activeLabel ? <span className="min-w-0 truncate text-[11px]">{activeLabel}</span> : null}
+        </summary>
+        <div className="ml-5 py-1">
+          <ChainOfThoughtPrimitive.Parts
+            components={{ Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }}
+          />
+        </div>
+      </details>
+    </ChainOfThoughtPrimitive.Root>
+  );
+}
+
+function AssistantPendingPart() {
+  const t = useTranslations('console.work');
+  const running = useAuiState((state) => state.message.status?.type === 'running');
+  const hasParts = useAuiState((state) => state.message.parts.length > 0);
+  if (!running) return null;
+  return (
+    <ConversationPendingIndicator
+      label={hasParts ? t('generatingReply') : t('preparingReply')}
+      className="py-0.5 pl-0"
+    />
+  );
+}
+
 function attachmentUrl(attachment: Attachment) {
   const part = attachment.content?.find((item) => item.type === 'file' || item.type === 'image');
   if (part?.type === 'file') return part.data;
@@ -418,6 +507,32 @@ function AttachmentPickerButton({
         for (const file of files) {
           void composer.addAttachment(file).catch(() => undefined);
         }
+      }}
+    />
+  );
+}
+
+function ComposerMcpPromptPickerButton({
+  apiPath,
+  disabled,
+  onError,
+}: {
+  apiPath?: string;
+  disabled: boolean;
+  onError: (message: string | null) => void;
+}) {
+  const composer = useComposerRuntime();
+  return (
+    <McpPromptPickerButton
+      apiPath={apiPath}
+      disabled={disabled}
+      onError={onError}
+      onInsert={(text) => {
+        const current = composer.getState();
+        composer.setText(mergeDraftText(current.text, text));
+        window.requestAnimationFrame(() => {
+          document.querySelector<HTMLTextAreaElement>('[data-ui="chat.composer"] textarea')?.focus();
+        });
       }}
     />
   );
@@ -622,7 +737,8 @@ function AssistantMessage({
           components={{
             Text: AssistantText,
             File: FilePart,
-            tools: { Fallback: ToolPart },
+            ChainOfThought: AssistantProcess,
+            Empty: AssistantPendingPart,
           }}
         />
       </AssistantReply>
@@ -641,14 +757,19 @@ function AgentThread({
   contextUsage,
   contextUsageBusy,
   error,
+  mcpPromptApiPath,
   onClearAttachmentError,
   onBranchChange,
+  onPromptError,
   onRegenerateMessage,
   onStartBranch,
   ready,
   supportsAttachments,
   submitError,
   uploadingAttachments,
+  webSearchAvailable,
+  webSearchEnabled,
+  onToggleWebSearch,
   workMode,
 }: {
   activeConversationId: string | null;
@@ -661,17 +782,23 @@ function AgentThread({
   contextUsage: ContextUsageSnapshot | null;
   contextUsageBusy: boolean;
   error?: Error;
+  mcpPromptApiPath?: string;
   onClearAttachmentError: () => void;
   onBranchChange?: (messageId: string) => void | Promise<void>;
+  onPromptError: (message: string | null) => void;
   onRegenerateMessage?: (messageId: string) => void | Promise<void>;
   onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
   supportsAttachments: boolean;
   submitError: string | null;
   uploadingAttachments: boolean;
+  webSearchAvailable?: boolean;
+  webSearchEnabled: boolean;
+  onToggleWebSearch: () => void;
   workMode: boolean;
 }) {
   const t = useTranslations('console.agents');
+  const webSearchLabel = webSearchEnabled ? t('disableWebSearch') : t('enableWebSearch');
   const {
     expanded: composerExpanded,
     inputRef: composerInputRef,
@@ -704,9 +831,6 @@ function AgentThread({
                 ? <UserMessage allowEdit={allowEdit} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} />
                 : <AssistantMessage agentName={agentName} allowRegenerate={allowRegenerate} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} onRegenerate={onRegenerateMessage} onStartBranch={onStartBranch} />}
             </ThreadPrimitive.Messages>
-            <ThreadPrimitive.If running>
-              <ConversationPendingIndicator label={t('agentIsResponding')} />
-            </ThreadPrimitive.If>
           </div>
         </div>
 
@@ -755,6 +879,29 @@ function AgentThread({
                   onClearError={onClearAttachmentError}
                   supportsAttachments={supportsAttachments}
                 />
+                <ComposerMcpPromptPickerButton
+                  apiPath={mcpPromptApiPath}
+                  disabled={!ready || branchBusy || creatingConversation || uploadingAttachments}
+                  onError={onPromptError}
+                />
+                {webSearchAvailable ? (
+                  <button
+                    type="button"
+                    disabled={branchBusy || creatingConversation || uploadingAttachments}
+                    aria-label={webSearchLabel}
+                    aria-pressed={webSearchEnabled}
+                    title={webSearchLabel}
+                    onClick={onToggleWebSearch}
+                    className={cx(
+                      'flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40',
+                      webSearchEnabled
+                        ? 'bg-brand/10 text-brand'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    <Globe2 className="size-[17px]" />
+                  </button>
+                ) : null}
                 {!ready || uploadingAttachments || !activeConversationId ? (
                   <div className="min-w-0 truncate text-[11px] text-muted-foreground">
                     {!ready
@@ -969,12 +1116,14 @@ export function AgentConversation({
   includeConversationIdInBody = true,
   initialMessages,
   modelName,
+  mcpPromptApiPath,
   onBranchChange,
   onConversationChanged,
   onStartBranch,
   ready,
   runtimeKind,
   supportsAttachments,
+  webSearchAvailable,
   workSessionId,
 }: {
   activeConversationId: string | null;
@@ -994,17 +1143,20 @@ export function AgentConversation({
   includeConversationIdInBody?: boolean;
   initialMessages: HermesUIMessage[];
   modelName?: string | null;
+  mcpPromptApiPath?: string;
   onBranchChange?: (messageId: string) => void | Promise<void>;
   onConversationChanged?: () => void | Promise<void>;
   onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
   runtimeKind: string | null;
   supportsAttachments?: boolean;
+  webSearchAvailable?: boolean;
   workSessionId?: string;
 }) {
   const t = useTranslations('console.agents');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const clearSubmitError = useCallback(() => setSubmitError(null), []);
   const assistantRuntimeRef = useRef<AssistantRuntime | null>(null);
   const sendConversationIdRef = useRef<string | null>(null);
@@ -1094,9 +1246,12 @@ export function AgentConversation({
         ...options?.body,
         ...(includeConversationIdInBody ? { conversationId: nextConversationId } : {}),
         ...(workSessionId ? { workSessionId } : {}),
+        ...(webSearchAvailable !== undefined
+          ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
+          : {}),
       },
     });
-  }, [branchBusy, ensureConversation, includeConversationIdInBody, sendChatMessage, t, workSessionId]);
+  }, [branchBusy, ensureConversation, includeConversationIdInBody, sendChatMessage, t, webSearchAvailable, webSearchEnabled, workSessionId]);
   const regenerate = useCallback<typeof chat.regenerate>(async (options) => {
     if (!allowRegenerate || branchBusy) return;
     setSubmitError(null);
@@ -1113,9 +1268,12 @@ export function AgentConversation({
         ...options?.body,
         ...(includeConversationIdInBody ? { conversationId: nextConversationId } : {}),
         ...(workSessionId ? { workSessionId } : {}),
+        ...(webSearchAvailable !== undefined
+          ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
+          : {}),
       },
     });
-  }, [activeConversationId, allowRegenerate, branchBusy, ensureConversation, includeConversationIdInBody, regenerateChat, t, workSessionId]);
+  }, [activeConversationId, allowRegenerate, branchBusy, ensureConversation, includeConversationIdInBody, regenerateChat, t, webSearchAvailable, webSearchEnabled, workSessionId]);
   const attachmentAdapter = useAgentAttachmentAdapter({
     agentId,
     attachmentUploadUrl,
@@ -1160,8 +1318,10 @@ export function AgentConversation({
         contextUsage={contextUsage}
         contextUsageBusy={chat.status === 'submitted' || chat.status === 'streaming'}
         error={chat.error}
+        mcpPromptApiPath={mcpPromptApiPath}
         onClearAttachmentError={clearSubmitError}
         onBranchChange={onBranchChange}
+        onPromptError={setSubmitError}
         onRegenerateMessage={!includeConversationIdInBody
           ? (messageId) => void regenerate({ messageId })
           : undefined}
@@ -1170,6 +1330,9 @@ export function AgentConversation({
         supportsAttachments={supportsAttachments ?? (runtimeKind === 'hermes' || Boolean(attachmentUploadUrl))}
         submitError={submitError}
         uploadingAttachments={uploadingAttachments}
+        webSearchAvailable={webSearchAvailable}
+        webSearchEnabled={Boolean(webSearchAvailable && webSearchEnabled)}
+        onToggleWebSearch={() => setWebSearchEnabled((enabled) => !enabled)}
         workMode={Boolean(workSessionId)}
       />
     </AssistantRuntimeProvider>

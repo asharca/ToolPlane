@@ -20,11 +20,19 @@ const environmentRequirementSchema = z.object({
   required: z.literal(true),
 }).strict();
 
+const runtimeRequirementSchema = z.object({
+  agentKey: resourceKeySchema,
+  kind: z.literal('hermes'),
+  setupRequired: z.literal(true),
+}).strict();
+
 const resourceMapSchema = z.object({
   agents: z.record(resourceKeySchema, resourceIdSchema),
   deployments: z.record(resourceKeySchema, resourceIdSchema),
   skills: z.record(resourceKeySchema, resourceIdSchema),
   toolkits: z.record(resourceKeySchema, resourceIdSchema),
+  sandboxes: z.record(resourceKeySchema, resourceIdSchema).default({}),
+  sandboxDeployments: z.record(resourceKeySchema, resourceIdSchema).default({}),
 }).strict();
 
 const marketInstallSchema = z.object({
@@ -34,6 +42,7 @@ const marketInstallSchema = z.object({
   requirements: z.object({
     providers: z.array(providerRequirementSchema).max(64),
     environment: z.array(environmentRequirementSchema).max(MAX_AGENT_MARKET_ENV_REQUIREMENTS),
+    runtimes: z.array(runtimeRequirementSchema).max(64).default([]),
   }).strict(),
   resourceMap: resourceMapSchema,
 }).strict().superRefine((install, context) => {
@@ -55,6 +64,15 @@ const marketInstallSchema = z.object({
       });
     }
   }
+  for (const runtime of install.requirements.runtimes) {
+    if (!(runtime.agentKey in install.resourceMap.agents)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requirements', 'runtimes'],
+        message: 'Runtime requirement references an unknown agent.',
+      });
+    }
+  }
 });
 
 type ParsedMarketInstall = z.infer<typeof marketInstallSchema>;
@@ -69,6 +87,10 @@ export type AgentMarketSetupGuide = {
     deploymentId: string;
     variable: string;
   }>;
+  runtimes: Array<{
+    agentId: string;
+    kind: 'hermes';
+  }>;
 };
 
 export type AgentMarketSetupCurrentState = {
@@ -76,6 +98,8 @@ export type AgentMarketSetupCurrentState = {
     id: string;
     model: string | null;
     provider: { format: string } | null;
+    runtimeKind?: string;
+    runtime?: { status: string } | null;
   }>;
   deployments: Array<{
     id: string;
@@ -131,6 +155,15 @@ function guideFromCurrentState(
     environment.set(key, { deploymentId, variable: requirement.variable });
   }
 
+  const runtimes = new Map<string, AgentMarketSetupGuide['runtimes'][number]>();
+  for (const requirement of install.requirements.runtimes) {
+    const agentId = install.resourceMap.agents[requirement.agentKey];
+    const agent = agents.get(agentId);
+    if (!agent) continue;
+    if (agent.runtimeKind === requirement.kind && agent.runtime?.status !== 'setup_required') continue;
+    runtimes.set(`${agentId}\0${requirement.kind}`, { agentId, kind: requirement.kind });
+  }
+
   const guide = {
     missingProviders: [...missingProviders.values()].sort((a, b) => (
       a.agentId.localeCompare(b.agentId)
@@ -140,9 +173,12 @@ function guideFromCurrentState(
     environment: [...environment.values()].sort((a, b) => (
       a.deploymentId.localeCompare(b.deploymentId) || a.variable.localeCompare(b.variable)
     )),
+    runtimes: [...runtimes.values()].sort((a, b) => (
+      a.agentId.localeCompare(b.agentId) || a.kind.localeCompare(b.kind)
+    )),
   };
 
-  return guide.missingProviders.length > 0 || guide.environment.length > 0
+  return guide.missingProviders.length > 0 || guide.environment.length > 0 || guide.runtimes.length > 0
     ? guide
     : null;
 }
@@ -172,11 +208,17 @@ export function parseAgentMarketSetupResourceIds(
   const parsed = marketInstallSchema.safeParse(input);
   if (!parsed.success) return null;
 
-  const agentIds = [...new Set(parsed.data.requirements.providers.map(
-    (requirement) => parsed.data.resourceMap.agents[requirement.agentKey],
-  ))];
+  const agentIds = [...new Set([
+    ...parsed.data.requirements.providers,
+    ...parsed.data.requirements.runtimes,
+  ].map((requirement) => parsed.data.resourceMap.agents[requirement.agentKey]))];
   const deploymentIds = [...new Set(parsed.data.requirements.environment.map(
     (requirement) => parsed.data.resourceMap.deployments[requirement.deploymentKey],
   ))];
   return { agentIds, deploymentIds };
+}
+
+export function parseAgentMarketResourceMap(input: unknown): ParsedMarketInstall['resourceMap'] | null {
+  const parsed = resourceMapSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
 }

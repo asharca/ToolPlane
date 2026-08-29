@@ -14,6 +14,12 @@ import { parseServerRecipe } from '@/lib/workspace/server-recipe';
 import { validateServerRecipe } from '@/lib/admin/recipe-validate';
 import { fetchGithubSkillBundle } from '@/lib/skills/bundle';
 import { syncGithubSkillRegistry } from '@/lib/skills/registry';
+import {
+  fetchServerSourceMetadata,
+  type ServerMetadataSource,
+  type ServerSourceMetadata,
+} from '@/lib/admin/server-source';
+import { isValidMcpRef } from '@/lib/workspace/custom-mcp';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
@@ -21,6 +27,46 @@ const str = (fd: FormData, k: string) => String(fd.get(k) ?? '').trim();
 const nul = (v: string) => (v === '' ? null : v);
 const num = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : 0; };
 const ids = (fd: FormData) => fd.getAll('categoryIds').map((v) => String(v));
+const ALLOWED_SOURCE_URL_HOSTS = new Set(['github.com', 'www.npmjs.com', 'pypi.org']);
+
+function sourceMetadataFromForm(fd: FormData) {
+  const source = str(fd, 'sourceMetadataSource') as ServerMetadataSource;
+  const ref = str(fd, 'sourceMetadataRef');
+  const sourceUrl = str(fd, 'sourceMetadataCanonicalUrl');
+  if (!sourceUrl) return undefined;
+  if (!['github', 'npm', 'pypi'].includes(source) || !isValidMcpRef(source, ref)) {
+    throw new Error('Invalid source metadata reference.');
+  }
+  const url = new URL(sourceUrl);
+  if (
+    url.protocol !== 'https:'
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || !ALLOWED_SOURCE_URL_HOSTS.has(url.hostname.toLowerCase())
+  ) throw new Error('Invalid canonical source URL.');
+  return { source, ref, sourceUrl };
+}
+
+export type ServerSourceMetadataActionState = {
+  error?: string;
+  metadata?: ServerSourceMetadata;
+};
+
+export async function fetchServerSourceMetadataAction(
+  _prev: ServerSourceMetadataActionState,
+  fd: FormData,
+): Promise<ServerSourceMetadataActionState> {
+  await requireAdmin();
+  const t = await getTranslations('admin');
+  const source = str(fd, 'sourceMetadataSource') as ServerMetadataSource;
+  try {
+    return { metadata: await fetchServerSourceMetadata({ source, ref: str(fd, 'sourceMetadataRef') }) };
+  } catch (error) {
+    return { error: t('errorSourceMetadataFetch', { message: error instanceof Error ? error.message : t('errorActionFailed') }) };
+  }
+}
 
 export type SkillRegistrySyncActionState = {
   error?: string;
@@ -42,6 +88,8 @@ export async function createServerAction(_prev: AdminActionState, fd: FormData):
       slug, name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
       iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
       isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
+      readme: nul(str(fd, 'readme').slice(0, 500_000)),
+      sourceMetadata: sourceMetadataFromForm(fd),
     });
   } catch {
     return { error: t('errorServerExists') };
@@ -61,6 +109,8 @@ export async function updateServerAction(_prev: AdminActionState, fd: FormData):
       name, author: nul(str(fd, 'author')), description: nul(str(fd, 'description')),
       iconUrl: nul(str(fd, 'iconUrl')), stars: num(str(fd, 'stars')),
       isOfficial: fd.get('isOfficial') === 'on', isFeatured: fd.get('isFeatured') === 'on', categoryIds: ids(fd),
+      readme: nul(str(fd, 'readme').slice(0, 500_000)),
+      sourceMetadata: sourceMetadataFromForm(fd),
     });
   } catch {
     return { error: t('errorActionFailed') };
@@ -218,7 +268,7 @@ export async function deleteSkillAction(_prev: AdminActionState, fd: FormData): 
 
 export type RecipeActionState = { error?: string; ok?: boolean; toolCount?: number; tools?: string[] };
 
-const SOURCES = new Set(['npm', 'pypi', 'github', 'docker']);
+const SOURCES = new Set(['npm', 'pypi', 'github', 'docker', 'remote']);
 
 // Free-form env-keys field → list (comma / whitespace / newline separated).
 function envKeys(raw: string): string[] {
@@ -235,16 +285,33 @@ function envPairs(raw: string): Record<string, string> {
   return out;
 }
 
+// "Header-Name=ENV_KEY" lines -> header-to-secret-environment mapping.
+function headerEnvPairs(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split(/\n+/)) {
+    const separator = line.indexOf('=');
+    if (separator > 0) out[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return out;
+}
+
 function recipeFromForm(fd: FormData) {
   const source = str(fd, 'recipeSource');
   if (!SOURCES.has(source)) return null;
   return parseServerRecipe({
     source,
     ref: str(fd, 'recipeRef'),
+    sourceUrl: str(fd, 'recipeSourceUrl'),
     startCommand: str(fd, 'recipeStartCommand'),
     env: envKeys(str(fd, 'recipeEnv')),
     envValues: envPairs(str(fd, 'recipeEnvValues')),
     network: fd.get('recipeNetwork') === 'on' ? 'none' : undefined,
+    transport: str(fd, 'recipeTransport') === 'sse' ? 'sse' : 'streamable-http',
+    authType: ['bearer', 'headers'].includes(str(fd, 'recipeAuthType'))
+      ? str(fd, 'recipeAuthType')
+      : 'none',
+    bearerEnv: str(fd, 'recipeBearerEnv'),
+    headerEnv: headerEnvPairs(str(fd, 'recipeHeaderEnv')),
   });
 }
 
@@ -282,14 +349,18 @@ export async function validateServerRecipeAction(_prev: RecipeActionState, fd: F
   await requireAdmin();
   const t = await getTranslations('admin');
   const id = str(fd, 'id');
-  const server = await db.server.findUnique({ where: { id }, select: { installCfg: true } });
+  const server = await db.server.findUnique({ where: { id }, select: { installCfg: true, updatedAt: true } });
   const recipe = parseServerRecipe(server?.installCfg);
   if (!recipe) return { error: t('errorSaveRecipeFirst') };
 
   const result = await validateServerRecipe(recipe, envPairs(str(fd, 'testEnv')));
   if (!result.ok) return { error: t('errorValidationFailed', { message: result.error }) };
 
-  await setServerVerified(id, result.toolCount);
+  try {
+    await setServerVerified(id, result.toolCount, result.toolCatalog, server!.updatedAt);
+  } catch {
+    return { error: t('errorSaveRecipeFirst') };
+  }
   revalidatePath(`/admin/servers/${id}/edit`);
   revalidatePath('/admin/servers');
   return { ok: true, toolCount: result.toolCount, tools: result.tools };

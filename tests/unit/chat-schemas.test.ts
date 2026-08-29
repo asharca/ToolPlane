@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CreateChatAssistantSchema,
   UpdateChatAssistantSchema,
+  UpdateChatThreadSchema,
   parseChatTurn,
 } from '@/lib/chat/schemas';
 
@@ -13,12 +14,14 @@ describe('chat bounded-context input', () => {
       modelProviderId: 'provider-1',
       model: 'gpt-5',
       deploymentIds: ['mcp-1', 'mcp-1'],
+      marketTemplateReleaseId: 'release-1',
       skillIds: ['skill-1'],
       sandboxId: 'sandbox-1',
       runtime: 'hermes',
     });
 
     expect(result.deploymentIds).toEqual(['mcp-1']);
+    expect(result.marketTemplateReleaseId).toBe('release-1');
     expect(result).not.toHaveProperty('skillIds');
     expect(result).not.toHaveProperty('sandboxId');
     expect(result).not.toHaveProperty('runtime');
@@ -55,5 +58,10 @@ describe('chat bounded-context input', () => {
       name: 'Helper',
       maxSteps: 21,
     }).success).toBe(false);
+  });
+
+  it('accepts moving a thread to another assistant', () => {
+    expect(UpdateChatThreadSchema.parse({ assistantId: 'assistant-2' }))
+      .toEqual({ assistantId: 'assistant-2' });
   });
 });

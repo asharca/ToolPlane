@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   deploymentUpsert: vi.fn(),
   deploymentDeleteMany: vi.fn(),
   deploymentUpdate: vi.fn(),
+  marketInstallUpdateMany: vi.fn(),
   serverFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
   membershipFindUnique: vi.fn(),
@@ -30,7 +31,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('@/lib/db', () => ({
-  db: {
+  db: (() => {
+    const client = {
     deployment: {
       findFirst: mocks.deploymentFindFirst,
       create: mocks.deploymentCreate,
@@ -51,7 +53,15 @@ vi.mock('@/lib/db', () => ({
       findUnique: mocks.membershipFindUnique,
       create: mocks.membershipCreate,
     },
-  },
+    marketInstall: { updateMany: mocks.marketInstallUpdateMany },
+    };
+    return {
+      ...client,
+      $transaction: (input: unknown) => typeof input === 'function'
+        ? (input as (tx: typeof client) => unknown)(client)
+        : Promise.all(input as Promise<unknown>[]),
+    };
+  })(),
 }));
 vi.mock('@/lib/process/supervisor', () => ({
   startProcess: mocks.startProcess,
@@ -224,7 +234,7 @@ describe('deployServerAction', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1');
   });
@@ -317,8 +327,10 @@ describe('removeDeploymentAction', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'builtin' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
+    await mocks.startProcess.mock.calls[0][2].onReady();
+    expect(mocks.listMcpTools).toHaveBeenCalledWith('dep1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
     expect(mocks.redirect).toHaveBeenCalledWith(
@@ -336,7 +348,7 @@ describe('removeDeploymentAction', () => {
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'builtin' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith(
       '/app/mine/mcp/dep1?tab=logs#runtime-logs',
@@ -357,7 +369,7 @@ describe('removeDeploymentAction', () => {
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'builtin' },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith(
       '/app/mine/mcp/dep1?tab=logs#runtime-logs',
@@ -539,7 +551,7 @@ describe('MCP deployment management actions', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep-copy',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep-copy');
   });
@@ -707,7 +719,7 @@ describe('deployCustomServerAction', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep-new',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
   });
 
@@ -787,7 +799,7 @@ describe('deployCustomServerAction', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep-ssh',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
   });
 
@@ -866,7 +878,7 @@ describe('deployCustomServerAction', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'dep-docker-config',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
   });
 
@@ -1087,7 +1099,7 @@ describe('updateMcpJsonConfigAction', () => {
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
   });
 
@@ -1175,7 +1187,7 @@ describe('updateMcpJsonConfigAction', () => {
     expect(mocks.restartProcess).toHaveBeenCalledWith(
       'dep1',
       { kind: 'bridge', command: 'docker', args: [] },
-      { awaitReady: false, workspaceId: 'ws1' },
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
     );
   });
 
@@ -1702,7 +1714,7 @@ describe('runMcpConsoleToolAction', () => {
     expect(mocks.mcpRpc).toHaveBeenCalledWith('dep1', 'tools/call', {
       name: 'write',
       arguments: { value: 'x' },
-    });
+    }, 30_000, { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 });
     expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws1',
       deploymentId: 'dep1',

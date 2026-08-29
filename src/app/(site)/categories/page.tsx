@@ -55,9 +55,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
-  const [t, searchT, common, categories] = await Promise.all([
+  const [t, common, categories] = await Promise.all([
     getTranslations('categories'),
-    getTranslations('search'),
     getTranslations('common'),
     listPublicCategories(),
   ]);
@@ -93,11 +92,13 @@ export default async function Page() {
                 <Icon className="size-5 text-muted-foreground" />
                 <h2 className="mt-3 font-mono text-lg font-bold text-foreground">{category.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {category._count.servers.toLocaleString()} {t('mcpServers')}
-                  <span className="mx-1.5 text-border">·</span>
-                  {category._count.skills.toLocaleString()} {searchT('skills')}
-                  <span className="mx-1.5 text-border">·</span>
-                  {category._count.agentListings.toLocaleString()} {searchT('agents')}
+                  {t('categoryCounts', {
+                    servers: category._count.servers,
+                    skills: category._count.skills,
+                    agents: category._count.agentListings,
+                    assistants: category._count.assistants,
+                    toolkits: category._count.toolkits,
+                  })}
                 </p>
               </Link>
             );

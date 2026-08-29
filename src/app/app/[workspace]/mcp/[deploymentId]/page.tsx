@@ -25,6 +25,9 @@ import {
   getDeploymentRuntimeSnapshot,
 } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
+import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
+import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
+import { listSandboxes } from '@/lib/sandboxes/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { CopyButton } from '@/components/dashboard/CopyButton';
@@ -52,7 +55,9 @@ import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefres
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { McpJsonConfigEditor } from '@/components/dashboard/McpJsonConfigEditor';
 import { McpToolExposureEditor } from '@/components/dashboard/McpToolExposureEditor';
+import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 import { RuntimeFilesEditor } from '@/components/dashboard/RuntimeFilesEditor';
+import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
 import {
   isEditableMcpSource,
   serializeMcpDeploymentConfig,
@@ -121,7 +126,17 @@ export default async function DeploymentInspectorPage({
   const dep = await db.deployment.findFirst({
     where: { id: deploymentId, workspaceId: ws.id },
     include: {
-      server: { select: { name: true, slug: true, installCfg: true } },
+      server: {
+        select: {
+          name: true,
+          slug: true,
+          author: true,
+          description: true,
+          readme: true,
+          verifiedTools: true,
+          installCfg: true,
+        },
+      },
       configFiles: {
         select: { id: true, path: true, size: true, updatedAt: true },
         orderBy: { path: 'asc' },
@@ -175,11 +190,65 @@ export default async function DeploymentInspectorPage({
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
   const transitioning = transitioningStatuses.has(status);
-  const tools = running && current === 'tools' ? await listMcpTools(deploymentId) : [];
+  const inspectorConnection = readMcpInspectorConnection(dep.installCfg);
+  const connectedInspectorSandbox = dep.source === 'remote' && inspectorConnection
+    ? await db.sandbox.findFirst({
+        where: {
+          id: inspectorConnection.sandboxId,
+          workspaceId: ws.id,
+          kind: { in: ['docker', 'connector'] },
+          network: { not: 'none' },
+        },
+        select: { deploymentId: true, deployment: { select: { status: true } } },
+      })
+    : null;
+  const remoteInspectorConnected = Boolean(
+    connectedInspectorSandbox
+    && effectiveStatus(
+      connectedInspectorSandbox.deploymentId,
+      connectedInspectorSandbox.deployment.status,
+    ) === 'running',
+  );
+  const toolCatalogVisible = dep.source !== 'remote' || remoteInspectorConnected;
+  const liveTools = dep.source !== 'remote' && running && current === 'tools'
+    ? await listMcpTools(deploymentId)
+    : [];
+  const deploymentToolCatalogKnown = toolCatalogVisible && hasMcpToolCatalog(dep.installCfg);
+  const serverToolCatalogKnown = dep.source !== 'remote' && hasMcpToolCatalog(dep.server?.installCfg);
+  const savedTools = deploymentToolCatalogKnown
+    ? readMcpToolCatalog(dep.installCfg)
+    : serverToolCatalogKnown
+      ? readMcpToolCatalog(dep.server?.installCfg)
+      : [];
+  const refreshedConfig = dep.source !== 'remote' && running && current === 'tools' && liveTools.length === 0
+    ? await db.deployment.findFirst({
+        where: { id: deploymentId, workspaceId: ws.id },
+        select: { installCfg: true },
+      })
+    : null;
+  const tools = dep.source !== 'remote' && running && current === 'tools'
+    ? liveTools.length
+      ? liveTools
+      : hasMcpToolCatalog(refreshedConfig?.installCfg)
+        ? readMcpToolCatalog(refreshedConfig?.installCfg)
+        : savedTools
+    : savedTools;
   const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId) : [];
   const runtimeSnapshot = current === 'logs'
     ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;
+  const playgroundAvailable = dep.source === 'remote' || running;
+  const inspectorSandboxes = current === 'tools' && playgroundAvailable
+    ? (await listSandboxes(ws.id))
+      .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
+      .map((sandbox) => ({
+        id: sandbox.id,
+        name: sandbox.name,
+        kind: sandbox.kind,
+        running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
+        networkEnabled: sandbox.network !== 'none',
+      }))
+    : [];
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
@@ -191,6 +260,29 @@ export default async function DeploymentInspectorPage({
     : ['custom', 'config', 'docker'].includes(label.source)
       ? t(`source.${label.source}`)
       : label.source;
+  const networkLabel = envCfg.network === 'none' ? t('networkNone') : t('networkIsolated');
+  const knownToolCount = dep.source === 'remote' && !remoteInspectorConnected
+    ? undefined
+    : running && current === 'tools'
+    ? tools.length
+    : deploymentToolCatalogKnown || serverToolCatalogKnown
+      ? savedTools.length
+      : dep.server?.verifiedTools;
+  const toolCatalogLabels = {
+    title: t('toolCatalog'),
+    description: t('toolCatalogDescription'),
+    count: t('toolsCount', { count: tools.length }),
+    instructions: t('instructions'),
+    inputSchema: t('inputSchema'),
+    schemaJson: t('schemaJson'),
+    parameter: t('parameter'),
+    type: t('type'),
+    descriptionColumn: t('descriptionColumn'),
+    required: t('required'),
+    defaultValue: t('defaultValue'),
+    noDescription: t('noDescription'),
+    noArguments: t('noArguments'),
+  };
 
   return (
     <>
@@ -319,6 +411,45 @@ export default async function DeploymentInspectorPage({
                 status={status}
               />
             ) : null}
+
+            <DashboardPanel
+              title={t('aboutThisMcp')}
+              description={dep.server?.description ?? undefined}
+            >
+              {dep.server?.readme ? (
+                <SafeStreamdown
+                  mode="static"
+                  linkSafety={{ enabled: true }}
+                  className="prose prose-sm max-h-[42rem] max-w-none overflow-auto leading-7 dark:prose-invert"
+                >
+                  {dep.server.readme}
+                </SafeStreamdown>
+              ) : dep.server?.description ? null : (
+                <p className="text-sm text-muted-foreground">{t('noDescription')}</p>
+              )}
+              <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                {dep.server?.author ? (
+                  <div>
+                    <dt className="text-xs text-muted-foreground">{t('author')}</dt>
+                    <dd className="mt-1 font-medium text-foreground">{dep.server.author}</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t('sourceLabel')}</dt>
+                  <dd className="mt-1 font-medium text-foreground">{sourceLabel}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t('network')}</dt>
+                  <dd className="mt-1 font-medium text-foreground">{networkLabel}</dd>
+                </div>
+                {typeof knownToolCount === 'number' ? (
+                  <div>
+                    <dt className="text-xs text-muted-foreground">{t('tools')}</dt>
+                    <dd className="mt-1 font-medium text-foreground">{knownToolCount.toLocaleString(locale)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </DashboardPanel>
 
             <DashboardPanel title={t('nextStep')} description={t('nextStepDescription')} bodyClassName="py-4">
               {setupRequired ? (
@@ -462,6 +593,17 @@ export default async function DeploymentInspectorPage({
 
         {current === 'tools' ? (
           <div className="space-y-6">
+            {tools.length ? (
+              <McpToolCatalog
+                tools={tools}
+                labels={toolCatalogLabels}
+                compact
+                hrefForTool={(toolName) => (
+                  `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(deploymentId)}/tools/${encodeURIComponent(toolName)}`
+                )}
+              />
+            ) : null}
+
             <section className="ui-panel overflow-hidden">
               <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
                 <div className="flex min-w-0 items-start gap-2.5">
@@ -490,21 +632,32 @@ export default async function DeploymentInspectorPage({
               </div>
             </section>
 
-            {running ? (
+            {playgroundAvailable ? (
               <section className="ui-panel overflow-hidden">
                 <header className="border-b border-border px-5 py-4">
                   <h2 className="text-sm font-semibold text-foreground">{t('manualToolTesting')}</h2>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('manualToolTestingDescription')}</p>
                 </header>
                 <div className="px-5 py-5">
-                  <ToolPlayground workspace={slug} deploymentId={deploymentId} tools={tools} />
+                  <ToolPlayground
+                    workspace={slug}
+                    deploymentId={deploymentId}
+                    tools={inspectorConnection ? tools : []}
+                    sandboxes={inspectorSandboxes}
+                    connectedSandboxId={dep.source === 'remote'
+                      ? remoteInspectorConnected ? inspectorConnection?.sandboxId : undefined
+                      : inspectorConnection?.sandboxId}
+                    credentialsRequired={setupRequired}
+                  />
                 </div>
               </section>
             ) : (
               <DashboardEmptyState
                 icon={Wrench}
-                title={t('toolsUnavailable')}
-                description={t('deploymentNotRunningTools', { status })}
+                title={tools.length ? t('toolTestingUnavailable') : t('toolsUnavailable')}
+                description={tools.length
+                  ? t('deploymentNotRunningTesting', { status })
+                  : t('deploymentNotRunningTools', { status })}
                 actions={(
                   <Link href={`${base}?tab=logs`} className="ui-button-secondary">
                     {t('viewRuntimeLogs')}

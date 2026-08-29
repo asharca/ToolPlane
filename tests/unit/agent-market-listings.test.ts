@@ -31,6 +31,10 @@ const releaseSummary = {
 function listing(overrides: Record<string, unknown> = {}) {
   return {
     id: 'listing-1',
+    publisherKind: 'workspace',
+    publisherWorkspaceId: 'workspace-1',
+    sourceAgentId: 'agent-1',
+    publishedById: 'user-1',
     slug: 'researcher',
     name: 'Researcher',
     summary: null,
@@ -52,27 +56,38 @@ describe('listAgentMarketListings', () => {
     mocks.findMany.mockReset();
   });
 
-  it('filters and skips listings without a publisher workspace', async () => {
-    mocks.count.mockResolvedValue(1);
+  it('shows platform listings but skips orphaned workspace listings', async () => {
+    mocks.count.mockResolvedValue(2);
     mocks.findMany.mockResolvedValue([
       listing(),
-      listing({ id: 'orphaned-listing', publisherWorkspace: null }),
+      listing({
+        id: 'platform-listing',
+        publisherKind: 'platform',
+        publisherWorkspaceId: null,
+        sourceAgentId: null,
+        publishedById: null,
+        publisherWorkspace: null,
+      }),
+      listing({
+        id: 'orphaned-listing',
+        publisherKind: 'workspace',
+        publisherWorkspaceId: null,
+        sourceAgentId: null,
+        publishedById: null,
+        publisherWorkspace: null,
+      }),
     ]);
 
     const result = await listAgentMarketListings();
 
-    expect(mocks.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({ publisherWorkspace: { is: {} } }),
-    });
-    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ publisherWorkspace: { is: {} } }),
+    expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ AND: expect.any(Array) }),
     }));
-    expect(result.total).toBe(1);
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({
-      id: 'listing-1',
-      workspaceSlug: 'acme',
-      latestReleaseId: 'release-1',
-    });
+    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ AND: expect.any(Array) }),
+    }));
+    expect(result.total).toBe(2);
+    expect(result.items.map(({ id }) => id)).toEqual(['listing-1', 'platform-listing']);
+    expect(result.items[1]).toMatchObject({ workspaceSlug: null, workspaceName: null });
   });
 });
