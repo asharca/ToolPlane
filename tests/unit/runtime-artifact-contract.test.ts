@@ -33,6 +33,14 @@ describe('minimal runtime artifact contract', () => {
     expect(dockerfile).toContain('/app/dist/release/app/');
     expect(dockerfile.match(/\/app\/node_modules \.\/node_modules/g)).toHaveLength(1);
     expect(runtimeAssembler).toContain('writeLegacyEntrypointShims(outputRoot)');
+    expect(runtimeAssembler).toContain("await mkdir(path.join(outputRoot, 'public'), { recursive: true })");
+    expect(runtimeAssembler).toContain("['public', 'public assets directory']");
+    expect(ciWorkflow).toContain(
+      'tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null',
+    );
+    expect(releaseWorkflow).toContain(
+      'tar -tzf toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null',
+    );
     expect(runtimeAssembler).toContain("['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim']");
     expect(runtimeAssembler).toContain("['node_modules/.bin/next', 'legacy entrypoint Next shim']");
     expect(runtimeAssembler).toContain(

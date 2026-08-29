@@ -118,5 +118,6 @@ jobs:
           test -L dist/release/app/packages
           test -L dist/release/app/messages
           tar -C dist/release -czf /tmp/toolplane-runtime-linux-amd64.tar.gz app
+          tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
           artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
           test "$artifact_size" -le $((100 * 1024 * 1024))

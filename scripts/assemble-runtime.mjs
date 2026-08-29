@@ -200,6 +200,7 @@ await cp(path.join(root, '.next', 'static'), path.join(outputRoot, '.next', 'sta
 });
 
 if (await pathExists(path.join(root, 'public'))) await copyEntry('public');
+await mkdir(path.join(outputRoot, 'public'), { recursive: true });
 
 for (const entry of [
   'package.json',
@@ -274,6 +275,7 @@ for (const [entry, description] of [
   ['.next/server', 'standalone server bundle'],
   ['.next/static', 'client static assets'],
   ['messages', 'internationalization messages'],
+  ['public', 'public assets directory'],
   ['node_modules/node-pty', 'sandbox PTY runtime'],
   ['node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', 'remote MCP client runtime'],
   ['node_modules/ws', 'connector WebSocket runtime'],

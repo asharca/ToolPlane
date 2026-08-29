@@ -120,6 +120,7 @@ jobs:
         if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         run: |
           tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
+          tar -tzf toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
           artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
           test "$artifact_size" -le $((100 * 1024 * 1024))
           shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
