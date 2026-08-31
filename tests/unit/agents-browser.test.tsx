@@ -635,6 +635,11 @@ describe('AgentsBrowser', () => {
     expect(environment).not.toBeChecked();
     expect(volume).not.toBeChecked();
     expect(conversations).not.toBeChecked();
+    await user.click(conversations);
+    expect(volume).toBeChecked();
+    await user.click(volume);
+    expect(volume).not.toBeChecked();
+    expect(conversations).not.toBeChecked();
     await user.click(volume);
     expect(conversations).toBeChecked();
     expect(screen.getByText('Conversations are included to preserve attachment and Hermes session references.')).toBeInTheDocument();

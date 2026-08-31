@@ -15,6 +15,7 @@ import {
   ProviderModelError,
   updateAgent,
   updateAgentModelSelection,
+  bindHermesAgentModelProvider,
   setAgentTools,
   setProviderModels,
   setHermesRuntimeEnv,
@@ -22,9 +23,11 @@ import {
   appendMessage,
   appendConversationTurn,
   createConversation,
+  setHermesConversationSelection,
   ensureConversationRuntimeSession,
 } from '@/lib/agents/mutations';
 import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
+import { hermesProviderName } from '@/lib/agents/hermes/config';
 import { readSandboxEnv } from '@/lib/sandboxes/env';
 import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import {
@@ -461,77 +464,36 @@ describe('agents mutations', () => {
       .rejects.toThrow('Sandboxes are exclusive to one agent');
   });
 
-  it('uses clone scope to copy conversation data without unwanted bindings', async () => {
-    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  it('rejects Hermes conversation copies without the matching persistent volume', async () => {
     const source = await createAgent(workspaceId, 'Scoped clone source', { runtime: 'hermes' });
-    const skill = await db.installedSkill.create({
-      data: { workspaceId, name: 'Scoped skill', slug: `scoped-skill-${suffix}`, content: '# scoped' },
-    });
-    await setAgentTools(workspaceId, source.id, {
-      deploymentIds: [deploymentId],
-      installedSkillIds: [skill.id],
-      toolkitIds: [],
-      sandboxIds: [],
-    });
     const conversation = await createConversation(workspaceId, source.id, 'Keep this history');
     await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Copied question' }]);
-    await appendMessage(conversation!.id, 'assistant', [{ type: 'text', text: 'Copied answer' }]);
-    await db.message.create({
-      data: { conversationId: conversation!.id, role: 'assistant', parts: Prisma.JsonNull },
-    });
 
-    const cloned = await cloneAgent(workspaceId, source.id, 'Scoped clone target', {
+    await expect(cloneAgent(workspaceId, source.id, 'Scoped clone target', {
       copyMcp: false,
       copySkills: false,
       copyToolkits: false,
       copySandboxes: false,
       copySubAgents: false,
       copyConversations: true,
-    });
-    const reread = await db.agent.findUniqueOrThrow({
-      where: { id: cloned!.id },
-      include: {
-        servers: true,
-        skills: true,
-        toolkits: true,
-        sandboxes: true,
-        subAgents: true,
-        conversations: { include: { messages: { orderBy: { createdAt: 'asc' } } } },
-      },
-    });
-
-    expect(reread.servers).toHaveLength(0);
-    expect(reread.skills).toHaveLength(0);
-    expect(reread.toolkits).toHaveLength(0);
-    expect(reread.sandboxes).toHaveLength(0);
-    expect(reread.subAgents).toHaveLength(0);
-    expect(reread.conversations).toHaveLength(1);
-    expect(reread.conversations[0]).toMatchObject({ title: 'Keep this history' });
-    expect(reread.conversations[0].id).not.toBe(conversation!.id);
-    expect(reread.conversations[0].messages.map((message) => message.parts)).toEqual([
-      [{ type: 'text', text: 'Copied question' }],
-      [{ type: 'text', text: 'Copied answer' }],
-      null,
-    ]);
+    })).rejects.toThrow('only be cloned with the Hermes persistent volume');
   });
 
-  it('copies Hermes environment and session aliases for a complete data clone', async () => {
+  it('copies Hermes environment without copying conversations when the volume is not copied', async () => {
     const source = await createAgent(workspaceId, 'Hermes clone data source', { runtime: 'hermes' });
     await setHermesRuntimeEnv(workspaceId, source.id, { PRIVATE_TOKEN: 'source-secret', REGION: 'cn' });
     const conversation = await createConversation(workspaceId, source.id, 'Hermes state');
     await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Remember this' }]);
 
     const cloned = await cloneAgent(workspaceId, source.id, 'Hermes clone data target', {
-      copyConversations: true,
       copyHermesEnvironment: true,
     });
-    const [sourceConversation, targetRuntime, targetConversation] = await Promise.all([
-      db.conversation.findUniqueOrThrow({ where: { id: conversation!.id } }),
+    const [targetRuntime, targetConversationCount] = await Promise.all([
       db.agentRuntime.findUniqueOrThrow({
         where: { agentId: cloned!.id },
         include: { sandbox: { include: { deployment: true } } },
       }),
-      db.conversation.findFirstOrThrow({ where: { agentId: cloned!.id } }),
+      db.conversation.count({ where: { agentId: cloned!.id } }),
     ]);
 
     expect(readSandboxEnv(targetRuntime.sandbox.config)).toEqual({
@@ -541,12 +503,8 @@ describe('agents mutations', () => {
     expect(targetRuntime.sandbox.deployment.installCfg).toMatchObject({
       env: { PRIVATE_TOKEN: 'source-secret', REGION: 'cn' },
     });
-    expect(targetConversation.id).not.toBe(sourceConversation.id);
-    expect(targetConversation).toMatchObject({
-      runtimeSessionId: sourceConversation.runtimeSessionId,
-      runtimeSessionKey: sourceConversation.runtimeSessionKey,
-    });
-    expect(cloned?.conversationIds).toEqual([{ sourceId: conversation!.id, targetId: targetConversation.id }]);
+    expect(targetConversationCount).toBe(0);
+    expect(cloned?.conversationIds).toEqual([]);
   });
 
   it('clones Hermes attachment records only onto the copied runtime', async () => {
@@ -998,6 +956,154 @@ describe('agents mutations', () => {
     await deleteAgent(workspaceId, hermesAgent.id);
   });
 
+  it('clears Hermes conversation overrides when linked providers or models disappear', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Hermes override provider ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://hermes-overrides.test/v1',
+        apiKey: 'k',
+      },
+    });
+    await setProviderModels(workspaceId, provider.id, ['model-a', 'model-b']);
+    const agent = await createAgent(workspaceId, 'Hermes provider overrides', { runtime: 'hermes' });
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId: null,
+      providerIds: [provider.id],
+      model: null,
+      maxSteps: 8,
+    });
+    const [plain, custom] = await Promise.all([
+      createConversation(workspaceId, agent.id, 'Plain provider alias'),
+      createConversation(workspaceId, agent.id, 'Custom provider alias'),
+    ]);
+    const providerName = hermesProviderName(provider.id);
+    await setHermesConversationSelection(workspaceId, agent.id, plain!.id, {
+      profile: 'default', provider: providerName, model: 'model-a',
+    });
+    await setHermesConversationSelection(workspaceId, agent.id, custom!.id, {
+      profile: 'default', provider: `custom:${providerName}`, model: 'model-b',
+    });
+
+    await setProviderModels(workspaceId, provider.id, ['model-a']);
+    await expect(db.conversation.findUnique({ where: { id: custom!.id } })).resolves.toMatchObject({
+      hermesProvider: null,
+      hermesModel: null,
+    });
+    await expect(db.conversation.findUnique({ where: { id: plain!.id } })).resolves.toMatchObject({
+      hermesProvider: providerName,
+      hermesModel: 'model-a',
+    });
+
+    await updateAgentModelSelection(workspaceId, agent.id, [], null);
+    await expect(db.conversation.findUnique({ where: { id: plain!.id } })).resolves.toMatchObject({
+      hermesProvider: null,
+      hermesModel: null,
+    });
+    await deleteProvider(workspaceId, provider.id);
+    await deleteAgent(workspaceId, agent.id);
+  });
+
+  it('adds one selected ToolPlane provider to a Hermes agent without replacing existing bindings', async () => {
+    const suffix = Date.now();
+    const [existingProvider, selectedProvider] = await Promise.all([
+      db.modelProvider.create({
+        data: {
+          workspaceId,
+          name: `Existing Hermes provider ${suffix}`,
+          format: 'openai',
+          baseUrl: 'https://existing-hermes.test/v1',
+          apiKey: 'k',
+          models: ['model-existing'],
+        },
+      }),
+      db.modelProvider.create({
+        data: {
+          workspaceId,
+          name: `Selected Hermes provider ${suffix}`,
+          format: 'openai',
+          baseUrl: 'https://selected-hermes.test/v1',
+          apiKey: 'k',
+          models: ['model-selected'],
+        },
+      }),
+    ]);
+    const agent = await createAgent(workspaceId, `Hermes chat binding ${suffix}`, { runtime: 'hermes' });
+    await updateAgentModelSelection(workspaceId, agent.id, [existingProvider.id], null);
+
+    const alias = hermesProviderName(selectedProvider.id);
+    await expect(bindHermesAgentModelProvider(
+      workspaceId,
+      agent.id,
+      alias,
+      'model-selected',
+    )).resolves.toBe(alias);
+    await expect(bindHermesAgentModelProvider(
+      workspaceId,
+      agent.id,
+      alias,
+      'model-selected',
+    )).resolves.toBe(alias);
+
+    await expect(db.agentModelProvider.findMany({
+      where: { agentId: agent.id },
+      orderBy: { providerId: 'asc' },
+      select: { providerId: true },
+    })).resolves.toEqual([
+      { providerId: existingProvider.id },
+      { providerId: selectedProvider.id },
+    ].sort((a, b) => a.providerId.localeCompare(b.providerId)));
+    await expect(bindHermesAgentModelProvider(
+      workspaceId,
+      agent.id,
+      alias,
+      'missing-model',
+    )).rejects.toThrow('The selected ToolPlane model is not available.');
+
+    await deleteAgent(workspaceId, agent.id);
+    await Promise.all([
+      deleteProvider(workspaceId, existingProvider.id),
+      deleteProvider(workspaceId, selectedProvider.id),
+    ]);
+  });
+
+  it('protects a Hermes conversation override until its provider is deleted', async () => {
+    const provider = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Hermes protected override ${Date.now()}`,
+        format: 'openai',
+        baseUrl: 'https://hermes-protected.test/v1',
+        apiKey: 'k',
+      },
+    });
+    await setProviderModels(workspaceId, provider.id, ['model-a']);
+    const agent = await createAgent(workspaceId, 'Hermes protected override agent', { runtime: 'hermes' });
+    await updateAgentModelSelection(workspaceId, agent.id, [provider.id], null);
+    const conversation = await createConversation(workspaceId, agent.id, 'Protected override');
+    await setHermesConversationSelection(workspaceId, agent.id, conversation!.id, {
+      profile: 'default',
+      provider: `custom:${hermesProviderName(provider.id)}`,
+      model: 'model-a',
+    });
+
+    await expect(deleteProviderModel(workspaceId, provider.id, 'model-a'))
+      .rejects.toThrow('This model is in use and cannot be removed.');
+    const runtime = await db.agentRuntime.findUniqueOrThrow({ where: { agentId: agent.id } });
+    await expect(deleteProvider(workspaceId, provider.id)).resolves.toEqual([{
+      agentId: agent.id,
+      sandboxId: runtime.sandboxId,
+    }]);
+    await expect(db.conversation.findUnique({ where: { id: conversation!.id } })).resolves.toMatchObject({
+      hermesProvider: null,
+      hermesModel: null,
+    });
+    await deleteAgent(workspaceId, agent.id);
+  });
+
   it('updates providers within the workspace and keeps the API key when omitted', async () => {
     const provider = await db.modelProvider.create({
       data: {
@@ -1095,6 +1201,86 @@ describe('agents mutations', () => {
       runtimeSessionId: messagingConversation!.id,
       runtimeSessionKey: 'msg:slack:dm:U123',
     });
+  });
+
+  it('stores Hermes conversation selection and forks when a populated conversation changes profile', async () => {
+    const agent = await createAgent(workspaceId, 'Hermes profile chat', { runtime: 'hermes' });
+    const conversation = await createConversation(workspaceId, agent.id);
+    const selected = await setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      conversation!.id,
+      { profile: 'research', provider: null, model: null },
+    );
+    expect(selected).toEqual({ conversationId: conversation!.id, created: false });
+    await expect(db.conversation.findUnique({ where: { id: conversation!.id } })).resolves.toMatchObject({
+      hermesProfile: 'research',
+      hermesProvider: null,
+      hermesModel: null,
+    });
+
+    await appendMessage(conversation!.id, 'user', [{ type: 'text', text: 'Keep this profile isolated.' }]);
+    const forked = await setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      conversation!.id,
+      { profile: 'default', provider: 'openrouter', model: 'model-a' },
+    );
+    expect(forked).toMatchObject({ created: true });
+    expect(forked?.conversationId).not.toBe(conversation!.id);
+    await expect(db.conversation.findUnique({ where: { id: forked!.conversationId } })).resolves.toMatchObject({
+      hermesProfile: null,
+      hermesProvider: 'openrouter',
+      hermesModel: 'model-a',
+    });
+
+    await appendMessage(forked!.conversationId, 'user', [{ type: 'text', text: 'Stay on default.' }]);
+    await expect(setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      forked!.conversationId,
+      { profile: 'default', provider: 'openrouter', model: 'model-b' },
+    )).resolves.toEqual({ conversationId: forked!.conversationId, created: false });
+
+    const workConversation = await createConversation(workspaceId, agent.id, 'Hermes Work');
+    await appendMessage(workConversation!.id, 'user', [{ type: 'text', text: 'Keep this Work conversation.' }]);
+    const workSession = await db.workSession.create({
+      data: {
+        workspaceId,
+        agentId: agent.id,
+        conversationId: workConversation!.id,
+        runtimeKind: 'hermes',
+        status: 'idle',
+      },
+    });
+    const conversationCount = await db.conversation.count({ where: { agentId: agent.id } });
+    await expect(setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      workConversation!.id,
+      { profile: 'research', provider: 'openrouter', model: 'model-a' },
+    )).resolves.toEqual({ conversationId: workConversation!.id, created: false });
+    await expect(db.conversation.count({ where: { agentId: agent.id } })).resolves.toBe(conversationCount);
+    await expect(db.conversation.findUnique({ where: { id: workConversation!.id } })).resolves.toMatchObject({
+      hermesProfile: 'research',
+      hermesProvider: 'openrouter',
+      hermesModel: 'model-a',
+    });
+    await db.workSession.update({ where: { id: workSession.id }, data: { status: 'running' } });
+    await expect(setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      workConversation!.id,
+      { profile: 'default', provider: null, model: null },
+    )).resolves.toBeNull();
+
+    const messaging = await createConversation(workspaceId, agent.id, 'msg:slack:dm:U123');
+    await expect(setHermesConversationSelection(
+      workspaceId,
+      agent.id,
+      messaging!.id,
+      { profile: 'default', provider: null, model: null },
+    )).resolves.toBeNull();
   });
 
   it('persists a generated user/assistant turn atomically and in order', async () => {

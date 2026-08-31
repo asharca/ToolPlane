@@ -26,20 +26,20 @@ describe('persistDeploymentMcpToolCatalog', () => {
     mocks.findUnique.mockResolvedValue({
       source: 'config',
       updatedAt,
-      installCfg: { command: 'npx', env: { API_KEY: 'private-value' } },
+      installCfg: { command: 'npx', env: { API_KEY: 'private-value', GITHUB_TOOLSETS: 'all' } },
     });
     mocks.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(persistDeploymentMcpToolCatalog('dep-1', [
       {
         name: 'search',
-        description: 'Search safely; never echo private-value.',
+        description: 'Search all safely; never echo private-value.',
         inputSchema: { type: 'object' },
         env: { API_KEY: 'leak' },
       },
     ])).resolves.toEqual([{
       name: 'search',
-      description: 'Search safely; never echo [REDACTED].',
+      description: 'Search all safely; never echo [REDACTED].',
       inputSchema: { type: 'object' },
     }]);
 
@@ -48,10 +48,10 @@ describe('persistDeploymentMcpToolCatalog', () => {
       data: {
         installCfg: {
           command: 'npx',
-          env: { API_KEY: 'private-value' },
+          env: { API_KEY: 'private-value', GITHUB_TOOLSETS: 'all' },
           toolCatalog: [{
             name: 'search',
-            description: 'Search safely; never echo [REDACTED].',
+            description: 'Search all safely; never echo [REDACTED].',
             inputSchema: { type: 'object' },
           }],
         },

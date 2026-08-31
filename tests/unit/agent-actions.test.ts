@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
   setHermesRuntimeEnv: vi.fn(),
   stopHermesRuntime: vi.fn(),
   syncHermesRuntime: vi.fn(),
+  runHermesRuntimeMaintenance: vi.fn(),
+  requestHermesRuntimeSync: vi.fn(),
   updateAgent: vi.fn(),
+  updateProvider: vi.fn(),
   upgradeHermesRuntime: vi.fn(),
   agentFindFirst: vi.fn(),
   createConversation: vi.fn(),
@@ -18,6 +21,13 @@ const mocks = vi.hoisted(() => ({
   generateConsoleConversationTitle: vi.fn(),
   deleteConsoleConversation: vi.fn(),
   updateAgentModelSelection: vi.fn(),
+  bindHermesAgentModelProvider: vi.fn(),
+  setHermesConversationSelection: vi.fn(),
+  agentFindMany: vi.fn(),
+  listHermesProfiles: vi.fn(),
+  listHermesProfileModels: vi.fn(),
+  supportsHermesProfileChat: vi.fn(),
+  ensureHermesProfileProjection: vi.fn(),
   getProvider: vi.fn(),
   workspaceUpdate: vi.fn(),
   redirect: vi.fn(),
@@ -33,7 +43,7 @@ vi.mock('@/lib/agents/conversation-naming', () => ({
 }));
 vi.mock('@/lib/db', () => ({
   db: {
-    agent: { findFirst: mocks.agentFindFirst },
+    agent: { findFirst: mocks.agentFindFirst, findMany: mocks.agentFindMany },
     workspace: { update: mocks.workspaceUpdate },
   },
 }));
@@ -46,13 +56,15 @@ vi.mock('@/lib/agents/mutations', () => ({
   setAgentTools: mocks.setAgentTools,
   deleteAgent: vi.fn(),
   createProvider: vi.fn(),
-  updateProvider: vi.fn(),
+  updateProvider: mocks.updateProvider,
   deleteProvider: vi.fn(),
   setProviderModels: vi.fn(),
   createConversation: mocks.createConversation,
   renameConsoleConversation: mocks.renameConsoleConversation,
   deleteConsoleConversation: mocks.deleteConsoleConversation,
   updateAgentModelSelection: mocks.updateAgentModelSelection,
+  bindHermesAgentModelProvider: mocks.bindHermesAgentModelProvider,
+  setHermesConversationSelection: mocks.setHermesConversationSelection,
   setHermesRuntimeEnv: mocks.setHermesRuntimeEnv,
 }));
 vi.mock('@/lib/agents/channel-connections', () => ({
@@ -76,9 +88,27 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
   cleanupHermesRuntime: vi.fn(),
   copyHermesRuntimeVolume: vi.fn(),
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
+  runHermesRuntimeMaintenance: mocks.runHermesRuntimeMaintenance,
   stopHermesRuntime: mocks.stopHermesRuntime,
   syncHermesRuntime: mocks.syncHermesRuntime,
   upgradeHermesRuntime: mocks.upgradeHermesRuntime,
+}));
+vi.mock('@/lib/agents/hermes/profiles', () => ({
+  ensureHermesProfileProjection: mocks.ensureHermesProfileProjection,
+  hasHermesProfileModel: (
+    options: { providers: Array<{ id: string; models: string[] }> },
+    provider: string,
+    model: string,
+  ) => options.providers.some((item) => item.id === provider && item.models.includes(model)),
+  HermesProfileError: class HermesProfileError extends Error {},
+  listHermesProfileModels: mocks.listHermesProfileModels,
+  listHermesProfiles: mocks.listHermesProfiles,
+  normalizeHermesProfile: (value: unknown) => {
+    const profile = String(value ?? '').trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile) ? profile : null;
+  },
+  setHermesProfileDefaultModel: vi.fn(),
+  supportsHermesProfileChat: mocks.supportsHermesProfileChat,
 }));
 
 import {
@@ -87,6 +117,8 @@ import {
   createAgentAction,
   updateAgentAction,
   updateAgentModelAction,
+  updateHermesConversationSelectionAction,
+  updateProviderAction,
   updateWorkspaceModelPreferenceAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
@@ -307,9 +339,11 @@ describe('model configuration action', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorizedAgent();
+    mocks.syncHermesRuntime.mockResolvedValue({ status: 'stopped' });
   });
 
   it('updates only the selected model binding and refreshes the chat workspace', async () => {
+    mocks.updateAgentModelSelection.mockResolvedValueOnce('native');
     const form = runtimeForm();
     form.set('providerId', 'provider-1');
     form.set('model', 'gpt-5');
@@ -317,7 +351,200 @@ describe('model configuration action', () => {
     await expect(updateAgentModelAction({}, form)).resolves.toEqual({ savedAt: expect.any(Number) });
 
     expect(mocks.updateAgentModelSelection).toHaveBeenCalledWith('workspace-1', 'agent-1', ['provider-1'], 'gpt-5');
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+  });
+
+  it('reports a saved model selection as a warning when Hermes projection fails', async () => {
+    mocks.updateAgentModelSelection.mockResolvedValueOnce('hermes');
+    mocks.syncHermesRuntime.mockResolvedValueOnce({ status: 'error', error: 'projection failed' });
+    const form = runtimeForm();
+    form.set('providerId', 'provider-1');
+    form.set('model', 'gpt-5');
+
+    await expect(updateAgentModelAction({}, form)).resolves.toEqual({
+      warning: 'Saved, but Hermes sync failed: projection failed',
+      savedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('Hermes profile and provider actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.supportsHermesProfileChat.mockResolvedValue(true);
+    mocks.ensureHermesProfileProjection.mockResolvedValue(undefined);
+    mocks.bindHermesAgentModelProvider.mockResolvedValue('toolplane-provider-1');
+    mocks.syncHermesRuntime.mockResolvedValue({ status: 'running' });
+    mocks.listHermesProfileModels.mockResolvedValue({
+      profile: 'default',
+      provider: 'toolplane-provider-1',
+      model: 'model-a',
+      providers: [{ id: 'toolplane-provider-1', name: 'Provider', models: ['model-a'] }],
+    });
+    mocks.listHermesProfiles.mockResolvedValue([{
+      name: 'default', isDefault: true, provider: 'openrouter', model: 'model-a', description: '',
+    }]);
+    mocks.setHermesConversationSelection.mockResolvedValue({
+      conversationId: 'conversation-1', created: false,
+    });
+    mocks.runHermesRuntimeMaintenance.mockImplementation(async (...args: unknown[]) => ({
+      status: 'completed',
+      data: await (args[4] as (context: { requestSync: () => void }) => Promise<unknown>)({
+        requestSync: mocks.requestHermesRuntimeSync,
+      }),
+    }));
+  });
+
+  it('changes a conversation profile only inside the runtime write barrier', async () => {
+    mocks.agentFindFirst
+      .mockResolvedValueOnce({
+        publicRuntimeAllocation: null,
+        runtime: { sandbox: { config: { managedBy: 'agent-runtime' } } },
+      })
+      .mockResolvedValueOnce({
+        id: 'agent-1',
+        workspaceId: 'workspace-1',
+        runtime: { id: 'runtime-1', kind: 'hermes', sandboxId: 'sandbox-1' },
+      });
+    const form = runtimeForm();
+    form.set('conversationId', 'conversation-1');
+    form.set('profile', 'default');
+    form.set('useDefault', '1');
+
+    await expect(updateHermesConversationSelectionAction({}, form)).resolves.toEqual({
+      savedAt: expect.any(Number),
+      conversationId: 'conversation-1',
+      created: false,
+    });
+    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'sandbox-1',
+      { quiesce: false },
+      expect.any(Function),
+    );
+    expect(mocks.setHermesConversationSelection).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'conversation-1',
+      { profile: 'default', provider: null, model: null },
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
+  });
+
+  it('binds and projects a ToolPlane provider before saving a conversation model', async () => {
+    mocks.agentFindFirst
+      .mockResolvedValueOnce({
+        publicRuntimeAllocation: null,
+        runtime: { sandbox: { config: { managedBy: 'agent-runtime' } } },
+      })
+      .mockResolvedValueOnce({
+        id: 'agent-1',
+        workspaceId: 'workspace-1',
+        runtime: { id: 'runtime-1', kind: 'hermes', sandboxId: 'sandbox-1' },
+      });
+    const form = runtimeForm();
+    form.set('conversationId', 'conversation-1');
+    form.set('profile', 'default');
+    form.set('provider', 'toolplane-provider-1');
+    form.set('model', 'model-a');
+
+    await expect(updateHermesConversationSelectionAction({}, form)).resolves.toEqual({
+      savedAt: expect.any(Number),
+      conversationId: 'conversation-1',
+      created: false,
+    });
+    expect(mocks.bindHermesAgentModelProvider).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'toolplane-provider-1',
+      'model-a',
+    );
+    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenNthCalledWith(
+      1,
+      'workspace-1',
+      'agent-1',
+      'sandbox-1',
+      { quiesce: false },
+      expect.any(Function),
+    );
+    expect(mocks.requestHermesRuntimeSync).toHaveBeenCalledOnce();
+    expect(mocks.setHermesConversationSelection).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'conversation-1',
+      { profile: 'default', provider: 'toolplane-provider-1', model: 'model-a' },
+    );
+  });
+
+  it('keeps a provider save successful when runtime reprojection fails', async () => {
+    mocks.getProvider.mockResolvedValue({
+      id: 'provider-1',
+      name: 'Provider',
+      format: 'openai',
+      baseUrl: 'https://provider.test/v1',
+      apiKey: 'secret',
+    });
+    mocks.agentFindMany.mockResolvedValue([{
+      id: 'hermes-1',
+      runtime: { sandboxId: 'sandbox-1' },
+    }]);
+    mocks.runHermesRuntimeMaintenance.mockResolvedValueOnce({
+      status: 'error',
+      error: 'projection failed',
+    });
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('providerId', 'provider-1');
+    form.set('name', 'Provider');
+    form.set('format', 'openai');
+    form.set('baseUrl', 'https://provider.test/v1');
+
+    await expect(updateProviderAction({}, form)).resolves.toEqual({
+      warning: 'Hermes sync failed: projection failed',
+      savedAt: expect.any(Number),
+    });
+    expect(mocks.updateProvider).toHaveBeenCalled();
+    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledWith(
+      'workspace-1',
+      'hermes-1',
+      'sandbox-1',
+      { quiesce: false, reprojectAfter: true },
+      expect.any(Function),
+    );
+  });
+
+  it('attempts every Hermes reprojection after an earlier Agent fails', async () => {
+    mocks.getProvider.mockResolvedValue({
+      id: 'provider-1',
+      name: 'Provider',
+      format: 'openai',
+      baseUrl: 'https://provider.test/v1',
+      apiKey: 'secret',
+    });
+    mocks.agentFindMany.mockResolvedValue([
+      { id: 'hermes-1', runtime: { sandboxId: 'sandbox-1' } },
+      { id: 'hermes-2', runtime: { sandboxId: 'sandbox-2' } },
+    ]);
+    mocks.runHermesRuntimeMaintenance
+      .mockResolvedValueOnce({ status: 'error', error: 'first failed' })
+      .mockResolvedValueOnce({ status: 'completed' });
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('providerId', 'provider-1');
+    form.set('name', 'Provider');
+    form.set('format', 'openai');
+    form.set('baseUrl', 'https://provider.test/v1');
+
+    await expect(updateProviderAction({}, form)).resolves.toEqual({
+      warning: 'Hermes sync failed: first failed',
+      savedAt: expect.any(Number),
+    });
+    expect(mocks.runHermesRuntimeMaintenance).toHaveBeenCalledTimes(2);
   });
 });
 

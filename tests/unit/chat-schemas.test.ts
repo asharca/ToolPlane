@@ -40,11 +40,17 @@ describe('chat bounded-context input', () => {
       messages: [{ id: 'u-1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
       trigger: 'regenerate-message',
       messageId: 'a-1',
+      reasoningEffort: 'xhigh',
     })).toMatchObject({
       trigger: 'regenerate-message',
       messageId: 'a-1',
+      reasoningEffort: 'xhigh',
       messages: [expect.objectContaining({ id: 'u-1' })],
     });
+    expect(parseChatTurn({
+      messages: [{ id: 'u-1', role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
+      reasoningEffort: 'extreme',
+    })).toBeNull();
   });
 
   it('caps assistant tool steps at the UI limit', () => {

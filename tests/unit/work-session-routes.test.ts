@@ -7,10 +7,12 @@ const mocks = vi.hoisted(() => ({
   createWorkSession: vi.fn(),
   listWorkSessions: vi.fn(),
   getWorkSessionForUser: vi.fn(),
+  appendWorkSessionInput: vi.fn(),
   archiveWorkSession: vi.fn(),
   findWorkSession: vi.fn(),
   livePort: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
+  prepareHermesConversationSelection: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
@@ -21,10 +23,14 @@ vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort }));
 vi.mock('@/lib/agents/hermes/runtime', () => ({
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
 }));
+vi.mock('@/lib/agents/hermes/conversation-selection', () => ({
+  prepareHermesConversationSelection: mocks.prepareHermesConversationSelection,
+}));
 vi.mock('@/lib/work/sessions', () => ({
   createWorkSession: mocks.createWorkSession,
   listWorkSessions: mocks.listWorkSessions,
   getWorkSessionForUser: mocks.getWorkSessionForUser,
+  appendWorkSessionInput: mocks.appendWorkSessionInput,
   archiveWorkSession: mocks.archiveWorkSession,
   normalizeWorkDirectory: (value: unknown) => typeof value === 'string' && !value.startsWith('..') ? value || '.' : null,
   workSessionWorkingDirectory: (value: unknown) => (value as { workingDirectory?: string } | null)?.workingDirectory ?? '.',
@@ -32,6 +38,7 @@ vi.mock('@/lib/work/sessions', () => ({
 
 import { POST as createWork } from '@/app/api/v1/work-sessions/route';
 import { GET as getWork } from '@/app/api/v1/work-sessions/[workSessionId]/route';
+import { POST as appendWorkInput } from '@/app/api/v1/work-sessions/[workSessionId]/input/route';
 import { POST as openWorkTerminal } from '@/app/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]/route';
 
 describe('WorkSession API', () => {
@@ -44,6 +51,7 @@ describe('WorkSession API', () => {
       conversationId: 'conversation-1',
       status: 'queued',
     });
+    mocks.appendWorkSessionInput.mockResolvedValue({ ok: true, changed: true, status: 'queued' });
     mocks.findWorkSession.mockResolvedValue({
       workspaceId: 'workspace-1',
       runtimeKind: 'pi',
@@ -53,6 +61,7 @@ describe('WorkSession API', () => {
     });
     mocks.livePort.mockReturnValue(4312);
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
+    mocks.prepareHermesConversationSelection.mockImplementation(async (_agent, selection) => selection);
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -61,7 +70,12 @@ describe('WorkSession API', () => {
     const response = await createWork(new Request('http://toolplane.test/api/v1/work-sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ agentId: 'agent-1', sandboxId: 'sandbox-1', task: 'Run the tests' }),
+      body: JSON.stringify({
+        agentId: 'agent-1',
+        sandboxId: 'sandbox-1',
+        task: 'Run the tests',
+        reasoningEffort: 'high',
+      }),
     }));
 
     expect(response.status).toBe(202);
@@ -75,8 +89,103 @@ describe('WorkSession API', () => {
       agentId: 'agent-1',
       sandboxId: 'sandbox-1',
       task: 'Run the tests',
+      reasoningEffort: 'high',
       workingDirectory: '.',
     });
+  });
+
+  it('rejects an unsupported Work reasoning effort', async () => {
+    const response = await createWork(new Request('http://toolplane.test/api/v1/work-sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent-1', task: 'Run the tests', reasoningEffort: 'ultra' }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.getAgentForRequest).not.toHaveBeenCalled();
+  });
+
+  it('validates and forwards a Hermes model selected for the new Work conversation', async () => {
+    const agent = {
+      id: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeKind: 'hermes',
+      runtime: {
+        kind: 'hermes',
+        sandboxId: 'sandbox-1',
+        sandbox: { workspaceId: 'workspace-1', kind: 'hermes', network: 'bridge' },
+      },
+    };
+    mocks.getAgentForRequest.mockResolvedValueOnce(agent);
+    const response = await createWork(new Request('http://toolplane.test/api/v1/work-sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agentId: 'agent-1',
+        task: 'Run the tests',
+        hermesProfile: 'research',
+        hermesProvider: 'openrouter',
+        hermesModel: 'model-b',
+      }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(mocks.prepareHermesConversationSelection).toHaveBeenCalledWith(agent, {
+      profile: 'research',
+      provider: 'openrouter',
+      model: 'model-b',
+    });
+    expect(mocks.createWorkSession).toHaveBeenCalledWith(expect.objectContaining({
+      hermesSelection: { profile: 'research', provider: 'openrouter', model: 'model-b' },
+    }));
+  });
+
+  it('rejects an incomplete Hermes provider and model pair', async () => {
+    mocks.getAgentForRequest.mockResolvedValueOnce({ id: 'agent-1', workspaceId: 'workspace-1', runtimeKind: 'hermes' });
+    const response = await createWork(new Request('http://toolplane.test/api/v1/work-sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'agent-1', task: 'Run the tests', hermesProfile: 'default', hermesProvider: 'openrouter' }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.prepareHermesConversationSelection).not.toHaveBeenCalled();
+    expect(mocks.createWorkSession).not.toHaveBeenCalled();
+  });
+
+  it('updates a scoped Work conversation reasoning effort before requeueing', async () => {
+    mocks.getWorkSessionForUser.mockResolvedValue({
+      id: 'work-1',
+      workspaceId: 'workspace-1',
+      conversationId: 'conversation-1',
+      runtimeSnapshot: null,
+      sandbox: { id: 'sandbox-1' },
+    });
+    const response = await appendWorkInput(new Request('http://toolplane.test/api/v1/work-sessions/work-1/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Continue', reasoningEffort: 'low' }),
+    }), { params: Promise.resolve({ workSessionId: 'work-1' }) });
+
+    expect(response.status).toBe(202);
+    expect(mocks.getWorkSessionForUser).toHaveBeenCalledWith('user-1', 'work-1');
+    expect(mocks.appendWorkSessionInput).toHaveBeenCalledWith(
+      'workspace-1',
+      'work-1',
+      'Continue',
+      { reasoningEffort: 'low' },
+    );
+  });
+
+  it('rejects an unsupported effort before loading a Work session', async () => {
+    const response = await appendWorkInput(new Request('http://toolplane.test/api/v1/work-sessions/work-1/input', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Continue', reasoningEffort: 'ultra' }),
+    }), { params: Promise.resolve({ workSessionId: 'work-1' }) });
+
+    expect(response.status).toBe(400);
+    expect(mocks.getWorkSessionForUser).not.toHaveBeenCalled();
   });
 
   it('rejects a working directory outside the sandbox root', async () => {

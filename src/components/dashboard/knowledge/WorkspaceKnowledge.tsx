@@ -8,6 +8,7 @@ import {
   ModelPicker,
   type ModelProviderOption,
 } from '@/components/dashboard/models/ModelPicker';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 type KnowledgeBase = {
   id: string;
@@ -260,7 +261,7 @@ export function WorkspaceKnowledge({
 
             {activeTab === 'documents' ? <div className="p-5 sm:p-7">
               <div className="flex flex-col gap-3 pb-5 sm:flex-row sm:items-end">
-                <label className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">{t('sourceSandbox')}<select value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input mt-1.5 h-10 w-full text-foreground">{sandboxes.map((sandbox) => <option key={sandbox.id} value={sandbox.id} disabled={!sandbox.running}>{sandbox.name}{sandbox.running ? '' : ` (${t('stopped')})`}</option>)}</select></label>
+                <label className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">{t('sourceSandbox')}<NativeSelect value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input h-10 w-full text-foreground" wrapperClassName="mt-1.5">{sandboxes.map((sandbox) => <option key={sandbox.id} value={sandbox.id} disabled={!sandbox.running}>{sandbox.name}{sandbox.running ? '' : ` (${t('stopped')})`}</option>)}</NativeSelect></label>
                 <label className="ui-button-secondary h-10 cursor-pointer"><FileUp className="size-4" /><span className="max-w-48 truncate">{file?.name ?? t('chooseFile')}</span><input type="file" accept=".txt,.md,.mdx,.csv,.json,text/plain,text/markdown,text/csv,application/json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="sr-only" /></label>
                 <button type="button" onClick={upload} disabled={busy || !file || !sandboxId} className="ui-button-primary h-10"><FileUp className="size-4" />{busy ? t('importing') : t('import')}</button>
               </div>

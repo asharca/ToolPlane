@@ -4,7 +4,9 @@ import { db } from '@/lib/db';
 import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
 import { defaultProviderModel, type ProviderModelValues } from '@/lib/agents/model-catalog';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
+import { hermesProviderName } from '@/lib/agents/hermes/config';
 import { withoutHermesChannelEnv } from '@/lib/agents/hermes/env-merge-script';
+import { HERMES_PROFILE_NAME } from '@/lib/agents/hermes/profiles';
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
@@ -327,6 +329,13 @@ export async function cloneAgent(
       'Sandboxes are exclusive to one agent and cannot be reused by a clone. Clear sandbox bindings before cloning.',
     );
   }
+  if (runtime.runtime === HERMES_RUNTIME_KIND
+    && cloneOptions.copyConversations
+    && !cloneOptions.copyHermesVolume) {
+    throw new AgentConfigurationError(
+      'Hermes conversations can only be cloned with the Hermes persistent volume.',
+    );
+  }
   // A Hermes volume contains the files referenced by conversations and their
   // runtime session state. Keep those database records together with a volume
   // clone, even if a stale/non-UI caller omitted the dependent checkbox.
@@ -465,7 +474,7 @@ export async function cloneAgent(
           workspaceId,
           sourceAgentId,
           cloned.id,
-          runtime.runtime === HERMES_RUNTIME_KIND,
+          false,
         )
       : [];
     return { ...cloned, conversationIds, conversationsDeferred };
@@ -479,6 +488,10 @@ type SourceConversationForClone = {
   title: string | null;
   runtimeSessionId: string | null;
   runtimeSessionKey: string | null;
+  hermesProfile: string | null;
+  hermesProvider: string | null;
+  hermesModel: string | null;
+  reasoningEffort: string | null;
   createdAt: Date;
   messages: Array<{
     role: string;
@@ -519,7 +532,13 @@ async function copyConversationsInTransaction(
         agentId: targetAgentId,
         title: conversation.title,
         createdAt: conversation.createdAt,
+        reasoningEffort: conversation.reasoningEffort,
         ...(runtimeSession ?? {}),
+        ...(preserveHermesSession ? {
+          hermesProfile: conversation.hermesProfile,
+          hermesProvider: conversation.hermesProvider,
+          hermesModel: conversation.hermesModel,
+        } : {}),
       },
     });
     conversationIds.push({ sourceId: conversation.id, targetId: copiedConversation.id });
@@ -555,6 +574,10 @@ async function cloneAgentConversationsInTransaction(
             title: true,
             runtimeSessionId: true,
             runtimeSessionKey: true,
+            hermesProfile: true,
+            hermesProvider: true,
+            hermesModel: true,
+            reasoningEffort: true,
             createdAt: true,
             messages: {
               orderBy: { createdAt: 'asc' },
@@ -614,6 +637,10 @@ export async function cloneHermesVolumeData(
               title: true,
               runtimeSessionId: true,
               runtimeSessionKey: true,
+              hermesProfile: true,
+              hermesProvider: true,
+              hermesModel: true,
+              reasoningEffort: true,
               createdAt: true,
               messages: {
                 orderBy: { createdAt: 'asc' },
@@ -956,7 +983,11 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
   await db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
       where: { id: agentId, workspaceId },
-      select: { id: true, runtimeKind: true },
+      select: {
+        id: true,
+        runtimeKind: true,
+        modelProviders: { select: { providerId: true } },
+      },
     });
     if (!agent) return;
 
@@ -991,6 +1022,18 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
         providerId: modelProviderId,
       })),
     });
+    const removedProviderIds = agent.modelProviders
+      .map(({ providerId: currentProviderId }) => currentProviderId)
+      .filter((currentProviderId) => !modelProviderIds.includes(currentProviderId));
+    if (removedProviderIds.length) {
+      await tx.conversation.updateMany({
+        where: {
+          agentId,
+          hermesProvider: { in: hermesProviderAliases(removedProviderIds) },
+        },
+        data: { hermesProvider: null, hermesModel: null },
+      });
+    }
   });
 }
 
@@ -1000,10 +1043,14 @@ export async function updateAgentModelSelection(
   requestedProviderIds: string[],
   model: string | null,
 ) {
-  await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
       where: { id: agentId, workspaceId },
-      select: { id: true, runtimeKind: true },
+      select: {
+        id: true,
+        runtimeKind: true,
+        modelProviders: { select: { providerId: true } },
+      },
     });
     if (!agent) return;
 
@@ -1018,7 +1065,19 @@ export async function updateAgentModelSelection(
       await tx.agentModelProvider.createMany({
         data: providerIds.map((providerId) => ({ agentId, providerId })),
       });
-      return;
+      const removedProviderIds = agent.modelProviders
+        .map(({ providerId }) => providerId)
+        .filter((providerId) => !providerIds.includes(providerId));
+      if (removedProviderIds.length) {
+        await tx.conversation.updateMany({
+          where: {
+            agentId,
+            hermesProvider: { in: hermesProviderAliases(removedProviderIds) },
+          },
+          data: { hermesProvider: null, hermesModel: null },
+        });
+      }
+      return agent.runtimeKind;
     }
 
     const providerId = requestedProviderIds[0];
@@ -1029,6 +1088,44 @@ export async function updateAgentModelSelection(
       where: { id: agentId, workspaceId },
       data: { providerId: validProviderId, model: validProviderId ? model : null },
     });
+    return agent.runtimeKind;
+  });
+}
+
+export async function bindHermesAgentModelProvider(
+  workspaceId: string,
+  agentId: string,
+  providerAlias: string,
+  model: string,
+): Promise<string> {
+  return db.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({
+      where: { id: agentId, workspaceId, runtimeKind: HERMES_RUNTIME_KIND },
+      select: { id: true },
+    });
+    if (!agent) throw new AgentConfigurationError('Hermes agent not found.');
+
+    const providers = await tx.modelProvider.findMany({
+      where: { workspaceId, models: { has: model } },
+      select: { id: true },
+    });
+    const bareAlias = providerAlias.replace(/^custom:/, '');
+    const provider = providers.find(({ id }) => hermesProviderName(id) === bareAlias);
+    if (!provider || !await lockProvider(tx, workspaceId, provider.id)) {
+      throw new AgentConfigurationError('The selected ToolPlane model is not available.');
+    }
+    const stillAvailable = await tx.modelProvider.findFirst({
+      where: { id: provider.id, workspaceId, models: { has: model } },
+      select: { id: true },
+    });
+    if (!stillAvailable) {
+      throw new AgentConfigurationError('The selected ToolPlane model is not available.');
+    }
+    await tx.agentModelProvider.createMany({
+      data: [{ agentId, providerId: provider.id }],
+      skipDuplicates: true,
+    });
+    return hermesProviderName(provider.id);
   });
 }
 
@@ -1434,6 +1531,13 @@ export async function createProvider(
   return db.modelProvider.create({ data: { workspaceId, ...data } });
 }
 
+function hermesProviderAliases(providerIds: string[]): string[] {
+  return providerIds.flatMap((providerId) => {
+    const name = hermesProviderName(providerId);
+    return [name, `custom:${name}`];
+  });
+}
+
 export async function updateProvider(
   workspaceId: string,
   providerId: string,
@@ -1446,8 +1550,17 @@ export async function updateProvider(
 }
 
 export async function deleteProvider(workspaceId: string, providerId: string) {
-  await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) return;
+  return db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) return [];
+
+    const hermesAgents = await tx.agent.findMany({
+      where: {
+        workspaceId,
+        runtime: { is: { kind: HERMES_RUNTIME_KIND } },
+        modelProviders: { some: { providerId } },
+      },
+      select: { id: true, runtime: { select: { sandboxId: true } } },
+    });
 
     await tx.agent.updateMany({
       where: { workspaceId, providerId },
@@ -1461,7 +1574,17 @@ export async function deleteProvider(workspaceId: string, providerId: string) {
       where: { id: workspaceId, titleModelProviderId: providerId },
       data: { titleModelProviderId: null, titleModel: null },
     });
+    await tx.conversation.updateMany({
+      where: {
+        agent: { workspaceId },
+        hermesProvider: { in: hermesProviderAliases([providerId]) },
+      },
+      data: { hermesProvider: null, hermesModel: null },
+    });
     await tx.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
+    return hermesAgents.flatMap(({ id, runtime }) => (
+      runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : []
+    ));
   });
 }
 
@@ -1491,12 +1614,21 @@ export async function setProviderModels(workspaceId: string, providerId: string,
       select: { modelId: true },
       orderBy: { createdAt: 'asc' },
     });
+    const nextModels = uniqueIds([...remoteModelIds, ...manualModels.map(({ modelId }) => modelId)]);
     await tx.modelProvider.update({
       where: { id: providerId },
       data: {
-        models: uniqueIds([...remoteModelIds, ...manualModels.map(({ modelId }) => modelId)]),
+        models: nextModels,
         modelsFetchedAt: new Date(),
       },
+    });
+    await tx.conversation.updateMany({
+      where: {
+        agent: { workspaceId },
+        hermesProvider: { in: hermesProviderAliases([providerId]) },
+        hermesModel: nextModels.length ? { notIn: nextModels } : { not: null },
+      },
+      data: { hermesProvider: null, hermesModel: null },
     });
   });
 }
@@ -1570,7 +1702,7 @@ export async function deleteProviderModel(
       select: { models: true },
     });
     if (!provider?.models.includes(modelId)) throw new ProviderModelError('Model not found.');
-    const [agent, assistant, knowledgeBase, workspace] = await Promise.all([
+    const [agent, assistant, knowledgeBase, workspace, conversation] = await Promise.all([
       tx.agent.findFirst({ where: { workspaceId, providerId, model: modelId }, select: { id: true } }),
       tx.chatAssistant.findFirst({
         where: { workspaceId, modelProviderId: providerId, model: modelId },
@@ -1590,8 +1722,16 @@ export async function deleteProviderModel(
         },
         select: { id: true },
       }),
+      tx.conversation.findFirst({
+        where: {
+          agent: { workspaceId },
+          hermesProvider: { in: hermesProviderAliases([providerId]) },
+          hermesModel: modelId,
+        },
+        select: { id: true },
+      }),
     ]);
-    if (agent || assistant || knowledgeBase || workspace) {
+    if (agent || assistant || knowledgeBase || workspace || conversation) {
       throw new ProviderModelError('This model is in use and cannot be removed.');
     }
     await tx.providerModel.deleteMany({ where: { providerId, modelId } });
@@ -1639,6 +1779,93 @@ export async function createConversation(
       where: { id: conversation.id },
       data: defaultConversationRuntimeSession(agent.id, conversation.id, runtimeSession),
     });
+  });
+}
+
+export type HermesConversationSelection = {
+  profile: string;
+  provider: string | null;
+  model: string | null;
+};
+
+export type HermesConversationSelectionResult = {
+  conversationId: string;
+  created: boolean;
+};
+
+export async function setHermesConversationSelection(
+  workspaceId: string,
+  agentId: string,
+  conversationId: string | null,
+  selection: HermesConversationSelection,
+): Promise<HermesConversationSelectionResult | null> {
+  if (
+    !HERMES_PROFILE_NAME.test(selection.profile)
+    || (selection.provider === null) !== (selection.model === null)
+    || (selection.provider !== null && (!selection.provider || selection.provider.length > 128))
+    || (selection.model !== null && (!selection.model || selection.model.length > 512))
+  ) return null;
+  const storedProfile = selection.profile === 'default' ? null : selection.profile;
+  return db.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({
+      where: { id: agentId, workspaceId, runtime: { is: { kind: 'hermes' } } },
+      select: { id: true, publicRuntimeAllocation: { select: { id: true } } },
+    });
+    if (!agent || agent.publicRuntimeAllocation) return null;
+
+    const createSelectedConversation = async () => {
+      const created = await tx.conversation.create({
+        data: {
+          agentId,
+          hermesProfile: storedProfile,
+          hermesProvider: selection.provider,
+          hermesModel: selection.model,
+        },
+      });
+      await tx.conversation.update({
+        where: { id: created.id },
+        data: defaultConversationRuntimeSession(agentId, created.id),
+      });
+      return { conversationId: created.id, created: true };
+    };
+
+    if (!conversationId) return createSelectedConversation();
+    const conversation = await tx.conversation.findFirst({
+      where: { id: conversationId, agentId, agent: { workspaceId } },
+      select: {
+        id: true,
+        title: true,
+        hermesProfile: true,
+        _count: { select: { messages: true } },
+        publicApiConversation: { select: { id: true } },
+        workSession: { select: { id: true, status: true } },
+      },
+    });
+    const editableWorkConversation = conversation?.workSession
+      && ['idle', 'waiting_user', 'completed', 'failed'].includes(conversation.workSession.status);
+    if (
+      !conversation
+      || conversation.title?.startsWith('msg:')
+      || conversation.publicApiConversation
+      || (conversation.workSession && !editableWorkConversation)
+    ) return null;
+
+    const currentProfile = conversation.hermesProfile || 'default';
+    if (currentProfile !== selection.profile && conversation._count.messages > 0 && !editableWorkConversation) {
+      return createSelectedConversation();
+    }
+    await tx.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        hermesProfile: storedProfile,
+        hermesProvider: selection.provider,
+        hermesModel: selection.model,
+        ...(currentProfile !== selection.profile
+          ? defaultConversationRuntimeSession(agentId, conversation.id)
+          : {}),
+      },
+    });
+    return { conversationId: conversation.id, created: false };
   });
 }
 

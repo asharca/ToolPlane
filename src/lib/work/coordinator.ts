@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import type { Prisma } from '@prisma/client';
 import { Type, type ToolCall } from '@earendil-works/pi-ai';
 import { db } from '@/lib/db';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import { getAgentForRun } from '@/lib/agents/queries';
 import { ensureConversationRuntimeSession } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
@@ -609,6 +610,10 @@ async function executeWork(workSessionId: string) {
           workingDirectory,
           sessionId: runtimeSession.runtimeSessionId,
           sessionKey: runtimeSession.runtimeSessionKey,
+          profile: work.conversation.hermesProfile,
+          provider: work.conversation.hermesProvider,
+          model: work.conversation.hermesModel,
+          reasoningEffort: normalizeReasoningEffort(work.conversation.reasoningEffort) ?? 'default',
           writeLease,
           signal: controller.signal,
           onRunStarted: async (runId) => {

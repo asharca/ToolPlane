@@ -141,10 +141,9 @@ async function validateAssistantResources(
         id: { in: input.deploymentIds },
         workspaceId,
         sandbox: { is: null },
-        server: { is: { verifiedAt: { not: null } } },
         OR: [{ source: null }, { source: { not: 'sandbox' } }],
       },
-      select: { id: true, server: { select: { slug: true } } },
+      select: { id: true, server: { select: { slug: true, verifiedAt: true } } },
     });
     if (deployments.length !== input.deploymentIds.length) {
       throw new ChatServiceError(400, 'One or more MCP deployments are invalid');
@@ -231,7 +230,9 @@ export async function createChatAssistant(userId: string, input: CreateChatAssis
   }
   const deployments = await validateAssistantResources(input.workspaceId, input);
   if (template) {
-    const selectedSlugs = new Set(deployments.flatMap(({ server }) => server?.slug ? [server.slug] : []));
+    const selectedSlugs = new Set(deployments.flatMap(({ server }) => (
+      server?.slug && server.verifiedAt ? [server.slug] : []
+    )));
     const missing = template.manifest.assistant.mcpRequirements
       .filter(({ catalogSlug }) => !selectedSlugs.has(catalogSlug));
     if (missing.length) {

@@ -74,7 +74,10 @@ managed_env_path = pathlib.Path(sys.argv[2])
 managed_keys_path = env_destination.parent / ".toolplane-env-keys.json"
 
 try:
-    managed_env = json.loads(managed_env_path.read_text(encoding="utf-8"))
+    managed_env = json.loads(
+        sys.stdin.read() if str(managed_env_path) == "-"
+        else managed_env_path.read_text(encoding="utf-8")
+    )
 except (OSError, json.JSONDecodeError):
     managed_env = {}
 if not isinstance(managed_env, dict):

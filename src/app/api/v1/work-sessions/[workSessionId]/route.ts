@@ -5,6 +5,7 @@ import {
   workSessionWorkingDirectory,
 } from '@/lib/work/sessions';
 import { effectiveStatus } from '@/lib/process/supervisor';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
 
 type Params = { params: Promise<{ workSessionId: string }> };
 
@@ -17,6 +18,10 @@ export async function GET(req: Request, { params }: Params) {
   const { conversation, sandbox, ...view } = work;
   return Response.json({
     ...view,
+    reasoningEffort: normalizeReasoningEffort(conversation.reasoningEffort) ?? null,
+    hermesProfile: conversation.hermesProfile,
+    hermesProvider: conversation.hermesProvider,
+    hermesModel: conversation.hermesModel,
     workingDirectory: workSessionWorkingDirectory(work.runtimeSnapshot),
     messages: conversation.messages,
     sandbox: sandbox ? {

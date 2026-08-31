@@ -1,4 +1,5 @@
 import { resolveRequestUser } from '@/lib/auth/request-user';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import {
   appendWorkSessionInput,
   getWorkSessionForUser,
@@ -17,7 +18,7 @@ export async function POST(
 ) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  let body: { input?: unknown; attachmentIds?: unknown };
+  let body: { input?: unknown; attachmentIds?: unknown; reasoningEffort?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -25,6 +26,12 @@ export async function POST(
   }
   if (typeof body.input !== 'string' || !body.input.trim() || body.input.length > 20_000) {
     return Response.json({ error: 'Invalid input' }, { status: 400 });
+  }
+  const reasoningEffort = body.reasoningEffort === undefined
+    ? undefined
+    : normalizeReasoningEffort(body.reasoningEffort);
+  if (body.reasoningEffort !== undefined && !reasoningEffort) {
+    return Response.json({ error: 'Invalid reasoningEffort' }, { status: 400 });
   }
 
   const { workSessionId } = await params;
@@ -41,12 +48,10 @@ export async function POST(
       attachmentIds: body.attachmentIds,
       conversationId: work.conversationId,
     });
-    result = attachments.length
-      ? await appendWorkSessionInput(work.workspaceId, work.id, body.input, {
-          uploadedById: user.id,
-          attachments,
-        })
-      : await appendWorkSessionInput(work.workspaceId, work.id, body.input);
+    result = await appendWorkSessionInput(work.workspaceId, work.id, body.input, {
+      ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    });
   } catch (error) {
     return error instanceof WorkAttachmentError
       ? Response.json({ error: error.message }, { status: error.status })

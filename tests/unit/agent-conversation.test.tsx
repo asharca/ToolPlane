@@ -118,6 +118,7 @@ describe('AgentConversation', () => {
     expect(copyButton.closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
     expect(screen.getByText('Test agent').closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thinking effort' })).not.toBeInTheDocument();
   });
 
   it('renders branch position and delegates sibling navigation', async () => {
@@ -478,5 +479,35 @@ describe('AgentConversation', () => {
         body: expect.objectContaining({ webSearchEnabled: true }),
       }),
     ));
+  });
+
+  it('shows supported thinking efforts and snapshots the selection for send and regenerate', async () => {
+    renderConversation({
+      activeConversationId: 'conv-1',
+      initialReasoningEffort: 'medium',
+      reasoningAvailable: true,
+    });
+
+    const effort = screen.getByRole('button', { name: 'Thinking effort' });
+    expect(effort).toHaveTextContent('Medium');
+    await userEvent.click(effort);
+    const slider = screen.getByRole('slider', { name: 'Thinking effort' });
+    expect(slider).toHaveValue('2');
+    fireEvent.change(slider, { target: { value: '3' } });
+    expect(effort).toHaveTextContent('High');
+    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Think carefully');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'user' }),
+      expect.objectContaining({
+        body: expect.objectContaining({ conversationId: 'conv-1', reasoningEffort: 'high' }),
+      }),
+    ));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await waitFor(() => expect(chatMocks.regenerate).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ conversationId: 'conv-1', reasoningEffort: 'high' }),
+    })));
   });
 });

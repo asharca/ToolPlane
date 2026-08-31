@@ -19,6 +19,11 @@ describe('parseAgentChatBody', () => {
     expect(parsed?.messages).toHaveLength(1);
   });
 
+  it('accepts supported reasoning efforts and rejects unknown values', () => {
+    expect(parseAgentChatBody({ reasoningEffort: 'high' })?.reasoningEffort).toBe('high');
+    expect(parseAgentChatBody({ reasoningEffort: 'ultra' })).toBeNull();
+  });
+
   it('defaults missing messages to an empty list', () => {
     expect(parseAgentChatBody({})?.messages).toEqual([]);
   });

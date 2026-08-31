@@ -10,6 +10,24 @@ export const AGENT_STEP_BOUNDS = { min: 0, max: 1000, default: 8 } as const;
 // Concrete ceiling that "no limit" (stored 0) maps to at run time.
 export const AGENT_STEPS_CEILING = 1000;
 
+export const REASONING_EFFORTS = [
+  'default',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export function normalizeReasoningEffort(value: unknown): ReasoningEffort | null {
+  return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
+    ? value as ReasoningEffort
+    : null;
+}
+
 // Resolve a stored maxSteps to the step count the SDK loop should stop at.
 // 0 (unlimited) → the safety ceiling; any positive value is used as-is.
 export function resolveMaxSteps(maxSteps: number): number {

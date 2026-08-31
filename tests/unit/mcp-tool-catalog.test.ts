@@ -110,6 +110,17 @@ describe('MCP tool catalog', () => {
     }])).toEqual({ ok: false, tools: [] });
   });
 
+  it('normalizes harmless trailing whitespace in live descriptions', () => {
+    expect(parseMcpToolCatalogResult([{
+      name: 'search',
+      description: 'Search repositories.\n',
+      inputSchema: { type: 'object' },
+    }])).toEqual({
+      ok: true,
+      tools: [{ name: 'search', description: 'Search repositories.', inputSchema: { type: 'object' } }],
+    });
+  });
+
   it('rejects live metadata that would be dropped or changed', () => {
     expect(parseMcpToolCatalogResult([{
       name: 'long-description',

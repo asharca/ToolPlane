@@ -166,6 +166,17 @@ describe('persistent Docker sandbox runtime', () => {
     expect(script.match(/HERMES_HOME=\/opt\/data/g)).toHaveLength(4);
   });
 
+  it('exposes only the named-profile chat and session routes', () => {
+    const script = readFileSync(path.join(process.cwd(), 'scripts/sandbox-mcp-server.mjs'), 'utf8');
+
+    expect(script).toContain("/^\\/p\\/[a-z0-9][a-z0-9_-]{0,63}\\/v1\\/(?:chat\\/completions|capabilities)$/");
+    expect(script).toContain("const profilePrefix = '(?:/p/[a-z0-9][a-z0-9_-]{0,63})?'");
+    expect(script).toContain('const sessionCreate');
+    expect(script).toContain('/api/sessions/[^/]+/chat/stream$');
+    expect(script).not.toContain('/api/sessions/[^/]+/model$');
+    expect(script).not.toContain("path.startsWith('/p/')");
+  });
+
   it('can restore the multiplexed default gateway when upstream restart targets a down s6 slot', () => {
     const script = readFileSync(path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs'), 'utf8');
 

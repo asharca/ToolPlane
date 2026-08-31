@@ -41,7 +41,7 @@ vi.mock('@/lib/chat/service', () => ({
 
 import { POST } from '@/app/api/v1/chat/threads/[threadId]/turns/route';
 
-function request(signal?: AbortSignal, webSearchEnabled = false) {
+function request(signal?: AbortSignal, webSearchEnabled = false, reasoningEffort?: string) {
   return new Request('http://toolplane.test/api/v1/chat/threads/thread-1/turns', {
     method: 'POST',
     signal,
@@ -51,6 +51,7 @@ function request(signal?: AbortSignal, webSearchEnabled = false) {
       trigger: 'regenerate-message',
       messageId: 'assistant-old',
       webSearchEnabled,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     }),
   });
 }
@@ -89,7 +90,7 @@ describe('chat turn stream contract', () => {
   });
 
   it('starts the stream with the persisted assistant id and historic model', async () => {
-    await POST(request(), { params: Promise.resolve({ threadId: 'thread-1' }) });
+    await POST(request(undefined, false, 'high'), { params: Promise.resolve({ threadId: 'thread-1' }) });
     const config = mocks.createStream.mock.calls[0]![0];
     const writer = { write: vi.fn() };
 
@@ -109,7 +110,10 @@ describe('chat turn stream contract', () => {
         modelId: 'historic-model',
       }),
     );
-    expect(mocks.runNative).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'historic-model' }));
+    expect(mocks.runNative).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'historic-model',
+      reasoningEffort: 'high',
+    }));
   });
 
   it('persists an HTTP-aborted response as cancelled, never completed', async () => {

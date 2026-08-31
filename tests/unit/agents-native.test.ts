@@ -17,7 +17,7 @@ describe('runNativeAgent', () => {
   it('continues through Pi tool calls and returns the completed reply', async () => {
     const execute = vi.fn(async ({ value }: { value: string }) => ({ echoed: value }));
     const onContextUsage = vi.fn();
-    vi.stubGlobal('fetch', vi.fn()
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce(sse([
         {
           id: 'chatcmpl-1',
@@ -42,7 +42,8 @@ describe('runNativeAgent', () => {
         { id: 'chatcmpl-2', model: 'gpt-x', choices: [{ index: 0, delta: { content: 'done' }, finish_reason: null }] },
         { id: 'chatcmpl-2', model: 'gpt-x', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
         { id: 'chatcmpl-2', model: 'gpt-x', choices: [], usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } },
-      ])));
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
 
     await expect(runNativeAgent({
       provider: { name: 'P', format: 'openai', baseUrl: 'https://example.test/v1', apiKey: 'secret' },
@@ -58,9 +59,11 @@ describe('runNativeAgent', () => {
         }),
       },
       maxSteps: 2,
+      reasoningEffort: 'high',
       onContextUsage,
     })).resolves.toBe('done');
 
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ reasoning_effort: 'high' });
     expect(execute).toHaveBeenCalledWith({ value: 'hi' });
     expect(onContextUsage).toHaveBeenLastCalledWith({
       usedTokens: 150,

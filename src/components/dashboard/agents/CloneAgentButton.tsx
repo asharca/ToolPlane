@@ -130,6 +130,12 @@ export function CloneAgentButton({
       if (key === 'hermesVolume' && checked) {
         return { ...current, hermesVolume: true, conversations: true };
       }
+      if (isHermes && key === 'conversations' && checked) {
+        return { ...current, conversations: true, hermesVolume: true };
+      }
+      if (key === 'hermesVolume' && !checked && current.conversations) {
+        return { ...current, hermesVolume: false, conversations: false };
+      }
       if (key === 'conversations' && !checked && current.hermesVolume) {
         return { ...current, conversations: false, hermesVolume: false };
       }

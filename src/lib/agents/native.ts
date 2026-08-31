@@ -8,7 +8,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import { buildModel, providerModelIds, type ProviderConfig } from './model';
-import { resolveMaxSteps } from './constants';
+import { resolveMaxSteps, type ReasoningEffort } from './constants';
 import type { AgentToolSet } from './agent-tool';
 
 const EMPTY_USAGE = {
@@ -112,6 +112,7 @@ export type NativeRunOptions = {
   messages: Message[];
   tools: AgentToolSet;
   maxSteps: number;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   onEvent?: (event: AssistantMessageEvent) => void | Promise<void>;
   onToolResult?: (toolCall: ToolCall, output: unknown, isError: boolean) => void | Promise<void>;
@@ -120,6 +121,10 @@ export type NativeRunOptions = {
 
 export async function runNativeAgent(options: NativeRunOptions): Promise<string> {
   const { models, model } = buildModel(options.provider, options.modelId);
+  const reasoning = options.reasoningEffort && options.reasoningEffort !== 'default'
+    ? options.reasoningEffort
+    : undefined;
+  const runtimeModel = reasoning ? { ...model, reasoning: true } : model;
   const contextWindowEstimated = providerModelIds(options.provider)?.includes(options.modelId) !== true;
   const tools = Object.values(options.tools);
   const maxSteps = resolveMaxSteps(options.maxSteps);
@@ -131,7 +136,11 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
   let text = '';
 
   for (let step = 0; step < maxSteps; step += 1) {
-    const stream = models.streamSimple(model, context, { signal: options.signal, maxRetries: 0 });
+    const stream = models.streamSimple(runtimeModel, context, {
+      signal: options.signal,
+      maxRetries: 0,
+      ...(reasoning ? { reasoning } : {}),
+    });
     for await (const event of stream) await options.onEvent?.(event);
     const message = await stream.result();
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {

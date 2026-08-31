@@ -984,6 +984,14 @@ model Conversation {
   // even though its database primary key must be new.
   runtimeSessionId      String?
   runtimeSessionKey     String?
+  // null profile means Hermes' default profile. null provider/model means the
+  // conversation follows that profile's configured default model.
+  hermesProfile         String?
+  hermesProvider        String?
+  hermesModel           String?
+  // null follows the model/provider default. Explicit values are snapshotted
+  // per conversation so one chat cannot change another chat's reasoning level.
+  reasoningEffort       String?
   createdAt             DateTime                 @default(now())
   messages              Message[]
   attachments           AgentAttachment[]

@@ -1,7 +1,7 @@
 import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-export type HermesRuntimeTokenPurpose = 'hermes-api' | 'toolplane-mcp';
+export type HermesRuntimeTokenPurpose = 'hermes-api' | 'hermes-dashboard-api' | 'toolplane-mcp';
 
 export type HermesDashboardBrokerAccess = {
   expiresAt: number;

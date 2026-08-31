@@ -142,6 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
           messages: uiMessagesToPi(hydratedHistory),
           tools,
           maxSteps: assistant.maxSteps,
+          reasoningEffort: input.reasoningEffort,
           signal: req.signal,
           onEvent: uiStream.onEvent,
           onToolResult: uiStream.onToolResult,

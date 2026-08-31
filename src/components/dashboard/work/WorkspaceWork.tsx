@@ -42,6 +42,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
+import { ReasoningEffortControl } from '@/components/dashboard/agents/ReasoningEffortControl';
 import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import {
   ConversationAttachmentChip,
@@ -66,6 +67,7 @@ import { callSandboxTool, SandboxConsole } from '@/components/dashboard/sandboxe
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
 import { deleteAgentAction } from '@/lib/agents/actions';
+import { normalizeReasoningEffort, type ReasoningEffort } from '@/lib/agents/constants';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import {
@@ -156,6 +158,10 @@ type WorkItem = {
   error: string | null;
   artifacts: string[];
   conversationId: string;
+  reasoningEffort?: ReasoningEffort | null;
+  hermesProfile?: string | null;
+  hermesProvider?: string | null;
+  hermesModel?: string | null;
   workingDirectory?: string;
   sandbox: { id: string; name: string; kind: string; deploymentId: string; running: boolean } | null;
   messages: WorkMessage[];
@@ -698,12 +704,31 @@ export function WorkspaceWork({
   const [sessionQuery, setSessionQuery] = useState('');
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
   const selected = creatingMode ? null : liveSelected?.id === selectedWorkSessionId ? liveSelected : initialSelected;
-  const [agentId, setAgentId] = useState(
-    initialSelected?.agentId
-      ?? workAgents.find((item) => item.id === requestedAgentId)?.id
-      ?? workAgents[0]?.id
-      ?? '',
-  );
+  const initialAgentId = initialSelected?.agentId
+    ?? workAgents.find((item) => item.id === requestedAgentId)?.id
+    ?? workAgents[0]?.id
+    ?? '';
+  const [agentId, setAgentId] = useState(initialAgentId);
+  const reasoningScope = selected?.id ?? `agent:${agentId}`;
+  const [reasoningSelection, setReasoningSelection] = useState<{
+    scope: string;
+    value: ReasoningEffort;
+  }>({
+    scope: initialSelected?.id ?? `agent:${initialAgentId}`,
+    value: normalizeReasoningEffort(initialSelected?.reasoningEffort) ?? 'default',
+  });
+  const reasoningEffort = reasoningSelection.scope === reasoningScope
+    ? reasoningSelection.value
+    : normalizeReasoningEffort(selected?.reasoningEffort) ?? 'default';
+  const setReasoningEffort = (value: ReasoningEffort) => {
+    setReasoningSelection({ scope: reasoningScope, value });
+  };
+  const [hermesDraftSelection, setHermesDraftSelection] = useState<{
+    agentId: string;
+    profile: string;
+    provider: string | null;
+    model: string | null;
+  } | null>(null);
   const [sandboxId, setSandboxId] = useState('');
   const [workingDirectory, setWorkingDirectory] = useState(initialSelected?.workingDirectory ?? '.');
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
@@ -734,6 +759,17 @@ export function WorkspaceWork({
   const controlSandbox = selected?.sandbox
     ? { ...selected.sandbox, isDefault: false }
     : activeSandbox;
+  const controlHermesSelection = controlAgent?.runtimeKind === 'hermes'
+    ? selected
+      ? {
+          profile: selected.hermesProfile ?? 'default',
+          provider: selected.hermesProvider ?? null,
+          model: selected.hermesModel ?? null,
+        }
+      : hermesDraftSelection?.agentId === controlAgent.id
+        ? hermesDraftSelection
+        : { agentId: controlAgent.id, profile: 'default', provider: null, model: null }
+    : null;
   const controlWorkspaceRoot = controlSandbox?.kind === 'hermes' ? '/opt/data/workspace' : '/workspace';
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
@@ -743,8 +779,8 @@ export function WorkspaceWork({
     : controlAgent?.runtimeKind === 'hermes'
       ? `/api/v1/agents/${controlAgent.id}/terminal`
       : controlSandbox ? `/api/v1/mcp/${controlSandbox.deploymentId}/terminal` : undefined;
-  const controlModelLabel = controlAgent?.runtimeKind === 'hermes'
-    ? controlAgent.providerLabel || t('selectModel')
+  const controlModelLabel = controlHermesSelection
+    ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents('profileDefault')}`
     : controlAgent?.model || t('selectModel');
   const activeWorkingDirectory = selected?.workingDirectory ?? workingDirectory;
   const workReturnTo = selected ? workHref(slug, selected.id) : `/app/${encodeURIComponent(slug)}/work`;
@@ -884,6 +920,8 @@ export function WorkspaceWork({
     setMobilePane('work');
     setDraft('');
     setAttachments([]);
+    setReasoningSelection({ scope: `agent:${nextAgentId}`, value: 'default' });
+    setHermesDraftSelection(null);
     setWorkingDirectory('.');
     setError(null);
     window.history.replaceState(window.history.state, '', `/app/${encodeURIComponent(slug)}/work`);
@@ -930,6 +968,14 @@ export function WorkspaceWork({
           task: draft.trim(),
           workingDirectory,
           attachmentIds,
+          ...(agent?.runtimeKind === 'hermes' ? {
+            reasoningEffort,
+            ...(hermesDraftSelection?.agentId === agent.id ? {
+              hermesProfile: hermesDraftSelection.profile,
+              hermesProvider: hermesDraftSelection.provider,
+              hermesModel: hermesDraftSelection.model,
+            } : {}),
+          } : {}),
         }),
       });
       const body = await response.json() as { workSessionId?: string; error?: string };
@@ -981,7 +1027,11 @@ export function WorkspaceWork({
       setBusy(null);
       return;
     }
-    if (await postAction('input', { input, ...(attachmentIds.length ? { attachmentIds } : {}) })) {
+    if (await postAction('input', {
+      input,
+      ...(selected.runtimeKind === 'hermes' ? { reasoningEffort } : {}),
+      ...(attachmentIds.length ? { attachmentIds } : {}),
+    })) {
       setDraft('');
       setAttachments([]);
     } else {
@@ -1005,9 +1055,16 @@ export function WorkspaceWork({
   }
 
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
+  const draftHermesModelReady = agent?.runtimeKind === 'hermes'
+    && hermesDraftSelection?.agentId === agent.id
+    && Boolean(hermesDraftSelection.provider && hermesDraftSelection.model);
   const canSend = selected
     ? MESSAGEABLE_STATUSES.has(selected.status)
-    : Boolean(agent?.ready && activeSandbox && (activeSandbox.running || agent.runtimeKind === 'hermes'));
+    : Boolean(
+        (agent?.ready || draftHermesModelReady)
+        && activeSandbox
+        && (activeSandbox.running || agent?.runtimeKind === 'hermes'),
+      );
 
   function togglePanel(panel: WorkPanel) {
     if (typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1280px)').matches) {
@@ -1065,16 +1122,18 @@ export function WorkspaceWork({
                   itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
                 )}>
                   <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]">
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
+                    <span className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground">
+                      <Bot className="size-3.5" />
+                      <span
+                        className={cx(
+                          'absolute right-0 top-0 size-1.5 rounded-full ring-1 ring-background',
+                          itemAgent.supportsWork ? (itemAgent.ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-red-500',
+                        )}
+                        title={itemAgent.supportsWork ? (itemAgent.ready ? tAgents('ready1') : tAgents('needsModel')) : tAgents('runtimeUnavailable')}
+                      />
+                    </span>
                     <span className={cx('min-w-0 flex-1 truncate', itemAgent.id === activeAgentId && 'font-medium')}>{itemAgent.name}</span>
                   </div>
-                  <span
-                    className={cx(
-                      'mr-0.5 size-1.5 shrink-0 rounded-full',
-                      itemAgent.supportsWork ? (itemAgent.ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-muted-foreground/40',
-                    )}
-                    title={itemAgent.supportsWork ? (itemAgent.ready ? tAgents('ready1') : tAgents('needsModel')) : tAgents('chat')}
-                  />
                   <Link
                     href={agentSettingsHref(slug, itemAgent.id, workReturnTo)}
                     aria-label={`${tAgents('configureAgent')} · ${itemAgent.name}`}
@@ -1223,6 +1282,7 @@ export function WorkspaceWork({
                   setAgentId(value);
                   setSandboxId('');
                   setWorkingDirectory('.');
+                  setHermesDraftSelection(null);
                 }}
               />
             )}
@@ -1240,6 +1300,19 @@ export function WorkspaceWork({
                 }}
                 providers={providers}
                 confirmationMessage={selected?.messages.length ? t('modelSwitchConfirm') : undefined}
+                hermesConversation={controlAgent.runtimeKind === 'hermes' ? {
+                  id: selected?.conversationId ?? null,
+                  profile: controlHermesSelection?.profile ?? 'default',
+                  provider: controlHermesSelection?.provider ?? null,
+                  model: controlHermesSelection?.model ?? null,
+                  hasMessages: Boolean(selected?.messages.length),
+                  editable: !selected || MESSAGEABLE_STATUSES.has(selected.status),
+                  forkOnProfileChange: false,
+                } : undefined}
+                onHermesDraftChange={!selected ? (selection) => {
+                  setHermesDraftSelection({ agentId: controlAgent.id, ...selection });
+                } : undefined}
+                onHermesSelectionSaved={selected ? refreshSelected : undefined}
                 trigger={(
                   <button type="button" aria-label={t('model')} title={t('model')} className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
                     {controlModelLabel !== t('selectModel') ? (
@@ -1426,6 +1499,13 @@ export function WorkspaceWork({
                         window.requestAnimationFrame(() => composerInputRef.current?.focus());
                       }}
                     />
+                    {controlAgent?.runtimeKind === 'hermes' ? (
+                      <ReasoningEffortControl
+                        value={reasoningEffort}
+                        disabled={Boolean(busy) || running}
+                        onChange={setReasoningEffort}
+                      />
+                    ) : null}
                     <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
                       <TerminalSquare className="size-3.5 shrink-0" />
                       {selected

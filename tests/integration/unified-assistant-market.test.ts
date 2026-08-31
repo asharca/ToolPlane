@@ -4,6 +4,7 @@ import {
   createChatAssistant,
   deleteChatAssistant,
   installAssistantMarketRelease,
+  updateChatAssistant,
 } from '@/lib/chat/service';
 import { db } from '@/lib/db';
 import { getMarketListing } from '@/lib/market/listings';
@@ -203,6 +204,37 @@ describe.sequential('unified assistant market', () => {
     expect((await db.marketListing.findUnique({ where: { id: listingId } }))?.installCount).toBe(1);
     await deleteChatAssistant(targetUserId, assistant.id);
     expect((await db.marketListing.findUnique({ where: { id: listingId } }))?.installCount).toBe(0);
+  });
+
+  it('allows workspace custom MCPs while rejecting foreign and sandbox deployments', async () => {
+    const [custom, sandbox, foreign] = await Promise.all([
+      db.deployment.create({
+        data: { workspaceId: targetWorkspaceId, name: 'Custom MCP', source: 'pypi', status: 'stopped' },
+      }),
+      db.deployment.create({
+        data: { workspaceId: targetWorkspaceId, name: 'Sandbox MCP', source: 'sandbox', status: 'stopped' },
+      }),
+      db.deployment.create({
+        data: { workspaceId: sourceWorkspaceId, name: 'Foreign MCP', source: 'npm', status: 'stopped' },
+      }),
+    ]);
+    const assistant = await createChatAssistant(targetUserId, {
+      workspaceId: targetWorkspaceId,
+      name: 'Custom MCP helper',
+      deploymentIds: [custom.id],
+    });
+
+    await expect(updateChatAssistant(targetUserId, assistant.id, {
+      deploymentIds: [custom.id],
+    })).resolves.toMatchObject({
+      mcpGrants: [expect.objectContaining({ deploymentId: custom.id })],
+    });
+    await expect(updateChatAssistant(targetUserId, assistant.id, {
+      deploymentIds: [foreign.id],
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(updateChatAssistant(targetUserId, assistant.id, {
+      deploymentIds: [sandbox.id],
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it('blocks assistant releases that contain credentials', async () => {

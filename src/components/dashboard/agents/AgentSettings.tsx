@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Bot,
@@ -13,6 +13,7 @@ import {
   FileText,
   Hammer,
   MessageSquare,
+  Rows3,
   Play,
   Plug,
   Route,
@@ -51,6 +52,12 @@ const HermesRuntimePanel = dynamic(() =>
 const AgentApiPanel = dynamic(() =>
   import('@/components/dashboard/agents/AgentApiPanel').then(
     (module) => module.AgentApiPanel,
+  ),
+);
+
+const HermesProfilesPanel = dynamic(() =>
+  import('@/components/dashboard/agents/HermesProfilesPanel').then(
+    (module) => module.HermesProfilesPanel,
   ),
 );
 
@@ -93,7 +100,7 @@ type AgentApiSettingsData = {
   canManage: boolean;
 };
 
-type SettingsTab = AgentSettingsSection | 'channels' | 'api' | 'hermes' | 'terminal';
+type SettingsTab = AgentSettingsSection | 'channels' | 'api' | 'profiles' | 'hermes' | 'terminal';
 type InitialSettingsTab = SettingsTab | 'agent';
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -133,7 +140,7 @@ function resolveSettingsTab({
   if (isAgentSettingsSection(requested)) return requested;
   if (requested === 'channels' && supportsChannelSettings) return requested;
   if (requested === 'api' && supportsApiSettings) return requested;
-  if (isHermesRuntime && (requested === 'hermes' || requested === 'terminal')) return requested;
+  if (isHermesRuntime && ['profiles', 'hermes', 'terminal'].includes(requested)) return requested;
   return 'general';
 }
 
@@ -186,6 +193,20 @@ export function AgentSettings({
   });
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(requestedTab);
   const hermesIframeRef = useRef<HTMLIFrameElement>(null);
+  const activeTabRef = useRef<HTMLButtonElement>(null);
+  const navigationRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const navigation = navigationRef.current;
+    const active = activeTabRef.current;
+    if (!navigation || !active) return;
+    const bounds = navigation.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    if (item.left < bounds.left) navigation.scrollLeft -= bounds.left - item.left;
+    else if (item.right > bounds.right) navigation.scrollLeft += item.right - bounds.right;
+    if (item.top < bounds.top) navigation.scrollTop -= bounds.top - item.top;
+    else if (item.bottom > bounds.bottom) navigation.scrollTop += item.bottom - bounds.bottom;
+  }, [settingsTab]);
 
   const navigationGroups: Array<{
     label: string;
@@ -219,6 +240,7 @@ export function AgentSettings({
         ? [{ id: 'channels', label: t('channelSettingsTab'), icon: Route }]
         : [
             ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab'), icon: Code2 }] : []),
+            { id: 'profiles', label: t('hermesProfilesSettingsTab'), icon: Rows3 },
             { id: 'hermes', label: t('hermesSettingsTab'), icon: Container },
             { id: 'terminal', label: t('terminalSettingsTab'), icon: Terminal },
           ],
@@ -279,10 +301,11 @@ export function AgentSettings({
         {marketSetup ? <AgentMarketSetupBanner slug={slug} setup={marketSetup} /> : null}
 
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <aside className="shrink-0 bg-muted/10 lg:w-52">
+          <aside className="min-h-0 shrink-0 bg-muted/10 lg:w-52">
             <nav
+              ref={navigationRef}
               aria-label={t('configurationNavigation')}
-              className="flex min-w-max gap-4 overflow-x-auto p-2 lg:block lg:min-w-0 lg:space-y-5 lg:overflow-visible lg:p-3"
+              className="flex w-full min-w-0 gap-4 overflow-x-auto p-2 lg:block lg:h-full lg:space-y-5 lg:overflow-y-auto lg:p-3"
             >
               {navigationGroups.map((group) => (
                 <div key={group.label} className="flex shrink-0 items-center gap-1.5 lg:block lg:space-y-1">
@@ -294,6 +317,7 @@ export function AgentSettings({
                     return (
                       <button
                         key={id}
+                        ref={active ? activeTabRef : undefined}
                         type="button"
                         aria-current={active ? 'page' : undefined}
                         onClick={() => setSettingsTab(id)}
@@ -363,6 +387,8 @@ export function AgentSettings({
               deployments={settings.deployments}
               skills={settings.skills}
             />
+          ) : settingsTab === 'profiles' && isHermesRuntime ? (
+            <HermesProfilesPanel slug={slug} agentId={agentId} />
           ) : isHermesRuntime && settings.runtime ? (
             <HermesRuntimePanel
               view={settingsTab === 'hermes' ? 'web' : 'terminal'}

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { WorkspaceKnowledge } from '@/components/dashboard/knowledge/WorkspaceKnowledge';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
 
-const surfaceMocks = vi.hoisted(() => ({ sandboxConsole: vi.fn() }));
+const surfaceMocks = vi.hoisted(() => ({ sandboxConsole: vi.fn(), modelDialog: vi.fn() }));
 
 vi.mock('@/lib/agents/actions', () => ({ deleteAgentAction: vi.fn() }));
 vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: vi.fn() }));
@@ -13,7 +14,10 @@ vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
 }));
 
 vi.mock('@/components/dashboard/agents/AgentModelDialog', () => ({
-  AgentModelDialog: ({ trigger }: { trigger: React.ReactNode }) => trigger,
+  AgentModelDialog: (props: { trigger: React.ReactNode }) => {
+    surfaceMocks.modelDialog(props);
+    return props.trigger;
+  },
 }));
 
 vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
@@ -44,6 +48,7 @@ class WorkEventSource {
 
 afterEach(() => {
   WorkEventSource.latest = null;
+  vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -63,11 +68,18 @@ describe('Chat, Work, and Knowledge surfaces', () => {
         id: 'agent-hermes',
         name: 'Hermes researcher',
         supportsWork: true,
-        ready: true,
+        ready: false,
         runtimeKind: 'hermes',
         providerIds: ['provider-hermes'],
         providerLabel: 'OpenAI',
         sandboxes: [{ id: 'sandbox-hermes', name: 'Hermes runtime', kind: 'hermes', deploymentId: 'deployment-hermes', running: false, isDefault: true }],
+      }, {
+        id: 'agent-chat',
+        name: 'Chat only',
+        supportsWork: false,
+        ready: false,
+        runtimeKind: null,
+        sandboxes: [],
       }]}
       sessions={[]}
       selectedWorkSessionId={null}
@@ -94,7 +106,16 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const builderDisclosure = screen.getByRole('button', { name: 'Builder' });
     expect(builderDisclosure).toHaveAttribute('aria-expanded', 'true');
     expect(builderDisclosure.parentElement?.lastElementChild).toBe(builderDisclosure);
-    expect(sidebar.querySelectorAll('[aria-controls^="agent-work-sessions-"]')).toHaveLength(2);
+    expect(sidebar.querySelectorAll('[aria-controls^="agent-work-sessions-"]')).toHaveLength(3);
+    for (const [name, title, tone] of [
+      ['Builder', 'ready', 'bg-emerald-500'],
+      ['Hermes researcher', 'needs model', 'bg-amber-500'],
+      ['Chat only', 'Not connected yet', 'bg-red-500'],
+    ] as const) {
+      const dot = screen.getByRole('button', { name }).parentElement?.querySelector(`[title="${title}"]`);
+      expect(dot?.parentElement).toHaveClass('relative');
+      expect(dot).toHaveClass('absolute', 'right-0', 'top-0', tone);
+    }
     expect(screen.getByText('No work sessions yet.')).toBeInTheDocument();
     fireEvent.click(builderDisclosure);
     expect(screen.queryByText('No work sessions yet.')).not.toBeInTheDocument();
@@ -115,10 +136,105 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete agent' });
     expect(deleteDialog).toHaveTextContent('Delete this agent and all its conversations?');
     expect(deleteDialog.querySelector('input[name="returnTo"]')).toHaveValue('/app/acme/work');
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thinking effort' })).not.toBeInTheDocument();
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
     expect(screen.queryByText('Run budget')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+  });
+
+  it('shows Cherry-style thinking effort control for Hermes Work', async () => {
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{
+        id: 'agent-hermes',
+        name: 'Hermes researcher',
+        supportsWork: true,
+        ready: true,
+        runtimeKind: 'hermes',
+        providerIds: ['provider-hermes'],
+        providerLabel: 'OpenAI',
+        sandboxes: [{ id: 'sandbox-hermes', name: 'Hermes runtime', kind: 'hermes', deploymentId: 'deployment-hermes', running: true, isDefault: true }],
+      }]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+
+    const effort = screen.getByRole('button', { name: 'Thinking effort' });
+    expect(effort).toHaveTextContent('Default');
+    await userEvent.click(effort);
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking effort' }), { target: { value: '4' } });
+    expect(effort).toHaveTextContent('Extra high');
+  });
+
+  it('sends a draft Hermes model with the first Work task', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: 'stop after capture' }, { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{
+        id: 'agent-hermes',
+        name: 'Hermes researcher',
+        supportsWork: true,
+        ready: false,
+        runtimeKind: 'hermes',
+        providerIds: [],
+        providerLabel: 'OpenAI',
+        sandboxes: [{ id: 'sandbox-hermes', name: 'Hermes runtime', kind: 'hermes', deploymentId: 'deployment-hermes', running: true, isDefault: true }],
+      }]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+
+    const dialogProps = surfaceMocks.modelDialog.mock.calls.at(-1)?.[0] as {
+      hermesConversation: { id: string | null; editable: boolean };
+      onHermesDraftChange: (selection: { profile: string; provider: string | null; model: string | null }) => void;
+    };
+    expect(dialogProps.hermesConversation).toMatchObject({ id: null, editable: true });
+    fireEvent.change(screen.getByPlaceholderText('What should the Agent accomplish?'), { target: { value: 'Research it' } });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    act(() => dialogProps.onHermesDraftChange({ profile: 'research', provider: 'openrouter', model: 'model-b' }));
+    expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('research · model-b');
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/work-sessions', expect.objectContaining({ method: 'POST' })));
+    const request = fetchMock.mock.calls.find(([url]) => url === '/api/v1/work-sessions')?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      hermesProfile: 'research',
+      hermesProvider: 'openrouter',
+      hermesModel: 'model-b',
+    });
+  });
+
+  it('keeps legacy Hermes Work creation unchanged until a model is explicitly selected', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: 'stop after capture' }, { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{
+        id: 'agent-hermes',
+        name: 'Hermes researcher',
+        supportsWork: true,
+        ready: true,
+        runtimeKind: 'hermes',
+        providerIds: ['provider-hermes'],
+        sandboxes: [{ id: 'sandbox-hermes', name: 'Hermes runtime', kind: 'hermes', deploymentId: 'deployment-hermes', running: true, isDefault: true }],
+      }]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+
+    fireEvent.change(screen.getByPlaceholderText('What should the Agent accomplish?'), { target: { value: 'Run it' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/work-sessions', expect.anything()));
+    const request = fetchMock.mock.calls.find(([url]) => url === '/api/v1/work-sessions')?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    expect(body).not.toHaveProperty('hermesProfile');
+    expect(body).not.toHaveProperty('hermesProvider');
+    expect(body).not.toHaveProperty('hermesModel');
   });
 
   it('inserts an attached MCP prompt into the Work composer', async () => {
