@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/asharca/ToolPlane/compare/v0.22.1...v0.23.0) (2026-08-31)
+
+
+### Features
+
+* **agents:** add Hermes conversation profiles ([#95](https://github.com/asharca/ToolPlane/issues/95)) ([9b10903](https://github.com/asharca/ToolPlane/commit/9b10903bac5a6d6fa813827a2b6709c664b15834))
+
+
+### Bug Fixes
+
+* **deploy:** pin pgvector to trixie ([3661fe3](https://github.com/asharca/ToolPlane/commit/3661fe32689d176b628ada808047801e96935ba5))
+
 ## [0.22.1](https://github.com/asharca/ToolPlane/compare/v0.22.0...v0.22.1) (2026-08-29)
 
 
