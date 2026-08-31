@@ -54,7 +54,7 @@ const HERMES_SYNC_CONTAINER_RESOURCE_LIMITS = [
   '--cpus', '2',
 ];
 const TOOLPLANE_SKILL_ROOT = 'toolplane-agent';
-const HERMES_CONFIG_VERSION = 7;
+const HERMES_CONFIG_VERSION = 8;
 const DASHBOARD_READY_CACHE_MS = 15_000;
 const BLOCKED_SANDBOX_LIFECYCLE_STATES = new Set([
   'copying',
@@ -78,27 +78,31 @@ except (ImportError, AttributeError):
     raise SystemExit(0)
 
 
-path = pathlib.Path("/opt/data/config.yaml")
-if not path.exists():
-    raise SystemExit(0)
-value = yaml.safe_load(path.read_text(encoding="utf-8"))
-if not isinstance(value, dict) or "_config_version" not in value:
-    raise SystemExit(0)
-raw_version = value.get("_config_version")
-try:
-    version = 0 if isinstance(raw_version, bool) else max(int(raw_version), 0)
-except (TypeError, ValueError):
-    version = 0
-if version < SUPPORT_FLOOR_VERSION:
-    print(
-        "ToolPlane cannot safely sync this Hermes volume because config.yaml "
-        f"has _config_version {version}, below Hermes' supported migration floor "
-        f"{SUPPORT_FLOOR_VERSION}. Back up /opt/data/config.yaml, review the Hermes "
-        "changelog, and migrate it manually before syncing; the running container "
-        "and volume were left unchanged.",
-        file=sys.stderr,
-    )
-    raise SystemExit(78)
+paths = [pathlib.Path(value) for value in sys.argv[1:]]
+if not paths:
+    paths = [pathlib.Path("/opt/data/config.yaml")]
+    paths.extend(pathlib.Path("/opt/data/profiles").glob("*/config.yaml"))
+for path in paths:
+    if not path.exists():
+        continue
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or "_config_version" not in value:
+        continue
+    raw_version = value.get("_config_version")
+    try:
+        version = 0 if isinstance(raw_version, bool) else max(int(raw_version), 0)
+    except (TypeError, ValueError):
+        version = 0
+    if version < SUPPORT_FLOOR_VERSION:
+        print(
+            f"ToolPlane cannot safely sync {path} because it has _config_version "
+            f"{version}, below Hermes' supported migration floor "
+            f"{SUPPORT_FLOOR_VERSION}. Back it up, review the Hermes changelog, "
+            "and migrate it manually before syncing; the running container and "
+            "volume were left unchanged.",
+            file=sys.stderr,
+        )
+        raise SystemExit(78)
 `;
 const CONFIG_MERGE_SCRIPT = String.raw`import os
 import pathlib
@@ -109,9 +113,12 @@ import yaml
 
 
 def load_mapping(path):
-    if not path.exists():
-        return {}
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if str(path) == "-":
+        value = yaml.safe_load(sys.stdin.read())
+    else:
+        if not path.exists():
+            return {}
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -684,14 +691,11 @@ async function validateHermesConfigCompatibility(params: {
   ], undefined, DOCKER_TIMEOUT_MS, params.signal);
 }
 
-async function buildProjection(
+function renderManagedHermesConfig(
   agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
-): Promise<{ directory: string; configHash: string }> {
+): string {
   if (!agent.runtime) throw new Error('Hermes runtime is not configured.');
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'toolplane-hermes-'));
-  const hash = createHash('sha256');
-  const resolved = resolveAgentTools(agent);
-  const config = renderHermesConfig({
+  return renderHermesConfig({
     maxSteps: agent.maxSteps,
     providers: agent.modelProviders.map(({ provider }) => ({
       id: provider.id,
@@ -703,21 +707,31 @@ async function buildProjection(
     })),
     mcpUrl: hermesRuntimeMcpUrl(agent.runtime.id),
     mcpToken: deriveHermesRuntimeToken(agent.runtime.id, 'toolplane-mcp'),
-    // Normal Hermes Agents own their prompt inside the Hermes volume. Only a
-    // hidden public Endpoint runtime receives ToolPlane's immutable revision
-    // prompt, so a source Agent's mutable/legacy field can never bleed across
-    // the isolation boundary.
     systemPrompt: agent.publicRuntimeAllocation?.revision.systemPrompt,
     publicRuntime: Boolean(agent.publicRuntimeAllocation),
   });
+}
+
+async function buildProjection(
+  agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>,
+): Promise<{ directory: string; configHash: string }> {
+  if (!agent.runtime) throw new Error('Hermes runtime is not configured.');
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'toolplane-hermes-'));
+  const hash = createHash('sha256');
+  const resolved = resolveAgentTools(agent);
+  const config = renderManagedHermesConfig(agent);
   const runtimeEnvironment = readSandboxEnv(agent.runtime.sandbox.config);
   const projectedEnvironment = {
     ...runtimeEnvironment,
     API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
   };
   const envPayload = renderHermesEnvPayload(projectedEnvironment);
+  const profileEnvPayload = renderHermesEnvPayload({
+    API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+  });
   await writeFile(path.join(directory, 'config.yaml'), config, { mode: 0o600 });
   await writeFile(path.join(directory, 'env.json'), envPayload, { mode: 0o600 });
+  await writeFile(path.join(directory, 'profile-env.json'), profileEnvPayload, { mode: 0o600 });
   await writeFile(
     path.join(directory, '.toolplane-merge-config.py'),
     CONFIG_MERGE_SCRIPT,
@@ -733,6 +747,7 @@ async function buildProjection(
   // volume owns them afterwards, so they must not keep invalidating the
   // ToolPlane projection fingerprint.
   hash.update(`env\0${renderHermesEnvPayload(withoutHermesChannelEnv(projectedEnvironment))}\0`);
+  hash.update(`profile-env\0${profileEnvPayload}\0`);
   hash.update(`mcp-bindings\0${renderHermesMcpBindingFingerprint(resolved.deploymentIds)}\0`);
 
   const usedNames = new Set<string>();
@@ -749,6 +764,54 @@ async function buildProjection(
   );
   hash.update(bundle);
   return { directory, configHash: hash.digest('hex') };
+}
+
+export async function syncHermesProfileProjection(
+  workspaceId: string,
+  agentId: string,
+  profile: string,
+  writeLease: HermesRuntimeWriteLease,
+): Promise<boolean> {
+  if (profile === 'default') return true;
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) return false;
+  const projected = await runHermesDashboardMutation(
+    workspaceId,
+    agentId,
+    writeLease,
+    async (ready) => {
+      if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
+      const agent = await getAgent(workspaceId, agentId);
+      if (!agent?.runtime || agent.runtime.kind !== HERMES_RUNTIME_KIND) return false;
+      const profileDirectory = `/opt/data/profiles/${profile}`;
+      const configPath = `${profileDirectory}/config.yaml`;
+      const envPath = `${profileDirectory}/.env`;
+      const container = sandboxContainerName(agent.runtime.sandboxId);
+      try {
+        await runDocker(['exec', container, 'test', '-d', profileDirectory], undefined, 30_000);
+      } catch {
+        throw new Error('Hermes profile does not exist.');
+      }
+      await runDocker(
+        ['exec', '--user', 'hermes', container, '/opt/hermes/.venv/bin/python', '-c', CONFIG_COMPATIBILITY_SCRIPT, configPath],
+        undefined,
+        30_000,
+      );
+      await runDocker(
+        ['exec', '--user', 'hermes', '-i', container, '/opt/hermes/.venv/bin/python', '-c', CONFIG_MERGE_SCRIPT, configPath, '-'],
+        renderManagedHermesConfig(agent),
+        30_000,
+      );
+      await runDocker(
+        ['exec', '--user', 'hermes', '-i', container, '/opt/hermes/.venv/bin/python', '-c', HERMES_ENV_MERGE_SCRIPT, envPath, '-'],
+        renderHermesEnvPayload({
+          API_SERVER_KEY: deriveHermesRuntimeToken(agent.runtime.id, 'hermes-api'),
+        }),
+        30_000,
+      );
+      return true;
+    },
+  );
+  return projected === true;
 }
 
 async function installProjection(params: {
@@ -772,6 +835,7 @@ async function installProjection(params: {
     '/opt/data/hooks',
     '/opt/data/image_cache',
     '/opt/data/audio_cache',
+    '/opt/data/profiles',
     '/opt/data/skills',
     '/opt/data/skill-bundles',
   ].join(' ');
@@ -787,6 +851,7 @@ async function installProjection(params: {
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py /opt/data/config.yaml /tmp/toolplane/config.yaml',
     '/opt/hermes/.venv/bin/python -c "from hermes_cli import config; migrate = getattr(config, \'migrate_config\', None); migrate(interactive=False, quiet=True) if callable(migrate) else None"',
     '/opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py /opt/data/.env /tmp/toolplane/env.json',
+    'for profile in /opt/data/profiles/*; do [ -d "$profile" ] || continue; name=${profile##*/}; [ ${#name} -le 64 ] || continue; case "$name" in [a-z0-9]*) ;; *) continue ;; esac; case "$name" in *[!a-z0-9_-]*) continue ;; esac; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-config.py "$profile/config.yaml" /tmp/toolplane/config.yaml; /opt/hermes/.venv/bin/python /tmp/toolplane/.toolplane-merge-env.py "$profile/.env" /tmp/toolplane/profile-env.json; done',
     `if id hermes >/dev/null 2>&1; then for path in ${hermesOwnedPaths}; do [ ! -e "$path" ] || chown -R "$(id -u hermes):$(id -g hermes)" "$path"; done; chown -R "$(id -u hermes):$(id -g hermes)" /opt/data/workspace 2>/dev/null || true; fi`,
   ].join(' && ');
   await runDocker([
@@ -1022,6 +1087,8 @@ export type HermesRuntimeMaintenanceContext = {
   deploymentId: string;
   volumeName: string;
   wasActive: boolean;
+  /** Hash-check and synchronize ToolPlane-managed files before reopening writes. */
+  requestSync: () => void;
   /** Keep an unsafe restore stopped; the caller persists its recovery state. */
   preventResume: () => void;
 };
@@ -1131,6 +1198,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
   const originalDeploymentStatus = deployment.status;
   const originalRuntimeStatus = runtime.status;
   let resumeAllowed = true;
+  let syncAfter = false;
   const context: HermesRuntimeMaintenanceContext = {
     agentId,
     runtimeId: runtime.id,
@@ -1138,6 +1206,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
     deploymentId: deployment.id,
     volumeName: sandboxVolumeName(runtime.sandboxId),
     wasActive,
+    requestSync: () => { syncAfter = true; },
     preventResume: () => { resumeAllowed = false; },
   };
   let maintenancePrepared = false;
@@ -1197,8 +1266,10 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
       if (invalidated.count !== 1) {
         throw new Error('The Hermes runtime changed before its restored volume could be projected.');
       }
-      // A failed projection has already persisted a safe error state. Do not
-      // blindly launch the restored container from the finally block.
+    }
+    if (options.reprojectAfter || syncAfter) {
+      // A failed sync has already persisted a safe error state. Do not blindly
+      // launch the old container from the finally block.
       resumeAllowed = false;
       const synced = await syncHermesRuntimeUnlocked(workspaceId, agentId, {
         start: wasActive,

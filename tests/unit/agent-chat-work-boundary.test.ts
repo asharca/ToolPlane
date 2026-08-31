@@ -5,27 +5,44 @@ const mocks = vi.hoisted(() => ({
   resolveRequestUser: vi.fn(),
   getAgentForRequest: vi.fn(),
   conversationFindFirst: vi.fn(),
+  conversationUpdateMany: vi.fn(),
+  appendMessage: vi.fn(),
+  ensureConversationRuntimeSession: vi.fn(),
+  writeHermesChatStream: vi.fn(),
+  acquireHermesRuntimeWriteLease: vi.fn(),
+  hermesAssistantSegments: vi.fn(),
+  transaction: vi.fn(),
+  messageCreate: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
 vi.mock('@/lib/agents/queries', () => ({ getAgentForRequest: mocks.getAgentForRequest }));
 vi.mock('@/lib/db', () => ({
-  db: { conversation: { findFirst: mocks.conversationFindFirst } },
+  db: {
+    conversation: {
+      findFirst: mocks.conversationFindFirst,
+      updateMany: mocks.conversationUpdateMany,
+    },
+    message: { create: mocks.messageCreate },
+    $transaction: mocks.transaction,
+  },
 }));
 vi.mock('@/lib/agents/mutations', () => ({
-  appendMessage: vi.fn(),
-  ensureConversationRuntimeSession: vi.fn(),
+  appendMessage: mocks.appendMessage,
+  ensureConversationRuntimeSession: mocks.ensureConversationRuntimeSession,
 }));
 vi.mock('@/lib/agents/resolve', () => ({ resolveAgentTools: vi.fn() }));
 vi.mock('@/lib/agents/system-prompt', () => ({ assembleSystemPrompt: vi.fn() }));
 vi.mock('@/lib/agents/run', () => ({ buildAgentToolSet: vi.fn() }));
 vi.mock('@/lib/agents/native', () => ({ uiMessagesToPi: vi.fn(), runNativeAgent: vi.fn() }));
-vi.mock('@/lib/agents/hermes/client', () => ({ writeHermesChatStream: vi.fn() }));
+vi.mock('@/lib/agents/hermes/client', () => ({ writeHermesChatStream: mocks.writeHermesChatStream }));
 vi.mock('@/lib/agents/hermes/runtime', () => ({
-  acquireHermesRuntimeWriteLease: vi.fn(),
+  acquireHermesRuntimeWriteLease: mocks.acquireHermesRuntimeWriteLease,
   HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR: 'Runtime busy',
 }));
-vi.mock('@/lib/agents/hermes/message-segments', () => ({ hermesAssistantSegments: vi.fn() }));
+vi.mock('@/lib/agents/hermes/message-segments', () => ({
+  hermesAssistantSegments: mocks.hermesAssistantSegments,
+}));
 
 import { POST } from '@/app/api/v1/agents/[agentId]/chat/route';
 
@@ -52,6 +69,159 @@ describe('Chat and Work execution boundary', () => {
       model: 'model-1',
       modelProviders: [],
     });
+    mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('persists and snapshots the selected reasoning effort for Hermes', async () => {
+    const release = vi.fn();
+    mocks.getAgentForRequest.mockResolvedValue({
+      id: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeKind: 'hermes',
+      runtime: { id: 'runtime-1', kind: 'hermes' },
+      provider: null,
+      model: null,
+      modelProviders: [{ provider: { id: 'provider-1' } }],
+    });
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: 'conversation-1',
+      title: null,
+      hermesProfile: null,
+      hermesProvider: null,
+      hermesModel: null,
+      reasoningEffort: null,
+      publicApiConversation: null,
+      workSession: null,
+    });
+    mocks.ensureConversationRuntimeSession.mockResolvedValue({
+      runtimeSessionId: 'conversation-1',
+      runtimeSessionKey: 'session-key',
+    });
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
+    mocks.writeHermesChatStream.mockResolvedValue({ runtimeSessionId: 'conversation-1' });
+    mocks.hermesAssistantSegments.mockReturnValue([]);
+
+    const response = await POST(request({
+      conversationId: 'conversation-1',
+      reasoningEffort: 'high',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Think carefully' }] }],
+    }), context);
+    await response.text();
+
+    expect(mocks.conversationUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'conversation-1',
+        agentId: 'agent-1',
+        agent: { workspaceId: 'workspace-1' },
+      },
+      data: { reasoningEffort: 'high' },
+    });
+    expect(mocks.writeHermesChatStream).toHaveBeenCalledWith(expect.objectContaining({
+      reasoningEffort: 'high',
+    }));
+  });
+
+  it('holds the Hermes write lease until a cancelled turn actually exits', async () => {
+    const release = vi.fn();
+    let finishTurn!: (value: { runtimeSessionId: string }) => void;
+    const turn = new Promise<{ runtimeSessionId: string }>((resolve) => { finishTurn = resolve; });
+    mocks.getAgentForRequest.mockResolvedValue({
+      id: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeKind: 'hermes',
+      runtime: { id: 'runtime-1', kind: 'hermes' },
+      provider: null,
+      model: null,
+      modelProviders: [{ provider: { id: 'provider-1' } }],
+    });
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: 'conversation-1',
+      title: null,
+      hermesProfile: null,
+      hermesProvider: null,
+      hermesModel: null,
+      publicApiConversation: null,
+      workSession: null,
+    });
+    mocks.ensureConversationRuntimeSession.mockResolvedValue({
+      runtimeSessionId: 'conversation-1',
+      runtimeSessionKey: 'session-key',
+    });
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
+    mocks.writeHermesChatStream.mockReturnValue(turn);
+
+    const response = await POST(request({
+      conversationId: 'conversation-1',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Hello' }] }],
+    }), context);
+    const cancellation = response.body!.cancel();
+    await vi.waitFor(() => expect(mocks.writeHermesChatStream).toHaveBeenCalled());
+
+    expect(release).not.toHaveBeenCalled();
+    expect(mocks.writeHermesChatStream).toHaveBeenCalledWith(expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+    finishTurn({ runtimeSessionId: 'conversation-1' });
+    await cancellation;
+
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists Hermes compression rollover before completing a successful turn', async () => {
+    const release = vi.fn();
+    let finishPersistence!: () => void;
+    const persistence = new Promise<void>((resolve) => { finishPersistence = resolve; });
+    mocks.getAgentForRequest.mockResolvedValue({
+      id: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeKind: 'hermes',
+      runtime: { id: 'runtime-1', kind: 'hermes' },
+      provider: null,
+      model: null,
+      modelProviders: [{ provider: { id: 'provider-1' } }],
+    });
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: 'conversation-1',
+      title: null,
+      hermesProfile: null,
+      hermesProvider: null,
+      hermesModel: null,
+      publicApiConversation: null,
+      workSession: null,
+    });
+    mocks.ensureConversationRuntimeSession.mockResolvedValue({
+      runtimeSessionId: 'conversation-1',
+      runtimeSessionKey: 'session-key',
+    });
+    mocks.acquireHermesRuntimeWriteLease.mockReturnValue({ release });
+    mocks.writeHermesChatStream.mockResolvedValue({ runtimeSessionId: 'conversation-child' });
+    mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.hermesAssistantSegments.mockReturnValue([]);
+    mocks.appendMessage
+      .mockResolvedValueOnce(undefined)
+      .mockReturnValueOnce(persistence);
+
+    const response = await POST(request({
+      conversationId: 'conversation-1',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Hello' }] }],
+    }), context);
+    const body = response.text();
+
+    await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledTimes(2));
+    expect(release).not.toHaveBeenCalled();
+    finishPersistence();
+    await body;
+
+    expect(mocks.conversationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 'conversation-1',
+        agentId: 'agent-1',
+        runtimeSessionId: 'conversation-1',
+      }),
+      data: { runtimeSessionId: 'conversation-child' },
+    });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('rejects the legacy workSessionId transport', async () => {

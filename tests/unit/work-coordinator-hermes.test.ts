@@ -83,6 +83,10 @@ describe('Hermes Work coordinator', () => {
         deployment: { status: 'stopped' },
       },
       conversation: {
+        hermesProfile: 'research',
+        hermesProvider: 'openrouter',
+        hermesModel: 'model-a',
+        reasoningEffort: 'high',
         messages: [{
           id: 'message-user',
           role: 'user',
@@ -141,6 +145,10 @@ describe('Hermes Work coordinator', () => {
       task: 'Inspect the repository',
       workingDirectory: '.',
       sessionId: 'conversation-1',
+      profile: 'research',
+      provider: 'openrouter',
+      model: 'model-a',
+      reasoningEffort: 'high',
     }));
     expect(mocks.messageCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({

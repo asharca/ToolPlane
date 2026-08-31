@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildModel, providerModelIds } from '@/lib/agents/model';
+import { buildModel, modelSupportsReasoning, providerModelIds } from '@/lib/agents/model';
 
 const base = { name: 'P', baseUrl: 'https://example.com/v1', apiKey: 'k' };
 
@@ -34,6 +34,11 @@ describe('buildModel', () => {
       api: 'google-generative-ai',
       baseUrl: 'https://gateway.example/v1',
     });
+  });
+
+  it('inherits known reasoning support for compatible custom providers', () => {
+    expect(modelSupportsReasoning({ ...base, format: 'openai-responses' }, 'gpt-5.6-terra')).toBe(true);
+    expect(modelSupportsReasoning({ ...base, format: 'openai-responses' }, 'gpt-image-1')).toBe(false);
   });
 
   it('sends OpenAI Responses requests through Pi to the responses endpoint', async () => {

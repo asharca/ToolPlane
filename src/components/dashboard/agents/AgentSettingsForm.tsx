@@ -49,6 +49,7 @@ import {
   type ModelProviderOption,
 } from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 type Provider = ModelProviderOption & { format: string };
 type SaveStatus = 'idle' | 'dirty';
@@ -801,9 +802,9 @@ export function AgentSettingsForm({
           {!singleSandboxRuntime && selectedSandboxIds.size ? (
             <label className="mt-3 block text-xs text-muted-foreground">
               <span className="mb-1 block">Default Work sandbox</span>
-              <select name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
+              <NativeSelect name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
                 {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxOptions.find((item) => item.id === id)?.label ?? id}</option>)}
-              </select>
+              </NativeSelect>
             </label>
           ) : null}
           {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}

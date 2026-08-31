@@ -142,6 +142,8 @@ describe('WorkSession coordinator', () => {
       agentId: 'agent-1',
       sandboxId: 'sandbox-hermes',
       task: 'Build it',
+      reasoningEffort: 'high',
+      hermesSelection: { profile: 'research', provider: 'openrouter', model: 'model-b' },
     })).resolves.toMatchObject({
       sandboxId: 'sandbox-hermes',
       runtimeKind: 'hermes',
@@ -153,6 +155,16 @@ describe('WorkSession coordinator', () => {
         runtimeSnapshot: expect.objectContaining({ runtimeId: 'runtime-1', sandboxId: 'sandbox-hermes' }),
       }),
     }));
+    expect(mocks.conversationCreate).toHaveBeenCalledWith({
+      data: {
+        agentId: 'agent-1',
+        title: 'Build it',
+        reasoningEffort: 'high',
+        hermesProfile: 'research',
+        hermesProvider: 'openrouter',
+        hermesModel: 'model-b',
+      },
+    });
   });
 
   it('rejects a sandbox that is not the Hermes Agent runtime sandbox', async () => {
@@ -248,6 +260,7 @@ describe('WorkSession coordinator', () => {
       'workspace-1',
       'work-1',
       '  Use PostgreSQL  ',
+      { reasoningEffort: 'high' },
     )).resolves.toEqual({ ok: true, changed: true, status: 'queued' });
     expect(mocks.workUpdateMany).toHaveBeenCalledWith({
       where: { id: 'work-1', workspaceId: 'workspace-1', status: 'waiting_user' },
@@ -268,6 +281,10 @@ describe('WorkSession coordinator', () => {
         parts: [{ type: 'text', text: 'Use PostgreSQL' }],
         textCharacters: 14,
       },
+    });
+    expect(mocks.conversationUpdate).toHaveBeenCalledWith({
+      where: { id: 'conversation-1' },
+      data: { reasoningEffort: 'high' },
     });
   });
 

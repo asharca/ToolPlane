@@ -5,17 +5,19 @@ import type { ComponentProps } from 'react';
 import { WorkspaceChat } from '@/components/dashboard/agents/WorkspaceChat';
 
 vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
-  AgentConversation: ({ agentId, activeConversationId, attachmentUploadUrl, ensureConversation, onConversationChanged }: {
+  AgentConversation: ({ agentId, activeConversationId, attachmentUploadUrl, ensureConversation, onBusyChange, onConversationChanged }: {
     agentId: string;
     activeConversationId: string | null;
     attachmentUploadUrl?: string;
     ensureConversation: () => Promise<string>;
+    onBusyChange?: (busy: boolean) => void;
     onConversationChanged?: () => void | Promise<void>;
   }) => (
     <div>
       <div>{`${agentId}:${activeConversationId}`}</div>
       {attachmentUploadUrl ? <div>{attachmentUploadUrl}</div> : null}
       <button type="button" onClick={() => void ensureConversation()}>Ensure conversation</button>
+      <button type="button" onClick={() => onBusyChange?.(true)}>Set chat busy</button>
       <button type="button" onClick={() => void onConversationChanged?.()}>Finish conversation</button>
     </div>
   ),
@@ -30,6 +32,10 @@ const agentActions = vi.hoisted(() => ({
   }),
   renameConversationAction: vi.fn(),
   updateAgentModelAction: vi.fn(async (...args: [unknown, FormData]) => {
+    void args;
+    return {};
+  }),
+  updateHermesConversationSelectionAction: vi.fn(async (...args: [unknown, FormData]) => {
     void args;
     return {};
   }),
@@ -139,14 +145,48 @@ describe('WorkspaceChat', () => {
     expect(formData.get('model')).toBe('claude-sonnet-4');
   });
 
-  it('keeps Hermes provider multi-select in the model dialog', () => {
+  it('selects a Hermes profile and conversation model instead of changing agent providers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/hermes/profiles')) {
+        return Response.json({
+          profiles: [{ name: 'default', isDefault: true, provider: 'openrouter', model: 'model-a', description: '' }],
+          profileChatSupported: true,
+        });
+      }
+      return Response.json({
+        profile: 'default',
+        provider: 'openrouter',
+        model: 'model-a',
+        providers: [{ id: 'openrouter', name: 'OpenRouter', models: ['model-a', 'model-b'] }],
+      });
+    }));
     renderChat([], 'agent-2');
 
     fireEvent.click(screen.getByRole('button', { name: 'Model configuration' }));
     const dialog = screen.getByRole('dialog', { name: 'Model configuration' });
-    expect(within(dialog).getByRole('checkbox', { name: /OpenAI/ })).not.toBeChecked();
-    expect(within(dialog).getByRole('checkbox', { name: /Anthropic/ })).not.toBeChecked();
+    expect(await within(dialog).findByRole('combobox', { name: 'Hermes profile' })).toHaveValue('default');
+    const useDefault = within(dialog).getByRole('checkbox', { name: /Use profile default model/ });
+    expect(useDefault).toBeChecked();
+    fireEvent.click(useDefault);
+    fireEvent.click(await within(dialog).findByRole('button', { name: /model-a/ }));
+    fireEvent.click(await screen.findByRole('option', { name: 'model-b' }));
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(agentActions.updateHermesConversationSelectionAction).toHaveBeenCalledTimes(1));
+    const formData = agentActions.updateHermesConversationSelectionAction.mock.calls[0][1] as FormData;
+    expect(formData.get('profile')).toBe('default');
+    expect(formData.get('provider')).toBe('openrouter');
+    expect(formData.get('model')).toBe('model-b');
+  });
+
+  it('disables conversation model changes while a reply is streaming', () => {
+    renderChat([], 'agent-2');
+    const modelButton = screen.getByRole('button', { name: 'Model configuration' });
+    expect(modelButton).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Set chat busy' }));
+    expect(modelButton).toBeDisabled();
   });
 
   it('filters nested conversations', () => {

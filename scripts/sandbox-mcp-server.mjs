@@ -25,6 +25,7 @@ const CONTAINER = `toolplane-sandbox-${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_
 const USER_ENV = parseEnvJson(process.env.SANDBOX_ENV_JSON || '{}');
 const HERMES_RUNTIME_ID = process.env.HERMES_RUNTIME_ID || '';
 const HERMES_RUNTIME_API_KEY = process.env.HERMES_RUNTIME_API_KEY || '';
+const HERMES_RUNTIME_DASHBOARD_TOKEN = process.env.HERMES_RUNTIME_DASHBOARD_TOKEN || '';
 const HERMES_RUNTIME_MODEL_NAME = process.env.HERMES_RUNTIME_MODEL_NAME || 'hermes-agent';
 const WORKSPACE_ROOT = KIND === 'hermes' ? '/opt/data/workspace' : '/workspace';
 const PROTOCOL_VERSION = '2025-06-18';
@@ -483,6 +484,7 @@ function hasExpectedDockerSandboxCaps(info) {
     'HERMES_DASHBOARD=1',
     'HERMES_DASHBOARD_HOST=127.0.0.1',
     'HERMES_DASHBOARD_PORT=9119',
+    `HERMES_DASHBOARD_SESSION_TOKEN=${HERMES_RUNTIME_DASHBOARD_TOKEN}`,
     'GATEWAY_MULTIPLEX_PROFILES=1',
     HERMES_TTS_WRITE_SAFE_ROOT_ENV,
   ].every((entry) => containerEnv.has(entry));
@@ -552,6 +554,8 @@ function dockerCreateArgs() {
       'HERMES_DASHBOARD_HOST=127.0.0.1',
       '--env',
       'HERMES_DASHBOARD_PORT=9119',
+      '--env',
+      `HERMES_DASHBOARD_SESSION_TOKEN=${HERMES_RUNTIME_DASHBOARD_TOKEN}`,
       '--env',
       'HERMES_ACCEPT_HOOKS=1',
       // ToolPlane exposes one fixed gateway API port. A multiplexed default
@@ -1222,9 +1226,19 @@ function hermesProxyPath(req) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   if (!url.pathname.startsWith('/hermes/')) return null;
   const path = url.pathname.slice('/hermes'.length);
-  const sessionMessages = /^\/api\/sessions\/[^/]+\/messages$/.test(path);
-  const sessionDelete = req.method === 'DELETE' && /^\/api\/sessions\/[^/]+$/.test(path);
-  if (!(path === '/health' || path === '/health/detailed' || path.startsWith('/v1/') || sessionMessages || sessionDelete)) {
+  const profilePrefix = '(?:/p/[a-z0-9][a-z0-9_-]{0,63})?';
+  const chatApi = path.startsWith('/v1/')
+    || /^\/p\/[a-z0-9][a-z0-9_-]{0,63}\/v1\/(?:chat\/completions|capabilities)$/.test(path);
+  const sessionCreate = req.method === 'POST'
+    && new RegExp(`^${profilePrefix}/api/sessions$`).test(path);
+  const sessionChatStream = req.method === 'POST'
+    && new RegExp(`^${profilePrefix}/api/sessions/[^/]+/chat/stream$`).test(path);
+  const sessionMessages = req.method === 'GET'
+    && new RegExp(`^${profilePrefix}/api/sessions/[^/]+/messages$`).test(path);
+  const sessionDelete = req.method === 'DELETE'
+    && new RegExp(`^${profilePrefix}/api/sessions/[^/]+$`).test(path);
+  if (!(path === '/health' || path === '/health/detailed' || chatApi
+    || sessionCreate || sessionChatStream || sessionMessages || sessionDelete)) {
     return false;
   }
   return `${path}${url.search}`;

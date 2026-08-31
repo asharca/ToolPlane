@@ -124,7 +124,7 @@ export function parseMcpToolCatalogResult(value: unknown): McpToolCatalogResult 
     if (source.title !== undefined && text(source.title, MAX_NAME_LENGTH) !== source.title) {
       return { ok: false, tools: [] };
     }
-    if (source.description !== undefined && text(source.description, MAX_DESCRIPTION_LENGTH) !== source.description) {
+    if (source.description !== undefined && text(source.description, MAX_DESCRIPTION_LENGTH) === undefined) {
       return { ok: false, tools: [] };
     }
     if (!validLiveAnnotations(source.annotations)) return { ok: false, tools: [] };

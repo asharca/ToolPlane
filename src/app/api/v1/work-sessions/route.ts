@@ -1,5 +1,9 @@
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
+import { AgentConfigurationError, type HermesConversationSelection } from '@/lib/agents/mutations';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
+import { prepareHermesConversationSelection } from '@/lib/agents/hermes/conversation-selection';
+import { HermesProfileError } from '@/lib/agents/hermes/profiles';
 import { createWorkSession, listWorkSessions, normalizeWorkDirectory } from '@/lib/work/sessions';
 import { kickWorkCoordinator } from '@/lib/work/coordinator';
 import { startWorkOutput } from '@/lib/work/run-control';
@@ -31,6 +35,10 @@ export async function POST(req: Request) {
     maxSteps?: unknown;
     workingDirectory?: unknown;
     attachmentIds?: unknown;
+    reasoningEffort?: unknown;
+    hermesProfile?: unknown;
+    hermesProvider?: unknown;
+    hermesModel?: unknown;
   };
   try {
     body = await req.json();
@@ -57,24 +65,75 @@ export async function POST(req: Request) {
   )) {
     return Response.json({ error: 'Invalid maxSteps' }, { status: 400 });
   }
+  const reasoningEffort = body.reasoningEffort === undefined
+    ? undefined
+    : normalizeReasoningEffort(body.reasoningEffort);
+  if (body.reasoningEffort !== undefined && !reasoningEffort) {
+    return Response.json({ error: 'Invalid reasoningEffort' }, { status: 400 });
+  }
   const workingDirectory = normalizeWorkDirectory(body.workingDirectory ?? '.');
   if (!workingDirectory) {
     return Response.json({ error: 'Invalid workingDirectory' }, { status: 400 });
   }
   const agent = await getAgentForRequest(body.agentId, user.id);
   if (!agent) return Response.json({ error: 'Agent not found' }, { status: 404 });
+  const hasHermesSelection = body.hermesProfile !== undefined
+    || body.hermesProvider !== undefined
+    || body.hermesModel !== undefined;
+  let requestedHermesSelection: HermesConversationSelection | undefined;
+  if (hasHermesSelection) {
+    const provider = body.hermesProvider == null
+      ? null
+      : typeof body.hermesProvider === 'string' ? body.hermesProvider.trim() || null : undefined;
+    const model = body.hermesModel == null
+      ? null
+      : typeof body.hermesModel === 'string' ? body.hermesModel.trim() || null : undefined;
+    if (
+      agent.runtimeKind !== 'hermes'
+      || agent.runtime?.kind !== 'hermes'
+      || agent.runtime.sandbox.workspaceId !== agent.workspaceId
+      || agent.runtime.sandbox.kind !== 'hermes'
+      || agent.runtime.sandbox.network === 'none'
+      || (body.sandboxId && body.sandboxId !== agent.runtime.sandboxId)
+      || typeof body.hermesProfile !== 'string'
+      || provider === undefined
+      || model === undefined
+      || (provider === null) !== (model === null)
+    ) return Response.json({ error: 'Invalid Hermes profile or model' }, { status: 400 });
+    requestedHermesSelection = { profile: body.hermesProfile, provider, model };
+  }
   if (Array.isArray(body.attachmentIds) && body.attachmentIds.length && !body.sandboxId) {
     return Response.json({ error: 'sandboxId is required for Work attachments' }, { status: 400 });
   }
-  let work: Awaited<ReturnType<typeof createWorkSession>>;
+  let hermesSelection: HermesConversationSelection | undefined;
+  if (requestedHermesSelection) {
+    try {
+      hermesSelection = await prepareHermesConversationSelection(agent, requestedHermesSelection);
+    } catch (error) {
+      if (error instanceof HermesProfileError || error instanceof AgentConfigurationError) {
+        return Response.json({ error: error.message }, {
+          status: error instanceof HermesProfileError ? error.status : 400,
+        });
+      }
+      return Response.json({ error: 'Could not prepare the Hermes model' }, { status: 502 });
+    }
+  }
+  let attachments: Awaited<ReturnType<typeof prepareWorkAttachments>>;
   try {
-    const attachments = await prepareWorkAttachments({
+    attachments = await prepareWorkAttachments({
       workspaceId: agent.workspaceId,
       userId: user.id,
       sandboxId: typeof body.sandboxId === 'string' ? body.sandboxId : '',
       workingDirectory,
       attachmentIds: body.attachmentIds,
     });
+  } catch (error) {
+    return error instanceof WorkAttachmentError
+      ? Response.json({ error: error.message }, { status: error.status })
+      : Response.json({ error: 'Could not copy attachments into the sandbox' }, { status: 502 });
+  }
+  let work: Awaited<ReturnType<typeof createWorkSession>>;
+  try {
     work = await createWorkSession({
       workspaceId: agent.workspaceId,
       agentId: agent.id,
@@ -82,13 +141,15 @@ export async function POST(req: Request) {
       task: body.task,
       ...(body.acceptanceCriteria !== undefined ? { acceptanceCriteria: body.acceptanceCriteria } : {}),
       ...(body.maxSteps !== undefined ? { maxSteps: body.maxSteps } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(hermesSelection ? { hermesSelection } : {}),
       workingDirectory,
       ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
     });
   } catch (error) {
     return error instanceof WorkAttachmentError
       ? Response.json({ error: error.message }, { status: error.status })
-      : Response.json({ error: 'Could not copy attachments into the sandbox' }, { status: 502 });
+      : Response.json({ error: 'Could not create the Work session' }, { status: 502 });
   }
   if (!work) return Response.json({ error: 'Choose a Work-ready Agent with its required sandbox and model providers' }, { status: 400 });
   startWorkOutput(work.id);

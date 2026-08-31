@@ -806,10 +806,12 @@ describe('supervisor readiness races', () => {
         command: 'docker',
         args: [
           'run', '--rm', 'node:24-bookworm-slim',
+          '-e', 'GITHUB_TOOLSETS=all',
+          '-e', 'MANUAL_PIN=123',
           '--password', 'argv-password',
           'ssh://git:url-password@example.test/repo',
         ],
-        env: { MCP_TOKEN: 'super-secret-value' },
+        env: { MCP_TOKEN: 'super-secret-value', GITHUB_TOOLSETS: 'all' },
         image: 'node:24-bookworm-slim',
       },
       { awaitReady: false },
@@ -817,9 +819,11 @@ describe('supervisor readiness races', () => {
 
     expect(supervisor.liveRedactionValues('runtime-progress')).toEqual(expect.arrayContaining([
       'super-secret-value',
+      '123',
       'argv-password',
       'url-password',
     ]));
+    expect(supervisor.liveRedactionValues('runtime-progress')).not.toContain('all');
 
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     expect(options.env).toMatchObject({

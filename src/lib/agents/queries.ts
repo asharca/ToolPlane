@@ -497,6 +497,10 @@ export async function listConversations(workspaceId: string, agentIds: string[])
 export async function getConversation(conversationId: string, workspaceId: string) {
   return db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
-    include: { messages: { orderBy: { createdAt: 'asc' } }, workSession: { select: { id: true } } },
+    include: {
+      messages: { orderBy: { createdAt: 'asc' } },
+      publicApiConversation: { select: { id: true } },
+      workSession: { select: { id: true } },
+    },
   });
 }

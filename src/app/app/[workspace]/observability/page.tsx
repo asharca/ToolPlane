@@ -15,6 +15,7 @@ import {
   DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -103,11 +104,12 @@ export default async function ObservabilityPage({
                 <label htmlFor="observability-deployment" className="sr-only">
                   {t('filterByServer')}
                 </label>
-                <select
+                <NativeSelect
                   id="observability-deployment"
                   name="deploymentId"
                   defaultValue={selectedDeploymentId ?? ''}
-                  className="ui-input h-9 min-w-52 text-sm"
+                  className="ui-input h-9 w-full text-sm"
+                  wrapperClassName="min-w-52"
                 >
                   <option value="">{t('allServers')}</option>
                   {o.deployments.map((deployment) => (
@@ -115,7 +117,7 @@ export default async function ObservabilityPage({
                       {deployment.name}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 <button type="submit" className="ui-button-secondary h-9 text-sm">
                   {t('applyFilter')}
                 </button>

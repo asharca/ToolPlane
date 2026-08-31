@@ -493,7 +493,7 @@ function secretValuesFromEnv(env: Record<string, string>): string[] {
     // Configured MCP env is intentionally treated as confidential by default.
     // Short primitives cannot meaningfully reveal a credential and redacting
     // them would make normal logs unreadable (e.g. PORT=3).
-    if (typeof value === 'string' && value.length >= 3) values.add(value);
+    if (typeof value === 'string' && value.length >= 4) values.add(value);
   }
   return [...values].sort((a, b) => b.length - a.length);
 }
@@ -550,7 +550,10 @@ function redactionValuesForSpec(spec: SpawnSpec): string[] {
     ? secretValuesFromEnv(spec.env)
     : []);
   if (spec.kind === 'bridge') {
-    for (const value of sensitiveArgValues(spec.args)) values.add(value);
+    const shortConfiguredValues = new Set(Object.values(spec.env).filter((value) => value.length < 4));
+    for (const value of sensitiveArgValues(spec.args)) {
+      if (!shortConfiguredValues.has(value)) values.add(value);
+    }
   } else if (spec.kind === 'remote') {
     for (const value of Object.values(spec.headers)) {
       if (!value) continue;
@@ -1419,6 +1422,9 @@ async function launchProcess(
             HERMES_RUNTIME_ID: managedSpec.runtimeId ?? '',
             HERMES_RUNTIME_API_KEY: managedSpec.runtimeId
               ? deriveHermesRuntimeToken(managedSpec.runtimeId, 'hermes-api')
+              : '',
+            HERMES_RUNTIME_DASHBOARD_TOKEN: managedSpec.runtimeId
+              ? deriveHermesRuntimeToken(managedSpec.runtimeId, 'hermes-dashboard-api')
               : '',
             HERMES_RUNTIME_MODEL_NAME: managedSpec.runtimeModelName ?? 'hermes-agent',
             TOOLPLANE_MAX_ATTACHMENT_BYTES: process.env.TOOLPLANE_MAX_ATTACHMENT_BYTES ?? '',

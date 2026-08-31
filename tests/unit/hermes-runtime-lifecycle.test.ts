@@ -68,6 +68,7 @@ import {
   runHermesDashboardMutation,
   runHermesRuntimeMaintenance,
   stopHermesRuntime,
+  syncHermesProfileProjection,
   syncHermesRuntime,
   upgradeHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
@@ -315,8 +316,18 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(String(syncCreate?.[1]?.at(-1))).toContain(
       "migrate(interactive=False, quiet=True) if callable(migrate) else None",
     );
+    const compatibilityRun = mocks.spawn.mock.calls.find(([, args]) => (
+      Array.isArray(args) && args[0] === 'run' && args.includes('--read-only')
+    ));
+    expect(String(compatibilityRun?.[1]?.at(-1))).toContain(
+      'pathlib.Path("/opt/data/profiles").glob("*/config.yaml")',
+    );
+    expect(String(syncCreate?.[1]?.at(-1))).toContain('for profile in /opt/data/profiles/*');
     expect(String(syncCreate?.[1]?.at(-1))).toContain(
-      'for path in /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/SOUL.md /opt/data/cron /opt/data/sessions /opt/data/logs /opt/data/memories /opt/data/pairing /opt/data/hooks /opt/data/image_cache /opt/data/audio_cache /opt/data/skills /opt/data/skill-bundles; do',
+      '"$profile/.env" /tmp/toolplane/profile-env.json',
+    );
+    expect(String(syncCreate?.[1]?.at(-1))).toContain(
+      'for path in /opt/data/config.yaml /opt/data/.env /opt/data/.toolplane-env-keys.json /opt/data/SOUL.md /opt/data/cron /opt/data/sessions /opt/data/logs /opt/data/memories /opt/data/pairing /opt/data/hooks /opt/data/image_cache /opt/data/audio_cache /opt/data/profiles /opt/data/skills /opt/data/skill-bundles; do',
     );
     expect(String(syncCreate?.[1]?.at(-1))).toContain(
       '[ ! -e "$path" ] || chown -R "$(id -u hermes):$(id -g hermes)" "$path"; done; chown -R',
@@ -588,6 +599,35 @@ describe('Hermes sandbox lifecycle isolation', () => {
     await expect(stop).resolves.toBeUndefined();
     expect(mocks.stopProcess).toHaveBeenCalledWith('deployment-1');
     vi.unstubAllGlobals();
+  });
+
+  it('updates named profile files as the Hermes user', async () => {
+    const agent = deletingAgent();
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.livePort.mockReturnValue(4312);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    const lease = acquireHermesRuntimeWriteLease('workspace-1', agent.id);
+    expect(lease).not.toBeNull();
+
+    try {
+      await expect(syncHermesProfileProjection(
+        'workspace-1',
+        agent.id,
+        'research',
+        lease!,
+      )).resolves.toBe(true);
+
+      const execCalls = mocks.spawn.mock.calls
+        .map(([, args]) => args as string[])
+        .filter((args) => args[0] === 'exec');
+      expect(execCalls).toHaveLength(4);
+      expect(execCalls.slice(1).every((args) => args[1] === '--user' && args[2] === 'hermes')).toBe(true);
+      expect(execCalls.some((args) => args.includes('chown'))).toBe(false);
+    } finally {
+      lease?.release();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('quiesces a live source, copies its volume, and leaves a syncable target', async () => {
@@ -946,56 +986,66 @@ describe('Hermes sandbox lifecycle isolation', () => {
     )).resolves.toEqual({ status: 'completed', data: 'deleted' });
   });
 
-  it('reprojects current managed Hermes files after restoring a stopped volume', async () => {
-    const base = deletingAgent();
-    const agent = {
-      ...base,
-      workspaceId: 'workspace-1',
-      runtime: {
-        ...base.runtime,
+  it.each(['option', 'operation'] as const)(
+    'reprojects current managed Hermes files after restoring a stopped volume via %s',
+    async (trigger) => {
+      const base = deletingAgent();
+      const agent = {
+        ...base,
         workspaceId: 'workspace-1',
-        status: 'stopped',
-        configHash: 'previous-projection' as string | null,
-        configVersion: 6,
-        sandbox: {
-          ...base.runtime.sandbox,
-          deployment: {
-            ...base.runtime.sandbox.deployment,
-            status: 'stopped',
+        runtime: {
+          ...base.runtime,
+          workspaceId: 'workspace-1',
+          status: 'stopped',
+          configHash: 'previous-projection' as string | null,
+          configVersion: 6,
+          sandbox: {
+            ...base.runtime.sandbox,
+            deployment: {
+              ...base.runtime.sandbox.deployment,
+              status: 'stopped',
+            },
           },
         },
-      },
-    };
-    mocks.getAgent.mockResolvedValue(agent);
-    mocks.agentRuntimeUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(agent.runtime, data);
-      return { count: 1 };
-    });
-    mocks.deploymentUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
-      Object.assign(agent.runtime.sandbox.deployment, data);
-      return { count: 1 };
-    });
+      };
+      mocks.getAgent.mockResolvedValue(agent);
+      mocks.agentRuntimeUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(agent.runtime, data);
+        return { count: 1 };
+      });
+      mocks.deploymentUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(agent.runtime.sandbox.deployment, data);
+        return { count: 1 };
+      });
 
-    await expect(runHermesRuntimeMaintenance(
-      'workspace-1',
-      agent.id,
-      agent.runtime.sandboxId,
-      { quiesce: true, operationStatus: 'restoring', reprojectAfter: true },
-      async ({ volumeName }) => {
-        await mocks.copyDockerVolume('snapshot-volume', volumeName, { replace: true });
-        return undefined;
-      },
-    )).resolves.toEqual({ status: 'completed', data: undefined });
+      await expect(runHermesRuntimeMaintenance(
+        'workspace-1',
+        agent.id,
+        agent.runtime.sandboxId,
+        {
+          quiesce: true,
+          operationStatus: 'restoring',
+          ...(trigger === 'option' ? { reprojectAfter: true } : {}),
+        },
+        async ({ volumeName, requestSync }) => {
+          await mocks.copyDockerVolume('snapshot-volume', volumeName, { replace: true });
+          if (trigger === 'operation') requestSync();
+          return undefined;
+        },
+      )).resolves.toEqual({ status: 'completed', data: undefined });
 
-    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ configHash: null, configVersion: 0 }),
-    }));
-    expect(mocks.killProcess).toHaveBeenCalledWith('deployment-1', { finalStatus: 'restoring' });
-    expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: 'stopped' }),
-    }));
-    expect(mocks.startProcess).not.toHaveBeenCalled();
-  });
+      if (trigger === 'option') {
+        expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+          data: expect.objectContaining({ configHash: null, configVersion: 0 }),
+        }));
+      }
+      expect(mocks.killProcess).toHaveBeenCalledWith('deployment-1', { finalStatus: 'restoring' });
+      expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'stopped' }),
+      }));
+      expect(mocks.startProcess).not.toHaveBeenCalled();
+    },
+  );
 
   it('pulls, replaces every persisted image reference, and rebuilds the same mutable tag safely', async () => {
     const agent = deletingAgent();

@@ -28,7 +28,8 @@ export async function persistDeploymentMcpToolCatalog(
       ? deployment.installCfg as Record<string, unknown>
       : {};
     const env = config.env && typeof config.env === 'object' && !Array.isArray(config.env)
-      ? Object.values(config.env as Record<string, unknown>).filter((entry): entry is string => typeof entry === 'string')
+      ? Object.values(config.env as Record<string, unknown>)
+          .filter((entry): entry is string => typeof entry === 'string' && entry.length >= 4)
       : [];
     const currentRedactionValues = liveRedactionValues(deploymentId);
     if (currentRedactionValues === null && requestRedactionValues.length === 0) return [];

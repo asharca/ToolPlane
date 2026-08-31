@@ -70,6 +70,8 @@ import {
 } from '@/components/dashboard/ConversationMessage';
 import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
 import type { ChatBranchNavigation } from '@/lib/chat/branches';
+import type { ReasoningEffort } from '@/lib/agents/constants';
+import { ReasoningEffortControl } from '@/components/dashboard/agents/ReasoningEffortControl';
 import {
   expandHermesAssistantMessages,
   type HermesUIMessage,
@@ -764,12 +766,15 @@ function AgentThread({
   onRegenerateMessage,
   onStartBranch,
   ready,
+  reasoningAvailable,
+  reasoningEffort,
   supportsAttachments,
   submitError,
   uploadingAttachments,
   webSearchAvailable,
   webSearchEnabled,
   onToggleWebSearch,
+  onReasoningEffortChange,
   workMode,
 }: {
   activeConversationId: string | null;
@@ -789,12 +794,15 @@ function AgentThread({
   onRegenerateMessage?: (messageId: string) => void | Promise<void>;
   onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
+  reasoningAvailable: boolean;
+  reasoningEffort: ReasoningEffort;
   supportsAttachments: boolean;
   submitError: string | null;
   uploadingAttachments: boolean;
   webSearchAvailable?: boolean;
   webSearchEnabled: boolean;
   onToggleWebSearch: () => void;
+  onReasoningEffortChange: (effort: ReasoningEffort) => void;
   workMode: boolean;
 }) {
   const t = useTranslations('console.agents');
@@ -901,6 +909,13 @@ function AgentThread({
                   >
                     <Globe2 className="size-[17px]" />
                   </button>
+                ) : null}
+                {reasoningAvailable ? (
+                  <ReasoningEffortControl
+                    value={reasoningEffort}
+                    disabled={branchBusy || creatingConversation || uploadingAttachments}
+                    onChange={onReasoningEffortChange}
+                  />
                 ) : null}
                 {!ready || uploadingAttachments || !activeConversationId ? (
                   <div className="min-w-0 truncate text-[11px] text-muted-foreground">
@@ -1114,13 +1129,16 @@ export function AgentConversation({
   creatingConversation,
   ensureConversation,
   includeConversationIdInBody = true,
+  initialReasoningEffort = 'default',
   initialMessages,
   modelName,
   mcpPromptApiPath,
   onBranchChange,
+  onBusyChange,
   onConversationChanged,
   onStartBranch,
   ready,
+  reasoningAvailable = false,
   runtimeKind,
   supportsAttachments,
   webSearchAvailable,
@@ -1141,13 +1159,16 @@ export function AgentConversation({
   creatingConversation: boolean;
   ensureConversation: () => Promise<string>;
   includeConversationIdInBody?: boolean;
+  initialReasoningEffort?: ReasoningEffort;
   initialMessages: HermesUIMessage[];
   modelName?: string | null;
   mcpPromptApiPath?: string;
   onBranchChange?: (messageId: string) => void | Promise<void>;
+  onBusyChange?: (busy: boolean) => void;
   onConversationChanged?: () => void | Promise<void>;
   onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
+  reasoningAvailable?: boolean;
   runtimeKind: string | null;
   supportsAttachments?: boolean;
   webSearchAvailable?: boolean;
@@ -1157,6 +1178,7 @@ export function AgentConversation({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(initialReasoningEffort);
   const clearSubmitError = useCallback(() => setSubmitError(null), []);
   const assistantRuntimeRef = useRef<AssistantRuntime | null>(null);
   const sendConversationIdRef = useRef<string | null>(null);
@@ -1184,6 +1206,11 @@ export function AgentConversation({
     messages: initialMessages,
     onFinish: () => { void onConversationChanged?.(); },
   });
+  const chatBusy = chat.status === 'submitted' || chat.status === 'streaming';
+  useEffect(() => {
+    onBusyChange?.(chatBusy);
+    return () => onBusyChange?.(false);
+  }, [chatBusy, onBusyChange]);
   const contextUsage = useMemo(() => resolveContextUsage(chat.messages, {
     maxTokens: contextWindow,
     modelName,
@@ -1249,9 +1276,10 @@ export function AgentConversation({
         ...(webSearchAvailable !== undefined
           ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
           : {}),
+        ...(reasoningAvailable ? { reasoningEffort } : {}),
       },
     });
-  }, [branchBusy, ensureConversation, includeConversationIdInBody, sendChatMessage, t, webSearchAvailable, webSearchEnabled, workSessionId]);
+  }, [branchBusy, ensureConversation, includeConversationIdInBody, reasoningAvailable, reasoningEffort, sendChatMessage, t, webSearchAvailable, webSearchEnabled, workSessionId]);
   const regenerate = useCallback<typeof chat.regenerate>(async (options) => {
     if (!allowRegenerate || branchBusy) return;
     setSubmitError(null);
@@ -1271,9 +1299,10 @@ export function AgentConversation({
         ...(webSearchAvailable !== undefined
           ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
           : {}),
+        ...(reasoningAvailable ? { reasoningEffort } : {}),
       },
     });
-  }, [activeConversationId, allowRegenerate, branchBusy, ensureConversation, includeConversationIdInBody, regenerateChat, t, webSearchAvailable, webSearchEnabled, workSessionId]);
+  }, [activeConversationId, allowRegenerate, branchBusy, ensureConversation, includeConversationIdInBody, reasoningAvailable, reasoningEffort, regenerateChat, t, webSearchAvailable, webSearchEnabled, workSessionId]);
   const attachmentAdapter = useAgentAttachmentAdapter({
     agentId,
     attachmentUploadUrl,
@@ -1327,12 +1356,15 @@ export function AgentConversation({
           : undefined}
         onStartBranch={onStartBranch}
         ready={ready}
+        reasoningAvailable={reasoningAvailable}
+        reasoningEffort={reasoningEffort}
         supportsAttachments={supportsAttachments ?? (runtimeKind === 'hermes' || Boolean(attachmentUploadUrl))}
         submitError={submitError}
         uploadingAttachments={uploadingAttachments}
         webSearchAvailable={webSearchAvailable}
         webSearchEnabled={Boolean(webSearchAvailable && webSearchEnabled)}
         onToggleWebSearch={() => setWebSearchEnabled((enabled) => !enabled)}
+        onReasoningEffortChange={setReasoningEffort}
         workMode={Boolean(workSessionId)}
       />
     </AssistantRuntimeProvider>

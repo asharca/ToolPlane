@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Box, Braces, Clock3, KeyRound, Loader2, Play, PlugZap, Power } from 'lucide-react';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   connectMcpInspectorAction,
   runMcpInspectorToolAction,
@@ -270,17 +271,18 @@ export function ToolPlayground({
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-[15rem] flex-1 text-xs font-medium text-muted-foreground">
           {t('inspectorSandbox')}
-          <select
+          <NativeSelect
             value={sandboxId}
             onChange={(event) => onSandboxChange(event.target.value)}
-            className="ui-input mt-1.5 h-9 w-full text-foreground"
+            className="ui-input h-9 w-full text-foreground"
+            wrapperClassName="mt-1.5"
           >
             {sandboxes.map((sandbox) => (
               <option key={sandbox.id} value={sandbox.id} disabled={!sandbox.networkEnabled}>
                 {sandbox.name} · {sandbox.kind}{sandbox.running ? '' : ` · ${t('sandboxStopped')}`}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         {selectedSandbox && !selectedSandbox.running ? (
           <button

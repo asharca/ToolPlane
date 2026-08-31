@@ -13,6 +13,7 @@ import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { resolveModelContext } from '@/lib/agents/model';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,10 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
       ? session.artifacts.filter((item): item is string => typeof item === 'string')
       : [],
     conversationId: session.conversationId,
+    reasoningEffort: normalizeReasoningEffort(detail?.conversation.reasoningEffort) ?? null,
+    hermesProfile: detail?.conversation.hermesProfile ?? null,
+    hermesProvider: detail?.conversation.hermesProvider ?? null,
+    hermesModel: detail?.conversation.hermesModel ?? null,
     workingDirectory: workSessionWorkingDirectory(session.runtimeSnapshot),
     sandbox: session.sandbox ? {
       id: session.sandbox.id,

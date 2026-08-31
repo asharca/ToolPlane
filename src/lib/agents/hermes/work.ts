@@ -1,9 +1,15 @@
 import 'server-only';
 import { posix } from 'node:path';
+import type { ReasoningEffort } from '@/lib/agents/constants';
 import {
   ensureHermesRuntimeReady,
   type HermesRuntimeWriteLease,
 } from './runtime';
+import {
+  ensureHermesProfileProjection,
+  HERMES_DEFAULT_PROFILE,
+  normalizeHermesProfile,
+} from './profiles';
 
 export type HermesWorkAgent = {
   id: string;
@@ -121,6 +127,10 @@ export type RunHermesWorkParams = {
   workingDirectory: string;
   sessionId: string;
   sessionKey: string;
+  profile?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  reasoningEffort?: ReasoningEffort;
   writeLease?: HermesRuntimeWriteLease;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -313,14 +323,23 @@ export async function runHermesWork(params: RunHermesWorkParams): Promise<Hermes
   const sessionKey = params.sessionKey.trim();
   if (!task) throw new Error('Hermes Work requires a task.');
   if (!sessionId || !sessionKey) throw new Error('Hermes Work requires a session ID and key.');
+  const profile = normalizeHermesProfile(params.profile || HERMES_DEFAULT_PROFILE);
+  if (!profile) throw new Error('Invalid Hermes profile.');
+  if ((params.provider == null) !== (params.model == null)) {
+    throw new Error('Hermes provider and model must be selected together.');
+  }
 
   const signal = combinedSignal(params.signal, params.timeoutMs ?? 60 * 60_000);
+  if (profile !== HERMES_DEFAULT_PROFILE) {
+    await ensureHermesProfileProjection(params.agent, profile, params.writeLease);
+  }
   const ready = await ensureHermesRuntimeReady(params.agent.workspaceId, params.agent.id, {
     writeLease: params.writeLease,
     signal,
   });
   if (!ready.port) throw new Error(ready.error || 'Hermes runtime is unavailable.');
-  const baseUrl = `http://127.0.0.1:${ready.port}/hermes`;
+  const profilePath = profile === HERMES_DEFAULT_PROFILE ? '' : `/p/${encodeURIComponent(profile)}`;
+  const baseUrl = `http://127.0.0.1:${ready.port}/hermes${profilePath}`;
   let runId = '';
   let terminal: HermesWorkRunTerminal | null = null;
   let text = '';
@@ -350,6 +369,10 @@ export async function runHermesWork(params: RunHermesWorkParams): Promise<Hermes
         input: task,
         instructions: requestInstructions(workingDirectory(params.workingDirectory), params.instructions),
         session_id: sessionId,
+        ...(params.provider && params.model ? { provider: params.provider, model: params.model } : {}),
+        ...(params.reasoningEffort && params.reasoningEffort !== 'default'
+          ? { model_options: { reasoning: { enabled: true, effort: params.reasoningEffort } } }
+          : {}),
       }),
       signal,
       cache: 'no-store',

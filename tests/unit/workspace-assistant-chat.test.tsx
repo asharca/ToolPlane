@@ -58,6 +58,7 @@ function renderChat(
     deployments={[]}
     initialMessages={[]}
     providers={providers}
+    reasoningAvailable
     selectedAssistantId="assistant-1"
     selectedThreadId="thread-1"
     slug="acme"
@@ -80,6 +81,8 @@ describe('WorkspaceAssistantChat', () => {
       allowRegenerate: true,
       attachmentUploadUrl: '/api/v1/workspaces/workspace-1/attachments',
       supportsAttachments: true,
+      initialReasoningEffort: 'default',
+      reasoningAvailable: true,
     }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));

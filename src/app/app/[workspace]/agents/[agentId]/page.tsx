@@ -259,7 +259,7 @@ export default async function AgentDetailPage({
         agentName={agent.name}
         providerLabel={providerLabel}
         marketSetup={marketSetup}
-        initialSettingsTab={settings === 'channels' && !isHermes ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'channels' && !isHermes ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </SettingsModal>
   );

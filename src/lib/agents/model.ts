@@ -116,6 +116,13 @@ export function createPiModel(provider: ProviderConfig, modelId: string): PiMode
   } as PiModel;
 }
 
+export const modelSupportsReasoning = (provider: ProviderConfig, modelId: string) => (
+  createPiModel(provider, modelId).reasoning
+  || builtinProviders().some((candidate) => candidate.getModels().some((model) => (
+    model.id === modelId && model.reasoning
+  )))
+);
+
 export function resolveModelContext(provider: ProviderConfig, modelId: string): ModelContext {
   const model = createPiModel(provider, modelId);
   return {

@@ -3,10 +3,19 @@ import { runHermesWork, stopHermesWorkRun } from '@/lib/agents/hermes/work';
 
 const mocks = vi.hoisted(() => ({
   ensureHermesRuntimeReady: vi.fn(async () => ({ port: 4312 })),
+  ensureHermesProfileProjection: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/agents/hermes/runtime', () => ({
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
+}));
+vi.mock('@/lib/agents/hermes/profiles', () => ({
+  ensureHermesProfileProjection: mocks.ensureHermesProfileProjection,
+  HERMES_DEFAULT_PROFILE: 'default',
+  normalizeHermesProfile: (value: unknown) => {
+    const profile = String(value ?? '').trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile) ? profile : null;
+  },
 }));
 
 const agent = {
@@ -17,6 +26,7 @@ const agent = {
 
 describe('Hermes Work runs client', () => {
   afterEach(() => {
+    vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
@@ -68,6 +78,10 @@ describe('Hermes Work runs client', () => {
       workingDirectory: 'packages/app',
       sessionId: 'conversation-1',
       sessionKey: 'agent:agent-1:work:conversation-1',
+      profile: 'research',
+      provider: 'openrouter',
+      model: 'model-a',
+      reasoningEffort: 'high',
       onRunStarted,
       onMessageDelta,
       onReasoningAvailable,
@@ -83,14 +97,15 @@ describe('Hermes Work runs client', () => {
       'agent-1',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(mocks.ensureHermesProfileProjection).toHaveBeenCalledWith(agent, 'research', undefined);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      'http://127.0.0.1:4312/hermes/v1/capabilities',
+      'http://127.0.0.1:4312/hermes/p/research/v1/capabilities',
       expect.objectContaining({ cache: 'no-store' }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      'http://127.0.0.1:4312/hermes/v1/runs',
+      'http://127.0.0.1:4312/hermes/p/research/v1/runs',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
@@ -104,10 +119,13 @@ describe('Hermes Work runs client', () => {
       input: 'Fix the tests.',
       instructions: 'Use pnpm.\n\nThe working directory for this task is /opt/data/workspace/packages/app. Perform and verify the requested work there.',
       session_id: 'conversation-1',
+      provider: 'openrouter',
+      model: 'model-a',
+      model_options: { reasoning: { enabled: true, effort: 'high' } },
     });
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      'http://127.0.0.1:4312/hermes/v1/runs/run_1/approval',
+      'http://127.0.0.1:4312/hermes/p/research/v1/runs/run_1/approval',
       expect.objectContaining({ body: JSON.stringify({ choice: 'once' }) }),
     );
     expect(onRunStarted).toHaveBeenCalledWith('run_1');
@@ -162,6 +180,8 @@ describe('Hermes Work runs client', () => {
       sessionKey: 'agent:agent-1:work:conversation-1',
       signal: controller.signal,
     })).rejects.toThrow('cancelled by user');
+
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).not.toHaveProperty('model_options');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,

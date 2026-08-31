@@ -528,6 +528,7 @@ export function WorkspaceAssistantChat({
   marketTemplate = null,
   marketTemplates = [],
   providers,
+  reasoningAvailable,
   selectedAssistantId,
   selectedThreadId,
   slug,
@@ -541,6 +542,7 @@ export function WorkspaceAssistantChat({
   marketTemplate?: AssistantMarketTemplate | null;
   marketTemplates?: AssistantMarketTemplate[];
   providers: ProviderOption[];
+  reasoningAvailable: boolean;
   selectedAssistantId: string | null;
   selectedThreadId: string | null;
   slug: string;
@@ -1007,9 +1009,11 @@ export function WorkspaceAssistantChat({
                 ensureConversation={async () => activeThread.id}
                 includeConversationIdInBody={false}
                 initialMessages={initialMessages}
+                initialReasoningEffort="default"
                 mcpPromptApiPath={`/api/v1/chat/threads/${activeThread.id}/prompts`}
                 modelName={activeAssistant.model}
                 ready={Boolean(activeAssistant.modelProviderId && activeAssistant.model)}
+                reasoningAvailable={reasoningAvailable}
                 runtimeKind={null}
                 supportsAttachments
                 webSearchAvailable={activeAssistant.webSearchAvailable}

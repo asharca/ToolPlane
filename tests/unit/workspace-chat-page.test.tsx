@@ -128,6 +128,36 @@ describe('Workspace chat page', () => {
     }));
   });
 
+  it('enables reasoning for the selected assistant model capability', async () => {
+    mocks.listProviders.mockResolvedValue([{
+      id: 'provider-1',
+      name: 'OpenAI',
+      format: 'openai',
+      baseUrl: '',
+      apiKey: '',
+      models: ['gpt-5'],
+      modelRecords: [{ modelId: 'gpt-5', capabilities: ['reasoning'] }],
+    }]);
+    mocks.listAssistants.mockResolvedValue([{
+      id: 'assistant-1',
+      name: 'Helper',
+      systemPrompt: null,
+      modelProviderId: 'provider-1',
+      model: 'gpt-5',
+      maxSteps: 8,
+      modelProvider: { name: 'OpenAI' },
+      mcpGrants: [],
+      threads: [],
+    }]);
+
+    render(await WorkspaceChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ reasoningAvailable: true }));
+  });
+
   it('opens the assistant creator from a direct market handoff', async () => {
     render(await WorkspaceChatPage({
       params: Promise.resolve({ workspace: 'acme' }),

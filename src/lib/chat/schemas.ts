@@ -1,5 +1,6 @@
 import type { UIMessage } from 'ai';
 import { z } from 'zod';
+import { REASONING_EFFORTS, type ReasoningEffort } from '@/lib/agents/constants';
 
 const nullableTrimmedString = (max: number) => z.string().trim().max(max).nullable();
 
@@ -53,6 +54,7 @@ export const CreateChatTurnSchema = z.object({
   trigger: z.enum(['submit-message', 'regenerate-message']).default('submit-message'),
   messageId: z.string().min(1).optional(),
   webSearchEnabled: z.boolean().default(false),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
 }).refine(
   (value) => value.messages.at(-1)?.role === 'user',
   { message: 'The last message must be from the user' },
@@ -67,6 +69,7 @@ export type CreateChatTurnInput = {
   trigger: 'submit-message' | 'regenerate-message';
   messageId?: string;
   webSearchEnabled: boolean;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export function parseChatTurn(raw: unknown): CreateChatTurnInput | null {

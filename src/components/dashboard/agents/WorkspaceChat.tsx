@@ -41,6 +41,7 @@ import {
 } from '@/lib/agents/actions';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import type { ParsedMessagingSession } from '@/lib/agents/messaging';
+import type { ReasoningEffort } from '@/lib/agents/constants';
 
 type ChatAgent = {
   id: string;
@@ -86,6 +87,9 @@ export function WorkspaceChat({
   agents,
   providers = [],
   conversations,
+  hermesSelection,
+  initialReasoningEffort = 'default',
+  reasoningAvailable = false,
   startInChat = false,
 }: {
   slug: string;
@@ -96,6 +100,15 @@ export function WorkspaceChat({
   agents: ChatAgent[];
   providers?: Array<ModelProviderOption & { format: string }>;
   conversations: ChatConversation[];
+  hermesSelection?: {
+    profile: string;
+    provider: string | null;
+    model: string | null;
+    hasMessages: boolean;
+    editable: boolean;
+  };
+  initialReasoningEffort?: ReasoningEffort;
+  reasoningAvailable?: boolean;
   startInChat?: boolean;
 }) {
   const t = useTranslations('console.agents');
@@ -121,6 +134,7 @@ export function WorkspaceChat({
     id: string;
   } | null>(null);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [conversationBusy, setConversationBusy] = useState(false);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ChatConversation | null>(null);
@@ -543,12 +557,21 @@ export function WorkspaceChat({
                     model: activeAgent.model ?? null,
                   }}
                   providers={providers}
+                  hermesConversation={activeAgent.runtimeKind === 'hermes' ? {
+                    id: activeConversationId,
+                    profile: hermesSelection?.profile ?? 'default',
+                    provider: hermesSelection?.provider ?? null,
+                    model: hermesSelection?.model ?? null,
+                    hasMessages: hermesSelection?.hasMessages ?? false,
+                    editable: hermesSelection?.editable ?? true,
+                  } : undefined}
                   trigger={(
                     <button
                       type="button"
+                      disabled={conversationBusy}
                       aria-label={t('modelConfiguration')}
                       title={t('modelConfiguration')}
-                      className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {activeAgent.runtimeKind === 'hermes' || !activeAgent.model ? (
                         <Cpu className="size-4 shrink-0" />
@@ -558,7 +581,9 @@ export function WorkspaceChat({
                         </span>
                       )}
                       <span className="hidden max-w-52 truncate sm:block">
-                        {activeAgent.runtimeKind === 'hermes' ? activeAgent.providerLabel : activeAgent.model ?? t('select')}
+                        {activeAgent.runtimeKind === 'hermes'
+                          ? `${hermesSelection?.profile ?? 'default'} · ${hermesSelection?.model ?? t('profileDefault')}`
+                          : activeAgent.model ?? t('select')}
                       </span>
                       <ChevronDown className="size-3.5 shrink-0" />
                     </button>
@@ -578,8 +603,11 @@ export function WorkspaceChat({
             creatingConversation={creatingConversation}
             ensureConversation={ensureConversation}
             initialMessages={initialMessages}
+            initialReasoningEffort={initialReasoningEffort}
             mcpPromptApiPath={`/api/v1/agents/${activeAgent.id}/prompts`}
+            onBusyChange={setConversationBusy}
             ready={activeAgent.ready}
+            reasoningAvailable={reasoningAvailable}
             runtimeKind={activeAgent.runtimeKind}
             onConversationChanged={handleConversationChanged}
           />

@@ -1,5 +1,6 @@
 import type { UIMessage } from 'ai';
 import { z } from 'zod';
+import { REASONING_EFFORTS, type ReasoningEffort } from './constants';
 
 const ChatMessage = z
   .object({
@@ -13,6 +14,7 @@ const ChatBody = z
   .object({
     messages: z.array(ChatMessage).default([]),
     conversationId: z.string().min(1).optional(),
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
   })
   .passthrough();
 
@@ -61,6 +63,7 @@ const AgentMessageBodySchema = z
 export type AgentChatBody = {
   messages: UIMessage[];
   conversationId?: string;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type AgentMessageBody = {
@@ -98,6 +101,7 @@ export function parseAgentChatBody(raw: unknown): AgentChatBody | null {
   if (!parsed.success) return null;
   return {
     conversationId: parsed.data.conversationId,
+    reasoningEffort: parsed.data.reasoningEffort,
     messages: parsed.data.messages as unknown as UIMessage[],
   };
 }

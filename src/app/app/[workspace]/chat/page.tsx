@@ -18,12 +18,13 @@ import {
   listChatAssistantsForWorkspace,
 } from '@/lib/chat/service';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
+import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardEmptyState, DashboardPage } from '@/components/dashboard/DashboardUI';
 import { WorkspaceChat } from '@/components/dashboard/agents/WorkspaceChat';
 import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
-import { resolveModelContext } from '@/lib/agents/model';
+import { modelSupportsReasoning, resolveModelContext } from '@/lib/agents/model';
 import {
   getAssistantMarketTemplate,
   listAssistantMarketTemplates,
@@ -117,6 +118,18 @@ export default async function WorkspaceChatPage({
       ?? chatAgents.find((agent) => agent.ready)
       ?? chatAgents[0];
     if (!activeAgent) return null;
+    const activeModel = activeAgent.model;
+    const activeProvider = providers.find((provider) => provider.id === activeAgent.providerId);
+    const activeModelRecord = activeProvider?.modelRecords.find((model) => model.modelId === activeModel);
+    const reasoningAvailable = activeAgent.runtimeKind === 'hermes' || Boolean(
+      !isDedicatedSandboxRuntimeKind(activeAgent.runtimeKind)
+      && activeModel
+      && activeProvider
+      && (
+        activeModelRecord?.capabilities.includes('reasoning')
+        || modelSupportsReasoning(activeProvider, activeModel)
+      ),
+    );
     const selectedConversationId = query.c
       ?? conversations.find((item) => item.agentId === activeAgent.id)?.id
       ?? null;
@@ -132,6 +145,7 @@ export default async function WorkspaceChatPage({
       role: message.role as HermesUIMessage['role'],
       parts: message.parts as HermesUIMessage['parts'],
     }));
+    const conversationSource = parseMessagingSessionTitle(conversation?.title ?? null);
 
     return (
       <>
@@ -142,6 +156,8 @@ export default async function WorkspaceChatPage({
           agentId={activeAgent.id}
           conversationId={conversation?.id ?? null}
           initialMessages={initialMessages}
+          initialReasoningEffort={normalizeReasoningEffort(conversation?.reasoningEffort) ?? 'default'}
+          reasoningAvailable={reasoningAvailable}
           agents={chatAgents}
           providers={providers.map((provider) => ({
             id: provider.id,
@@ -169,6 +185,13 @@ export default async function WorkspaceChatPage({
               editable: !item.publicApiConversation && !source,
             };
           })}
+          hermesSelection={activeAgent.runtimeKind === 'hermes' ? {
+            profile: conversation?.hermesProfile ?? 'default',
+            provider: conversation?.hermesProvider ?? null,
+            model: conversation?.hermesModel ?? null,
+            hasMessages: initialMessages.length > 0,
+            editable: !conversation?.publicApiConversation && !conversationSource,
+          } : undefined}
           startInChat
         />
       </>
@@ -213,6 +236,21 @@ export default async function WorkspaceChatPage({
   });
   const providersById = new Map(providers.map((provider) => [provider.id, provider]));
   const activeAssistant = assistants.find((item) => item.id === query.assistant) ?? assistants[0] ?? null;
+  const activeAssistantProvider = activeAssistant?.modelProviderId
+    ? providersById.get(activeAssistant.modelProviderId)
+    : null;
+  const activeAssistantModel = activeAssistant?.model;
+  const activeAssistantModelRecord = activeAssistantProvider?.modelRecords.find(
+    (model) => model.modelId === activeAssistantModel,
+  );
+  const reasoningAvailable = Boolean(
+    activeAssistantProvider
+    && activeAssistantModel
+    && (
+      activeAssistantModelRecord?.capabilities.includes('reasoning')
+      || modelSupportsReasoning(activeAssistantProvider, activeAssistantModel)
+    ),
+  );
   const requestedThreadId = query.thread ?? activeAssistant?.threads[0]?.id ?? null;
   let activeThread = activeAssistant && requestedThreadId
     ? await getChatThreadForWorkspace(workspace.id, activeAssistant.id, requestedThreadId)
@@ -240,6 +278,7 @@ export default async function WorkspaceChatPage({
         startCreating={query.newAssistant === '1'}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}
+        reasoningAvailable={reasoningAvailable}
         branch={activeThread?.branch ?? null}
         initialMessages={initialMessages}
         marketTemplate={marketTemplates.find((template) => template.releaseId === selectedTemplate?.releaseId) ?? null}

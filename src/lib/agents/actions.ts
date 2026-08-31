@@ -25,6 +25,7 @@ import {
   deleteProviderModel,
   ProviderModelError,
   createConversation,
+  setHermesConversationSelection,
   renameConsoleConversation,
   deleteConsoleConversation,
   setHermesRuntimeEnv,
@@ -57,8 +58,16 @@ import {
 } from '@/lib/agents/channel-pairing';
 import { getMessagingPlatform, hasBuiltInPairingProvider } from '@/lib/agents/platforms';
 import {
+  HermesProfileError,
+  listHermesProfiles,
+  normalizeHermesProfile,
+  setHermesProfileDefaultModel,
+} from '@/lib/agents/hermes/profiles';
+import { prepareHermesConversationSelection } from '@/lib/agents/hermes/conversation-selection';
+import {
   copyHermesRuntimeVolume,
   ensureHermesRuntimeReady,
+  runHermesRuntimeMaintenance,
   stopHermesRuntime,
   syncHermesRuntime,
   upgradeHermesRuntime,
@@ -100,12 +109,52 @@ async function isManageableAgent(workspaceId: string, agentId: string): Promise<
   );
 }
 
-export type ActionState = { error?: string; warning?: string; savedAt?: number };
+export type ActionState = {
+  error?: string;
+  warning?: string;
+  savedAt?: number;
+  conversationId?: string;
+  created?: boolean;
+};
 
 function revalidateProviderViews(slug: string) {
   for (const path of ['agents', 'chat', 'knowledge', 'providers', 'settings', 'settings/providers']) {
     revalidatePath(`/app/${slug}/${path}`);
   }
+}
+
+type HermesRuntimeRef = { agentId: string; sandboxId: string };
+
+async function hermesAgentsUsingProvider(
+  workspaceId: string,
+  providerId: string,
+): Promise<HermesRuntimeRef[]> {
+  const agents = await db.agent.findMany({
+    where: {
+      workspaceId,
+      runtime: { is: { kind: 'hermes' } },
+      modelProviders: { some: { providerId } },
+    },
+    select: { id: true, runtime: { select: { sandboxId: true } } },
+  });
+  return agents.flatMap(({ id, runtime }) => (
+    runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : []
+  ));
+}
+
+async function syncHermesAgents(workspaceId: string, agents: HermesRuntimeRef[]): Promise<string | null> {
+  const errors: string[] = [];
+  for (const { agentId, sandboxId } of agents) {
+    const result = await runHermesRuntimeMaintenance(
+      workspaceId,
+      agentId,
+      sandboxId,
+      { quiesce: false, reprojectAfter: true },
+      async () => undefined,
+    );
+    if (result.status === 'error') errors.push(result.error);
+  }
+  return errors.length ? `Hermes sync failed: ${errors.join('; ')}` : null;
 }
 
 function providerFormValue(format: string, baseUrl: string) {
@@ -203,6 +252,7 @@ export async function updateProviderAction(
   if (!ctx) return { error: 'Not authorized.' };
   const existing = await getProvider(ctx.ws.id, providerId);
   if (!existing) return { error: 'Provider not found.' };
+  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
 
   try {
     await updateProvider(ctx.ws.id, providerId, {
@@ -226,6 +276,8 @@ export async function updateProviderAction(
     });
     if (refreshError) warning = `Provider updated, but models were not refreshed: ${refreshError}`;
   }
+  const syncWarning = await syncHermesAgents(ctx.ws.id, hermesAgents);
+  if (syncWarning) warning = [warning, syncWarning].filter(Boolean).join(' ');
   revalidateProviderViews(slug);
   return { ...(warning ? { warning } : {}), savedAt: Date.now() };
 }
@@ -235,8 +287,10 @@ export async function deleteProviderAction(formData: FormData) {
   const providerId = String(formData.get('providerId') ?? '');
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  await deleteProvider(ctx.ws.id, providerId);
+  const hermesAgents = await deleteProvider(ctx.ws.id, providerId);
+  const warning = await syncHermesAgents(ctx.ws.id, hermesAgents);
   revalidateProviderViews(slug);
+  if (warning) throw new Error(warning);
 }
 
 export async function refreshModelsAction(
@@ -249,8 +303,11 @@ export async function refreshModelsAction(
   if (!ctx) return { error: 'Not authorized.' };
   const provider = await getProvider(ctx.ws.id, providerId);
   if (!provider) return { error: 'Provider not found.' };
+  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
   const refreshError = await refreshProviderModels(ctx.ws.id, providerId, provider);
   if (refreshError) return { error: refreshError };
+  const syncError = await syncHermesAgents(ctx.ws.id, hermesAgents);
+  if (syncError) return { warning: syncError, savedAt: Date.now() };
   revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
@@ -326,6 +383,11 @@ export async function addProviderModelAction(
   } catch (error) {
     return providerModelError(error);
   }
+  const syncError = await syncHermesAgents(
+    ctx.ws.id,
+    await hermesAgentsUsingProvider(ctx.ws.id, providerId),
+  );
+  if (syncError) return { warning: syncError, savedAt: Date.now() };
   revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
@@ -361,11 +423,14 @@ export async function deleteProviderModelAction(
   const modelId = String(formData.get('modelId') ?? '').trim();
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return { error: 'Not authorized.' };
+  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
   try {
     await deleteProviderModel(ctx.ws.id, providerId, modelId);
   } catch (error) {
     return providerModelError(error);
   }
+  const syncError = await syncHermesAgents(ctx.ws.id, hermesAgents);
+  if (syncError) return { warning: syncError, savedAt: Date.now() };
   revalidateProviderViews(slug);
   return { savedAt: Date.now() };
 }
@@ -704,7 +769,9 @@ export async function updateAgentAction(
   const runtimeResult = await syncHermesRuntime(ctx.ws.id, agentId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/work`);
-  if (runtimeResult.error) return { error: `Saved, but Hermes sync failed: ${runtimeResult.error}` };
+  if (runtimeResult.error) {
+    return { warning: `Saved, but Hermes sync failed: ${runtimeResult.error}`, savedAt: Date.now() };
+  }
   return { savedAt: Date.now() };
 }
 
@@ -718,8 +785,9 @@ export async function updateAgentModelAction(
   if (!ctx) return { error: 'Not authorized.' };
   if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
 
+  let runtimeKind: string | null | undefined;
   try {
-    await updateAgentModelSelection(
+    runtimeKind = await updateAgentModelSelection(
       ctx.ws.id,
       agentId,
       formData.getAll('providerId').map(String),
@@ -729,10 +797,109 @@ export async function updateAgentModelAction(
     if (error instanceof AgentConfigurationError) return { error: error.message };
     throw error;
   }
+  const runtimeResult = runtimeKind === 'hermes'
+    ? await syncHermesRuntime(ctx.ws.id, agentId)
+    : null;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
   revalidatePath(`/app/${slug}/chat`);
   revalidatePath(`/app/${slug}/work`);
+  if (runtimeResult?.error) {
+    return { warning: `Saved, but Hermes sync failed: ${runtimeResult.error}`, savedAt: Date.now() };
+  }
   return { savedAt: Date.now() };
+}
+
+async function manageableHermesAgent(workspaceId: string, agentId: string) {
+  if (!await isManageableAgent(workspaceId, agentId)) return null;
+  return db.agent.findFirst({
+    where: { id: agentId, workspaceId, runtime: { is: { kind: 'hermes' } } },
+    select: {
+      id: true,
+      workspaceId: true,
+      runtime: { select: { id: true, kind: true, sandboxId: true } },
+    },
+  });
+}
+
+export async function updateHermesConversationSelectionAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const conversationId = String(formData.get('conversationId') ?? '').trim() || null;
+  const profile = normalizeHermesProfile(formData.get('profile'));
+  const useDefault = formData.get('useDefault') === '1';
+  const provider = useDefault ? null : String(formData.get('provider') ?? '').trim() || null;
+  const model = useDefault ? null : String(formData.get('model') ?? '').trim() || null;
+  if (!profile || (provider === null) !== (model === null)) {
+    return { error: 'Choose a valid Hermes profile and model.' };
+  }
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  const agent = await manageableHermesAgent(ctx.ws.id, agentId);
+  if (!agent) return { error: 'Hermes agent not found.' };
+
+  try {
+    const selection = await prepareHermesConversationSelection(agent, { profile, provider, model });
+    const update = await runHermesRuntimeMaintenance(
+      ctx.ws.id,
+      agent.id,
+      agent.runtime!.sandboxId,
+      { quiesce: false },
+      () => setHermesConversationSelection(
+        ctx.ws.id,
+        agent.id,
+        conversationId,
+        selection,
+      ),
+    );
+    if (update.status === 'error') return { error: update.error };
+    const result = update.data;
+    if (!result) return { error: 'Conversation not found or cannot be changed.' };
+    revalidatePath(`/app/${slug}/chat`);
+    revalidatePath(`/app/${slug}/work`);
+    return { savedAt: Date.now(), ...result };
+  } catch (error) {
+    if (error instanceof HermesProfileError || error instanceof AgentConfigurationError) {
+      return { error: error.message };
+    }
+    return { error: 'Could not update the Hermes conversation model.' };
+  }
+}
+
+export async function updateHermesProfileDefaultModelAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const profile = normalizeHermesProfile(formData.get('profile'));
+  const provider = String(formData.get('provider') ?? '').trim();
+  const model = String(formData.get('model') ?? '').trim();
+  if (!profile || !provider || !model) return { error: 'Choose a valid Hermes profile and model.' };
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  const agent = await manageableHermesAgent(ctx.ws.id, agentId);
+  if (!agent) return { error: 'Hermes agent not found.' };
+
+  try {
+    const profiles = await listHermesProfiles(agent);
+    if (!profiles.some((item) => item.name === profile)) {
+      return { error: 'The selected Hermes profile no longer exists.' };
+    }
+    const { provider: projectedProvider } = await prepareHermesConversationSelection(agent, { profile, provider, model });
+    if (!projectedProvider) return { error: 'Choose a valid Hermes profile and model.' };
+    await setHermesProfileDefaultModel(agent, profile, projectedProvider, model);
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    revalidatePath(`/app/${slug}/chat`);
+    return { savedAt: Date.now() };
+  } catch (error) {
+    if (error instanceof HermesProfileError || error instanceof AgentConfigurationError) {
+      return { error: error.message };
+    }
+    return { error: 'Could not update the Hermes profile model.' };
+  }
 }
 
 export async function syncAgentRuntimeAction(

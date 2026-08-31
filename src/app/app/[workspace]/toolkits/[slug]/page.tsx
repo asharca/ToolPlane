@@ -37,6 +37,7 @@ import {
 import { TabBar } from '@/components/dashboard/TabBar';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   cloneToolkitAction,
   deleteToolkitAction,
@@ -387,14 +388,14 @@ export default async function ToolkitDetailPage({
                   <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                   <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                     {t('visibility')}
-                    <select
+                    <NativeSelect
                       name="visibility"
                       defaultValue={toolkit.visibility}
                       className="ui-input h-9 w-full text-sm"
                     >
                       <option value="private">{t('private')}</option>
                       <option value="public">{t('public')}</option>
-                    </select>
+                    </NativeSelect>
                   </label>
                   <label className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
                     <input
