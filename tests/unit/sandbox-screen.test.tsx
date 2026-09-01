@@ -36,6 +36,7 @@ vi.mock('@/components/dashboard/sandboxes/SandboxConsole', () => ({
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.clearAllMocks();
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
 });
 
@@ -154,5 +155,39 @@ describe('sandbox screen workspace', () => {
     await waitFor(() => expect(rfbMocks.construct).toHaveBeenCalledTimes(2));
     const reconnected = rfbMocks.construct.mock.calls.at(-1)?.[2] as { viewOnly: boolean };
     expect(reconnected.viewOnly).toBe(false);
+  });
+
+  it.each(['disconnect', 'securityfailure'])('retries RFB after %s', async (eventName) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ viewerUrl: 'wss://example.test/first' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ viewerUrl: 'wss://example.test/second' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <SandboxScreen
+        workspace="acme"
+        sandboxId="box-1"
+        displays={[{ id: 'main', label: 'Desktop', transport: 'rfb', control: true }]}
+        running
+      />,
+    );
+
+    await waitFor(() => expect(rfbMocks.construct).toHaveBeenCalledOnce());
+    const client = rfbMocks.construct.mock.calls[0][2] as EventTarget;
+    act(() => client.dispatchEvent(new Event(eventName)));
+    expect(screen.getByRole('alert')).toHaveTextContent('The screen is unavailable.');
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/workspaces/acme/sandboxes/box-1/screen/sessions',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ displayId: 'main' }) }),
+    ));
+    await waitFor(() => expect(rfbMocks.construct).toHaveBeenNthCalledWith(
+      2,
+      screen.getByTestId('rfb-target'),
+      'wss://example.test/second',
+      expect.anything(),
+    ));
   });
 });
