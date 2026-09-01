@@ -7,6 +7,7 @@ import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getSandbox } from '@/lib/sandboxes/queries';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 import {
+  connectorAndroidClientCommand,
   connectorClientCommand,
   connectorFromConfig,
   DEFAULT_CONNECTOR_REMOTE_ROOT,
@@ -30,7 +31,7 @@ import { mcpRpc } from '@/lib/process/mcp-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
-import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
+import { SandboxWorkspace } from '@/components/dashboard/sandboxes/SandboxWorkspace';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
 import { SandboxSettingsDialog } from '@/components/dashboard/sandboxes/SandboxSettingsDialog';
 import { SandboxDataManagement } from '@/components/dashboard/sandboxes/SandboxDataManagement';
@@ -187,7 +188,7 @@ export default async function SandboxDetailPage({
         </div>
       </form>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         {token ? (
           <div className="min-w-0 space-y-3">
             <CommandBlock
@@ -198,7 +199,7 @@ export default async function SandboxDetailPage({
             <p className="text-xs leading-5 text-muted-foreground">{t('connectorRequirements')}</p>
           </div>
         ) : (
-          <div className="rounded-md border border-border bg-background px-3 py-3">
+          <div className="rounded-md border border-border bg-background px-3 py-3 lg:col-span-2">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t('runOnTheUserMachine')}
             </div>
@@ -207,6 +208,16 @@ export default async function SandboxDetailPage({
             </p>
           </div>
         )}
+        {token ? (
+          <div className="min-w-0 space-y-3">
+            <CommandBlock
+              label={t('androidViaAdb')}
+              command={connectorAndroidClientCommand(connector, token)}
+              copyLabel={t('copyCommand')}
+            />
+            <p className="text-xs leading-5 text-muted-foreground">{t('androidConnectorRequirements')}</p>
+          </div>
+        ) : null}
         <div className="min-w-0 rounded-md border border-border bg-muted/35 px-3 py-3 text-xs text-muted-foreground">
           <div className="font-medium text-foreground">{t('connectionModel')}</div>
           <p className="mt-1">
@@ -461,8 +472,11 @@ export default async function SandboxDetailPage({
               {connectorSettings}
             </DashboardPanel>
           ) : (
-            <SandboxConsole
+            <SandboxWorkspace
               key={`${sandbox.id}:${canUseConsole ? connectorLive?.connectedAt ?? 'ready' : 'offline'}`}
+              workspace={slug}
+              sandboxId={sandbox.id}
+              displays={connectorLive?.displays ?? []}
               deploymentId={sandbox.deploymentId}
               running={canUseConsole}
               initialPath={initialDirectory.path}

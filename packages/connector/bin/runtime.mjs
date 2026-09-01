@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import pty from 'node-pty';
 import WebSocket from 'ws';
 
-export const VERSION = '0.1.9';
+export const VERSION = '0.1.13';
 export const PROTOCOL_VERSION = '2026-07-connector-ws-v2';
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 2_000_000;
@@ -17,8 +18,11 @@ const MAX_TIMEOUT_MS = 120_000;
 const MAX_PROCESS_ARGS = 128;
 const MAX_PROCESS_ARG_LENGTH = 8_192;
 const MAX_PROCESS_ARG_TOTAL = 24_000;
+const MAX_SCREEN_BUFFER = 8_000_000;
+const APPLE_RFB_BANNER = Buffer.from('RFB 003.889\n');
+const RFB_38_BANNER = Buffer.from('RFB 003.008\n');
 const DEFAULT_ROOT = '~/toolplane-sandbox';
-const CONNECTOR_FLAGS = new Set(['server', 'token', 'root']);
+const CONNECTOR_FLAGS = new Set(['server', 'token', 'root', 'android', 'screen-vnc']);
 const CONNECTOR_CAPABILITIES = ['process_exec', 'write_file_base64'];
 
 function usage(exitCode = 0) {
@@ -26,7 +30,8 @@ function usage(exitCode = 0) {
   out.write(`toolplane connector ${VERSION}
 
 Usage:
-  connector connect --server <url> --token <token> [--root <path>]
+  connector connect --server <url> --token <token> [--root <path>] [--android <serial|auto>]
+  connector connect --server <url> --token <token> [--root <path>] [--screen-vnc <127.0.0.1:port|auto>]
 
 Example:
   npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox"
@@ -56,13 +61,60 @@ export function parseArgs(argv) {
   const flags = parseFlags(rest);
 
   if (!flags.server || !flags.token) throw new Error('Both --server and --token are required.');
-  return {
+  const parsed = {
     help: false,
     command,
     server: flags.server,
     token: flags.token,
     root: flags.root,
   };
+  if (flags.android) parsed.android = validateAndroidSelector(flags.android);
+  if (flags['screen-vnc']) {
+    parseVncEndpoint(flags['screen-vnc']);
+    parsed.screenVnc = flags['screen-vnc'];
+  }
+  if (parsed.android && parsed.screenVnc) {
+    throw new Error('--android and --screen-vnc cannot be used together.');
+  }
+  return parsed;
+}
+
+export function validateAndroidSelector(value) {
+  const serial = String(value ?? '');
+  if (serial === 'auto') return serial;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(serial)) {
+    throw new Error('Android serial must be "auto" or a bounded ADB serial.');
+  }
+  return serial;
+}
+
+export function parseVncEndpoint(value) {
+  const input = String(value ?? '');
+  if (input === 'auto') return { host: '127.0.0.1', port: 5900 };
+  const match = /^127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(input);
+  const port = Number(match?.[1]);
+  if (!match || port > 65535) {
+    throw new Error('--screen-vnc must be "auto" or 127.0.0.1:<port>.');
+  }
+  return { host: '127.0.0.1', port };
+}
+
+export function probeVncEndpoint(endpoint, timeoutMs = 750) {
+  const target = typeof endpoint === 'string' ? parseVncEndpoint(endpoint) : endpoint;
+  return new Promise((resolve) => {
+    const socket = net.createConnection(target);
+    let settled = false;
+    const finish = (available) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(available);
+    };
+    socket.setTimeout(Math.min(Math.max(Number(timeoutMs) || 750, 1), 5000));
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
 }
 
 export function expandHome(value, home = os.homedir(), pathApi = path) {
@@ -203,13 +255,17 @@ function terminateChild(child, platform = process.platform) {
   }
 }
 
-export function createRuntime(rootInput) {
+export function createRuntime(rootInput, options = {}) {
   const root = path.resolve(expandHome(rootInput));
   const terminals = new Map();
+  const screenSessions = new Map();
   const activeChildren = new Set();
   let canonicalRootPromise;
   const platform = process.platform;
   const shell = connectorShell(platform);
+  const vnc = options.screenVnc
+    ? (typeof options.screenVnc === 'string' ? parseVncEndpoint(options.screenVnc) : options.screenVnc)
+    : null;
   const info = {
     version: VERSION,
     protocolVersion: PROTOCOL_VERSION,
@@ -218,8 +274,12 @@ export function createRuntime(rootInput) {
     shell,
     shellFamily: isWindows(platform) ? 'powershell' : 'posix',
     nodeVersion: process.versions.node,
-    capabilities: CONNECTOR_CAPABILITIES,
+    capabilities: vnc ? [...CONNECTOR_CAPABILITIES, 'screen'] : CONNECTOR_CAPABILITIES,
     root,
+    ...(vnc ? {
+      device: { kind: 'computer', name: os.hostname() },
+      displays: [{ id: 'vnc', label: 'Screen', transport: 'rfb', control: true }],
+    } : {}),
   };
 
   function resolvePath(raw = '.') {
@@ -458,9 +518,152 @@ export function createRuntime(rootInput) {
     return { ok: true };
   }
 
+  function screenSourceUrl(raw) {
+    if (!options.wsUrl || !options.token) throw new Error('Screen relay is not configured.');
+    let source;
+    let broker;
+    try {
+      source = new URL(String(raw ?? ''));
+      broker = new URL(String(options.wsUrl));
+    } catch {
+      throw new Error('Invalid screen source URL.');
+    }
+    if (!['ws:', 'wss:'].includes(source.protocol)
+      || source.protocol !== broker.protocol
+      || source.host !== broker.host
+      || source.username
+      || source.password
+      || source.hash) {
+      throw new Error('Screen source URL must use the connector broker origin.');
+    }
+    return source.toString();
+  }
+
+  async function screenOpen(args = {}) {
+    if (!vnc) throw new Error('VNC screen is not configured.');
+    if (args.displayId !== 'vnc') throw new Error('Unknown display.');
+    const sessionId = String(args.sessionId ?? '');
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('Invalid screen session id.');
+    if (screenSessions.has(sessionId)) throw new Error('Screen session already exists.');
+    const source = new WebSocket(screenSourceUrl(args.sourceUrl), {
+      headers: { authorization: `Bearer ${options.token}` },
+      maxPayload: 8_000_000,
+      perMessageDeflate: false,
+    });
+    const socket = net.createConnection(vnc);
+
+    try {
+      await new Promise((resolve, reject) => {
+        let sourceReady = false;
+        let socketReady = false;
+        let settled = false;
+        const timer = setTimeout(() => fail(new Error('Screen relay connection timed out.')), 10_000);
+        const ready = () => {
+          if (!settled && sourceReady && socketReady) {
+            settled = true;
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(error instanceof Error ? error : new Error('Screen relay connection failed.'));
+        };
+        source.once('open', () => {
+          sourceReady = true;
+          ready();
+        });
+        source.once('unexpected-response', (_request, response) => {
+          fail(new Error(`Screen relay rejected the connector (${response.statusCode}).`));
+        });
+        source.once('error', fail);
+        source.once('close', () => fail(new Error('Screen relay closed during connection.')));
+        socket.once('connect', () => {
+          socketReady = true;
+          ready();
+        });
+        socket.once('error', fail);
+        socket.once('close', () => fail(new Error('VNC server closed during connection.')));
+      });
+    } catch (error) {
+      source.close();
+      socket.destroy();
+      throw error;
+    }
+
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      screenSessions.delete(sessionId);
+      socket.destroy();
+      if (source.readyState === WebSocket.OPEN || source.readyState === WebSocket.CONNECTING) source.close();
+    };
+    screenSessions.set(sessionId, { close });
+    const relayToViewer = (data) => {
+      if (!data.length || source.readyState !== WebSocket.OPEN) return;
+      if (source.bufferedAmount + data.byteLength > MAX_SCREEN_BUFFER) {
+        close();
+        return;
+      }
+      source.send(data, { binary: true }, (error) => {
+        if (error) close();
+      });
+    };
+    source.on('message', (data, binary) => {
+      if (!binary) {
+        source.close(1003, 'binary RFB data required');
+        return;
+      }
+      const chunk = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+      if (socket.writableLength + chunk.byteLength > MAX_SCREEN_BUFFER) {
+        close();
+        return;
+      }
+      socket.write(chunk);
+    });
+    let pendingVncBanner = Buffer.alloc(0);
+    let pendingAppleSecurityTypes = null;
+    socket.on('data', (chunk) => {
+      let data = chunk;
+      if (pendingVncBanner !== null) {
+        pendingVncBanner = Buffer.concat([pendingVncBanner, chunk]);
+        if (pendingVncBanner.length < APPLE_RFB_BANNER.length) return;
+        const banner = pendingVncBanner.subarray(0, APPLE_RFB_BANNER.length);
+        const apple = banner.equals(APPLE_RFB_BANNER);
+        data = pendingVncBanner.subarray(APPLE_RFB_BANNER.length);
+        pendingVncBanner = null;
+        if (apple) pendingAppleSecurityTypes = Buffer.alloc(0);
+        relayToViewer(apple ? RFB_38_BANNER : banner);
+      }
+      if (pendingAppleSecurityTypes !== null) {
+        pendingAppleSecurityTypes = Buffer.concat([pendingAppleSecurityTypes, data]);
+        if (!pendingAppleSecurityTypes.length) return;
+        const count = pendingAppleSecurityTypes[0];
+        if (count > 0 && pendingAppleSecurityTypes.length < count + 1) return;
+        const offered = pendingAppleSecurityTypes.subarray(1, count + 1);
+        data = Buffer.concat([
+          offered.includes(2) ? Buffer.from([1, 2]) : pendingAppleSecurityTypes.subarray(0, count + 1),
+          pendingAppleSecurityTypes.subarray(count + 1),
+        ]);
+        pendingAppleSecurityTypes = null;
+      }
+      relayToViewer(data);
+    });
+    source.once('close', close);
+    source.once('error', close);
+    socket.once('close', close);
+    socket.once('error', close);
+    return { ok: true, sessionId, displayId: 'vnc' };
+  }
+
   function closeAllTerminals() {
     for (const term of terminals.values()) term.kill();
     terminals.clear();
+    for (const session of screenSessions.values()) session.close();
+    screenSessions.clear();
     for (const child of activeChildren) terminateChild(child, platform);
     activeChildren.clear();
   }
@@ -494,6 +697,8 @@ export function createRuntime(rootInput) {
         return terminalResize(args);
       case 'terminal_close':
         return terminalClose(args);
+      case 'screen_open':
+        return screenOpen(args);
       default:
         throw new Error(`Unknown connector op: ${op}`);
     }
@@ -580,8 +785,30 @@ async function connectOnce(wsUrl, token, runtime) {
 
 async function runSandboxConnector(args) {
   const boot = await bootstrap(args.server, args.token);
-  const runtime = createRuntime(resolveConnectorRoot(args.root, boot.root));
-  await fs.mkdir(runtime.root, { recursive: true });
+  let runtime;
+  if (args.android) {
+    const { createAndroidRuntime, resolveAndroidRoot } = await import('./android.mjs');
+    runtime = await createAndroidRuntime(
+      resolveAndroidRoot(args.root, boot.root),
+      args.android,
+    );
+  } else {
+    let screenVnc = null;
+    if (args.screenVnc) {
+      const endpoint = parseVncEndpoint(args.screenVnc);
+      if (await probeVncEndpoint(endpoint)) {
+        screenVnc = endpoint;
+      } else {
+        console.log(`[connector] VNC unavailable at ${endpoint.host}:${endpoint.port}; screen disabled`);
+      }
+    }
+    runtime = createRuntime(resolveConnectorRoot(args.root, boot.root), {
+      screenVnc,
+      token: args.token,
+      wsUrl: boot.wsUrl,
+    });
+    await fs.mkdir(runtime.root, { recursive: true });
+  }
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
