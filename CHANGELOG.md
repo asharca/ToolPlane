@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.1](https://github.com/asharca/ToolPlane/compare/v0.23.0...v0.23.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **sandboxes:** retry failed screen sessions ([#99](https://github.com/asharca/ToolPlane/issues/99)) ([9469782](https://github.com/asharca/ToolPlane/commit/9469782d7e1bc355543444f993100ac2d4401a53))
+* **sandboxes:** support Android and remote screens ([#97](https://github.com/asharca/ToolPlane/issues/97)) ([7de3a9c](https://github.com/asharca/ToolPlane/commit/7de3a9c7493f382768d3d34d3df4eae7b012b1fa))
+
 ## [0.23.0](https://github.com/asharca/ToolPlane/compare/v0.22.1...v0.23.0) (2026-08-31)
 
 
