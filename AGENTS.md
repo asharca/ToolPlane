@@ -27,7 +27,6 @@ pnpm test                      # vitest run (unit + integration)
 pnpm test:watch                # vitest watch
 pnpm vitest run tests/unit/auth.test.ts          # single test file
 pnpm vitest run -t "verifies token"              # single test by name
-pnpm test:e2e                  # node e2e/dashboard.e2e.mjs — needs `pnpm dev` already running
 
 pnpm db:migrate                # prisma migrate dev
 pnpm db:generate               # prisma generate

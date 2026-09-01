@@ -1,10 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import net from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { WebSocketServer } from 'ws';
+import { gunzipSync } from 'node:zlib';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { describe, expect, it } from 'vitest';
 import {
   connectorShell,
@@ -12,13 +14,20 @@ import {
   expandHome,
   normalizeSandboxPath,
   parseArgs,
+  parseVncEndpoint,
   pathIsInside,
+  probeVncEndpoint,
   PROTOCOL_VERSION,
   resolveConnectorRoot,
   shellExecArgs,
   terminalShellArgs,
   VERSION,
 } from '../../packages/connector/bin/runtime.mjs';
+import {
+  createAndroidRuntime,
+  resolveAndroidRoot,
+  resolveAndroidSerial,
+} from '../../packages/connector/bin/android.mjs';
 import { buildConnectorPackageTarball, CONNECTOR_TARBALL_FILENAME } from '@/lib/sandboxes/connector-package';
 import {
   CONNECTOR_PACKAGE_VERSION,
@@ -28,12 +37,32 @@ import connectorPackage from '../../packages/connector/package.json';
 
 const installSmoke = process.env.CONNECTOR_INSTALL_SMOKE === '1' ? it : it.skip;
 
+function writeFakeAdb(directory: string): string {
+  const executable = path.join(directory, 'fake-adb');
+  writeFileSync(executable, [
+    '#!/usr/bin/env node',
+    "const args = process.argv.slice(2);",
+    "if (args[0] === 'devices') { process.stdout.write('List of devices attached\\ndevice-one\\tdevice\\ndevice-two\\tdevice\\n'); process.exit(0); }",
+    "if (args.at(-1) === 'get-state') { process.stdout.write('device\\n'); process.exit(0); }",
+    "if (args.includes('screencap')) { process.stdout.write(Buffer.from('iVBORw0KGgo=', 'base64')); process.exit(0); }",
+    "const command = args.at(-1) || '';",
+    "if (command.includes('getprop ro.product.model')) { process.stdout.write('Pixel Test\\naarch64\\n'); process.exit(0); }",
+    "if (command.includes('canonical()') && command.includes('/escape/')) process.exit(42);",
+  ].join('\n'), { mode: 0o755 });
+  return executable;
+}
+
 describe('connector CLI portability', () => {
   it('keeps the CLI, package, and hosted tarball versions aligned', () => {
     expect(VERSION).toBe(connectorPackage.version);
     expect(CONNECTOR_PACKAGE_VERSION).toBe(connectorPackage.version);
     expect(CONNECTOR_TARBALL_FILENAME).toContain(connectorPackage.version);
     expect(PROTOCOL_VERSION).toBe(CONNECTOR_PROTOCOL_VERSION);
+  });
+
+  it('ships the Android runtime in the hosted connector tarball', async () => {
+    const tar = gunzipSync(await buildConnectorPackageTarball(process.cwd()));
+    expect(tar.includes(Buffer.from('package/bin/android.mjs'))).toBe(true);
   });
 
   it('runs through the symlink shape used by npm and npx bins', () => {
@@ -44,7 +73,7 @@ describe('connector CLI portability', () => {
       if (process.platform !== 'win32') symlinkSync(cli, entry);
       const result = spawnSync(process.execPath, [entry, '--help'], { encoding: 'utf8' });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('toolplane connector 0.1.9');
+      expect(result.stdout).toContain('toolplane connector 0.1.13');
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
@@ -84,7 +113,7 @@ describe('connector CLI portability', () => {
       for (const shell of shells) {
         const result = spawnSync(shell.executable, shell.args, { encoding: 'utf8', timeout: 120_000 });
         expect(result.status, `${shell.name}: ${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain('toolplane connector 0.1.9');
+        expect(result.stdout).toContain('toolplane connector 0.1.13');
       }
     } finally {
       rmSync(temp, { recursive: true, force: true });
@@ -327,8 +356,177 @@ describe('connector CLI portability', () => {
       'D:\\Work Area',
     ]);
 
+    if (!('root' in args)) throw new Error('Expected parsed connector arguments.');
     expect(args.root).toBe('D:\\Work Area');
     expect(resolveConnectorRoot(args.root, '~/toolplane-sandbox')).toBe('D:\\Work Area');
+  });
+
+  it('validates Android and loopback-only VNC CLI targets', () => {
+    expect(parseArgs([
+      'connect',
+      '--server',
+      'https://app.example.com',
+      '--token',
+      'mcpcon_test',
+      '--android',
+      'emulator-5554',
+    ])).toMatchObject({ android: 'emulator-5554' });
+    expect(parseVncEndpoint('auto')).toEqual({ host: '127.0.0.1', port: 5900 });
+    expect(parseVncEndpoint('127.0.0.1:5901')).toEqual({ host: '127.0.0.1', port: 5901 });
+    for (const target of ['localhost:5900', '0.0.0.0:5900', '127.0.0.2:5900', '127.0.0.1:0', '127.0.0.1:65536']) {
+      expect(() => parseVncEndpoint(target)).toThrow(/screen-vnc/i);
+    }
+    expect(() => parseArgs([
+      'connect', '--server', 'https://app.example.com', '--token', 'mcpcon_test',
+      '--android', 'auto', '--screen-vnc', 'auto',
+    ])).toThrow(/cannot be used together/i);
+  });
+
+  it('probes only the fixed loopback VNC endpoint before advertising it', async () => {
+    const server = net.createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    try {
+      await expect(probeVncEndpoint({ host: '127.0.0.1', port }, 1000)).resolves.toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await expect(probeVncEndpoint({ host: '127.0.0.1', port }, 100)).resolves.toBe(false);
+  });
+
+  it('forces legacy VNC password auth while keeping Apple Screen Sharing on RFB 3.8', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'toolplane-vnc-'));
+    const token = 'mcpcon_vnc_relay';
+    const vncServer = net.createServer();
+    const relayWss = new WebSocketServer({ noServer: true });
+    let vncSocket: Socket | undefined;
+    let sourceSocket: WebSocket | undefined;
+    let sourceAuthorization = '';
+    let resolveSourceData!: (value: Buffer) => void;
+    const sourceData = new Promise<Buffer>((resolve) => { resolveSourceData = resolve; });
+    relayWss.on('connection', (ws) => {
+      sourceSocket = ws;
+      ws.once('message', (raw) => resolveSourceData(Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer)));
+    });
+    const relayServer = http.createServer();
+    relayServer.on('upgrade', (req, socket, head) => {
+      sourceAuthorization = String(req.headers.authorization ?? '');
+      relayWss.handleUpgrade(req, socket, head, (ws) => relayWss.emit('connection', ws, req));
+    });
+    await Promise.all([
+      new Promise<void>((resolve, reject) => {
+        vncServer.once('error', reject);
+        vncServer.listen(0, '127.0.0.1', resolve);
+      }),
+      new Promise<void>((resolve, reject) => {
+        relayServer.once('error', reject);
+        relayServer.listen(0, '127.0.0.1', resolve);
+      }),
+    ]);
+    const vncPort = (vncServer.address() as AddressInfo).port;
+    const relayPort = (relayServer.address() as AddressInfo).port;
+    const connected = new Promise<Socket>((resolve) => {
+      vncServer.once('connection', (socket) => {
+        vncSocket = socket;
+        socket.write('RFB');
+        resolve(socket);
+      });
+    });
+    const runtime = createRuntime(root, {
+      screenVnc: { host: '127.0.0.1', port: vncPort },
+      token,
+      wsUrl: `ws://127.0.0.1:${relayPort}/connect`,
+    });
+
+    try {
+      expect(runtime.info).toMatchObject({
+        displays: [{ id: 'vnc', label: 'Screen', transport: 'rfb', control: true }],
+      });
+      await expect(runtime.handle({ readyState: 1, send: () => undefined }, 'screen_open', {
+        sessionId: 'screen_session_1',
+        sourceUrl: `ws://127.0.0.1:${relayPort}/screen/source/screen_session_1`,
+        displayId: 'vnc',
+      })).resolves.toMatchObject({ ok: true, sessionId: 'screen_session_1', displayId: 'vnc' });
+      const socket = await connected;
+      socket.write(' 003.889\n');
+      await expect(sourceData).resolves.toEqual(Buffer.from('RFB 003.008\n'));
+      expect(sourceAuthorization).toBe(`Bearer ${token}`);
+      if (!sourceSocket) throw new Error('Expected screen source connection.');
+
+      const viewerVersion = new Promise<Buffer>((resolve) => socket.once('data', resolve));
+      sourceSocket.send(Buffer.from('RFB 003.008\n'));
+      await expect(viewerVersion).resolves.toEqual(Buffer.from('RFB 003.008\n'));
+
+      const securityTypes = new Promise<Buffer>((resolve) => {
+        sourceSocket?.once('message', (raw) => resolve(Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer)));
+      });
+      socket.write(Buffer.from([7, 30, 33]));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      socket.write(Buffer.from([36, 31, 32, 2, 35]));
+      await expect(securityTypes).resolves.toEqual(Buffer.from([1, 2]));
+
+      const selectedType = new Promise<Buffer>((resolve) => socket.once('data', resolve));
+      sourceSocket.send(Buffer.from([2]));
+      await expect(selectedType).resolves.toEqual(Buffer.from([2]));
+
+      const challenge = Buffer.from('0123456789abcdef');
+      const relayedChallenge = new Promise<Buffer>((resolve) => {
+        sourceSocket?.once('message', (raw) => resolve(Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer)));
+      });
+      socket.write(challenge);
+      await expect(relayedChallenge).resolves.toEqual(challenge);
+
+      const response = Buffer.from('fedcba9876543210');
+      const relayedResponse = new Promise<Buffer>((resolve) => socket.once('data', resolve));
+      sourceSocket.send(response);
+      await expect(relayedResponse).resolves.toEqual(response);
+    } finally {
+      runtime.closeAllTerminals();
+      sourceSocket?.terminate();
+      vncSocket?.destroy();
+      relayWss.close();
+      await Promise.all([
+        new Promise<void>((resolve) => relayServer.close(() => resolve())),
+        new Promise<void>((resolve) => vncServer.close(() => resolve())),
+      ]);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it.skipIf(process.platform === 'win32')('discovers Android devices strictly and exposes bounded screenshots', async () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), 'toolplane-fake-adb-'));
+    const adb = writeFakeAdb(temp);
+    try {
+      await expect(resolveAndroidSerial('auto', { adb })).rejects.toThrow(/more than one/i);
+      expect(resolveAndroidRoot(undefined, '~/toolplane-sandbox')).toBe('/data/local/tmp/toolplane-sandbox');
+      expect(() => resolveAndroidRoot('/')).toThrow(/filesystem root/i);
+
+      const runtime = await createAndroidRuntime('/sdcard/ToolPlane', 'device-one', { adb });
+      const ws = { readyState: 1, send: () => undefined };
+      try {
+        expect(runtime.info).toMatchObject({
+          platform: 'android',
+          root: '/sdcard/ToolPlane',
+          device: { kind: 'android', name: 'Pixel Test' },
+          capabilities: ['process_exec', 'write_file_base64', 'terminal', 'files', 'screen_capture'],
+          displays: [{ id: 'main', label: 'Screen', transport: 'snapshot', control: false }],
+        });
+        await expect(runtime.handle(ws, 'read_file', { path: '../secret.txt' })).rejects.toThrow(/escapes connector root/i);
+        await expect(runtime.handle(ws, 'read_file', { path: 'escape/secret.txt' })).rejects.toThrow(/through a link/i);
+
+        const capture = await runtime.handle(ws, 'screen_capture', { displayId: 'main' });
+        expect(capture).toMatchObject({ contentType: 'image/png', size: 8 });
+        if (!('data' in capture)) throw new Error('Expected screen capture data.');
+        expect(Buffer.from(capture.data, 'base64')).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      } finally {
+        runtime.closeAllTerminals();
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it('expands slash and backslash home aliases with native path rules', () => {

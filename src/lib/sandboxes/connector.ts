@@ -3,6 +3,7 @@ import connectorPackage from '../../../packages/connector/package.json';
 
 export const DEFAULT_CONNECTOR_SERVER_URL = 'http://localhost:3000';
 export const DEFAULT_CONNECTOR_REMOTE_ROOT = '~/toolplane-sandbox';
+export const DEFAULT_ANDROID_CONNECTOR_REMOTE_ROOT = '/sdcard/ToolPlane';
 export const DEFAULT_CONNECTOR_PACKAGE = '/api/v1/connectors/package.tgz';
 export const CONNECTOR_PROTOCOL_VERSION = '2026-07-connector-ws-v2';
 export const CONNECTOR_PACKAGE_VERSION = connectorPackage.version;
@@ -134,8 +135,12 @@ function portableRootArg(value: string): string {
   return `"${sanitizeConnectorRoot(value)}"`;
 }
 
-function connectorClientCommandParts(config: SandboxConnectorConfig, token: string): string[] {
-  return [
+function connectorClientCommandParts(
+  config: SandboxConnectorConfig,
+  token: string,
+  options: { root?: string; android?: string; screenVnc?: string } = {},
+): string[] {
+  const parts = [
     'npx',
     '-y',
     '--package',
@@ -147,12 +152,22 @@ function connectorClientCommandParts(config: SandboxConnectorConfig, token: stri
     '--token',
     portableQuotedArg(token),
     '--root',
-    portableRootArg(config.remoteRoot),
+    portableRootArg(options.root ?? config.remoteRoot),
   ];
+  if (options.android) parts.push('--android', portableQuotedArg(options.android));
+  if (options.screenVnc) parts.push('--screen-vnc', portableQuotedArg(options.screenVnc));
+  return parts;
 }
 
 export function connectorClientCommand(config: SandboxConnectorConfig, token: string): string {
-  return connectorClientCommandParts(config, token).join(' ');
+  return connectorClientCommandParts(config, token, { screenVnc: 'auto' }).join(' ');
+}
+
+export function connectorAndroidClientCommand(config: SandboxConnectorConfig, token: string): string {
+  return connectorClientCommandParts(config, token, {
+    root: DEFAULT_ANDROID_CONNECTOR_REMOTE_ROOT,
+    android: 'auto',
+  }).join(' ');
 }
 
 export function isConnectorToken(token: string): boolean {

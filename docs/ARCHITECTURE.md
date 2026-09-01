@@ -269,7 +269,6 @@ Deployment、Skill、Toolkit、Sandbox 与 Sub-agent，任何外部 ID 都使事
 ## 11. 测试
 
 - **单元/集成**（Vitest 4，53 用例）：`tests/unit/*`（auth、命令面板、卡片、mcp-tools、安全回跳、SKILL.md 工件、工具台、工作区切换…）、`tests/integration/*`（db、home、queries）。`server-only` 用 `tests/stubs` 替身。
-- **e2e**（`e2e/dashboard.e2e.mjs`，裸 `playwright` 库）：signup → deploy → running → stop → start → install → download 全链路。`npm run test:e2e`（需 dev server 在跑）。
 
 ---
 
@@ -280,7 +279,6 @@ npm run dev          # next dev (:3000)
 npm run db:migrate   # prisma migrate dev
 npm run db:generate  # prisma generate
 npm test             # vitest run
-npm run test:e2e     # playwright e2e
 ```
 
 - **加 Prisma 模型后必须重启 dev server**：`prisma generate` 只更新磁盘上的 client，正在运行的 Next 进程仍持旧 client（会 `db.xxx is undefined` → 500）。

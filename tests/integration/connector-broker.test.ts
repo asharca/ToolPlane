@@ -11,6 +11,7 @@ vi.mock('@/lib/sandboxes/connector-auth', () => ({
 
 let broker: typeof import('@/lib/sandboxes/connector-broker');
 let wsUrl = '';
+let publicWsUrl: string | undefined;
 
 function sandboxRecord() {
   return {
@@ -32,6 +33,15 @@ async function openConnector(token = 'mcpcon_broker_test'): Promise<WebSocket> {
   return ws;
 }
 
+async function openSocket(url: string, options?: ConstructorParameters<typeof WebSocket>[1]): Promise<WebSocket> {
+  const ws = new WebSocket(url, options);
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+  });
+  return ws;
+}
+
 async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!check()) {
@@ -42,6 +52,8 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
 
 describe('connector broker integration', () => {
   beforeAll(async () => {
+    publicWsUrl = process.env.CONNECTOR_WS_PUBLIC_URL;
+    delete process.env.CONNECTOR_WS_PUBLIC_URL;
     process.env.CONNECTOR_WS_BIND = '127.0.0.1';
     process.env.CONNECTOR_WS_PORT = '0';
     broker = await import('@/lib/sandboxes/connector-broker');
@@ -53,6 +65,8 @@ describe('connector broker integration', () => {
     await broker.shutdownConnectorBroker();
     delete process.env.CONNECTOR_WS_BIND;
     delete process.env.CONNECTOR_WS_PORT;
+    if (publicWsUrl === undefined) delete process.env.CONNECTOR_WS_PUBLIC_URL;
+    else process.env.CONNECTOR_WS_PUBLIC_URL = publicWsUrl;
   });
 
   beforeEach(() => {
@@ -152,5 +166,103 @@ describe('connector broker integration', () => {
     }));
     await expect(closed).resolves.toBe(4002);
     expect(broker.connectorStatus('sb-broker').connected).toBe(false);
+  });
+
+  it('publishes sanitized display metadata and captures a bounded snapshot', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const ws = await openConnector();
+    ws.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as { type?: string; id?: string; op?: string };
+      if (message.type === 'request' && message.op === 'screen_capture') {
+        ws.send(JSON.stringify({
+          type: 'response',
+          id: message.id,
+          ok: true,
+          result: { data: png.toString('base64'), contentType: 'image/png' },
+        }));
+      }
+    });
+    ws.send(JSON.stringify({
+      type: 'hello',
+      protocolVersion: CONNECTOR_PROTOCOL_VERSION,
+      capabilities: ['process_exec', 'write_file_base64'],
+      device: { kind: 'ANDROID', name: ' Pixel 9 ' },
+      displays: [
+        { id: 'main', label: 'Phone', transport: 'snapshot', control: false, width: 1080, height: 2400 },
+        { id: 'ignored', label: 'Ignored', transport: 'video' },
+      ],
+    }));
+    await waitFor(() => broker.connectorStatus('sb-broker').connected);
+
+    expect(broker.connectorStatus('sb-broker')).toMatchObject({
+      device: { kind: 'android', name: 'Pixel 9' },
+      displays: [{
+        id: 'main',
+        label: 'Phone',
+        transport: 'snapshot',
+        control: false,
+        width: 1080,
+        height: 2400,
+      }],
+    });
+    await expect(broker.captureConnectorScreen('sb-broker', 'main')).resolves.toEqual({
+      data: png,
+      contentType: 'image/png',
+    });
+    await expect(broker.captureConnectorScreen('sb-broker', 'ignored')).rejects.toThrow(/does not support snapshot/);
+    ws.close();
+  });
+
+  it('relays RFB through one-time tickets, replaces the display session, and clears on disconnect', async () => {
+    const connector = await openConnector();
+    let source: WebSocket | undefined;
+    connector.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as {
+        type?: string;
+        id?: string;
+        op?: string;
+        args?: { sourceUrl?: string };
+      };
+      if (message.type !== 'request' || message.op !== 'screen_open' || !message.args?.sourceUrl) return;
+      source = new WebSocket(message.args.sourceUrl, {
+        headers: { authorization: 'Bearer mcpcon_broker_test' },
+      });
+      source.once('open', () => connector.send(JSON.stringify({
+        type: 'response',
+        id: message.id,
+        ok: true,
+        result: { ok: true },
+      })));
+    });
+    connector.send(JSON.stringify({
+      type: 'hello',
+      protocolVersion: CONNECTOR_PROTOCOL_VERSION,
+      capabilities: ['process_exec', 'write_file_base64'],
+      displays: [{ id: 'vnc', label: 'Screen', transport: 'rfb', control: true }],
+    }));
+    await waitFor(() => broker.connectorStatus('sb-broker').connected);
+
+    const session = await broker.createConnectorScreenSession('sb-broker', 'vnc', 'http://127.0.0.1');
+    const viewer = await openSocket(session.viewerUrl);
+    await waitFor(() => source?.readyState === WebSocket.OPEN);
+
+    const fromSource = new Promise<Buffer>((resolve) => viewer.once('message', (raw) => resolve(Buffer.from(raw as Buffer))));
+    source?.send(Buffer.from('RFB 003.008\n'));
+    await expect(fromSource).resolves.toEqual(Buffer.from('RFB 003.008\n'));
+
+    const fromViewer = new Promise<Buffer>((resolve) => source?.once('message', (raw) => resolve(Buffer.from(raw as Buffer))));
+    viewer.send(Buffer.from([1, 2, 3]));
+    await expect(fromViewer).resolves.toEqual(Buffer.from([1, 2, 3]));
+
+    await expect(openSocket(session.viewerUrl)).rejects.toThrow(/401/);
+    const firstViewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
+    const replacement = await broker.createConnectorScreenSession('sb-broker', 'vnc', 'http://127.0.0.1');
+    await firstViewerClosed;
+    const replacementViewer = await openSocket(replacement.viewerUrl);
+    await waitFor(() => source?.readyState === WebSocket.OPEN);
+
+    const viewerClosed = new Promise<void>((resolve) => replacementViewer.once('close', () => resolve()));
+    broker.disconnectConnector('sb-broker', 'token rotated');
+    await viewerClosed;
   });
 });

@@ -136,7 +136,7 @@ hosts. Linux, macOS, Windows PowerShell, and Windows Command Prompt all use the
 same one-line command:
 
 ```text
-npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.9" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox"
+npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
 ```
 
 The connector requires Node.js 20+, outbound access to ToolPlane's HTTP and
@@ -148,6 +148,26 @@ blocks `npx.ps1`, the unchanged command can be run in Command Prompt. The
 configured local root is returned by bootstrap; `--root <path>` remains an
 optional manual override for development and is reported back as the actual
 root shown in the console.
+
+Screen support is capability-based. A desktop connector probes only
+`127.0.0.1:5900` when `--screen-vnc auto` is present; an explicit
+`--screen-vnc 127.0.0.1:<port>` can select another local VNC server. When found,
+the sandbox page adds a Screen tab backed by noVNC. It opens read-only and lets
+the user explicitly enable control. The platform creates a one-use, 60-second
+viewer ticket and relays RFB bytes; it cannot choose the connector's VNC target.
+On macOS, use the password configured under **VNC viewers may control screen
+with password**, not the Mac account password.
+
+Android uses the same connector through a nearby computer with `adb` installed:
+
+```text
+npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
+```
+
+The phone may use USB debugging or Android 11+ Wireless debugging. `auto`
+requires exactly one authorized device; otherwise pass its bounded ADB serial.
+Shell, PTY, and file operations execute through ADB under the Android shell
+user. Screen display uses `adb exec-out screencap -p` and is read-only.
 
 The sandbox page generates the `mcpcon_...` token when creating a connector
 sandbox or when the user clicks **Generate command**. The command starts a
@@ -161,7 +181,9 @@ User machine
     |-- native shell (PowerShell on Windows, POSIX shell on macOS/Linux)
     |-- local filesystem root
     |-- structured process execution
-    `-- local PTY (ConPTY on Windows)
+    |-- local PTY (ConPTY on Windows)
+    |-- optional loopback VNC source
+    `-- optional Android ADB device
         |
         | WebSocket
         v
@@ -172,7 +194,8 @@ Platform connector broker
     |-- list_dir
     |-- read_file
     |-- write_file
-    `-- terminal stream
+    |-- terminal stream
+    `-- authenticated screen relay
 ```
 
 Important properties:
@@ -198,6 +221,8 @@ The Next.js server starts a connector broker during `instrumentation.ts`:
 NEXT server process
 |-- connector WebSocket broker
 |   |-- public WS /connect (Authorization: Bearer mcpcon_...)
+|   |-- public WS /screen/source/:sessionId (connector Bearer)
+|   |-- public WS /screen/view/:ticket (one-use browser ticket)
 |   `-- internal HTTP /internal/connectors/...
 `-- MCP supervisor
     `-- sandbox-mcp-server child processes
@@ -221,12 +246,13 @@ app:
     - '${CONNECTOR_WS_HOST_BIND:-0.0.0.0}:${CONNECTOR_WS_HOST_PORT:-9321}:9321'
 ```
 
-For production behind Coolify or another reverse proxy, route `/connect` to the
-broker's published host port and set `CONNECTOR_WS_PUBLIC_URL` to the public
-WebSocket endpoint, for example:
+For production behind Coolify or another reverse proxy, route `/connect`,
+`/screen/source/*`, and `/screen/view/*` with WebSocket upgrades to the broker's
+published host port. Set `CONNECTOR_WS_PUBLIC_URL` to the public WebSocket
+origin, for example:
 
 ```txt
-wss://example.com/connect
+wss://example.com
 ```
 
 If the proxy runs on another host, restrict the broker port to that proxy's IP

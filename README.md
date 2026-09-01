@@ -90,7 +90,6 @@ pnpm dev
 pnpm build
 pnpm lint
 pnpm test
-pnpm test:e2e
 pnpm db:migrate
 pnpm db:generate
 pnpm db:studio
@@ -105,8 +104,24 @@ User-machine sandboxes do not require SSH or Chisel. Linux, macOS, Windows
 PowerShell, and Windows Command Prompt use the same one-line command:
 
 ```text
-npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.9" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "~/toolplane-sandbox"
+npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
 ```
+
+`--screen-vnc auto` exposes a VNC server already listening on
+`127.0.0.1:5900`; use `127.0.0.1:<port>` for another loopback port. The
+browser Screen tab uses noVNC and starts read-only. The connector never dials a
+VNC address supplied by ToolPlane.
+
+Android phones use an ADB bridge on the computer running the connector:
+
+```text
+npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
+```
+
+Install `adb`, authorize exactly one USB or Wireless debugging device, then run
+the command. Pass the ADB serial instead of `auto` when several devices are
+connected. Android provides shell, files, structured execution when the device
+has the requested runtime, and a read-only screen snapshot.
 
 The sandbox page generates the `mcpcon_...` token and stores only its hash.
 Bootstrap supplies the configured local root, so OS-specific paths never need
