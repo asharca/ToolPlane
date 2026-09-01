@@ -49,11 +49,13 @@ export function SandboxScreen({
   running: boolean;
 }) {
   const t = useTranslations('console.sandboxes');
+  const errorT = useTranslations('errors');
   const [displayId, setDisplayId] = useState(displays[0]?.id ?? '');
   const [visible, setVisible] = useState(true);
   const [frame, setFrame] = useState(0);
   const [frameStatus, setFrameStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rfbStatus, setRfbStatus] = useState<'idle' | 'connecting' | 'connected' | 'credentials' | 'error'>('idle');
+  const [rfbAttempt, setRfbAttempt] = useState(0);
   const [viewOnly, setViewOnly] = useState(true);
   const [password, setPassword] = useState('');
   const [virtualKeyboardOpen, setVirtualKeyboardOpen] = useState(false);
@@ -123,7 +125,7 @@ export function SandboxScreen({
       rfbClient.current?.disconnect();
       rfbClient.current = null;
     };
-  }, [apiBase, display, running, visible]);
+  }, [apiBase, display, rfbAttempt, running, visible]);
 
   useEffect(() => {
     viewOnlyRef.current = viewOnly;
@@ -333,7 +335,21 @@ export function SandboxScreen({
               </form>
             ) : null}
             {rfbStatus === 'error' ? (
-              <p role="alert" className="absolute rounded-md bg-black/80 px-3 py-2 text-sm text-zinc-300">{t('screenUnavailable')}</p>
+              <div className="absolute flex items-center gap-3 rounded-md bg-black/80 px-3 py-2 text-sm text-zinc-300">
+                <p role="alert">{t('screenUnavailable')}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassword('');
+                    setRfbStatus('connecting');
+                    setRfbAttempt((attempt) => attempt + 1);
+                  }}
+                  className="flex h-8 items-center gap-1.5 rounded-md bg-white px-3 text-xs font-medium text-black"
+                >
+                  <RefreshCw className="size-3.5" />
+                  {errorT('tryAgain')}
+                </button>
+              </div>
             ) : null}
           </>
         )}
