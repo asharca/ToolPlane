@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/asharca/ToolPlane/compare/v0.24.0...v0.25.0) (2026-09-02)
+
+
+### Features
+
+* **mcp:** configure trusted private remote targets ([3fabc2d](https://github.com/asharca/ToolPlane/commit/3fabc2d2f6dd36f80380eba4ef5ea1d099581404))
+
 ## [0.24.0](https://github.com/asharca/ToolPlane/compare/v0.23.1...v0.24.0) (2026-09-02)
 
 
