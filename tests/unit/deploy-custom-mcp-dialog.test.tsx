@@ -84,6 +84,7 @@ describe('DeployCustomMcpDialog', () => {
     expect(screen.getByText('uvx + Git repository')).toBeInTheDocument();
     expect(screen.getByText('uv + package command')).toBeInTheDocument();
     expect(screen.getByText('Docker + container image')).toBeInTheDocument();
+    expect(screen.getByText('Remote HTTP MCP')).toBeInTheDocument();
     expect(screen.getByText(/Use a public Git HTTPS URL such as git\+https:\/\/<host>/i)).toBeInTheDocument();
 
     const exampleButtons = within(examples!).getAllByRole('button', { name: 'Use example' });
@@ -108,6 +109,32 @@ describe('DeployCustomMcpDialog', () => {
       .toContain('registry.example.com/organization/mcp-server:latest');
     expect(screen.getByLabelText<HTMLTextAreaElement>('MCP JSON config').value)
       .toContain('/toolplane/config/mcp-config.json');
+
+    await userEvent.click(exampleButtons[5]);
+    expect(screen.getByLabelText<HTMLTextAreaElement>('MCP JSON config').value)
+      .toContain('"type": "http"');
+  });
+
+  it('recognizes remote HTTP MCPs and hides local-only controls', async () => {
+    render(<DeployCustomMcpDialog slug="acme" />);
+    await openDialog();
+
+    const config = screen.getByLabelText('MCP JSON config');
+    await userEvent.click(config);
+    await userEvent.paste(JSON.stringify({
+      mcpServers: {
+        audit: {
+          type: 'http',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer test-token' },
+        },
+      },
+    }));
+
+    expect(screen.getByText('/acme/mcp/audit')).toBeInTheDocument();
+    expect(screen.queryByText('Configuration files (optional)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /isolated/i })).not.toBeInTheDocument();
+    expect(document.querySelector<HTMLInputElement>('input[name="runtimeFiles"]')).toHaveValue('[]');
   });
 
   it('keeps optional runtime files collapsed, submits them, and updates file path guidance by command', async () => {
@@ -157,7 +184,7 @@ describe('DeployCustomMcpDialog', () => {
     expect(screen.getByLabelText('MCP JSON config')).toHaveClass('min-h-48');
   });
 
-  it('shows a validation error for unsupported JSON commands', async () => {
+  it('shows the specific validation error for unsupported JSON commands', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();
     const config = screen.getByLabelText('MCP JSON config');
@@ -165,6 +192,26 @@ describe('DeployCustomMcpDialog', () => {
     await userEvent.paste(JSON.stringify({ unsafe: { command: 'bash', args: ['-lc', 'whoami'] } }));
     await userEvent.click(screen.getByRole('button', { name: 'Deploy MCP' }));
 
-    expect(screen.getByText(/valid MCP configuration for this source/i)).toBeInTheDocument();
+    expect(screen.getByText('command must be npx, uvx, uv, or docker.')).toBeInTheDocument();
+  });
+
+  it('shows a specific safe validation error for an invalid remote URL', async () => {
+    render(<DeployCustomMcpDialog slug="acme" />);
+    await openDialog();
+    const config = screen.getByLabelText('MCP JSON config');
+    await userEvent.click(config);
+    await userEvent.paste(JSON.stringify({
+      mcpServers: {
+        audit: {
+          type: 'http',
+          url: '[https://mcp.example.com/mcp](https://mcp.example.com/mcp)',
+          headers: { Authorization: 'Bearer test-token' },
+        },
+      },
+    }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy MCP' }));
+
+    expect(screen.getByText(/remote HTTP MCP url must be a public HTTPS URL/i)).toBeInTheDocument();
+    expect(screen.queryByText('test-token')).not.toBeInTheDocument();
   });
 });

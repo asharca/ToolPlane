@@ -88,6 +88,79 @@ describe('parseCustomMcpInput', () => {
     }))).toMatchObject({ name: 'fetcher', installCfg: { command: 'npx' } });
   });
 
+  it('accepts a remote HTTP MCP and moves its bearer token into a managed variable', () => {
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        audit: {
+          type: 'http',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer test-token' },
+        },
+      },
+    }))).toEqual({
+      source: 'remote',
+      ref: 'https://mcp.example.com/mcp',
+      name: 'audit',
+      installCfg: {
+        env: { MCP_BEARER_TOKEN: 'test-token' },
+        requiredEnv: ['MCP_BEARER_TOKEN'],
+        transport: 'streamable-http',
+        authType: 'bearer',
+        bearerEnv: 'MCP_BEARER_TOKEN',
+      },
+    });
+  });
+
+  it('accepts an unauthenticated remote HTTP MCP', () => {
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        public: { type: 'http', url: 'https://mcp.example.com/mcp' },
+      },
+    }))).toMatchObject({
+      source: 'remote',
+      ref: 'https://mcp.example.com/mcp',
+      installCfg: { env: {}, transport: 'streamable-http', authType: 'none' },
+    });
+  });
+
+  it('strictly rejects unsafe remote HTTP MCP fields without exposing credentials', () => {
+    const token = 'secret-token-must-not-appear';
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ type: 'sse', url: 'https://mcp.example.com/mcp' }, /type must be/],
+      [{ type: 'http', url: '[https://mcp.example.com/mcp](https://mcp.example.com/mcp)' }, /url must be/],
+      [{ type: 'http', url: 'http://mcp.example.com/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://mcp.example.com:443/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://mcp.example.com/mcp?token=x' }, /url must be/],
+      [{ type: 'http', url: 'https://mcp.example.com/mcp', headers: { 'X-API-Key': token } }, /Authorization header/],
+      [{ type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: `Basic ${token}` } }, /Bearer authentication/],
+      [{ type: 'http', url: 'https://mcp.example.com/mcp', command: 'npx' }, /only type, url, and headers/],
+    ];
+
+    for (const [config, error] of cases) {
+      expect(() => parseMcpJsonConfig(JSON.stringify({ mcpServers: { remote: config } }))).toThrow(error);
+      try {
+        parseMcpJsonConfig(JSON.stringify({ mcpServers: { remote: config } }));
+      } catch (caught) {
+        expect(caught).not.toHaveProperty('message', expect.stringContaining(token));
+      }
+    }
+  });
+
+  it('ignores the local network override for remote HTTP MCPs', () => {
+    expect(parseCustomMcpInput({
+      source: 'config',
+      network: 'none',
+      config: JSON.stringify({
+        mcpServers: {
+          remote: { type: 'http', url: 'https://mcp.example.com/mcp' },
+        },
+      }),
+    })).toMatchObject({
+      source: 'remote',
+      installCfg: { env: {}, transport: 'streamable-http', authType: 'none' },
+    });
+  });
+
   it('accepts a single mcpServers entry copied without outer braces', () => {
     expect(parseMcpJsonConfig(`
       "fetcher": {

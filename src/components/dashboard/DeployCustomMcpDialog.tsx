@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEv
 import { createPortal } from 'react-dom';
 import { Plus, X, AlertTriangle, Plug } from 'lucide-react';
 import { deployCustomServerAction } from '@/lib/workspace/actions';
-import { parseMcpJsonConfig } from '@/lib/workspace/custom-mcp';
+import { mcpConfigErrorDetail, parseMcpJsonConfig } from '@/lib/workspace/custom-mcp';
 import { McpNetworkModeControl } from './McpNetworkModeControl';
 import {
   RuntimeFileDraftsInput,
@@ -79,6 +79,17 @@ const JSON_CONFIG_EXAMPLES = {
     }
   }
 }`,
+  remoteHttp: `{
+  "mcpServers": {
+    "remote-mcp": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <TOKEN>"
+      }
+    }
+  }
+}`,
 } as const;
 
 const field =
@@ -118,6 +129,7 @@ export function DeployCustomMcpDialog({
       const parsed = parseMcpJsonConfig(config);
       return {
         name: parsed.name,
+        source: parsed.source,
         command: parsed.installCfg && 'command' in parsed.installCfg
           ? parsed.installCfg.command
           : null,
@@ -128,6 +140,7 @@ export function DeployCustomMcpDialog({
   }, [config]);
   const configName = parsedConfig?.name ?? '';
   const configCommand = parsedConfig?.command;
+  const configIsRemote = parsedConfig?.source === 'remote';
   const slugPreview =
     configName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mcp-server';
 
@@ -137,7 +150,7 @@ export function DeployCustomMcpDialog({
     if (!networkTouched) {
       try {
         const parsed = parseMcpJsonConfig(nextConfig);
-        setNetwork(parsed.installCfg?.network === 'none' ? 'none' : 'isolated');
+        setNetwork(parsed.installCfg && 'network' in parsed.installCfg && parsed.installCfg.network === 'none' ? 'none' : 'isolated');
       } catch {
         // Example JSON is valid, but preserve the current selection defensively.
       }
@@ -148,9 +161,9 @@ export function DeployCustomMcpDialog({
     try {
       parseMcpJsonConfig(config);
       setConfigError(null);
-    } catch {
+    } catch (error) {
       event.preventDefault();
-      setConfigError(t('invalidJsonConfig'));
+      setConfigError(mcpConfigErrorDetail(error) ?? t('invalidJsonConfig'));
       return;
     }
     const runtimeFileKeys = new Set<string>();
@@ -247,7 +260,7 @@ export function DeployCustomMcpDialog({
                 <form action={deployCustomServerAction} onSubmit={validateBeforeSubmit} className="flex min-h-0 flex-1 flex-col">
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="source" value="config" />
-                  <input type="hidden" name="runtimeFiles" value={JSON.stringify(runtimeFiles)} />
+                  <input type="hidden" name="runtimeFiles" value={JSON.stringify(configIsRemote ? [] : runtimeFiles)} />
 
                   <div
                     data-testid="deploy-custom-mcp-scroll-area"
@@ -280,6 +293,7 @@ export function DeployCustomMcpDialog({
                                 ['uvxGit', 'jsonExampleUvxGit'],
                                 ['uv', 'jsonExampleUv'],
                                 ['docker', 'jsonExampleDocker'],
+                                ['remoteHttp', 'jsonExampleRemoteHttp'],
                               ] as const).map(([key, label]) => (
                                 <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2">
                                   <span className="text-xs font-medium text-foreground">{t(label)}</span>
@@ -329,40 +343,44 @@ export function DeployCustomMcpDialog({
                       </aside>
                     </div>
 
-                  <div className="space-y-2">
-                    <details className="rounded-lg border border-border bg-card">
-                      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground">
-                        {t('runtimeFilesOptional')}
-                      </summary>
-                      <div className="border-t border-border p-3">
-                        <p className="mb-3 text-xs leading-5 text-muted-foreground">{t('runtimeFilesOptionalHint')}</p>
-                        <RuntimeFileDraftsInput
-                          value={runtimeFiles}
-                          relativePathArgumentsWork={configCommand !== 'docker'}
-                          onChange={(files) => {
-                            setRuntimeFiles(files);
-                            setRuntimeFilesError(null);
-                          }}
-                        />
+                  {!configIsRemote ? (
+                    <>
+                      <div className="space-y-2">
+                        <details className="rounded-lg border border-border bg-card">
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground">
+                            {t('runtimeFilesOptional')}
+                          </summary>
+                          <div className="border-t border-border p-3">
+                            <p className="mb-3 text-xs leading-5 text-muted-foreground">{t('runtimeFilesOptionalHint')}</p>
+                            <RuntimeFileDraftsInput
+                              value={runtimeFiles}
+                              relativePathArgumentsWork={configCommand !== 'docker'}
+                              onChange={(files) => {
+                                setRuntimeFiles(files);
+                                setRuntimeFilesError(null);
+                              }}
+                            />
+                          </div>
+                        </details>
+                        {runtimeFilesError ? (
+                          <p className="text-xs text-red-600 dark:text-red-400" role="alert">
+                            {runtimeFilesError}
+                          </p>
+                        ) : null}
                       </div>
-                    </details>
-                    {runtimeFilesError ? (
-                      <p className="text-xs text-red-600 dark:text-red-400" role="alert">
-                        {runtimeFilesError}
-                      </p>
-                    ) : null}
-                  </div>
 
-                    <section className="rounded-lg border border-border bg-card p-4">
-                      <McpNetworkModeControl
-                        value={network}
-                        onChange={(value) => {
-                          setNetwork(value);
-                          setNetworkTouched(true);
-                        }}
-                        warnAboutPackageInstall={configCommand !== 'docker'}
-                      />
-                    </section>
+                      <section className="rounded-lg border border-border bg-card p-4">
+                        <McpNetworkModeControl
+                          value={network}
+                          onChange={(value) => {
+                            setNetwork(value);
+                            setNetworkTouched(true);
+                          }}
+                          warnAboutPackageInstall={configCommand !== 'docker'}
+                        />
+                      </section>
+                    </>
+                  ) : null}
                   </div>
 
                   <div

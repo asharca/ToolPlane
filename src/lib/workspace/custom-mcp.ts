@@ -82,6 +82,14 @@ type StdioMcpInstallConfig = {
   network?: 'none';
 };
 
+type RemoteMcpInstallConfig = {
+  env: Record<string, string>;
+  requiredEnv?: string[];
+  transport: 'streamable-http';
+  authType: 'none' | 'bearer';
+  bearerEnv?: string;
+};
+
 type PackageMcpInstallConfig = {
   env: Record<string, string>;
   startCommand?: string;
@@ -104,6 +112,12 @@ export function isValidMcpRef(source: McpSource, ref: string): boolean {
     : isValidRemoteMcpUrl(ref);
 }
 
+function hasExplicitHttpsPort(value: string): boolean {
+  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
+  const host = authority.slice(authority.lastIndexOf('@') + 1);
+  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
+}
+
 export function isValidRemoteMcpUrl(value: string): boolean {
   if (!value || value.length > 2_048) return false;
   try {
@@ -115,6 +129,7 @@ export function isValidRemoteMcpUrl(value: string): boolean {
       || url.search
       || url.hash
       || url.port
+      || hasExplicitHttpsPort(value)
     ) return false;
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
     return host !== 'localhost'
@@ -152,6 +167,7 @@ export type ParsedCustomMcp = {
   installCfg:
     | PackageMcpInstallConfig
     | StdioMcpInstallConfig
+    | RemoteMcpInstallConfig
     | null;
 };
 
@@ -249,8 +265,16 @@ export function serializeMcpDeploymentConfig(
   }, null, 2);
 }
 
+const MCP_CONFIG_ERROR_PREFIX = 'Invalid MCP JSON config: ';
+
+export function mcpConfigErrorDetail(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message.startsWith(MCP_CONFIG_ERROR_PREFIX)) return null;
+  const detail = error.message.slice(MCP_CONFIG_ERROR_PREFIX.length);
+  return detail && detail.length <= 240 && !/[\u0000-\u001f\u007f]/.test(detail) ? detail : null;
+}
+
 function configError(message: string): never {
-  throw new Error(`Invalid MCP JSON config: ${message}`);
+  throw new Error(`${MCP_CONFIG_ERROR_PREFIX}${message}`);
 }
 
 function parsedArgs(value: unknown, required: boolean): string[] {
@@ -367,6 +391,68 @@ function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
   return 'mcp-server';
 }
 
+const REMOTE_HTTP_FIELDS = new Set(['type', 'url', 'headers']);
+const REMOTE_BEARER_ENV = 'MCP_BEARER_TOKEN';
+const MAX_REMOTE_HEADER_VALUE_LENGTH = 8_192;
+
+function parseRemoteHttpMcpConfig(
+  config: Record<string, unknown>,
+  name: string,
+): ParsedCustomMcp {
+  const unknownKey = Object.keys(config).find((key) => !REMOTE_HTTP_FIELDS.has(key));
+  if (unknownKey) return configError('remote HTTP MCP supports only type, url, and headers.');
+  if (config.type !== 'http') return configError('remote HTTP MCP type must be "http".');
+  if (typeof config.url !== 'string' || config.url !== config.url.trim() || !isValidRemoteMcpUrl(config.url)) {
+    return configError('remote HTTP MCP url must be a public HTTPS URL without credentials, a custom port, query parameters, or a fragment.');
+  }
+  if (!name || name.length > 80) return configError('the server name must be 1-80 characters.');
+
+  if (config.headers === undefined) {
+    return {
+      source: 'remote',
+      ref: config.url,
+      name,
+      installCfg: { env: {}, transport: 'streamable-http', authType: 'none' },
+    };
+  }
+  if (!config.headers || typeof config.headers !== 'object' || Array.isArray(config.headers)) {
+    return configError('remote HTTP MCP headers must be an object.');
+  }
+  const entries = Object.entries(config.headers as Record<string, unknown>);
+  if (entries.length === 0) {
+    return {
+      source: 'remote',
+      ref: config.url,
+      name,
+      installCfg: { env: {}, transport: 'streamable-http', authType: 'none' },
+    };
+  }
+  if (entries.length !== 1 || entries[0][0].toLowerCase() !== 'authorization') {
+    return configError('remote HTTP MCP supports only an Authorization header.');
+  }
+  const authorization = entries[0][1];
+  if (
+    typeof authorization !== 'string'
+    || authorization.length > MAX_REMOTE_HEADER_VALUE_LENGTH
+    || /[\r\n\0]/.test(authorization)
+  ) return configError('remote HTTP MCP Authorization header is invalid.');
+  const token = /^Bearer[ \t]+([^\s]+)$/i.exec(authorization)?.[1];
+  if (!token) return configError('remote HTTP MCP Authorization header must use Bearer authentication.');
+
+  return {
+    source: 'remote',
+    ref: config.url,
+    name,
+    installCfg: {
+      env: { [REMOTE_BEARER_ENV]: token },
+      requiredEnv: [REMOTE_BEARER_ENV],
+      transport: 'streamable-http',
+      authType: 'bearer',
+      bearerEnv: REMOTE_BEARER_ENV,
+    },
+  };
+}
+
 export function parseMcpJsonConfig(
   raw: string,
   fallbackName?: string,
@@ -416,6 +502,9 @@ export function parseMcpJsonConfig(
     config = value as Record<string, unknown>;
   }
 
+  const name = explicitName || fallbackName?.trim();
+  if ('type' in config || 'url' in config) return parseRemoteHttpMcpConfig(config, name ?? '');
+
   const allowedKeys = new Set([
     'command',
     'args',
@@ -437,13 +526,13 @@ export function parseMcpJsonConfig(
   const env = parsedEnv(config.env);
   const network = parsedNetwork(config.network);
 
-  const name = explicitName || fallbackName?.trim() || inferredConfigName(command, args as string[]);
-  if (!name || name.length > 80) return configError('the server name must be 1-80 characters.');
+  const resolvedName = name || inferredConfigName(command, args as string[]);
+  if (!resolvedName || resolvedName.length > 80) return configError('the server name must be 1-80 characters.');
 
   return {
     source: 'config',
     ref: command,
-    name,
+    name: resolvedName,
     installCfg: { command, args, env, ...(network ? { network } : {}) },
   };
 }
@@ -530,7 +619,7 @@ export function parseCustomMcpInput(raw: unknown): ParsedCustomMcp {
     const parsed = parseMcpJsonConfig(config);
     // Older callers may omit this field and keep the value declared in JSON.
     // The create form always submits it, making the visible selector authoritative.
-    if (input.network === undefined) return parsed;
+    if (input.network === undefined || parsed.source === 'remote') return parsed;
     if (!parsed.installCfg || !('command' in parsed.installCfg)) {
       return configError('the command configuration is invalid.');
     }
