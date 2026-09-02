@@ -211,7 +211,7 @@ describe('DeployCustomMcpDialog', () => {
     }));
     await userEvent.click(screen.getByRole('button', { name: 'Deploy MCP' }));
 
-    expect(screen.getByText(/remote HTTP MCP url must be a public HTTPS URL/i)).toBeInTheDocument();
+    expect(screen.getByText(/remote HTTP MCP url must be an HTTPS URL/i)).toBeInTheDocument();
     expect(screen.queryByText('test-token')).not.toBeInTheDocument();
   });
 });

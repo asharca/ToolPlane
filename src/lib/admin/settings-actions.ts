@@ -14,10 +14,13 @@ import {
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resetMcpStartupTimeoutSettings,
+  resetRemoteMcpPrivateHostsSettings,
   updateHermesArchiveSettings,
   updateMcpStartupTimeoutSettings,
+  updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
 } from '@/lib/admin/settings';
+import { parseRemoteMcpPrivateHosts } from '../../../scripts/remote-mcp-private-hosts.mjs';
 import {
   isValidHermesArchiveMaxUploadMiB,
   MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB,
@@ -150,6 +153,31 @@ export async function updateMcpStartupTimeoutSettingsAction(
         };
       }
       await updateMcpStartupTimeoutSettings(idleTimeoutMs, maxTimeoutMs);
+    }
+  } catch {
+    return { error: t('errorActionFailed') };
+  }
+
+  revalidatePath('/admin/settings');
+  return { ok: true };
+}
+
+export async function updateRemoteMcpPrivateHostsSettingsAction(
+  _prev: AdminSettingsActionState,
+  formData: FormData,
+): Promise<AdminSettingsActionState> {
+  await requireAdmin();
+  const t = await getTranslations('admin');
+
+  try {
+    if (String(formData.get('intent') ?? '') === 'reset') {
+      await resetRemoteMcpPrivateHostsSettings();
+    } else {
+      const value = formData.get('remoteMcpPrivateHosts');
+      if (typeof value !== 'string' || !parseRemoteMcpPrivateHosts(value)) {
+        return { error: t('errorRemoteMcpPrivateHosts') };
+      }
+      await updateRemoteMcpPrivateHostsSettings(value);
     }
   } catch {
     return { error: t('errorActionFailed') };

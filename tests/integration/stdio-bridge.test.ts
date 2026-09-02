@@ -79,6 +79,7 @@ async function rpc(port: number, method: string, params?: unknown) {
 function runRemoteBridge(
   config: unknown,
   nodeArgs: string[] = [],
+  env: Record<string, string> = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     let stdout = '';
@@ -86,6 +87,7 @@ function runRemoteBridge(
     const proc = spawn(process.execPath, [...nodeArgs, REMOTE_BRIDGE], {
       env: {
         ...process.env,
+        ...env,
         MCP_PORT: '0',
         MCP_NAME: 'remote-test',
         MCP_REMOTE_CONFIG: JSON.stringify(config),
@@ -167,13 +169,67 @@ describe('mcp-http-bridge', () => {
     expect(result.stderr).not.toContain(secret);
   });
 
+  it('allows configured wildcard hosts and exact RFC1918 addresses only', async () => {
+    const preload = `data:text/javascript,${encodeURIComponent(`
+      import dns from 'node:dns/promises';
+      import { createRequire, syncBuiltinESMExports } from 'node:module';
+      dns.lookup = async () => [{ address: '10.0.10.42', family: 4 }];
+      syncBuiltinESMExports();
+      globalThis.fetch = () => Promise.reject(new Error('unexpected global fetch'));
+      const require = createRequire(${JSON.stringify(REMOTE_BRIDGE)});
+      const undici = require('undici');
+      undici.Agent = class {
+        constructor(options) { this.options = options; }
+        async close() {}
+      };
+      undici.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        await new Promise((resolve, reject) => init.dispatcher.options.connect.lookup(
+          url.hostname,
+          { all: true },
+          (error, addresses) => {
+            if (error) reject(error);
+            else if (!Array.isArray(addresses) || addresses[0]?.address !== '10.0.10.42') {
+              reject(new Error('test did not use pinned address'));
+            } else resolve();
+          },
+        ));
+        throw new Error('test fetch reached');
+      };
+    `)}`;
+    const config = {
+      url: 'https://mcp.rhzy.ai/mcp',
+      transport: 'sse',
+      headers: {},
+      timeoutMs: 1000,
+    };
+    const allowed = await runRemoteBridge(config, ['--import', preload], {
+      MCP_REMOTE_PRIVATE_HOSTS: '*.rhzy.ai,10.0.10.42',
+    });
+
+    expect(allowed.stderr).toContain('test fetch reached');
+    expect(allowed.stderr).not.toContain('non-public address');
+
+    const exactIp = await runRemoteBridge({ ...config, url: 'https://10.0.10.42/mcp' }, ['--import', preload], {
+      MCP_REMOTE_PRIVATE_HOSTS: '*.rhzy.ai,10.0.10.42',
+    });
+    expect(exactIp.stderr).toContain('test fetch reached');
+    expect(exactIp.stderr).not.toContain('non-public address');
+
+    const unlisted = await runRemoteBridge({ ...config, url: 'https://other.example.com/mcp' }, ['--import', preload], {
+      MCP_REMOTE_PRIVATE_HOSTS: '*.rhzy.ai,10.0.10.42',
+    });
+    expect(unlisted.stderr).toContain('non-public address');
+  }, 10_000);
+
   it('bounds an SSE connection that never completes startup', async () => {
     const preload = `data:text/javascript,${encodeURIComponent(`
       import dns from 'node:dns/promises';
-      import { syncBuiltinESMExports } from 'node:module';
+      import { createRequire, syncBuiltinESMExports } from 'node:module';
       dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
       syncBuiltinESMExports();
-      globalThis.fetch = () => new Promise(() => {});
+      const require = createRequire(${JSON.stringify(REMOTE_BRIDGE)});
+      require('undici').fetch = () => new Promise(() => {});
     `)}`;
     const result = await runRemoteBridge({
       url: 'https://example.com/mcp',

@@ -108,6 +108,9 @@ services:
       # admins can override them in Settings for subsequent MCP starts.
       TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_IDLE_TIMEOUT_MS:-300000}
       TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS: ${TOOLPLANE_MCP_STARTUP_MAX_TIMEOUT_MS:-900000}
+      # Admin-controlled exact hosts, wildcard suffixes, or private IPs allowed
+      # for Remote MCPs. This does not allow loopback or link-local targets.
+      TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS: ${TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS:-}
       TOOLPLANE_RUNTIME_ROOT: /app
       # These paths are baked into the Docker image. Local `pnpm dev` may still
       # override them through .env when running outside Compose.

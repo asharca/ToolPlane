@@ -395,6 +395,11 @@ describe('resolveSpawnSpec', () => {
       sourceRef: 'https://mcp.example.com/mcp',
       installCfg: { authType: 'bearer', env: {}, bearerEnv: 'TOKEN' },
     })).toThrow(/TOKEN is not configured/);
+    expect(() => resolveSpawnSpec({
+      ...deployment,
+      sourceRef: 'https://100.64.0.1/mcp',
+      installCfg: { authType: 'none' },
+    })).toThrow(/not allowed/);
   });
 
   it('sandbox source resolves to the sandbox MCP server spec', () => {

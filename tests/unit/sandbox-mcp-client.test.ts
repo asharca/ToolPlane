@@ -54,7 +54,7 @@ describe('sandbox MCP client', () => {
     await expect(mcpRpcViaSandbox('sandbox-deployment', remote, 'tools/call', {
       name: 'search',
       arguments: { query: 'test' },
-    })).resolves.toEqual({ content: [{ type: 'text', text: 'ok' }] });
+    }, '*.rhzy.ai')).resolves.toEqual({ content: [{ type: 'text', text: 'ok' }] });
 
     expect(mocks.mcpRpc).toHaveBeenCalledWith(
       'sandbox-deployment',
@@ -71,6 +71,10 @@ describe('sandbox MCP client', () => {
     };
     expect(JSON.stringify(call.arguments.args)).not.toContain('top-secret');
     expect(call.arguments.stdin).toContain('top-secret');
+    expect(JSON.parse(call.arguments.stdin.slice(0, call.arguments.stdin.indexOf('\n')))).toMatchObject({
+      privateHosts: '*.rhzy.ai',
+    });
+    expect(call.arguments.stdin).toContain('allowedPrivate');
     expect(call.arguments.stdin).toContain("c.transport==='sse'?await legacy():await streamable()");
   });
 

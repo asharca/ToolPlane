@@ -7,6 +7,7 @@ import {
 } from './sandbox';
 import { commandArgsNeedGit } from './git-source';
 import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxes/connector';
+import { isValidRemoteMcpUrl } from '@/lib/remote-mcp/url';
 import { parseDockerJsonArgs } from '@/lib/workspace/docker-json-command';
 
 export type SpawnSpec =
@@ -102,6 +103,7 @@ function readRemoteCfg(
   if (url.username || url.password || hasExplicitPort(sourceRef ?? '') || url.search || url.hash) {
     throw new Error('Remote MCP URL cannot contain credentials, a custom port, query parameters, or a fragment.');
   }
+  if (!isValidRemoteMcpUrl(sourceRef ?? '')) throw new Error('Remote MCP URL is not allowed.');
 
   if (!installCfg || typeof installCfg !== 'object' || Array.isArray(installCfg)) {
     throw new Error('Remote MCP configuration is invalid.');

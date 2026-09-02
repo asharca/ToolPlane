@@ -21,10 +21,13 @@ export class SandboxMcpAuthenticationError extends Error {
 const BOOTSTRAP = "let s='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const i=s.indexOf('\\n');globalThis.__MCP_CONFIG=JSON.parse(s.slice(0,i));(0,eval)(s.slice(i+1))})";
 
 const CLIENT = String.raw`(async()=>{
-const c=globalThis.__MCP_CONFIG,base=new URL(c.url),dns=require('node:dns').promises,net=require('node:net');
+const c=globalThis.__MCP_CONFIG,base=new URL(c.url),dns=require('node:dns').promises,net=require('node:net'),norm=h=>String(h).toLowerCase().replace(/^\[|\]$/g,'').replace(/\.$/,''),targets=typeof c.privateHosts==='string'?c.privateHosts.split(',').filter(Boolean):[];
 const blocked4=a=>{const p=a.split('.').map(Number),[x,y,z]=p;return p.length!==4||p.some(n=>!Number.isInteger(n)||n<0||n>255)||x===0||x===10||x===127||(x===100&&y>=64&&y<=127)||(x===169&&y===254)||(x===172&&y>=16&&y<=31)||(x===192&&y===0&&z===0)||(x===192&&y===0&&z===2)||(x===192&&y===168)||(x===198&&(y===18||y===19))||(x===198&&y===51&&z===100)||(x===203&&y===0&&z===113)||x>=224};
 const blocked6=a=>{a=a.toLowerCase().split('%')[0];const d=a.match(/(\d+\.\d+\.\d+\.\d+)$/)?.[1];if(d&&a.startsWith('::'))return blocked4(d);if(a.startsWith('::ffff:')){const w=a.slice(7).split(':');if(w.length===2&&w.every(x=>/^[0-9a-f]{1,4}$/.test(x))){const h=parseInt(w[0],16),l=parseInt(w[1],16);return blocked4((h>>8)+'.'+(h&255)+'.'+(l>>8)+'.'+(l&255))}}const f=parseInt(a.split(':')[0]||'0',16);return a==='::'||a==='::1'||(f&0xfe00)===0xfc00||(f&0xffc0)===0xfe80||(f&0xffc0)===0xfec0||(f&0xff00)===0xff00||a.startsWith('64:ff9b:')||a.startsWith('100:')||a.startsWith('2001:db8:')};
-async function safe(u,query=false){u=new URL(u);if(u.protocol!=='https:'||u.origin!==base.origin||u.username||u.password||u.port||(!query&&u.search)||u.hash)throw Error('Remote endpoint is not allowed');const a=await dns.lookup(u.hostname,{all:true,verbatim:true});if(!a.length||a.some(x=>net.isIP(x.address)===4?blocked4(x.address):blocked6(x.address)))throw Error('Remote endpoint is not public');return u}
+const private4=a=>{const p=a.split('.').map(Number),[x,y]=p;return p.length===4&&p.every(n=>Number.isInteger(n)&&n>=0&&n<=255)&&(x===10||(x===172&&y>=16&&y<=31)||(x===192&&y===168))};
+const private6=a=>{a=a.toLowerCase().split('%')[0];const d=a.match(/(\d+\.\d+\.\d+\.\d+)$/)?.[1];if(d&&a.startsWith('::'))return private4(d);if(a.startsWith('::ffff:')){const w=a.slice(7).split(':');if(w.length===2&&w.every(x=>/^[0-9a-f]{1,4}$/.test(x))){const h=parseInt(w[0],16),l=parseInt(w[1],16);return private4((h>>8)+'.'+(h&255)+'.'+(l>>8)+'.'+(l&255))}}return(parseInt(a.split(':')[0]||'0',16)&0xfe00)===0xfc00};
+const allowedPrivate=(h,a)=>{const f=net.isIP(a);return(f===4?private4(a):f===6&&private6(a))&&(targets.includes(h)||targets.some(x=>x.startsWith('*.')&&h.endsWith('.'+x.slice(2))))};
+async function safe(u,query=false){u=new URL(u);if(u.protocol!=='https:'||u.origin!==base.origin||u.username||u.password||u.port||(!query&&u.search)||u.hash)throw Error('Remote endpoint is not allowed');const h=norm(u.hostname),a=await dns.lookup(h,{all:true,verbatim:true});if(!a.length||a.some(x=>{const f=net.isIP(x.address);return(f===4?blocked4(x.address):blocked6(x.address))&&!allowedPrivate(h,x.address)}))throw Error('Remote endpoint is not public');return u}
 const headers={...c.headers,accept:'application/json, text/event-stream','content-type':'application/json'};
 async function body(r){const max=120000,n=Number(r.headers.get('content-length')||0);if(n>max)throw Error('Remote MCP response too large');if(!r.body)return '';const q=r.body.getReader(),d=new TextDecoder();let out='',size=0;for(;;){const x=await q.read();if(x.done)break;size+=x.value.byteLength;if(size>max){await q.cancel();throw Error('Remote MCP response too large')}out+=d.decode(x.value,{stream:true})}return out+d.decode()}
 function payload(text,id){let values=[];try{values=[JSON.parse(text)]}catch{for(const b of text.split(/\r?\n\r?\n/)){const d=b.split(/\r?\n/).filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trim()).join('\n');if(d)try{values.push(JSON.parse(d))}catch{}}}const v=values.find(x=>x&&x.id===id);if(!v)throw Error('Remote MCP returned no response');if(v.error)throw Error(String(v.error.message||'Remote MCP error'));return v.result}
@@ -50,11 +53,13 @@ export async function mcpRpcViaSandbox(
   remote: RemoteSpec,
   method: string,
   params?: Record<string, unknown>,
+  privateHosts = '',
 ): Promise<Record<string, unknown> | null> {
   const stdin = `${JSON.stringify({
     url: remote.url,
     transport: remote.transport,
     headers: remote.headers,
+    privateHosts,
     timeoutMs: Math.min(remote.timeoutMs, 120_000),
     method,
     ...(params === undefined ? {} : { params }),
@@ -99,6 +104,7 @@ export async function mcpRpcViaSandbox(
 export async function listMcpToolsViaSandbox(
   sandboxDeploymentId: string,
   remote: RemoteSpec,
+  privateHosts = '',
 ): Promise<McpToolDefinition[] | null> {
   const tools: McpToolDefinition[] = [];
   const cursors = new Set<string>();
@@ -109,6 +115,7 @@ export async function listMcpToolsViaSandbox(
       remote,
       'tools/list',
       cursor ? { cursor } : undefined,
+      privateHosts,
     );
     const listed = parseMcpToolCatalogResult(result?.tools);
     if (!listed.ok || listed.tools.length > MAX_TOOLS - tools.length) return null;

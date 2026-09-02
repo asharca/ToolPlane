@@ -123,6 +123,18 @@ describe('parseCustomMcpInput', () => {
     });
   });
 
+  it('accepts a private HTTPS address for administrator allowlist enforcement', () => {
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        internal: { type: 'http', url: 'https://10.0.10.42/mcp' },
+      },
+    }))).toMatchObject({
+      source: 'remote',
+      ref: 'https://10.0.10.42/mcp',
+      installCfg: { env: {}, transport: 'streamable-http', authType: 'none' },
+    });
+  });
+
   it('strictly rejects unsafe remote HTTP MCP fields without exposing credentials', () => {
     const token = 'secret-token-must-not-appear';
     const cases: Array<[Record<string, unknown>, RegExp]> = [
@@ -131,6 +143,11 @@ describe('parseCustomMcpInput', () => {
       [{ type: 'http', url: 'http://mcp.example.com/mcp' }, /url must be/],
       [{ type: 'http', url: 'https://mcp.example.com:443/mcp' }, /url must be/],
       [{ type: 'http', url: 'https://mcp.example.com/mcp?token=x' }, /url must be/],
+      [{ type: 'http', url: 'https://localhost./mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://169.254.169.254/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://100.64.0.1/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://192.0.2.1/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://[2001:db8::1]/mcp' }, /url must be/],
       [{ type: 'http', url: 'https://mcp.example.com/mcp', headers: { 'X-API-Key': token } }, /Authorization header/],
       [{ type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: `Basic ${token}` } }, /Bearer authentication/],
       [{ type: 'http', url: 'https://mcp.example.com/mcp', command: 'npx' }, /only type, url, and headers/],

@@ -33,6 +33,7 @@ describe('minimal runtime artifact contract', () => {
     expect(dockerfile).toContain('/app/dist/release/app/');
     expect(dockerfile.match(/\/app\/node_modules \.\/node_modules/g)).toHaveLength(1);
     expect(runtimeAssembler).toContain('writeLegacyEntrypointShims(outputRoot)');
+    expect(runtimeAssembler).toContain("await copyRuntimePackage('undici');");
     expect(runtimeAssembler).toContain("await mkdir(path.join(outputRoot, 'public'), { recursive: true })");
     expect(runtimeAssembler).toContain("['public', 'public assets directory']");
     expect(ciWorkflow).toContain(
@@ -43,6 +44,7 @@ describe('minimal runtime artifact contract', () => {
     );
     expect(runtimeAssembler).toContain("['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim']");
     expect(runtimeAssembler).toContain("['node_modules/.bin/next', 'legacy entrypoint Next shim']");
+    expect(runtimeAssembler).toContain("['node_modules/undici/index.js', 'remote MCP HTTP runtime']");
     expect(runtimeAssembler).toContain(
       "['node_modules/.toolplane-runtime/server.cjs', 'embedded standalone launcher']",
     );

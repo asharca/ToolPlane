@@ -29,12 +29,16 @@ import {
   getHermesArchiveSettings,
   HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+  REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
   getSkillImportSettings,
   resolveMcpStartupTimeoutSettings,
+  resolveRemoteMcpPrivateHostsSettings,
   resetMcpStartupTimeoutSettings,
+  resetRemoteMcpPrivateHostsSettings,
   SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
   updateHermesArchiveSettings,
   updateMcpStartupTimeoutSettings,
+  updateRemoteMcpPrivateHostsSettings,
   updateSkillImportSettings,
 } from '@/lib/admin/settings';
 
@@ -178,5 +182,64 @@ describe('system settings storage', () => {
     );
 
     expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it('uses a normalized administrator Remote MCP allowlist ahead of the environment fallback', async () => {
+    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai,10.0.10.42');
+    mocks.findUnique.mockResolvedValue(null);
+
+    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+      value: '*.rhzy.ai,10.0.10.42',
+      source: 'environment',
+    });
+
+    mocks.findUnique.mockResolvedValue({ value: 'MCP.RHZY.AI.\n*.RHZY.AI,10.0.10.42' });
+    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+      value: 'mcp.rhzy.ai,*.rhzy.ai,10.0.10.42',
+      source: 'database',
+    });
+  });
+
+  it('fails closed for an invalid stored Remote MCP allowlist', async () => {
+    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai');
+    mocks.findUnique.mockResolvedValue({ value: '127.0.0.1' });
+
+    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+      value: '',
+      source: 'database',
+    });
+  });
+
+  it('fails closed when the stored Remote MCP allowlist cannot be read', async () => {
+    vi.stubEnv('TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS', '*.rhzy.ai');
+    mocks.findUnique.mockRejectedValue(new Error('database unavailable'));
+
+    await expect(resolveRemoteMcpPrivateHostsSettings()).resolves.toEqual({
+      value: '',
+      source: 'default',
+    });
+  });
+
+  it('writes, normalizes, and resets the Remote MCP private host allowlist', async () => {
+    mocks.upsert.mockResolvedValue(undefined);
+    mocks.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(updateRemoteMcpPrivateHostsSettings('*.RHZY.AI\n10.0.10.42')).resolves.toEqual({
+      value: '*.rhzy.ai,10.0.10.42',
+      source: 'database',
+    });
+    expect(mocks.upsert).toHaveBeenCalledWith({
+      where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
+      create: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, value: '*.rhzy.ai,10.0.10.42' },
+      update: { value: '*.rhzy.ai,10.0.10.42' },
+    });
+
+    await expect(updateRemoteMcpPrivateHostsSettings('127.0.0.1')).rejects.toThrow(
+      'Invalid Remote MCP private host allowlist.',
+    );
+    await resetRemoteMcpPrivateHostsSettings();
+    expect(mocks.deleteMany).toHaveBeenCalledWith({
+      where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
+    });
   });
 });

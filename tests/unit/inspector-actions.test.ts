@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listMcpTools: vi.fn(),
   mcpRpc: vi.fn(),
   logRequest: vi.fn(),
+  resolveRemoteMcpPrivateHostsSettings: vi.fn(),
   SandboxMcpAuthenticationError: class SandboxMcpAuthenticationError extends Error {},
 }));
 
@@ -29,6 +30,9 @@ vi.mock('@/lib/db', () => ({
 }));
 vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: mocks.effectiveStatus }));
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
+vi.mock('@/lib/admin/settings', () => ({
+  resolveRemoteMcpPrivateHostsSettings: mocks.resolveRemoteMcpPrivateHostsSettings,
+}));
 vi.mock('@/lib/process/sandbox-mcp-client', () => ({
   listMcpToolsViaSandbox: mocks.listMcpToolsViaSandbox,
   mcpRpcViaSandbox: mocks.mcpRpcViaSandbox,
@@ -89,6 +93,10 @@ describe('sandbox-backed MCP Inspector actions', () => {
     });
     mocks.effectiveStatus.mockReturnValue('running');
     mocks.resolveSpawnSpec.mockReturnValue(remoteSpec);
+    mocks.resolveRemoteMcpPrivateHostsSettings.mockResolvedValue({
+      value: '*.rhzy.ai,10.0.10.42',
+      source: 'database',
+    });
     mocks.listMcpToolsViaSandbox.mockResolvedValue([tool]);
     mocks.mcpRpcViaSandbox.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     mocks.deploymentUpdateMany.mockResolvedValue({ count: 1 });
@@ -101,7 +109,11 @@ describe('sandbox-backed MCP Inspector actions', () => {
     expect(mocks.sandboxFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'sandbox-1', workspaceId: 'workspace-1' }),
     }));
-    expect(mocks.listMcpToolsViaSandbox).toHaveBeenCalledWith('sandbox-dep', remoteSpec);
+    expect(mocks.listMcpToolsViaSandbox).toHaveBeenCalledWith(
+      'sandbox-dep',
+      remoteSpec,
+      '*.rhzy.ai,10.0.10.42',
+    );
     const update = mocks.deploymentUpdateMany.mock.calls[0][0];
     expect(update.where).toMatchObject({ id: 'remote-dep', workspaceId: 'workspace-1' });
     expect(update.data.installCfg).toMatchObject({
@@ -187,12 +199,17 @@ describe('sandbox-backed MCP Inspector actions', () => {
       arguments: { query: 'hello' },
     })).resolves.toEqual({ result: { content: [{ type: 'text', text: 'ok' }] } });
 
-    expect(mocks.listMcpToolsViaSandbox).toHaveBeenCalledWith('sandbox-dep', remoteSpec);
+    expect(mocks.listMcpToolsViaSandbox).toHaveBeenCalledWith(
+      'sandbox-dep',
+      remoteSpec,
+      '*.rhzy.ai,10.0.10.42',
+    );
     expect(mocks.mcpRpcViaSandbox).toHaveBeenCalledWith(
       'sandbox-dep',
       remoteSpec,
       'tools/call',
       { name: 'search', arguments: { query: 'hello' } },
+      '*.rhzy.ai,10.0.10.42',
     );
     expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'workspace-1',
