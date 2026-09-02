@@ -5,7 +5,6 @@
 
 ### Features
 
-* **mcp:** configure trusted private remote targets ([496b316](https://github.com/asharca/ToolPlane/commit/496b3162bd4cdd50a823c0e2e2d984e5e1212ac1))
 * **mcp:** configure trusted private remote targets ([3fabc2d](https://github.com/asharca/ToolPlane/commit/3fabc2d2f6dd36f80380eba4ef5ea1d099581404))
 
 ## [0.24.0](https://github.com/asharca/ToolPlane/compare/v0.23.1...v0.24.0) (2026-09-02)
