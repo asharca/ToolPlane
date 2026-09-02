@@ -64,12 +64,28 @@ describe('DashboardChrome sidebar', () => {
     renderChrome();
 
     const sidebar = screen.getByRole('complementary');
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
     expect(sidebar.className).toContain('w-16');
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
     expect(screen.queryByText('Discover', { exact: true })).toBeNull();
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/smoke/chat');
     expect(screen.queryByRole('link', { name: 'Agents' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/smoke/skills');
+  });
+
+  it('expands and collapses the desktop sidebar', async () => {
+    const user = userEvent.setup();
+    renderChrome();
+
+    const sidebar = screen.getByRole('complementary');
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(sidebar.className).toContain('lg:w-64');
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute('aria-expanded', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
   });
 
   it('shows the admin console inside the account menu only for administrators', async () => {
