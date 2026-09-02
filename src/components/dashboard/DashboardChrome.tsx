@@ -40,6 +40,7 @@ export function DashboardChrome({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const t = useTranslations('console.sidebar');
 
@@ -87,6 +88,8 @@ export function DashboardChrome({
               isAdmin={isAdmin}
               mobileOpen={open}
               onClose={closeMenu}
+              collapsed={collapsed}
+              onToggleCollapsed={() => setCollapsed((value) => !value)}
             />
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

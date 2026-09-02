@@ -16,6 +16,8 @@ import {
   TerminalSquare,
   LibraryBig,
   Layers3,
+  PanelLeftClose,
+  PanelLeftOpen,
   GitFork,
   ExternalLink,
   X,
@@ -57,6 +59,8 @@ export function DashboardSidebar({
   isAdmin = false,
   mobileOpen = false,
   onClose,
+  collapsed,
+  onToggleCollapsed,
 }: {
   slug: string;
   workspaceName: string;
@@ -66,6 +70,8 @@ export function DashboardSidebar({
   isAdmin?: boolean;
   mobileOpen?: boolean;
   onClose?: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const pathname = usePathname() ?? '';
   const base = `/app/${slug}`;
@@ -129,14 +135,19 @@ export function DashboardSidebar({
     <aside
       ref={sidebarRef}
       id="dashboard-sidebar"
+      data-collapsed={collapsed}
       role={mobileOpen ? 'dialog' : undefined}
       aria-modal={mobileOpen ? true : undefined}
       aria-label={mobileOpen ? t('navigation') : undefined}
-      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-shell text-shell-foreground shadow-2xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:w-16 lg:self-start lg:translate-x-0 lg:shadow-none ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-shell text-shell-foreground shadow-2xl transition-[transform,width] duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:shadow-none ${
+        collapsed ? 'lg:w-16' : 'lg:w-64'
+      } ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
-      <div className="flex h-14 shrink-0 items-center justify-between px-4 lg:justify-center lg:px-0">
+      <div className={`flex h-14 shrink-0 items-center justify-between px-4 ${
+        collapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-start lg:px-3'
+      }`}>
         <div className="lg:hidden"><DashboardLogo /></div>
         <HoverCard.Root openDelay={200} closeDelay={150}>
           <HoverCard.Trigger asChild>
@@ -144,9 +155,13 @@ export function DashboardSidebar({
               href={`${base}/chat`}
               onClick={(event) => handleWorkspaceRoute(event, `${base}/chat`)}
               aria-label="ToolPlane"
-              className="hidden size-9 items-center justify-center rounded-xl bg-brand text-sm font-bold tracking-tight text-brand-foreground shadow-sm lg:flex"
+              className={`hidden items-center justify-center rounded-xl lg:flex ${
+                collapsed
+                  ? 'size-9 bg-brand text-sm font-bold tracking-tight text-brand-foreground shadow-sm'
+                  : 'h-9 px-1.5 hover:bg-accent/70'
+              }`}
             >
-              <Layers3 className="size-[18px]" strokeWidth={1.9} />
+              {collapsed ? <Layers3 className="size-[18px]" strokeWidth={1.9} /> : <DashboardLogo />}
             </Link>
           </HoverCard.Trigger>
           <HoverCard.Portal>
@@ -198,7 +213,9 @@ export function DashboardSidebar({
         </div>
       </div>
 
-      <nav aria-label={t('navigation')} className="min-h-0 flex-1 overflow-y-auto px-3 py-2 lg:px-2">
+      <nav aria-label={t('navigation')} className={`min-h-0 flex-1 overflow-y-auto px-3 py-2 ${
+        collapsed ? 'lg:px-2' : 'lg:px-3'
+      }`}>
         <ul className="space-y-0.5 lg:space-y-1">
           {NAV_ITEMS.map((item) => {
             const href = `${base}/${item.segment}`;
@@ -212,15 +229,19 @@ export function DashboardSidebar({
                   onClick={(event) => handleWorkspaceRoute(event, href)}
                   aria-current={active ? 'page' : undefined}
                   aria-label={label}
-                  title={label}
-                  className={`relative flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm transition-colors lg:mx-auto lg:size-9 lg:justify-center lg:gap-0 lg:rounded-full lg:px-0 ${
+                  title={collapsed ? label : undefined}
+                  className={`relative flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm transition-colors ${
+                    collapsed
+                      ? 'lg:mx-auto lg:size-9 lg:justify-center lg:gap-0 lg:rounded-full lg:px-0'
+                      : 'lg:h-10 lg:rounded-lg'
+                  } ${
                     active
                       ? 'bg-brand-soft font-medium text-foreground ring-1 ring-brand/10'
                       : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
                   }`}
                 >
                   <Icon className="size-[18px] shrink-0" />
-                  <span className="min-w-0 flex-1 truncate lg:sr-only">{label}</span>
+                  <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:sr-only' : ''}`}>{label}</span>
                 </Link>
               </li>
             );
@@ -228,25 +249,40 @@ export function DashboardSidebar({
         </ul>
       </nav>
 
-      <div className="flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 lg:items-center lg:px-2">
+      <div className={`flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 ${
+        collapsed ? 'lg:items-center lg:px-2' : 'lg:px-3'
+      }`}>
         <WorkspaceSwitcher
           slug={slug}
           workspaceName={workspaceName}
           userLabel={userLabel}
           workspaces={workspaces}
           isAdmin={isAdmin}
-          compact
+          compact={collapsed}
         />
         <Link
           href={`${base}/settings?returnTo=${encodeURIComponent(pathname)}`}
           onClick={onClose}
           aria-label={t('settings')}
-          title={t('settings')}
-          className="ui-button-ghost justify-start px-3 lg:w-9 lg:justify-center lg:rounded-full lg:px-0"
+          title={collapsed ? t('settings') : undefined}
+          className={`ui-button-ghost justify-start px-3 ${
+            collapsed ? 'lg:w-9 lg:justify-center lg:rounded-full lg:px-0' : ''
+          }`}
         >
           <Settings className="size-[18px]" />
-          <span className="lg:hidden">{t('settings')}</span>
+          <span className={collapsed ? 'lg:hidden' : ''}>{t('settings')}</span>
         </Link>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-controls="dashboard-sidebar"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
+          title={collapsed ? t('expandSidebar') : t('collapseSidebar')}
+          className="ui-button-ghost ui-icon-button hidden lg:flex"
+        >
+          {collapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
+        </button>
       </div>
     </aside>
   );
