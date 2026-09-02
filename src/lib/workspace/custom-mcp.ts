@@ -3,6 +3,7 @@ import {
   isValidDockerImageRef,
   parseDockerJsonArgs,
 } from './docker-json-command';
+import { isValidRemoteMcpUrl } from '@/lib/remote-mcp/url';
 
 const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
@@ -112,40 +113,7 @@ export function isValidMcpRef(source: McpSource, ref: string): boolean {
     : isValidRemoteMcpUrl(ref);
 }
 
-function hasExplicitHttpsPort(value: string): boolean {
-  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
-  const host = authority.slice(authority.lastIndexOf('@') + 1);
-  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
-}
-
-export function isValidRemoteMcpUrl(value: string): boolean {
-  if (!value || value.length > 2_048) return false;
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== 'https:'
-      || url.username
-      || url.password
-      || url.search
-      || url.hash
-      || url.port
-      || hasExplicitHttpsPort(value)
-    ) return false;
-    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    return host !== 'localhost'
-      && host !== '0.0.0.0'
-      && host !== '::'
-      && host !== '::1'
-      && !host.endsWith('.localhost')
-      && !/^127\./.test(host)
-      && !/^10\./.test(host)
-      && !/^192\.168\./.test(host)
-      && !/^169\.254\./.test(host)
-      && !/^172\.(?:1[6-9]|2\d|3[01])\./.test(host);
-  } catch {
-    return false;
-  }
-}
+export { isValidRemoteMcpUrl } from '@/lib/remote-mcp/url';
 
 const schema = z
   .object({
@@ -403,7 +371,7 @@ function parseRemoteHttpMcpConfig(
   if (unknownKey) return configError('remote HTTP MCP supports only type, url, and headers.');
   if (config.type !== 'http') return configError('remote HTTP MCP type must be "http".');
   if (typeof config.url !== 'string' || config.url !== config.url.trim() || !isValidRemoteMcpUrl(config.url)) {
-    return configError('remote HTTP MCP url must be a public HTTPS URL without credentials, a custom port, query parameters, or a fragment.');
+    return configError('remote HTTP MCP url must be an HTTPS URL without credentials, a custom port, query parameters, or a fragment.');
   }
   if (!name || name.length > 80) return configError('the server name must be 1-80 characters.');
 

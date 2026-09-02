@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   updateSkillImportSettings: vi.fn(),
   updateMcpStartupTimeoutSettings: vi.fn(),
   resetMcpStartupTimeoutSettings: vi.fn(),
+  updateRemoteMcpPrivateHostsSettings: vi.fn(),
+  resetRemoteMcpPrivateHostsSettings: vi.fn(),
   isValidMcpStartupTimeouts: vi.fn((idleTimeoutMs: unknown, maxTimeoutMs: unknown) => (
     Number.isSafeInteger(idleTimeoutMs)
     && Number.isSafeInteger(maxTimeoutMs)
@@ -26,6 +28,8 @@ vi.mock('@/lib/admin/settings', () => ({
   updateSkillImportSettings: mocks.updateSkillImportSettings,
   updateMcpStartupTimeoutSettings: mocks.updateMcpStartupTimeoutSettings,
   resetMcpStartupTimeoutSettings: mocks.resetMcpStartupTimeoutSettings,
+  updateRemoteMcpPrivateHostsSettings: mocks.updateRemoteMcpPrivateHostsSettings,
+  resetRemoteMcpPrivateHostsSettings: mocks.resetRemoteMcpPrivateHostsSettings,
   isValidMcpStartupTimeouts: mocks.isValidMcpStartupTimeouts,
   MIN_MCP_STARTUP_TIMEOUT_MS: 1_000,
   MAX_MCP_STARTUP_TIMEOUT_MS: 1_800_000,
@@ -40,6 +44,7 @@ vi.mock('@/lib/agents/attachment-limits', () => ({
 import {
   updateHermesArchiveUploadLimitAction,
   updateMcpStartupTimeoutSettingsAction,
+  updateRemoteMcpPrivateHostsSettingsAction,
   updateSkillImportLimitAction,
 } from '@/lib/admin/settings-actions';
 
@@ -60,6 +65,13 @@ function mcpTimeoutsForm(idleSeconds: string, maxSeconds: string, intent?: strin
 function skillImportForm(value: string): FormData {
   const formData = new FormData();
   formData.set('skillImportMaxSkills', value);
+  return formData;
+}
+
+function remoteMcpPrivateHostsForm(value: string, intent?: string): FormData {
+  const formData = new FormData();
+  formData.set('remoteMcpPrivateHosts', value);
+  if (intent) formData.set('intent', intent);
   return formData;
 }
 
@@ -153,5 +165,49 @@ describe('updateSkillImportLimitAction', () => {
     });
 
     expect(mocks.updateSkillImportSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateRemoteMcpPrivateHostsSettingsAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({ id: 'admin-1' });
+    mocks.getTranslations.mockResolvedValue((key: string) => key);
+    mocks.updateRemoteMcpPrivateHostsSettings.mockResolvedValue({
+      value: '*.rhzy.ai,10.0.10.42',
+      source: 'database',
+    });
+    mocks.resetRemoteMcpPrivateHostsSettings.mockResolvedValue(undefined);
+  });
+
+  it('requires an admin and persists a valid Remote MCP private host allowlist', async () => {
+    await expect(updateRemoteMcpPrivateHostsSettingsAction(
+      {},
+      remoteMcpPrivateHostsForm('*.rhzy.ai\n10.0.10.42'),
+    )).resolves.toEqual({ ok: true });
+
+    expect(mocks.requireAdmin).toHaveBeenCalledOnce();
+    expect(mocks.updateRemoteMcpPrivateHostsSettings).toHaveBeenCalledWith('*.rhzy.ai\n10.0.10.42');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
+  });
+
+  it.each(['127.0.0.1', '169.254.169.254', 'https://mcp.rhzy.ai/mcp', '10.0.0.0/8'])
+  ('rejects invalid Remote MCP private host entry %s without writing', async (value) => {
+    await expect(updateRemoteMcpPrivateHostsSettingsAction(
+      {},
+      remoteMcpPrivateHostsForm(value),
+    )).resolves.toEqual({ error: 'errorRemoteMcpPrivateHosts' });
+
+    expect(mocks.updateRemoteMcpPrivateHostsSettings).not.toHaveBeenCalled();
+  });
+
+  it('restores the environment allowlist without validating the textarea', async () => {
+    await expect(updateRemoteMcpPrivateHostsSettingsAction(
+      {},
+      remoteMcpPrivateHostsForm('', 'reset'),
+    )).resolves.toEqual({ ok: true });
+
+    expect(mocks.resetRemoteMcpPrivateHostsSettings).toHaveBeenCalledOnce();
+    expect(mocks.updateRemoteMcpPrivateHostsSettings).not.toHaveBeenCalled();
   });
 });

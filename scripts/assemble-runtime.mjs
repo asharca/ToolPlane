@@ -256,6 +256,7 @@ await copyRuntimePackage(
     'zod-to-json-schema',
   ],
 );
+await copyRuntimePackage('undici');
 const remoteMcpSdkRoot = path.join(outputRoot, 'node_modules/@modelcontextprotocol/sdk/dist/esm');
 await Promise.all([
   'client/index.js',
@@ -278,6 +279,7 @@ for (const [entry, description] of [
   ['public', 'public assets directory'],
   ['node_modules/node-pty', 'sandbox PTY runtime'],
   ['node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', 'remote MCP client runtime'],
+  ['node_modules/undici/index.js', 'remote MCP HTTP runtime'],
   ['node_modules/ws', 'connector WebSocket runtime'],
   ['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim'],
   ['node_modules/.bin/next', 'legacy entrypoint Next shim'],

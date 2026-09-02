@@ -7,11 +7,21 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { ResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import undici from 'undici';
+import {
+  isPrivateRemoteMcpIp,
+  normalizeRemoteMcpHostname,
+  parseRemoteMcpPrivateHosts,
+} from './remote-mcp-private-hosts.mjs';
+
+const { Agent, fetch: undiciFetch } = undici;
 
 const NAME = process.env.MCP_NAME || 'remote-mcp';
 const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || '').trim();
 let rawConfig = process.env.MCP_REMOTE_CONFIG || '';
+let rawPrivateHosts = process.env.MCP_REMOTE_PRIVATE_HOSTS || '';
 delete process.env.MCP_REMOTE_CONFIG;
+delete process.env.MCP_REMOTE_PRIVATE_HOSTS;
 
 function invalidConfig(message) {
   throw new Error(`invalid remote MCP configuration: ${message}`);
@@ -62,7 +72,18 @@ function parseConfig() {
   return { url, transport: value.transport, timeoutMs: value.timeoutMs, headers };
 }
 
+function parsePrivateHosts() {
+  try {
+    const parsed = parseRemoteMcpPrivateHosts(rawPrivateHosts);
+    if (!parsed) invalidConfig('private host allowlist must contain DNS hosts, wildcard suffixes, or private IP addresses');
+    return parsed;
+  } finally {
+    rawPrivateHosts = '';
+  }
+}
+
 const CONFIG = parseConfig();
+const PRIVATE_TARGETS = parsePrivateHosts();
 const secretValues = [...new Set(Object.values(CONFIG.headers).flatMap((value) => {
   const match = /^(?:Bearer|Basic)\s+(.+)$/i.exec(value);
   return match ? [value, match[1]] : [value];
@@ -137,18 +158,52 @@ function blockedIp(address) {
   return family === 4 ? blockedIpv4(address) : family === 6 ? blockedIpv6(address) : true;
 }
 
-async function assertPublicUrl(url, allowQuery = false) {
+function allowlistedPrivateIp(hostname, address) {
+  if (!isPrivateRemoteMcpIp(address)) return false;
+  return (PRIVATE_TARGETS.ips.has(address) && hostname === address)
+    || PRIVATE_TARGETS.hosts.has(hostname)
+    || [...PRIVATE_TARGETS.suffixes].some((suffix) => hostname.endsWith(`.${suffix}`));
+}
+
+function validateRemoteUrl(url, allowQuery = false) {
   if (url.protocol !== 'https:' || url.username || url.password || url.port || (!allowQuery && url.search) || url.hash) {
     throw new Error('Remote MCP endpoint is not allowed.');
   }
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const hostname = normalizeRemoteMcpHostname(url.hostname);
   if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
     throw new Error('Remote MCP endpoint is not allowed.');
   }
+  return hostname;
+}
+
+async function resolveRemoteUrl(url, allowQuery = false) {
+  const hostname = validateRemoteUrl(url, allowQuery);
   const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (addresses.length === 0 || addresses.some(({ address }) => blockedIp(address))) {
+  if (addresses.length === 0 || addresses.some(({ address }) => (
+    blockedIp(address) && !allowlistedPrivateIp(hostname, address)
+  ))) {
     throw new Error('Remote MCP endpoint resolved to a non-public address.');
   }
+  return { hostname, addresses };
+}
+
+function createPinnedDispatcher(hostname, addresses) {
+  return new Agent({
+    connect: {
+      lookup(requestHostname, options, callback) {
+        if (normalizeRemoteMcpHostname(requestHostname) !== hostname) {
+          callback(new Error('Remote MCP endpoint is not allowed.'));
+          return;
+        }
+        if (options.all) {
+          callback(null, addresses);
+          return;
+        }
+        const address = addresses[0];
+        callback(null, address.address, address.family);
+      },
+    },
+  });
 }
 
 async function safeFetch(input, init) {
@@ -156,8 +211,9 @@ async function safeFetch(input, init) {
   if (url.origin !== CONFIG.url.origin) throw new Error('Remote MCP endpoint is not allowed.');
   // Legacy SSE servers announce a same-origin POST endpoint with a session ID
   // in its query string. The configured URL itself remains query-free.
-  await assertPublicUrl(url, CONFIG.transport === 'sse');
-  return fetch(input, { ...init, redirect: 'error' });
+  validateRemoteUrl(url, CONFIG.transport === 'sse');
+  if (!pinnedDispatcher) throw new Error('Remote MCP endpoint is not allowed.');
+  return undiciFetch(input, { ...init, redirect: 'error', dispatcher: pinnedDispatcher });
 }
 
 const requestInit = { headers: CONFIG.headers, redirect: 'error' };
@@ -171,6 +227,7 @@ const transport = CONFIG.transport === 'sse'
 const client = new Client({ name: 'toolplane-http-bridge', version: '1.0.0' }, { capabilities: {} });
 let initResult = null;
 let shuttingDown = false;
+let pinnedDispatcher = null;
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -237,6 +294,11 @@ async function shutdown(code) {
   } catch {
     // The remote connection may already be gone.
   }
+  try {
+    await pinnedDispatcher?.close();
+  } catch {
+    // The HTTP dispatcher may already be gone.
+  }
   process.exitCode = code;
 }
 
@@ -246,7 +308,8 @@ process.once('SIGINT', () => void shutdown(0));
 async function start() {
   try {
     runtimePhase('initializing', 'Connecting to remote MCP.');
-    await assertPublicUrl(CONFIG.url);
+    const remote = await resolveRemoteUrl(CONFIG.url);
+    pinnedDispatcher = createPinnedDispatcher(remote.hostname, remote.addresses);
     let timer;
     try {
       await Promise.race([

@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { resolveSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
+import { resolveRemoteMcpPrivateHostsSettings } from '@/lib/admin/settings';
 import {
   listMcpToolsViaSandbox,
   mcpRpcViaSandbox,
@@ -48,6 +49,7 @@ type InspectorContext = {
   sandboxId: string;
   sandboxDeploymentId: string;
   remote?: RemoteSpec;
+  remotePrivateHosts?: string;
 };
 
 async function inspectorContext(input: {
@@ -103,6 +105,7 @@ async function inspectorContext(input: {
     return { error: 'sandboxNotRunning' };
   }
   let remote: RemoteSpec | undefined;
+  let remotePrivateHosts: string | undefined;
   if (deployment.source === 'remote') {
     const config = deployment.installCfg && typeof deployment.installCfg === 'object'
       && !Array.isArray(deployment.installCfg)
@@ -115,6 +118,7 @@ async function inspectorContext(input: {
       const spec = resolveSpawnSpec(deployment);
       if (spec.kind !== 'remote') return { error: 'unsupportedTransport' };
       remote = spec;
+      remotePrivateHosts = (await resolveRemoteMcpPrivateHostsSettings()).value;
     } catch {
       return { error: 'connectorFailed' };
     }
@@ -129,6 +133,7 @@ async function inspectorContext(input: {
       sandboxId: input.sandboxId,
       sandboxDeploymentId: sandbox.deploymentId,
       ...(remote ? { remote } : {}),
+      ...(remotePrivateHosts !== undefined ? { remotePrivateHosts } : {}),
     },
   };
 }
@@ -202,7 +207,11 @@ async function persistConnection(context: InspectorContext, value: unknown): Pro
 
 async function inspectorTools(context: InspectorContext): Promise<McpToolDefinition[] | null> {
   if (context.remote) {
-    return listMcpToolsViaSandbox(context.sandboxDeploymentId, context.remote);
+    return listMcpToolsViaSandbox(
+      context.sandboxDeploymentId,
+      context.remote,
+      context.remotePrivateHosts,
+    );
   }
   if (effectiveStatus(context.deploymentId, context.deploymentStatus) !== 'running') return null;
   return listMcpTools(context.deploymentId);
@@ -274,6 +283,7 @@ export async function runMcpInspectorToolAction(input: {
           resolved.context.remote,
           'tools/call',
           { name: input.toolName, arguments: input.arguments },
+          resolved.context.remotePrivateHosts,
         )
       : mcpRpc(
           resolved.context.deploymentId,

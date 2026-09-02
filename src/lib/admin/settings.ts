@@ -10,9 +10,11 @@ import {
   DEFAULT_SKILL_IMPORT_SKILLS,
   isValidSkillImportMaxSkills,
 } from '@/lib/skills/limits';
+import { parseRemoteMcpPrivateHosts } from '../../../scripts/remote-mcp-private-hosts.mjs';
 
 export const HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY = 'hermes.maxArchiveUploadMiB';
 export const MCP_STARTUP_TIMEOUTS_SETTING_KEY = 'mcp.startupTimeouts';
+export const REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY = 'mcp.remotePrivateHosts';
 export const SKILL_IMPORT_MAX_SKILLS_SETTING_KEY = 'skills.maxImportSkills';
 
 export const DEFAULT_MCP_STARTUP_IDLE_TIMEOUT_MS = 90_000;
@@ -32,6 +34,11 @@ export type McpStartupTimeoutSettings = {
 
 export type SkillImportSettings = {
   maxSkills: number;
+};
+
+export type RemoteMcpPrivateHostsSettings = {
+  value: string;
+  source: 'database' | 'environment' | 'default';
 };
 
 function toSystemSettings(value?: string | null): SystemSettings {
@@ -211,4 +218,48 @@ export async function updateMcpStartupTimeoutSettings(
 
 export async function resetMcpStartupTimeoutSettings(): Promise<void> {
   await db.systemSetting.deleteMany({ where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY } });
+}
+
+function environmentRemoteMcpPrivateHostsSettings(): RemoteMcpPrivateHostsSettings {
+  const parsed = parseRemoteMcpPrivateHosts(process.env.TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS ?? '');
+  return parsed?.value
+    ? { value: parsed.value, source: 'environment' }
+    : { value: '', source: 'default' };
+}
+
+// Resolve this for every Remote MCP launch so an administrator's saved
+// allowlist applies to the next start on every app instance.
+export async function resolveRemoteMcpPrivateHostsSettings(): Promise<RemoteMcpPrivateHostsSettings> {
+  try {
+    const setting = await db.systemSetting.findUnique({
+      where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
+      select: { value: true },
+    });
+    if (setting) {
+      const parsed = parseRemoteMcpPrivateHosts(setting.value);
+      // A malformed persisted override must not fall back to a permissive env.
+      return { value: parsed?.value ?? '', source: 'database' };
+    }
+  } catch {
+    // Do not widen a saved administrator policy when Postgres is unavailable.
+    return { value: '', source: 'default' };
+  }
+  return environmentRemoteMcpPrivateHostsSettings();
+}
+
+export async function updateRemoteMcpPrivateHostsSettings(
+  value: string,
+): Promise<RemoteMcpPrivateHostsSettings> {
+  const parsed = parseRemoteMcpPrivateHosts(value);
+  if (!parsed) throw new Error('Invalid Remote MCP private host allowlist.');
+  await db.systemSetting.upsert({
+    where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
+    create: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, value: parsed.value },
+    update: { value: parsed.value },
+  });
+  return { value: parsed.value, source: 'database' };
+}
+
+export async function resetRemoteMcpPrivateHostsSettings(): Promise<void> {
+  await db.systemSetting.deleteMany({ where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY } });
 }

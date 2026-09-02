@@ -21,7 +21,10 @@ import { type SpawnSpec } from './spawn-spec';
 import { MCP_NETWORK } from './sandbox';
 import { ensureConnectorBroker } from '@/lib/sandboxes/connector-broker';
 import { deriveHermesRuntimeToken } from '@/lib/agents/hermes/token';
-import { resolveMcpStartupTimeoutSettings } from '@/lib/admin/settings';
+import {
+  resolveMcpStartupTimeoutSettings,
+  resolveRemoteMcpPrivateHostsSettings,
+} from '@/lib/admin/settings';
 import {
   DEPLOYMENT_CONFIG_MOUNT_PATH,
   configVolumeName,
@@ -1359,6 +1362,9 @@ async function launchProcess(
   const startupTimeouts = managedSpec.kind === 'bridge'
     ? await resolveMcpStartupTimeoutSettings()
     : null;
+  const remotePrivateHosts = managedSpec.kind === 'remote'
+    ? await resolveRemoteMcpPrivateHostsSettings()
+    : null;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
   const runtimeEventToken = managedSpec.kind === 'bridge' || managedSpec.kind === 'remote'
@@ -1395,6 +1401,9 @@ async function launchProcess(
               headers: managedSpec.headers,
               timeoutMs: managedSpec.timeoutMs,
             }),
+            // Only the bridge sees this admin-controlled setting; deployment
+            // config cannot opt individual workspace MCPs into private access.
+            MCP_REMOTE_PRIVATE_HOSTS: remotePrivateHosts!.value,
             MCP_RUNTIME_EVENT_TOKEN: runtimeEventToken,
           }
         : managedSpec.kind === 'sandbox'
