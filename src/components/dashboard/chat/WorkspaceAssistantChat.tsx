@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu } from 'radix-ui';
+import { ChatShell, SearchInput } from '@toolplane/ui';
 import {
   Bot,
   ChevronDown,
@@ -15,10 +16,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   MoveRight,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
-  Search,
   Store,
   Trash2,
   X,
@@ -754,33 +752,27 @@ export function WorkspaceAssistantChat({
 
   return (
     <>
-      <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
-        <div className={cx(
-          'grid min-h-0 flex-1 grid-cols-1',
-          sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)]',
-          branchOpen && !branchMaximized && (sidebarOpen
-            ? 'xl:grid-cols-[15rem_minmax(0,1fr)_20rem]'
-            : 'xl:grid-cols-[minmax(0,1fr)_20rem]'),
-        )}>
-          <aside className={cx(
-            'min-h-0 flex-col overflow-hidden bg-background p-1.5',
-            mobilePane === 'chat' ? (sidebarOpen ? 'hidden lg:flex' : 'hidden') : (sidebarOpen ? 'flex' : 'flex lg:hidden'),
-          )}>
-            <div className="relative px-0.5">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t('search')}
-                aria-label={t('search')}
-                className="h-7 w-full rounded-full border-0 bg-muted/70 pl-7 pr-7 text-[11px] outline-none focus:ring-1 focus:ring-brand/35"
-              />
-              {query ? (
-                <button type="button" onClick={() => setQuery('')} aria-label={common('clear')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background">
-                  <X className="size-3" />
-                </button>
-              ) : null}
-            </div>
+      <ChatShell
+        className="relative"
+        sidebarOpen={sidebarOpen}
+        onSidebarOpenChange={setSidebarOpen}
+        mobilePane={mobilePane}
+        onMobilePaneChange={setMobilePane}
+        labels={{ showSidebar: t('showSidebar'), hideSidebar: t('hideSidebar') }}
+        sidebarLabel={t('assistants')}
+        sidebar={(
+          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background p-1.5">
+            <SearchInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onClear={() => setQuery('')}
+              label={t('search')}
+              clearLabel={t('clearSearch')}
+              placeholder={t('search')}
+              controlSize="sm"
+              wrapperClassName="px-0.5"
+              className="h-7 rounded-full border-0 bg-muted/70 text-[11px] focus:ring-1 focus:ring-brand/35"
+            />
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
               <div className="flex h-8 items-center justify-between px-2.5">
                 <p className="text-xs font-medium text-muted-foreground">{t('assistants')}</p>
@@ -927,20 +919,11 @@ export function WorkspaceAssistantChat({
               </ul>
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
-          </aside>
-
-          <section className={cx(
-            'min-h-0 min-w-0 flex-col overflow-hidden bg-background',
-            mobilePane === 'sidebar' ? 'hidden lg:flex' : 'flex',
-          )}>
-            <header className="flex h-11 shrink-0 items-center justify-between gap-3 px-2.5">
+          </div>
+        )}
+        header={(
+          <>
               <div className="flex min-w-0 items-center gap-1.5">
-                <button type="button" onClick={() => setMobilePane('sidebar')} aria-label={t('showSidebar')} className="flex size-[30px] items-center justify-center rounded-lg text-muted-foreground hover:bg-muted lg:hidden">
-                  <PanelLeftOpen className="size-[18px]" />
-                </button>
-                <button type="button" onClick={() => setSidebarOpen((value) => !value)} aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')} className="hidden size-[30px] items-center justify-center rounded-lg text-muted-foreground hover:bg-muted lg:flex">
-                  {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-                </button>
                 {activeAssistant ? (
                   <>
                     <button type="button" onClick={() => setEditing(activeAssistant)} aria-label={`${t('settings')}: ${activeAssistant.name}`} title={t('settings')} className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium hover:bg-muted">
@@ -989,8 +972,22 @@ export function WorkspaceAssistantChat({
                   <GitBranch className="size-[17px]" />
                 </button>
               ) : null}
-            </header>
-
+          </>
+        )}
+        rightPanelOpen={branchOpen && !branchMaximized && Boolean(activeThread && branch)}
+        rightPanel={activeThread && branch ? (
+          <ChatBranchPanel
+            branch={branch}
+            busy={branchBusy}
+            canMaximize
+            onClose={() => setBranchOpen(false)}
+            onDelete={(messageId) => void deleteBranch(messageId)}
+            onMaximize={() => setBranchMaximized(true)}
+            onSelect={(messageId) => void switchBranch(messageId)}
+            onStart={(messageId) => void startBranch(messageId)}
+          />
+        ) : undefined}
+      >
             {error ? <p role="alert" className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
             {activeAssistant && activeThread ? (
               <AgentConversation
@@ -1034,23 +1031,7 @@ export function WorkspaceAssistantChat({
                 </button>
               </div>
             )}
-          </section>
-          {branchOpen && !branchMaximized && activeThread && branch ? (
-            <aside className="hidden min-h-0 overflow-hidden bg-background xl:flex">
-              <ChatBranchPanel
-                branch={branch}
-                busy={branchBusy}
-                canMaximize
-                onClose={() => setBranchOpen(false)}
-                onDelete={(messageId) => void deleteBranch(messageId)}
-                onMaximize={() => setBranchMaximized(true)}
-                onSelect={(messageId) => void switchBranch(messageId)}
-                onStart={(messageId) => void startBranch(messageId)}
-              />
-            </aside>
-          ) : null}
-        </div>
-      </div>
+      </ChatShell>
 
       {branchOpen && !branchMaximized && activeThread && branch ? (
         <div className="fixed inset-0 z-50 flex justify-end xl:hidden">

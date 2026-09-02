@@ -2223,6 +2223,7 @@
       "saveError": "Could not save the assistant.",
       "deleteError": "Could not delete this item.",
       "search": "Search assistants and chats",
+      "clearSearch": "Clear assistant search",
       "empty": "No assistants match this search.",
       "emptyTitle": "Create a chat assistant",
       "emptyDescription": "Choose a model and optionally allow selected MCP tools. Work capabilities stay isolated.",
