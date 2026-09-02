@@ -2223,6 +2223,7 @@
       "saveError": "无法保存助手。",
       "deleteError": "无法删除此项目。",
       "search": "搜索助手和会话",
+      "clearSearch": "清除助手搜索",
       "empty": "没有匹配的助手。",
       "emptyTitle": "创建聊天助手",
       "emptyDescription": "选择模型并按需授权 MCP 工具，Work 能力会保持隔离。",

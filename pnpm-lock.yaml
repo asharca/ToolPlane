@@ -41,6 +41,9 @@ importers:
       '@streamdown/code':
         specifier: ^1.1.1
         version: 1.1.1(react@19.2.4)
+      '@toolplane/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -174,6 +177,39 @@ importers:
       ws:
         specifier: ^8.21.0
         version: 8.21.0
+
+  packages/ui:
+    dependencies:
+      '@assistant-ui/react':
+        specifier: ^0.14.26
+        version: 0.14.26(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+      '@assistant-ui/react-streamdown':
+        specifier: 0.3.5
+        version: 0.3.5(@assistant-ui/react@0.14.26(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@streamdown/code@1.1.1(react@19.2.4))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@streamdown/code':
+        specifier: ^1.1.1
+        version: 1.1.1(react@19.2.4)
+      lucide-react:
+        specifier: ^1.21.0
+        version: 1.21.0(react@19.2.4)
+      radix-ui:
+        specifier: 1.6.2
+        version: 1.6.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.4(react@19.2.4)
+      remark-breaks:
+        specifier: ^4.0.0
+        version: 4.0.0
+      streamdown:
+        specifier: ^2.5.0
+        version: 2.5.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      tailwindcss:
+        specifier: ^4.0.0
+        version: 4.3.1
 
 packages:
 

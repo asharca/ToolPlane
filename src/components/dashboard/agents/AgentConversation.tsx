@@ -4,71 +4,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useChat } from '@ai-sdk/react';
 import {
-  ActionBarPrimitive,
-  AssistantRuntimeProvider,
-  AttachmentPrimitive,
-  ChainOfThoughtPrimitive,
-  ComposerPrimitive,
-  MessagePrimitive,
-  ThreadPrimitive,
-  useAuiState,
   useComposerRuntime,
   type AppendMessage,
   type AssistantRuntime,
-  type Attachment,
   type AttachmentAdapter,
   type CompleteAttachment,
-  type FileMessagePartProps,
-  type ReasoningMessagePartProps,
-  type TextMessagePartProps,
-  type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
 import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk';
 import { DefaultChatTransport, generateId, type CreateUIMessage, type UIMessage } from 'ai';
+import { Bot, Globe2 } from 'lucide-react';
 import {
-  Box,
-  Bot,
-  Brain,
-  Check,
-  ChevronLeft,
-  ChevronDown,
-  ChevronRight,
-  CheckCircle2,
-  CircleAlert,
-  CirclePause,
-  Copy,
-  Globe2,
-  Loader2,
-  Paperclip,
-  Pencil,
-  Plug,
-  RefreshCw,
-  Send,
-  Split,
-  UserRound,
-  Wrench,
-  X,
-} from 'lucide-react';
-import {
-  ConversationAttachmentChip,
-  ConversationAttachmentPicker,
-  ConversationAttachmentRemoveButton,
-  ConversationContextUsage,
-  ConversationComposerExpand,
-  conversationAttachmentThumbClassName,
-  conversationComposerClassName,
-  conversationComposerInputClassName,
-  conversationComposerToolbarClassName,
-  useConversationComposerExpansion,
-} from '@/components/dashboard/ConversationComposer';
+  ChatThread,
+  type ChatThreadLabels,
+} from '@toolplane/ui';
+import { ConversationContextUsage } from '@/components/dashboard/ConversationComposer';
 import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
-import {
-  AssistantMarkdown,
-  AssistantReply,
-  ConversationPendingIndicator,
-  assistantMessageActionClassName,
-} from '@/components/dashboard/ConversationMessage';
-import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
+import { resolveContextUsage } from '@/lib/context-usage';
 import type { ChatBranchNavigation } from '@/lib/chat/branches';
 import type { ReasoningEffort } from '@/lib/agents/constants';
 import { ReasoningEffortControl } from '@/components/dashboard/agents/ReasoningEffortControl';
@@ -85,10 +36,6 @@ type DraftSnapshot = {
   text: string;
   files: File[];
 };
-
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
-}
 
 function displayUserText(text: string) {
   return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
@@ -125,51 +72,6 @@ function toEditableCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
         }
       : message.metadata,
   } as unknown as CreateUIMessage<UI_MESSAGE>;
-}
-
-function formatToolResult(result: unknown) {
-  if (typeof result === 'string') return result;
-  if (result && typeof result === 'object' && 'content' in result && Array.isArray(result.content)) {
-    const text = result.content.flatMap((part) => (
-      part && typeof part === 'object' && 'text' in part && typeof part.text === 'string'
-        ? [part.text]
-        : []
-    )).join('\n\n');
-    if (text) return text;
-  }
-  try {
-    return JSON.stringify(result, null, 2);
-  } catch {
-    return String(result);
-  }
-}
-
-type ToolKind = 'web' | 'skill' | 'sandbox' | 'mcp' | 'subagent' | 'tool';
-
-function toolKind(toolName: string): ToolKind {
-  if (/(?:^|__)(?:brave|web|firecrawl|fetch|search|crawl|scrape|extract|browser)/i.test(toolName)) return 'web';
-  if (toolName === 'skill_read_file' || toolName === 'skill_run_script') return 'skill';
-  if (/sandbox|terminal|shell|process|filesystem/i.test(toolName)) return 'sandbox';
-  if (/sub.?agent|delegate/i.test(toolName)) return 'subagent';
-  if (toolName.includes('__')) return 'mcp';
-  return 'tool';
-}
-
-function toolKindLabel(kind: ToolKind, t: ReturnType<typeof useTranslations>) {
-  const labels: Record<ToolKind, string> = {
-    web: t('toolKindWeb'),
-    skill: t('toolKindSkill'),
-    sandbox: t('toolKindSandbox'),
-    mcp: t('toolKindMcp'),
-    subagent: t('toolKindSubagent'),
-    tool: t('toolKindTool'),
-  };
-  return labels[kind];
-}
-
-function formatToolArgs(args: unknown, argsText: string) {
-  if (argsText.trim()) return argsText;
-  return formatToolResult(args);
 }
 
 function mergeDraftText(current: string, restored: string) {
@@ -240,280 +142,6 @@ async function restoreCreateMessageDraft(runtime: AssistantRuntime | null, messa
   }
 }
 
-function UserText({ text }: TextMessagePartProps) {
-  return (
-    <span className="block whitespace-pre-wrap [&:not(:last-child)]:mb-2">
-      {displayUserText(text)}
-    </span>
-  );
-}
-
-function AssistantText({ text, status }: TextMessagePartProps) {
-  return <AssistantMarkdown text={text} streaming={status.type === 'running'} />;
-}
-
-function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
-  const t = useTranslations('console.work');
-  const running = status.type === 'running';
-  return (
-    <details open={running} className="group/reasoning rounded-md">
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-        {running
-          ? <Loader2 className="size-3.5 shrink-0 animate-spin" />
-          : <CheckCircle2 className="size-3.5 shrink-0" />}
-        <Brain className="size-3.5 shrink-0" />
-        <span>{running ? t('thinking') : t('thought')}</span>
-        {text ? <ChevronRight className="ml-auto size-3.5 transition-transform group-open/reasoning:rotate-90" /> : null}
-      </summary>
-      {text ? (
-        <pre className="ml-5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground">
-          {text}
-        </pre>
-      ) : null}
-    </details>
-  );
-}
-
-function FilePart({ data, filename }: FileMessagePartProps) {
-  const t = useTranslations('console.agents');
-  return (
-    <a
-      href={data}
-      download={filename}
-      className="my-1 inline-flex max-w-full items-center gap-2 rounded-md border border-current/20 px-2 py-1 text-xs underline-offset-2 hover:underline"
-    >
-      <Paperclip className="size-3.5 shrink-0" />
-      <span className="truncate">{filename || t('attachment')}</span>
-    </a>
-  );
-}
-
-function ToolPart({
-  toolName,
-  status,
-  result,
-  isError,
-  args,
-  argsText,
-  approval,
-  respondToApproval,
-}: ToolCallMessagePartProps) {
-  const t = useTranslations('console.agents');
-  const kind = toolKind(toolName);
-  const Icon = kind === 'skill'
-    ? Brain
-    : kind === 'web'
-      ? Globe2
-    : kind === 'sandbox'
-      ? Box
-      : kind === 'mcp'
-        ? Plug
-        : kind === 'subagent'
-          ? Bot
-          : Wrench;
-  const waitingForApproval = approval
-    && approval.approved === undefined
-    && !approval.resolution;
-  const isRunning = status.type === 'running';
-  const stateLabel = waitingForApproval
-    ? t('toolAwaitingApproval')
-    : isRunning
-      ? t('toolRunning')
-      : isError
-        ? t('toolFailed')
-        : t('toolCompleted');
-  const StateIcon = waitingForApproval || isError
-    ? CircleAlert
-    : isRunning
-      ? Loader2
-      : CheckCircle2;
-
-  return (
-    <details
-      open={isRunning || Boolean(isError) || Boolean(waitingForApproval)}
-      className={cx(
-        'group my-1 overflow-hidden rounded-lg text-xs',
-        (isError || waitingForApproval) && 'bg-amber-500/5',
-      )}
-    >
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-lg px-1 py-0.5 marker:content-none hover:bg-muted/50">
-        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
-          <span className="font-medium text-foreground">{toolName}</span>
-          <span className="ml-1.5 text-[11px]">{toolKindLabel(kind, t)}</span>
-        </span>
-        <span className={cx(
-          'inline-flex shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium',
-          isError ? 'text-red-700 dark:text-red-300'
-            : waitingForApproval ? 'text-amber-700 dark:text-amber-300'
-              : isRunning ? 'text-brand'
-                : 'text-muted-foreground',
-        )}>
-          <StateIcon className={cx('size-3', isRunning && 'animate-spin')} />
-          {stateLabel}
-        </span>
-      </summary>
-      <div className="ml-5 space-y-3 border-l border-border/70 px-3 py-2">
-        <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('toolInput')}</p>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">
-            {formatToolArgs(args, argsText)}
-          </pre>
-        </div>
-        {waitingForApproval ? (
-          <div className="rounded-md border border-amber-500/25 bg-amber-500/10 p-2.5">
-            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{t('toolApprovalDescription')}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => respondToApproval({ approved: true })}
-                className="ui-button-primary h-8 px-3 text-xs"
-              >
-                {t('toolAllow')}
-              </button>
-              <button
-                type="button"
-                onClick={() => respondToApproval({ approved: false })}
-                className="ui-button-secondary h-8 px-3 text-xs"
-              >
-                {t('toolReject')}
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {result !== undefined ? (
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('toolOutput')}</p>
-            <pre className={cx(
-              'max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border p-2 text-[11px] leading-relaxed',
-              isError ? 'border-red-500/20 bg-red-500/5 text-red-800 dark:text-red-200' : 'border-border bg-muted/30 text-foreground',
-            )}>
-              {formatToolResult(result)}
-            </pre>
-          </div>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
-function AssistantProcess() {
-  const t = useTranslations('console.work');
-  const running = useAuiState((state) => state.chainOfThought.status.type === 'running');
-  const failed = useAuiState((state) => state.chainOfThought.parts.some((part) => (
-    part.type === 'tool-call' && part.isError
-  )));
-  const activeLabel = useAuiState((state) => {
-    const part = state.chainOfThought.parts.at(-1);
-    if (!running || !part) return '';
-    return part.type === 'tool-call' ? t('usingTool', { tool: part.toolName }) : t('thinking');
-  });
-
-  return (
-    <ChainOfThoughtPrimitive.Root asChild>
-      <details open={running || failed} data-ui="assistant-process" className="group/process my-1.5 text-xs">
-        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-          <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
-          {running
-            ? <Loader2 className="size-3.5 shrink-0 animate-spin" />
-            : failed
-              ? <CircleAlert className="size-3.5 shrink-0 text-red-600" />
-              : <CheckCircle2 className="size-3.5 shrink-0" />}
-          <span className="shrink-0 font-medium text-foreground">
-            {running ? t('processing') : failed ? t('processFailed') : t('processed')}
-          </span>
-          {activeLabel ? <span className="min-w-0 truncate text-[11px]">{activeLabel}</span> : null}
-        </summary>
-        <div className="ml-5 py-1">
-          <ChainOfThoughtPrimitive.Parts
-            components={{ Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }}
-          />
-        </div>
-      </details>
-    </ChainOfThoughtPrimitive.Root>
-  );
-}
-
-function AssistantPendingPart() {
-  const t = useTranslations('console.work');
-  const running = useAuiState((state) => state.message.status?.type === 'running');
-  const hasParts = useAuiState((state) => state.message.parts.length > 0);
-  if (!running) return null;
-  return (
-    <ConversationPendingIndicator
-      label={hasParts ? t('generatingReply') : t('preparingReply')}
-      className="py-0.5 pl-0"
-    />
-  );
-}
-
-function attachmentUrl(attachment: Attachment) {
-  const part = attachment.content?.find((item) => item.type === 'file' || item.type === 'image');
-  if (part?.type === 'file') return part.data;
-  if (part?.type === 'image') return part.image;
-  return null;
-}
-
-function SentAttachment({ attachment }: { attachment: CompleteAttachment }) {
-  const url = attachmentUrl(attachment);
-  return (
-    <AttachmentPrimitive.Root className="my-1 inline-flex h-8 max-w-full items-center gap-2 rounded-md border border-current/20 px-2 text-xs">
-      <Paperclip className="size-3.5 shrink-0" />
-      {url ? (
-        <a href={url} download={attachment.name} className="min-w-0 truncate underline-offset-2 hover:underline">
-          <AttachmentPrimitive.Name />
-        </a>
-      ) : (
-        <span className="min-w-0 truncate"><AttachmentPrimitive.Name /></span>
-      )}
-    </AttachmentPrimitive.Root>
-  );
-}
-
-function ComposerAttachment({ attachment }: { attachment: Attachment }) {
-  const t = useTranslations('console.agents');
-  return (
-    <AttachmentPrimitive.Root asChild>
-      <ConversationAttachmentChip
-        name={<AttachmentPrimitive.Name />}
-        progress={attachment.status.type === 'running' ? attachment.status.progress : undefined}
-        thumbnail={<AttachmentPrimitive.unstable_Thumb className={conversationAttachmentThumbClassName} />}
-        removeButton={(
-          <AttachmentPrimitive.Remove asChild>
-            <ConversationAttachmentRemoveButton label={t('removeAttachment', { name: attachment.name })} />
-          </AttachmentPrimitive.Remove>
-        )}
-      />
-    </AttachmentPrimitive.Root>
-  );
-}
-
-function AttachmentPickerButton({
-  disabled,
-  onClearError,
-  supportsAttachments,
-}: {
-  disabled: boolean;
-  onClearError: () => void;
-  supportsAttachments: boolean;
-}) {
-  const composer = useComposerRuntime();
-  return (
-    <ConversationAttachmentPicker
-      accept={composer.getState().attachmentAccept}
-      disabled={disabled}
-      supportsAttachments={supportsAttachments}
-      onFiles={(files) => {
-        onClearError();
-        for (const file of files) {
-          void composer.addAttachment(file).catch(() => undefined);
-        }
-      }}
-    />
-  );
-}
-
 function ComposerMcpPromptPickerButton({
   apiPath,
   disabled,
@@ -537,423 +165,6 @@ function ComposerMcpPromptPickerButton({
         });
       }}
     />
-  );
-}
-
-function ConversationBranchNavigator({
-  branch,
-  disabled,
-  onSelect,
-}: {
-  branch?: ChatBranchNavigation;
-  disabled: boolean;
-  onSelect?: (messageId: string) => void | Promise<void>;
-}) {
-  const t = useTranslations('console.agents');
-  const common = useTranslations('common');
-  if (!branch || !onSelect) return null;
-  return (
-    <div aria-label={t('conversationBranch')} className="inline-flex h-[26px] items-center gap-0.5 text-[11px] tabular-nums text-muted-foreground">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => void onSelect(branch.previousMessageId)}
-        aria-label={common('previous')}
-        title={common('previous')}
-        className="flex size-[22px] items-center justify-center rounded-md hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        <ChevronLeft className="size-3" />
-      </button>
-      <span className="min-w-8 text-center font-mono">{branch.position}/{branch.total}</span>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => void onSelect(branch.nextMessageId)}
-        aria-label={common('next')}
-        title={common('next')}
-        className="flex size-[22px] items-center justify-center rounded-md hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        <ChevronRight className="size-3" />
-      </button>
-    </div>
-  );
-}
-
-function UserMessage({
-  allowEdit,
-  branch,
-  branchBusy,
-  messageId,
-  onBranchChange,
-}: {
-  allowEdit: boolean;
-  branch?: ChatBranchNavigation;
-  branchBusy: boolean;
-  messageId: string;
-  onBranchChange?: (messageId: string) => void | Promise<void>;
-}) {
-  const t = useTranslations('console.agents');
-  const common = useTranslations('common');
-  return (
-    <MessagePrimitive.Root asChild>
-      <article id={`chat-message-${messageId}`} className="flex flex-col items-end rounded-[10px] pt-2.5">
-        <ComposerPrimitive.If editing={false}>
-          <div className="flex max-w-full items-start justify-end gap-2.5">
-            <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
-              <MessagePrimitive.Parts components={{ Text: UserText }} />
-              <MessagePrimitive.Attachments>
-                {({ attachment }) => <SentAttachment attachment={attachment} />}
-              </MessagePrimitive.Attachments>
-            </div>
-            <div aria-label={t('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <UserRound className="size-4" />
-            </div>
-          </div>
-          <div className="mr-10 flex min-h-[26px] items-center justify-end gap-1">
-            <ConversationBranchNavigator branch={branch} disabled={branchBusy} onSelect={onBranchChange} />
-            <ActionBarPrimitive.Root autohide="always" className="flex h-[26px] items-center justify-end gap-0.5">
-              {allowEdit ? (
-                <ActionBarPrimitive.Edit
-                  aria-label={common('edit')}
-                  title={common('edit')}
-                  className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                >
-                  <Pencil className="size-[14px]" />
-                </ActionBarPrimitive.Edit>
-              ) : null}
-              <ActionBarPrimitive.Copy
-                aria-label={common('copy')}
-                title={common('copy')}
-                className="flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              >
-                <Copy className="size-[15px]" />
-              </ActionBarPrimitive.Copy>
-            </ActionBarPrimitive.Root>
-          </div>
-        </ComposerPrimitive.If>
-        <ComposerPrimitive.If editing>
-          <ComposerPrimitive.Root className="mr-10 w-[min(36rem,calc(100%_-_2.5rem))] rounded-[10px] bg-muted p-2">
-            <ComposerPrimitive.Input
-              autoFocus
-              rows={2}
-              submitMode="enter"
-              className="max-h-48 min-h-14 w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none"
-            />
-            <div className="mt-1 flex justify-end gap-1">
-              <ComposerPrimitive.Cancel
-                aria-label={common('cancel')}
-                title={common('cancel')}
-                className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-              >
-                <X className="size-4" />
-              </ComposerPrimitive.Cancel>
-              <ComposerPrimitive.Send
-                aria-label={common('save')}
-                title={common('save')}
-                className="flex size-7 items-center justify-center rounded-md bg-foreground text-background disabled:opacity-40"
-              >
-                <Check className="size-4" />
-              </ComposerPrimitive.Send>
-            </div>
-          </ComposerPrimitive.Root>
-        </ComposerPrimitive.If>
-      </article>
-    </MessagePrimitive.Root>
-  );
-}
-
-function AssistantMessage({
-  agentName,
-  allowRegenerate,
-  branch,
-  branchBusy,
-  messageId,
-  onBranchChange,
-  onRegenerate,
-  onStartBranch,
-}: {
-  agentName: string;
-  allowRegenerate: boolean;
-  branch?: ChatBranchNavigation;
-  branchBusy: boolean;
-  messageId: string;
-  onBranchChange?: (messageId: string) => void | Promise<void>;
-  onRegenerate?: (messageId: string) => void | Promise<void>;
-  onStartBranch?: (messageId: string) => void | Promise<void>;
-}) {
-  const common = useTranslations('common');
-  const chat = useTranslations('console.chatAssistants');
-  return (
-    <MessagePrimitive.Root asChild>
-      <AssistantReply
-        id={`chat-message-${messageId}`}
-        agentName={agentName}
-        actions={(
-          <div className="flex h-[26px] items-center gap-1">
-            <ConversationBranchNavigator branch={branch} disabled={branchBusy} onSelect={onBranchChange} />
-            <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex h-[26px] items-center gap-0.5">
-              {onStartBranch ? (
-                <button
-                  type="button"
-                  disabled={branchBusy}
-                  aria-label={chat('newBranch')}
-                  title={chat('newBranch')}
-                  className={assistantMessageActionClassName}
-                  onClick={() => void onStartBranch(messageId)}
-                >
-                  <Split className="size-[15px]" />
-                </button>
-              ) : null}
-              <ActionBarPrimitive.Copy
-                aria-label={common('copy')}
-                title={common('copy')}
-                className={assistantMessageActionClassName}
-              >
-                <Copy className="size-[15px]" />
-              </ActionBarPrimitive.Copy>
-              {allowRegenerate && onRegenerate ? (
-                <button
-                  type="button"
-                  disabled={branchBusy}
-                  aria-label={common('regenerate')}
-                  title={common('regenerate')}
-                  className={assistantMessageActionClassName}
-                  onClick={() => void onRegenerate?.(messageId)}
-                >
-                  <RefreshCw className="size-[15px]" />
-                </button>
-              ) : allowRegenerate ? (
-                <ActionBarPrimitive.Reload
-                  aria-label={common('regenerate')}
-                  title={common('regenerate')}
-                  className={assistantMessageActionClassName}
-                >
-                  <RefreshCw className="size-[15px]" />
-                </ActionBarPrimitive.Reload>
-              ) : null}
-            </ActionBarPrimitive.Root>
-          </div>
-        )}
-      >
-        <MessagePrimitive.Parts
-          components={{
-            Text: AssistantText,
-            File: FilePart,
-            ChainOfThought: AssistantProcess,
-            Empty: AssistantPendingPart,
-          }}
-        />
-      </AssistantReply>
-    </MessagePrimitive.Root>
-  );
-}
-
-function AgentThread({
-  activeConversationId,
-  agentName,
-  allowEdit,
-  allowRegenerate,
-  branchBusy,
-  branchNavigation,
-  creatingConversation,
-  contextUsage,
-  contextUsageBusy,
-  error,
-  mcpPromptApiPath,
-  onClearAttachmentError,
-  onBranchChange,
-  onPromptError,
-  onRegenerateMessage,
-  onStartBranch,
-  ready,
-  reasoningAvailable,
-  reasoningEffort,
-  supportsAttachments,
-  submitError,
-  uploadingAttachments,
-  webSearchAvailable,
-  webSearchEnabled,
-  onToggleWebSearch,
-  onReasoningEffortChange,
-  workMode,
-}: {
-  activeConversationId: string | null;
-  agentName: string;
-  allowEdit: boolean;
-  allowRegenerate: boolean;
-  branchBusy: boolean;
-  branchNavigation: ChatBranchNavigation[];
-  creatingConversation: boolean;
-  contextUsage: ContextUsageSnapshot | null;
-  contextUsageBusy: boolean;
-  error?: Error;
-  mcpPromptApiPath?: string;
-  onClearAttachmentError: () => void;
-  onBranchChange?: (messageId: string) => void | Promise<void>;
-  onPromptError: (message: string | null) => void;
-  onRegenerateMessage?: (messageId: string) => void | Promise<void>;
-  onStartBranch?: (messageId: string) => void | Promise<void>;
-  ready: boolean;
-  reasoningAvailable: boolean;
-  reasoningEffort: ReasoningEffort;
-  supportsAttachments: boolean;
-  submitError: string | null;
-  uploadingAttachments: boolean;
-  webSearchAvailable?: boolean;
-  webSearchEnabled: boolean;
-  onToggleWebSearch: () => void;
-  onReasoningEffortChange: (effort: ReasoningEffort) => void;
-  workMode: boolean;
-}) {
-  const t = useTranslations('console.agents');
-  const webSearchLabel = webSearchEnabled ? t('disableWebSearch') : t('enableWebSearch');
-  const {
-    expanded: composerExpanded,
-    inputRef: composerInputRef,
-    minRows: composerMinRows,
-    toggle: toggleComposer,
-  } = useConversationComposerExpansion();
-  const branchByMessageId = useMemo(
-    () => new Map(branchNavigation.map((branch) => [branch.messageId, branch])),
-    [branchNavigation],
-  );
-  return (
-    <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
-      <ThreadPrimitive.Viewport className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
-        <div className="flex-1 py-1.5">
-          <ThreadPrimitive.Empty>
-            <div className="flex min-h-full items-center justify-center px-6 pb-24">
-              <div className="max-w-md text-center">
-                <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                  <Bot className="size-6" />
-                </div>
-                <h3 className="text-lg font-medium text-foreground">{workMode ? t('startWorkConversation') : t('startAConversation')}</h3>
-                {workMode ? <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('startWorkConversationDescription')}</p> : null}
-              </div>
-            </div>
-          </ThreadPrimitive.Empty>
-
-          <div className="mx-auto flex w-full max-w-[53rem] flex-col gap-0 px-6">
-            <ThreadPrimitive.Messages>
-              {({ message }) => message.role === 'user'
-                ? <UserMessage allowEdit={allowEdit} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} />
-                : <AssistantMessage agentName={agentName} allowRegenerate={allowRegenerate} branch={branchByMessageId.get(message.id)} branchBusy={branchBusy} messageId={message.id} onBranchChange={onBranchChange} onRegenerate={onRegenerateMessage} onStartBranch={onStartBranch} />}
-            </ThreadPrimitive.Messages>
-          </div>
-        </div>
-
-        <ThreadPrimitive.ScrollToBottom
-          aria-label={t('scrollToLatestMessage')}
-          title={t('scrollToLatestMessage')}
-          className="sticky bottom-3 z-10 mx-auto mb-3 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground disabled:invisible"
-        >
-          <ChevronDown className="size-4" />
-        </ThreadPrimitive.ScrollToBottom>
-      </ThreadPrimitive.Viewport>
-
-      <div className="shrink-0 bg-background pb-3 pt-4">
-        <div className="mx-auto w-full max-w-[53rem] px-6">
-          {error || submitError ? (
-            <p role="alert" className="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-              {submitError || error?.message}
-            </p>
-          ) : null}
-
-          <ComposerPrimitive.Root
-            data-ui="chat.composer"
-            data-composer-inputbar=""
-            data-composer-presentation="regular"
-            className={conversationComposerClassName}
-          >
-            <ConversationComposerExpand expanded={composerExpanded} onToggle={toggleComposer} />
-            <div className="flex flex-wrap gap-1.5 px-[15px] empty:hidden">
-              <ComposerPrimitive.Attachments>
-                {({ attachment }) => <ComposerAttachment attachment={attachment} />}
-              </ComposerPrimitive.Attachments>
-            </div>
-            <ComposerPrimitive.Input
-              ref={composerInputRef}
-              placeholder={t('messageThisAgent')}
-              disabled={!ready || branchBusy || creatingConversation || uploadingAttachments}
-              rows={2}
-              minRows={composerMinRows}
-              submitMode="enter"
-              className={conversationComposerInputClassName(composerExpanded)}
-            />
-            <div data-ui="part:composer-actions" data-composer-toolbar="" className={conversationComposerToolbarClassName}>
-              <div className="flex min-w-0 items-center gap-1.5">
-                <AttachmentPickerButton
-                  disabled={branchBusy || creatingConversation || uploadingAttachments}
-                  onClearError={onClearAttachmentError}
-                  supportsAttachments={supportsAttachments}
-                />
-                <ComposerMcpPromptPickerButton
-                  apiPath={mcpPromptApiPath}
-                  disabled={!ready || branchBusy || creatingConversation || uploadingAttachments}
-                  onError={onPromptError}
-                />
-                {webSearchAvailable ? (
-                  <button
-                    type="button"
-                    disabled={branchBusy || creatingConversation || uploadingAttachments}
-                    aria-label={webSearchLabel}
-                    aria-pressed={webSearchEnabled}
-                    title={webSearchLabel}
-                    onClick={onToggleWebSearch}
-                    className={cx(
-                      'flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40',
-                      webSearchEnabled
-                        ? 'bg-brand/10 text-brand'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    )}
-                  >
-                    <Globe2 className="size-[17px]" />
-                  </button>
-                ) : null}
-                {reasoningAvailable ? (
-                  <ReasoningEffortControl
-                    value={reasoningEffort}
-                    disabled={branchBusy || creatingConversation || uploadingAttachments}
-                    onChange={onReasoningEffortChange}
-                  />
-                ) : null}
-                {!ready || uploadingAttachments || !activeConversationId ? (
-                  <div className="min-w-0 truncate text-[11px] text-muted-foreground">
-                    {!ready
-                      ? t('chooseAModelBeforeSending')
-                      : uploadingAttachments
-                        ? t('uploadingAttachments')
-                        : t('conversationWillBeCreated')}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-2">
-                <ConversationContextUsage busy={contextUsageBusy} usage={contextUsage} />
-                <ThreadPrimitive.If running={false}>
-                  <ComposerPrimitive.Send
-                    aria-label={creatingConversation ? t('creating') : t('send')}
-                    title={creatingConversation ? t('creating') : t('send')}
-                    className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50"
-                  >
-                    {creatingConversation ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
-                  </ComposerPrimitive.Send>
-                </ThreadPrimitive.If>
-                <ThreadPrimitive.If running>
-                  <ComposerPrimitive.Cancel
-                    aria-label={t('stop')}
-                    title={t('stop')}
-                    className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted"
-                  >
-                    <CirclePause className="size-5" />
-                  </ComposerPrimitive.Cancel>
-                </ThreadPrimitive.If>
-              </div>
-            </div>
-          </ComposerPrimitive.Root>
-        </div>
-      </div>
-    </ThreadPrimitive.Root>
   );
 }
 
@@ -1175,11 +386,13 @@ export function AgentConversation({
   workSessionId?: string;
 }) {
   const t = useTranslations('console.agents');
+  const common = useTranslations('common');
+  const work = useTranslations('console.work');
+  const chatAssistants = useTranslations('console.chatAssistants');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(initialReasoningEffort);
-  const clearSubmitError = useCallback(() => setSubmitError(null), []);
   const assistantRuntimeRef = useRef<AssistantRuntime | null>(null);
   const sendConversationIdRef = useRef<string | null>(null);
   const attachmentDraftSnapshotRef = useRef<DraftSnapshot | null>(null);
@@ -1334,39 +547,125 @@ export function AgentConversation({
     };
   }, [runtime]);
 
+  const composerDisabled = branchBusy || creatingConversation || uploadingAttachments;
+  const attachmentsEnabled = supportsAttachments
+    ?? (runtimeKind === 'hermes' || Boolean(attachmentUploadUrl));
+  const composerStatus = !ready
+    ? t('chooseAModelBeforeSending')
+    : uploadingAttachments
+      ? t('uploadingAttachments')
+      : !activeConversationId
+        ? t('conversationWillBeCreated')
+        : null;
+  const threadLabels = useMemo<ChatThreadLabels>(() => ({
+    addAttachment: t('addAttachment'),
+    allowTool: t('toolAllow'),
+    attachment: t('attachment'),
+    attachmentsUnavailable: t('attachmentRuntimeRequired'),
+    cancel: common('cancel'),
+    composerTools: t('composerTools'),
+    conversationBranch: t('conversationBranch'),
+    copy: common('copy'),
+    edit: common('edit'),
+    expandComposer: t('expandComposer'),
+    generatingReply: work('generatingReply'),
+    messagePlaceholder: t('messageThisAgent'),
+    next: common('next'),
+    openComposerTools: t('openComposerTools'),
+    preparingReply: work('preparingReply'),
+    previous: common('previous'),
+    processFailed: work('processFailed'),
+    processed: work('processed'),
+    processing: work('processing'),
+    regenerate: common('regenerate'),
+    rejectTool: t('toolReject'),
+    removeAttachment: (name) => t('removeAttachment', { name }),
+    restoreComposer: t('restoreComposer'),
+    save: common('save'),
+    scrollToLatestMessage: t('scrollToLatestMessage'),
+    send: t('send'),
+    startBranch: chatAssistants('newBranch'),
+    startConversation: workSessionId ? t('startWorkConversation') : t('startAConversation'),
+    stop: t('stop'),
+    thinking: work('thinking'),
+    thought: work('thought'),
+    toolApprovalDescription: t('toolApprovalDescription'),
+    toolAwaitingApproval: t('toolAwaitingApproval'),
+    toolCompleted: t('toolCompleted'),
+    toolFailed: t('toolFailed'),
+    toolInput: t('toolInput'),
+    toolKindMcp: t('toolKindMcp'),
+    toolKindSandbox: t('toolKindSandbox'),
+    toolKindSkill: t('toolKindSkill'),
+    toolKindSubagent: t('toolKindSubagent'),
+    toolKindTool: t('toolKindTool'),
+    toolKindWeb: t('toolKindWeb'),
+    toolOutput: t('toolOutput'),
+    toolRunning: t('toolRunning'),
+    user: t('user'),
+    usingTool: (toolName) => work('usingTool', { tool: toolName }),
+  }), [chatAssistants, common, t, work, workSessionId]);
+
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <AgentThread
-        activeConversationId={activeConversationId}
-        agentName={agentName}
-        allowEdit={allowEdit}
-        allowRegenerate={allowRegenerate}
-        branchBusy={branchBusy}
-        branchNavigation={branchNavigation}
-        creatingConversation={creatingConversation}
-        contextUsage={contextUsage}
-        contextUsageBusy={chat.status === 'submitted' || chat.status === 'streaming'}
-        error={chat.error}
-        mcpPromptApiPath={mcpPromptApiPath}
-        onClearAttachmentError={clearSubmitError}
-        onBranchChange={onBranchChange}
-        onPromptError={setSubmitError}
-        onRegenerateMessage={!includeConversationIdInBody
-          ? (messageId) => void regenerate({ messageId })
-          : undefined}
-        onStartBranch={onStartBranch}
-        ready={ready}
-        reasoningAvailable={reasoningAvailable}
-        reasoningEffort={reasoningEffort}
-        supportsAttachments={supportsAttachments ?? (runtimeKind === 'hermes' || Boolean(attachmentUploadUrl))}
-        submitError={submitError}
-        uploadingAttachments={uploadingAttachments}
-        webSearchAvailable={webSearchAvailable}
-        webSearchEnabled={Boolean(webSearchAvailable && webSearchEnabled)}
-        onToggleWebSearch={() => setWebSearchEnabled((enabled) => !enabled)}
-        onReasoningEffortChange={setReasoningEffort}
-        workMode={Boolean(workSessionId)}
-      />
-    </AssistantRuntimeProvider>
+    <ChatThread
+      runtime={runtime}
+      assistantName={agentName}
+      allowAttachments={attachmentsEnabled}
+      allowEdit={allowEdit}
+      allowRegenerate={allowRegenerate}
+      branchNavigation={branchNavigation}
+      busy={branchBusy}
+      disabled={!ready || composerDisabled}
+      error={submitError || chat.error?.message}
+      labels={threadLabels}
+      transformUserText={displayUserText}
+      onBranchSelect={onBranchChange}
+      onBranchStart={onStartBranch}
+      onRegenerateMessage={!includeConversationIdInBody
+        ? (messageId) => void regenerate({ messageId })
+        : undefined}
+      composerTools={(
+        <>
+          <ComposerMcpPromptPickerButton
+            apiPath={mcpPromptApiPath}
+            disabled={!ready || composerDisabled}
+            onError={setSubmitError}
+          />
+          {webSearchAvailable ? (
+            <button
+              type="button"
+              disabled={composerDisabled}
+              aria-label={webSearchEnabled ? t('disableWebSearch') : t('enableWebSearch')}
+              aria-pressed={webSearchEnabled}
+              title={webSearchEnabled ? t('disableWebSearch') : t('enableWebSearch')}
+              onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${webSearchEnabled
+                ? 'bg-brand/10 text-brand'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+            >
+              <Globe2 className="size-[17px]" />
+            </button>
+          ) : null}
+          {reasoningAvailable ? (
+            <ReasoningEffortControl
+              value={reasoningEffort}
+              disabled={composerDisabled}
+              onChange={setReasoningEffort}
+            />
+          ) : null}
+        </>
+      )}
+      composerStatus={composerStatus}
+      composerEnd={<ConversationContextUsage busy={chatBusy} usage={contextUsage} />}
+      emptyState={workSessionId ? (
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Bot className="size-6" />
+          </div>
+          <h3 className="text-lg font-medium text-foreground">{t('startWorkConversation')}</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('startWorkConversationDescription')}</p>
+        </div>
+      ) : undefined}
+    />
   );
 }

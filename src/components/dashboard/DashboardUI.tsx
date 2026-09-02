@@ -1,6 +1,17 @@
 import type { ChangeEventHandler, ComponentType, ReactNode } from 'react';
 import Link from 'next/link';
 import { Search } from 'lucide-react';
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  Input,
+  Page,
+  Pagination,
+  Panel,
+  Section,
+  Toolbar,
+} from '@toolplane/ui';
 
 type Icon = ComponentType<{ className?: string }>;
 
@@ -8,14 +19,8 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-export function DashboardPage({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return <div className={cx('ui-page space-y-5', className)}>{children}</div>;
+export function DashboardPage({ children, className }: { children: ReactNode; className?: string }) {
+  return <Page as="div" className={className}>{children}</Page>;
 }
 
 export function DashboardToolbar({
@@ -27,12 +32,7 @@ export function DashboardToolbar({
   actions?: ReactNode;
   className?: string;
 }) {
-  return (
-    <div className={cx('flex flex-wrap items-center justify-between gap-3', className)}>
-      {children ? <div className="min-w-0">{children}</div> : <span />}
-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-    </div>
-  );
+  return <Toolbar actions={actions} className={className}>{children}</Toolbar>;
 }
 
 export function DashboardSearchForm({
@@ -55,20 +55,18 @@ export function DashboardSearchForm({
   return (
     <form className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
       <div className={cx('relative w-full', width)}>
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
+        <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
           name="q"
           defaultValue={defaultValue}
           placeholder={placeholder}
-          className="ui-input ui-input-icon h-9 w-full"
+          aria-label={placeholder}
+          className="ui-input-icon h-9 w-full"
         />
       </div>
-      <button className="ui-button-secondary">{submitLabel}</button>
+      <Button type="submit" variant="secondary">{submitLabel}</Button>
       {hasQuery && clearHref ? (
-        <Link
-          href={clearHref}
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
+        <Link href={clearHref} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
           {clearLabel}
         </Link>
       ) : null}
@@ -89,12 +87,13 @@ export function DashboardFilterInput({
 }) {
   return (
     <div className={cx('relative w-full', width)}>
-      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <input
+      <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
         value={value}
         onChange={onChange}
         placeholder={placeholder}
-        className="ui-input ui-input-icon h-9 w-full"
+        aria-label={placeholder}
+        className="ui-input-icon h-9 w-full"
       />
     </div>
   );
@@ -111,20 +110,7 @@ export function DashboardSection({
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">
-          {title}
-          {typeof count === 'number' ? (
-            <span className="ml-1.5 font-normal text-muted-foreground">({count})</span>
-          ) : null}
-        </h2>
-        {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
-      </div>
-      {children}
-    </section>
-  );
+  return <Section title={title} count={count} actions={actions}>{children}</Section>;
 }
 
 export function DashboardPanel({
@@ -144,33 +130,22 @@ export function DashboardPanel({
   bodyClassName?: string;
   className?: string;
 }) {
-  const danger = tone === 'danger';
-
   return (
-    <section
-      className={cx(
-        'ui-panel overflow-hidden',
-        danger && 'border-red-200 dark:border-red-500/30',
-        className,
-      )}
+    <Panel
+      title={title}
+      description={description}
+      tone={tone}
+      padded={false}
+      bodyClassName={cx(padded && 'px-5 py-4.5', bodyClassName)}
+      className={cx(tone === 'danger' && 'border-red-200 dark:border-red-500/30', className)}
     >
-      <div className={cx('px-5 py-3.5', danger ? 'bg-red-500/5' : 'bg-muted/25')}>
-        <h2 className={cx('text-sm font-semibold', danger ? 'text-red-700 dark:text-red-400' : 'text-foreground')}>
-          {title}
-        </h2>
-        {description ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      <div className={cx(padded && 'px-5 py-4.5', bodyClassName)}>{children}</div>
-    </section>
+      {children}
+    </Panel>
   );
 }
 
 export function DashboardEmptyState({
-  icon: Icon,
+  icon,
   title,
   description,
   children,
@@ -185,17 +160,9 @@ export function DashboardEmptyState({
   className?: string;
 }) {
   return (
-    <div className={cx('ui-empty', className)}>
-      {Icon ? <Icon className="mb-3 size-8 text-muted-foreground" /> : null}
-      {title ? <h2 className="text-lg font-semibold text-foreground">{title}</h2> : null}
-      {description ? (
-        <p className={cx('text-sm text-muted-foreground', title ? 'mt-1' : undefined)}>
-          {description}
-        </p>
-      ) : null}
-      {children ? <div className="mt-6 w-full">{children}</div> : null}
-      {actions ? <div className="mt-5 flex flex-wrap items-center justify-center gap-2">{actions}</div> : null}
-    </div>
+    <EmptyState icon={icon} title={title} description={description} actions={actions} className={className}>
+      {children}
+    </EmptyState>
   );
 }
 
@@ -215,36 +182,9 @@ export function DashboardTable({
   ariaLabel?: string;
 }) {
   return (
-    <div
-      role={ariaLabel ? 'region' : undefined}
-      aria-label={ariaLabel}
-      tabIndex={ariaLabel ? 0 : undefined}
-      className={cx(
-        panel ? 'ui-panel' : '',
-        'relative overflow-x-auto overscroll-x-contain focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-        className,
-      )}
-    >
-      <table className="ui-table" style={{ minWidth }}>
-        <thead>
-          <tr>
-            {headers.map((header, index) => (
-              <th
-                key={index}
-                className={cx(
-                  'px-4 py-3 font-medium',
-                  header.align === 'right' && 'text-right',
-                  header.className,
-                )}
-              >
-                {header.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">{children}</tbody>
-      </table>
-    </div>
+    <DataTable headers={headers} label={ariaLabel} minWidth={minWidth} panel={panel} className={className}>
+      {children}
+    </DataTable>
   );
 }
 
@@ -266,22 +206,19 @@ export function DashboardPagination({
   if (lastPage <= 1) return null;
 
   return (
-    <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-      <span>
-        {summary}
-      </span>
-      <div className="flex gap-2">
-        {page > 1 ? (
-          <Link href={hrefForPage(page - 1)} className="ui-button-secondary ui-button-sm">
-            {previousLabel}
-          </Link>
-        ) : null}
-        {page < lastPage ? (
-          <Link href={hrefForPage(page + 1)} className="ui-button-secondary ui-button-sm">
-            {nextLabel}
-          </Link>
-        ) : null}
-      </div>
-    </div>
+    <Pagination
+      aria-label={`${previousLabel} / ${nextLabel}`}
+      summary={summary}
+      previous={page > 1 ? (
+        <Link href={hrefForPage(page - 1)} className="ui-button-secondary ui-button-sm">
+          {previousLabel}
+        </Link>
+      ) : null}
+      next={page < lastPage ? (
+        <Link href={hrefForPage(page + 1)} className="ui-button-secondary ui-button-sm">
+          {nextLabel}
+        </Link>
+      ) : null}
+    />
   );
 }

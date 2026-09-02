@@ -4,6 +4,7 @@ import { useTheme } from 'next-themes';
 import { useTranslations } from 'next-intl';
 import { useSyncExternalStore } from 'react';
 import { Moon, Sun } from 'lucide-react';
+import { IconButton } from '@toolplane/ui';
 
 const subscribe = () => () => {};
 
@@ -19,19 +20,17 @@ export function ThemeToggle() {
       : t('switchToDarkTheme');
 
   return (
-    <button
-      type="button"
-      aria-label={label}
+    <IconButton
+      label={label}
       aria-pressed={mounted ? isDark : undefined}
-      title={label}
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      className="ui-button-ghost ui-icon-button"
-    >
-      <span aria-hidden="true">
+      variant="ghost"
+      icon={(
+        <span>
         <Sun className="hidden h-4 w-4 dark:block" />
         <Moon className="h-4 w-4 dark:hidden" />
-      </span>
-      <span className="sr-only">{label}</span>
-    </button>
+        </span>
+      )}
+    />
   );
 }

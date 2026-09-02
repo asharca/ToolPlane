@@ -44,6 +44,7 @@ function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFram
 const nextConfig: NextConfig = {
   output: 'standalone',
   poweredByHeader: false,
+  transpilePackages: ['@toolplane/ui'],
   serverExternalPackages: ['@earendil-works/pi-ai'],
   async headers() {
     return [

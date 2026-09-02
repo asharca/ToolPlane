@@ -1,6 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
+import { StatusBadge as UiStatusBadge } from '@toolplane/ui';
 
 const STYLES: Record<string, { dot: string; labelKey: string }> = {
   running: { dot: 'bg-emerald-500', labelKey: 'statusRunning' },
@@ -20,10 +21,5 @@ const STYLES: Record<string, { dot: string; labelKey: string }> = {
 export function StatusBadge({ status }: { status: string }) {
   const t = useTranslations('console.sandboxes');
   const s = STYLES[status] ?? STYLES.provisioning;
-  return (
-    <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-      <span className={`size-2 rounded-full ${s.dot}`} />
-      {t(s.labelKey)}
-    </span>
-  );
+  return <UiStatusBadge appearance="plain" dotClassName={s.dot} label={t(s.labelKey)} />;
 }

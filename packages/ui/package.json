@@ -1,0 +1,88 @@
+{
+  "name": "@toolplane/ui",
+  "version": "0.1.0",
+  "description": "Reusable ToolPlane components and chat UI for React applications.",
+  "type": "module",
+  "sideEffects": [
+    "./src/styles.css"
+  ],
+  "files": [
+    "dist",
+    "src/styles.css",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./controls": {
+      "types": "./dist/Controls.d.ts",
+      "import": "./dist/Controls.js"
+    },
+    "./dialog": {
+      "types": "./dist/Dialog.d.ts",
+      "import": "./dist/Dialog.js"
+    },
+    "./feedback": {
+      "types": "./dist/Feedback.d.ts",
+      "import": "./dist/Feedback.js"
+    },
+    "./forms": {
+      "types": "./dist/Forms.d.ts",
+      "import": "./dist/Forms.js"
+    },
+    "./layout": {
+      "types": "./dist/Layout.d.ts",
+      "import": "./dist/Layout.js"
+    },
+    "./navigation": {
+      "types": "./dist/Navigation.d.ts",
+      "import": "./dist/Navigation.js"
+    },
+    "./overlays": {
+      "types": "./dist/Overlays.d.ts",
+      "import": "./dist/Overlays.js"
+    },
+    "./chat-shell": {
+      "types": "./dist/ChatShell.d.ts",
+      "import": "./dist/ChatShell.js"
+    },
+    "./chat-thread": {
+      "types": "./dist/ChatThread.d.ts",
+      "import": "./dist/ChatThread.js"
+    },
+    "./conversation-sidebar": {
+      "types": "./dist/ConversationSidebar.d.ts",
+      "import": "./dist/ConversationSidebar.js"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "postbuild": "node --input-type=module -e \"import { readFileSync, writeFileSync } from 'node:fs'; const path = 'dist/index.d.ts'; writeFileSync(path, readFileSync(path, 'utf8').replaceAll('.tsx', '.js'))\"",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@assistant-ui/react": "^0.14.26",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@assistant-ui/react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@assistant-ui/react-streamdown": "0.3.5",
+    "@streamdown/code": "^1.1.1",
+    "lucide-react": "^1.21.0",
+    "radix-ui": "1.6.2",
+    "remark-breaks": "^4.0.0",
+    "streamdown": "^2.5.0"
+  }
+}

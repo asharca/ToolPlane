@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef } from 'react';
+import { Tab as UiTab } from '@toolplane/ui';
 
 export type Tab = { key: string; label: string; count?: number };
 
@@ -34,24 +35,14 @@ export function TabBar({
           if (tab.key !== tabs[0]?.key) params.set('tab', tab.key);
           const href = params.toString() ? `${basePath}?${params}` : basePath;
           return (
-            <Link
-              key={tab.key}
-              ref={active ? activeRef : undefined}
-              href={href}
-              aria-current={active ? 'page' : undefined}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60'
-                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
-              }`}
-            >
-              {tab.label}
-              {typeof tab.count === 'number' ? (
-                <span className="text-muted-foreground/70">
-                  {tab.count}
-                </span>
-              ) : null}
-            </Link>
+            <UiTab key={tab.key} asChild navigation current={active}>
+              <Link ref={active ? activeRef : undefined} href={href}>
+                {tab.label}
+                {typeof tab.count === 'number' ? (
+                  <span className="text-muted-foreground/70">{tab.count}</span>
+                ) : null}
+              </Link>
+            </UiTab>
           );
         })}
       </div>
