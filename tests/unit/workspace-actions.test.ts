@@ -723,6 +723,75 @@ describe('deployCustomServerAction', () => {
     );
   });
 
+  it('persists a standard remote HTTP MCP as a remote deployment', async () => {
+    const token = 'test-token';
+    const installCfg = {
+      env: { MCP_BEARER_TOKEN: token },
+      requiredEnv: ['MCP_BEARER_TOKEN'],
+      transport: 'streamable-http',
+      authType: 'bearer',
+      bearerEnv: 'MCP_BEARER_TOKEN',
+    };
+    const deployment = {
+      id: 'dep-remote',
+      serverId: null,
+      name: 'Audit',
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg,
+    };
+    const spec = {
+      kind: 'remote' as const,
+      name: 'Audit',
+      url: 'https://mcp.example.com/mcp',
+      transport: 'streamable-http' as const,
+      headers: { authorization: `Bearer ${token}` },
+      timeoutMs: 60_000,
+    };
+    mocks.deploymentCreate.mockResolvedValue(deployment);
+    mocks.resolveSpawnSpec.mockReturnValue(spec);
+
+    await deployCustomServerAction(customMcpFormData({
+      workspace: 'mine',
+      config: JSON.stringify({
+        mcpServers: {
+          Audit: {
+            type: 'http',
+            url: 'https://mcp.example.com/mcp',
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        },
+      }),
+      network: 'none',
+      runtimeFiles: '[]',
+    }));
+
+    expect(mocks.deploymentCreate).toHaveBeenCalledWith({
+      data: {
+        workspaceId: 'ws1',
+        serverId: null,
+        name: 'Audit',
+        source: 'remote',
+        sourceRef: 'https://mcp.example.com/mcp',
+        installCfg,
+        status: 'provisioning',
+      },
+    });
+    expect(mocks.resolveSpawnSpec).toHaveBeenCalledWith({
+      serverId: null,
+      server: null,
+      name: 'Audit',
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg,
+    });
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'dep-remote',
+      spec,
+      expect.objectContaining({ awaitReady: false, workspaceId: 'ws1', onReady: expect.any(Function) }),
+    );
+  });
+
   it('persists an mcpServers config runtime file as an encrypted nested create and starts its resolved spec', async () => {
     const runtimeFileContent = JSON.stringify([
       {
