@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.24.0](https://github.com/asharca/ToolPlane/compare/v0.23.1...v0.24.0) (2026-09-02)
+
+
+### Features
+
+* **mcp:** support remote HTTP MCP configs ([9677450](https://github.com/asharca/ToolPlane/commit/967745063158aa03abe8dc006e95f77dab6ae63b))
+* **mcp:** support remote HTTP MCP configs ([1c06cec](https://github.com/asharca/ToolPlane/commit/1c06cec565c94e50780d39f422640957cbb444d2))
+* **ui:** extract reusable interface package ([#100](https://github.com/asharca/ToolPlane/issues/100)) ([d43eaa2](https://github.com/asharca/ToolPlane/commit/d43eaa2e67092368c8373697cd621b362698d8c8))
+* **ui:** improve chat rendering and package release flow ([4922f67](https://github.com/asharca/ToolPlane/commit/4922f67a46d4d05fa89e4acafef9a97185fba3fa))
+
 ## [0.23.1](https://github.com/asharca/ToolPlane/compare/v0.23.0...v0.23.1) (2026-09-01)
 
 
