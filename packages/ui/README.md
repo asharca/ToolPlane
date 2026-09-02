@@ -6,6 +6,7 @@ Reusable React controls, chat thread, conversation sidebar, and responsive shell
 
 ```bash
 pnpm add @toolplane/ui
+# or: npm install @toolplane/ui
 ```
 
 The package uses React 19 and Tailwind CSS 4. `ChatThread` additionally accepts an assistant-ui `AssistantRuntime`, so transport and persistence stay in the host application.
@@ -115,3 +116,15 @@ Theme defaults are scoped to package component roots. Override them with HSL-cha
 pnpm --filter @toolplane/ui build
 pnpm --dir packages/ui pack
 ```
+
+## Release
+
+This package is versioned independently from the ToolPlane application, like
+`packages/ai` in the Pi monorepo. To release a new version, update
+`packages/ui/package.json`, merge it, and create a matching `ui-vX.Y.Z` tag.
+The `publish-ui.yml` workflow builds and publishes that exact version to npm.
+
+Before the first public release, the maintainer must verify ownership of the
+`@toolplane` npm scope, add a license chosen by the copyright holder, and
+configure npm trusted publishing for `asharca/ToolPlane` and
+`publish-ui.yml`. The workflow uses OIDC rather than a long-lived npm token.

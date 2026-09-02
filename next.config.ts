@@ -3,6 +3,13 @@ import createNextIntlPlugin from 'next-intl/plugin';
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
+let allowedDevOrigins: string[] = [];
+try {
+  allowedDevOrigins = [new URL(process.env.NEXT_PUBLIC_APP_URL ?? '').hostname];
+} catch {
+  allowedDevOrigins = [];
+}
+
 function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFrames = false) {
   const isProduction = environment === 'production';
   const scriptPolicy = isProduction
@@ -42,6 +49,7 @@ function securityHeaders(environment = process.env.NODE_ENV, allowSameOriginFram
 }
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins,
   output: 'standalone',
   poweredByHeader: false,
   transpilePackages: ['@toolplane/ui'],

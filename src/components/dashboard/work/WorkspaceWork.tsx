@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
 import {
   Activity,
+  ArrowDown,
   ArrowUp,
   Archive,
   Bot,
@@ -172,6 +173,7 @@ const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancelling']);
 const STOPPABLE_STATUSES = new Set(['queued', 'running', 'waiting_approval']);
 const MESSAGEABLE_STATUSES = new Set(['idle', 'waiting_user', 'completed', 'failed']);
 const ARCHIVABLE_STATUSES = new Set(['idle', 'completed', 'failed', 'cancelled']);
+const EMPTY_WORK_ACTIVITIES: WorkActivity[] = [];
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -413,7 +415,6 @@ function WorkTranscript({
   const t = useTranslations('console.work');
   const agentsT = useTranslations('console.agents');
   const common = useTranslations('common');
-  const endRef = useRef<HTMLDivElement>(null);
   const copyButtonClassName = `${assistantMessageActionClassName} opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/message:opacity-100 group-hover/message:opacity-100`;
   const transcript = streaming
     ? [...messages, {
@@ -445,12 +446,6 @@ function WorkTranscript({
         ],
       }]
     : messages;
-
-  useEffect(() => {
-    if (streaming && typeof endRef.current?.scrollIntoView === 'function') {
-      endRef.current.scrollIntoView({ block: 'nearest' });
-    }
-  }, [streamActivities, streamText, streaming]);
 
   if (!transcript.length) {
     return (
@@ -617,7 +612,6 @@ function WorkTranscript({
           </AssistantReply>
         );
       })}
-      <div ref={endRef} />
     </div>
   );
 }
@@ -745,6 +739,9 @@ export function WorkspaceWork({
   const [busy, setBusy] = useState<string | null>(null);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
+  const transcriptViewportRef = useRef<HTMLDivElement>(null);
+  const followingTranscriptRef = useRef(true);
+  const [followingTranscript, setFollowingTranscript] = useState(true);
   const [streamOutput, setStreamOutput] = useState<{
     workSessionId: string;
     text: string;
@@ -787,7 +784,7 @@ export function WorkspaceWork({
   const pendingApprovals = selected?.approvals.filter((approval) => approval.status === 'pending') ?? [];
   const selectedStatus = selected?.status;
   const streamText = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.text : '';
-  const streamActivities = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.activities : [];
+  const streamActivities = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.activities : EMPTY_WORK_ACTIVITIES;
   const contextUsage = useMemo(() => resolveContextUsage(selected?.messages ?? [], {
     maxTokens: controlAgent?.contextWindow,
     modelName: controlAgent?.model,
@@ -795,6 +792,27 @@ export function WorkspaceWork({
     estimated: controlAgent?.contextWindowEstimated,
   }), [controlAgent?.contextWindow, controlAgent?.contextWindowEstimated, controlAgent?.model, selected?.messages, streamText]);
   const workspacePanelOpen = Boolean(desktopPanel && (desktopPanel === 'context' ? selected : controlSandbox));
+
+  const scrollTranscriptToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const viewport = transcriptViewportRef.current;
+    if (!viewport) return;
+    followingTranscriptRef.current = true;
+    setFollowingTranscript(true);
+    if (behavior === 'smooth' && typeof viewport.scrollTo === 'function') {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, []);
+
+  const handleTranscriptScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    const viewport = event.currentTarget;
+    const following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
+    if (followingTranscriptRef.current === following) return;
+    followingTranscriptRef.current = following;
+    setFollowingTranscript(following);
+  }, []);
 
   const statusLabels: Record<string, string> = {
     idle: t('statusIdle'),
@@ -843,6 +861,17 @@ export function WorkspaceWork({
   }, [creatingMode, selectedWorkSessionId]);
 
   const selectedActive = Boolean(selectedStatus && ACTIVE_STATUSES.has(selectedStatus));
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    scrollTranscriptToBottom();
+  }, [scrollTranscriptToBottom, selected?.id]);
+
+  useEffect(() => {
+    if (!selected?.id || !followingTranscriptRef.current) return;
+    scrollTranscriptToBottom();
+  }, [scrollTranscriptToBottom, selected?.artifacts, selected?.id, selected?.messages, selectedActive, streamActivities, streamText]);
+
   useEffect(() => {
     if (!selectedWorkSessionId || creatingMode || !selectedActive || typeof EventSource === 'undefined') return undefined;
 
@@ -1391,38 +1420,58 @@ export function WorkspaceWork({
 
         {error ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{error}</p> : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {selected ? (
-            <>
-              <WorkTranscript
-                agentName={controlAgent?.name ?? t('agent')}
-                messages={selected.messages}
-                status={selected.status}
-                streamText={streamText}
-                streamActivities={streamActivities}
-                streaming={selectedActive}
-              />
-              {selected.artifacts.length ? (
-                <section className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-7">
-                  <p className="flex items-center gap-2 text-xs font-semibold"><FileOutput className="size-4" />{t('artifacts')}</p>
-                  <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-                    {selected.artifacts.map((artifact) => <li key={artifact}>{artifact}</li>)}
-                  </ul>
-                </section>
-              ) : null}
-            </>
-          ) : (
-            <div className="flex h-full min-h-64 items-center justify-center px-6 text-center">
-              <div>
-                <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-5" /></span>
-                <h2 className="mt-3 text-base font-medium">{t('emptyTitle')}</h2>
-                {agent ? <p className="mt-1 text-xs text-muted-foreground">{agent.name}</p> : null}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={transcriptViewportRef}
+            data-ui="work.transcript"
+            onScroll={handleTranscriptScroll}
+            className="h-full overflow-y-auto [overflow-anchor:none]"
+          >
+            {selected ? (
+              <>
+                <WorkTranscript
+                  agentName={controlAgent?.name ?? t('agent')}
+                  messages={selected.messages}
+                  status={selected.status}
+                  streamText={streamText}
+                  streamActivities={streamActivities}
+                  streaming={selectedActive}
+                />
+                {selected.artifacts.length ? (
+                  <section className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-7">
+                    <p className="flex items-center gap-2 text-xs font-semibold"><FileOutput className="size-4" />{t('artifacts')}</p>
+                    <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
+                      {selected.artifacts.map((artifact) => <li key={artifact}>{artifact}</li>)}
+                    </ul>
+                  </section>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex h-full min-h-64 items-center justify-center px-6 text-center">
+                <div>
+                  <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-5" /></span>
+                  <h2 className="mt-3 text-base font-medium">{t('emptyTitle')}</h2>
+                  {agent ? <p className="mt-1 text-xs text-muted-foreground">{agent.name}</p> : null}
+                </div>
               </div>
+            )}
+          </div>
+          {!followingTranscript && selected ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+              <button
+                type="button"
+                onClick={() => scrollTranscriptToBottom('smooth')}
+                aria-label={tAgents('scrollToLatestMessage')}
+                title={tAgents('scrollToLatestMessage')}
+                className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ArrowDown className="size-4" />
+              </button>
             </div>
-          )}
+          ) : null}
         </div>
 
-        <div className="shrink-0 bg-background px-3 pb-3 pt-2 sm:px-5 sm:pb-4">
+        <div className="shrink-0 bg-background px-3 pb-3 sm:px-5 sm:pb-4">
           <div className="mx-auto max-w-3xl">
             {pendingApprovals.length ? (
               <div className="divide-y divide-amber-500/20 rounded-lg border border-amber-500/30 bg-amber-500/5">

@@ -2,6 +2,8 @@
 
 import {
   createContext,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
   useMemo,
@@ -20,6 +22,7 @@ import {
   ThreadPrimitive,
   useAuiState,
   useComposerRuntime,
+  useMessagePartText,
   type AssistantRuntime,
   type Attachment,
   type CompleteAttachment,
@@ -61,6 +64,9 @@ import {
   X,
 } from 'lucide-react';
 import { Button, IconButton } from './Controls.tsx';
+import { hasMermaidFence } from './chat-markdown.ts';
+
+const MermaidAssistantText = lazy(() => import('./MermaidAssistantText.tsx'));
 
 export type ChatBranchNavigation = {
   messageId: string;
@@ -258,6 +264,18 @@ function UserText({ text }: TextMessagePartProps) {
 }
 
 function AssistantText() {
+  const { text } = useMessagePartText();
+  if (hasMermaidFence(text)) {
+    return (
+      <Suspense fallback={<PlainAssistantText />}>
+        <MermaidAssistantText />
+      </Suspense>
+    );
+  }
+  return <PlainAssistantText />;
+}
+
+function PlainAssistantText() {
   return (
     <StreamdownTextPrimitive
       plugins={markdownPlugins}

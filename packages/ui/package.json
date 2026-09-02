@@ -3,6 +3,28 @@
   "version": "0.1.0",
   "description": "Reusable ToolPlane components and chat UI for React applications.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "keywords": [
+    "toolplane",
+    "react",
+    "ui",
+    "chat",
+    "assistant-ui",
+    "tailwindcss"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asharca/ToolPlane.git",
+    "directory": "packages/ui"
+  },
+  "homepage": "https://github.com/asharca/ToolPlane/tree/main/packages/ui",
+  "bugs": {
+    "url": "https://github.com/asharca/ToolPlane/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "sideEffects": [
     "./src/styles.css"
   ],
@@ -60,7 +82,7 @@
   },
   "scripts": {
     "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
-    "postbuild": "node --input-type=module -e \"import { readFileSync, writeFileSync } from 'node:fs'; const path = 'dist/index.d.ts'; writeFileSync(path, readFileSync(path, 'utf8').replaceAll('.tsx', '.js'))\"",
+    "postbuild": "node --input-type=module -e \"import { readFileSync, writeFileSync } from 'node:fs'; const path = 'dist/index.d.ts'; writeFileSync(path, readFileSync(path, 'utf8').replaceAll('.tsx', '.js').replaceAll('.ts', '.js'))\"",
     "prepack": "pnpm build"
   },
   "publishConfig": {
@@ -72,14 +94,10 @@
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.0.0"
   },
-  "peerDependenciesMeta": {
-    "@assistant-ui/react": {
-      "optional": true
-    }
-  },
   "dependencies": {
     "@assistant-ui/react-streamdown": "0.3.5",
     "@streamdown/code": "^1.1.1",
+    "@streamdown/mermaid": "^1.0.2",
     "lucide-react": "^1.21.0",
     "radix-ui": "1.6.2",
     "remark-breaks": "^4.0.0",

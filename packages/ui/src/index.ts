@@ -1,5 +1,6 @@
 export * from './ChatShell.tsx';
 export * from './ChatThread.tsx';
+export * from './chat-markdown.ts';
 export * from './Controls.tsx';
 export * from './ConversationSidebar.tsx';
 export * from './Dialog.tsx';

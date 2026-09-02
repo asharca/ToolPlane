@@ -391,6 +391,47 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(screen.getAllByText('read_file')).toHaveLength(1);
   });
 
+  it('keeps a Work reader above streaming output until they return to the latest message', () => {
+    const session = {
+      id: 'work-scroll', agentId: 'agent-1', title: 'Scroll reply', task: 'Scroll reply',
+      acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
+      maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+      artifacts: [], approvals: [], conversationId: 'conversation-scroll', messages: [
+        { id: 'message-user', role: 'user' as const, parts: [{ type: 'text', text: 'Show the transcript' }] },
+        { id: 'message-assistant', role: 'assistant' as const, parts: [{ type: 'text', text: 'First reply' }] },
+      ],
+      sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
+    };
+    const props = {
+      slug: 'acme',
+      workspaceId: 'workspace-1',
+      agents: [{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }],
+      selectedWorkSessionId: session.id,
+    };
+    const { rerender } = render(<WorkspaceWork {...props} sessions={[session]} />);
+    const viewport = document.querySelector('[data-ui="work.transcript"]') as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 800 },
+    });
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => { viewport.scrollTop = top ?? 0; });
+    Object.defineProperty(viewport, 'scrollTo', { configurable: true, value: scrollTo });
+    viewport.scrollTop = 120;
+
+    fireEvent.scroll(viewport);
+    expect(screen.getByRole('button', { name: 'Scroll to latest message' })).toBeInTheDocument();
+
+    rerender(<WorkspaceWork {...props} sessions={[{
+      ...session,
+      messages: [...session.messages, { id: 'message-latest', role: 'assistant' as const, parts: [{ type: 'text', text: 'Latest reply' }] }],
+    }]} />);
+    expect(viewport.scrollTop).toBe(120);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to latest message' }));
+    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
+    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).not.toBeInTheDocument();
+  });
+
   it('switches Knowledge task views without stacking all controls', () => {
     render(<WorkspaceKnowledge
       slug="acme"

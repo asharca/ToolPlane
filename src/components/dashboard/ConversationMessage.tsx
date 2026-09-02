@@ -1,13 +1,17 @@
 'use client';
 
-import { code } from '@streamdown/code';
 import { Bot } from 'lucide-react';
 import {
   forwardRef,
+  lazy,
+  Suspense,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from 'react';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
+import { hasMermaidFence } from '@toolplane/ui';
+
+const MermaidAssistantMarkdown = lazy(() => import('./MermaidAssistantMarkdown'));
 
 export const assistantMessageActionClassName = 'flex size-[26px] items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40';
 
@@ -43,12 +47,32 @@ export function AssistantMarkdown({
   text: string;
   streaming?: boolean;
 }) {
+  if (hasMermaidFence(text)) {
+    return (
+      <Suspense fallback={<PlainAssistantMarkdown text={text} streaming={streaming} />}>
+        <MermaidAssistantMarkdown
+          text={text}
+          streaming={streaming}
+          className={assistantMarkdownClassName}
+        />
+      </Suspense>
+    );
+  }
+  return <PlainAssistantMarkdown text={text} streaming={streaming} />;
+}
+
+function PlainAssistantMarkdown({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
   return (
     <SafeStreamdown
       mode={streaming ? 'streaming' : 'static'}
       parseIncompleteMarkdown={streaming}
       isAnimating={streaming}
-      plugins={{ code }}
       preserveSoftBreaks
       linkSafety={{ enabled: true }}
       className={assistantMarkdownClassName}

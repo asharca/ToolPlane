@@ -5,6 +5,7 @@
 /* Let Tailwind detect the utility classes baked into Streamdown's chat markdown renderer. */
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../node_modules/@streamdown/code/dist/*.js";
+@source "../../node_modules/@streamdown/mermaid/dist/*.js";
 
 /* next-themes uses a `.dark` class on <html>; make Tailwind's dark: variant follow it. */
 @custom-variant dark (&:is(.dark *));

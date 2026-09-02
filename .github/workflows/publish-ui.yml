@@ -1,0 +1,46 @@
+name: publish-ui
+
+on:
+  push:
+    tags:
+      - 'ui-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify release tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          node --input-type=module -e "import { readFileSync } from 'node:fs'; const manifest = JSON.parse(readFileSync('packages/ui/package.json', 'utf8')); if (!manifest.license) throw new Error('packages/ui/package.json requires a license before public release'); if (process.env.TAG_NAME !== 'ui-v' + manifest.version) throw new Error('Expected ui-v' + manifest.version + ', received ' + process.env.TAG_NAME);"
+
+      - run: pnpm --filter @toolplane/ui build
+      - run: pnpm vitest run tests/unit/ui-package.test.tsx
+
+      # npm publishes with GitHub Actions OIDC; pnpm remains the workspace manager.
+      - name: Verify npm tarball
+        working-directory: packages/ui
+        run: npm pack --dry-run --ignore-scripts
+
+      - name: Publish to npm
+        working-directory: packages/ui
+        run: npm publish --access public --ignore-scripts

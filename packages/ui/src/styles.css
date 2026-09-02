@@ -1,8 +1,10 @@
 @source "../dist/**/*.js";
 @source "../node_modules/streamdown/dist/*.js";
 @source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
 @source "../../../streamdown/dist/*.js";
 @source "../../../@streamdown/code/dist/*.js";
+@source "../../../@streamdown/mermaid/dist/*.js";
 @source "./**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));

@@ -47,6 +47,26 @@ const groups: ConversationSidebarGroup[] = [
 ];
 
 describe('@toolplane/ui', () => {
+  it('declares standalone npm package metadata', () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'packages/ui/package.json'), 'utf8'));
+
+    expect(manifest).toMatchObject({
+      name: '@toolplane/ui',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      engines: { node: '>=20' },
+      publishConfig: { access: 'public' },
+      repository: {
+        type: 'git',
+        url: 'git+https://github.com/asharca/ToolPlane.git',
+        directory: 'packages/ui',
+      },
+    });
+    expect(manifest.files).toEqual(expect.arrayContaining(['dist', 'src/styles.css', 'README.md']));
+    expect(manifest.peerDependencies['@assistant-ui/react']).toBe('^0.14.26');
+    expect(manifest.peerDependenciesMeta).toBeUndefined();
+  });
+
   it('filters and expands groups while delegating selection and CRUD actions', async () => {
     const user = userEvent.setup();
     const onSelectGroup = vi.fn();
