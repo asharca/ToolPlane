@@ -45,6 +45,7 @@ import {
   cloneDeploymentAction,
 } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
@@ -141,6 +142,12 @@ export default async function DeploymentInspectorPage({
         select: { id: true, path: true, size: true, updatedAt: true },
         orderBy: { path: 'asc' },
       },
+      marketInstall: { select: { id: true } },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
     },
   });
   if (!dep) notFound();
@@ -190,8 +197,9 @@ export default async function DeploymentInspectorPage({
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === 'running';
   const transitioning = transitioningStatuses.has(status);
+  const defaultRemoteRuntime = usesDefaultRemoteRuntime(dep);
   const inspectorConnection = readMcpInspectorConnection(dep.installCfg);
-  const connectedInspectorSandbox = dep.source === 'remote' && inspectorConnection
+  const connectedInspectorSandbox = dep.source === 'remote' && !defaultRemoteRuntime && inspectorConnection
     ? await db.sandbox.findFirst({
         where: {
           id: inspectorConnection.sandboxId,
@@ -209,8 +217,9 @@ export default async function DeploymentInspectorPage({
       connectedInspectorSandbox.deployment.status,
     ) === 'running',
   );
-  const toolCatalogVisible = dep.source !== 'remote' || remoteInspectorConnected;
-  const liveTools = dep.source !== 'remote' && running && current === 'tools'
+  const toolCatalogVisible = dep.source !== 'remote' || defaultRemoteRuntime || remoteInspectorConnected;
+  const readsLiveTools = dep.source !== 'remote' || defaultRemoteRuntime;
+  const liveTools = readsLiveTools && running && current === 'tools'
     ? await listMcpTools(deploymentId)
     : [];
   const deploymentToolCatalogKnown = toolCatalogVisible && hasMcpToolCatalog(dep.installCfg);
@@ -220,13 +229,13 @@ export default async function DeploymentInspectorPage({
     : serverToolCatalogKnown
       ? readMcpToolCatalog(dep.server?.installCfg)
       : [];
-  const refreshedConfig = dep.source !== 'remote' && running && current === 'tools' && liveTools.length === 0
+  const refreshedConfig = readsLiveTools && running && current === 'tools' && liveTools.length === 0
     ? await db.deployment.findFirst({
         where: { id: deploymentId, workspaceId: ws.id },
         select: { installCfg: true },
       })
     : null;
-  const tools = dep.source !== 'remote' && running && current === 'tools'
+  const tools = readsLiveTools && running && current === 'tools'
     ? liveTools.length
       ? liveTools
       : hasMcpToolCatalog(refreshedConfig?.installCfg)
@@ -238,7 +247,7 @@ export default async function DeploymentInspectorPage({
     ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;
   const playgroundAvailable = dep.source === 'remote' || running;
-  const inspectorSandboxes = current === 'tools' && playgroundAvailable
+  const inspectorSandboxes = current === 'tools' && playgroundAvailable && !defaultRemoteRuntime
     ? (await listSandboxes(ws.id))
       .filter((sandbox) => sandbox.kind === 'docker' || sandbox.kind === 'connector')
       .map((sandbox) => ({
@@ -261,7 +270,7 @@ export default async function DeploymentInspectorPage({
       ? t(`source.${label.source}`)
       : label.source;
   const networkLabel = envCfg.network === 'none' ? t('networkNone') : t('networkIsolated');
-  const knownToolCount = dep.source === 'remote' && !remoteInspectorConnected
+  const knownToolCount = dep.source === 'remote' && !defaultRemoteRuntime && !remoteInspectorConnected
     ? undefined
     : running && current === 'tools'
     ? tools.length
@@ -640,14 +649,16 @@ export default async function DeploymentInspectorPage({
                 </header>
                 <div className="px-5 py-5">
                   <ToolPlayground
+                    key={defaultRemoteRuntime ? `managed:${tools.map((tool) => tool.name).join('|')}` : undefined}
                     workspace={slug}
                     deploymentId={deploymentId}
-                    tools={inspectorConnection ? tools : []}
+                    tools={defaultRemoteRuntime || inspectorConnection ? tools : []}
                     sandboxes={inspectorSandboxes}
                     connectedSandboxId={dep.source === 'remote'
                       ? remoteInspectorConnected ? inspectorConnection?.sandboxId : undefined
                       : inspectorConnection?.sandboxId}
                     credentialsRequired={setupRequired}
+                    defaultRuntime={defaultRemoteRuntime}
                   />
                 </div>
               </section>

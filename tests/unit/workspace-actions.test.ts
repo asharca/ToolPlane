@@ -1767,10 +1767,25 @@ describe('runMcpConsoleToolAction', () => {
     mocks.listMcpTools.mockResolvedValue([{ name: 'read' }, { name: 'write' }]);
     mocks.mcpRpc.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     mocks.logRequest.mockResolvedValue(undefined);
+    mocks.resolveSpawnSpec.mockReturnValue({
+      kind: 'remote',
+      name: 'Remote',
+      url: 'https://mcp.example.com/mcp',
+      transport: 'streamable-http',
+      headers: {},
+      timeoutMs: 60_000,
+    });
   });
 
   it('allows workspace members to manually test a tool and records the call', async () => {
-    mocks.deploymentFindFirst.mockResolvedValue({ id: 'dep1' });
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      source: 'remote',
+      marketInstall: null,
+      toolkitLinks: [],
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg: { transport: 'streamable-http', authType: 'none', env: {} },
+    });
 
     const result = await runMcpConsoleToolAction({
       workspace: 'mine',
@@ -1783,12 +1798,80 @@ describe('runMcpConsoleToolAction', () => {
     expect(mocks.mcpRpc).toHaveBeenCalledWith('dep1', 'tools/call', {
       name: 'write',
       arguments: { value: 'x' },
-    }, 30_000, { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 });
+    }, 65_000, { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 });
     expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws1',
       deploymentId: 'dep1',
       path: '/mcp/dep1/rpc#tools/call:write',
     }));
+  });
+
+  it('keeps marketplace remote MCPs behind an explicit inspector sandbox', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      source: 'remote',
+      marketInstall: null,
+      toolkitLinks: [{ toolkitId: 'market-toolkit-1' }],
+      installCfg: {},
+    });
+
+    await expect(runMcpConsoleToolAction({
+      workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {},
+    })).resolves.toEqual({ error: 'sandboxRequired' });
+
+    expect(mocks.listMcpTools).not.toHaveBeenCalled();
+    expect(mocks.mcpRpc).not.toHaveBeenCalled();
+  });
+
+  it('redacts managed remote credentials from direct tool results and logs', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      source: 'remote',
+      marketInstall: null,
+      toolkitLinks: [],
+      sourceRef: 'https://mcp.example.com/mcp',
+      installCfg: {
+        transport: 'streamable-http',
+        authType: 'bearer',
+        bearerEnv: 'MCP_BEARER_TOKEN',
+        env: { MCP_BEARER_TOKEN: 'token-example' },
+      },
+    });
+    mocks.mcpRpc.mockResolvedValue({
+      content: [{ type: 'text', text: 'Bearer token-example' }],
+    });
+    mocks.resolveSpawnSpec.mockReturnValueOnce({
+      kind: 'remote',
+      name: 'Remote',
+      url: 'https://mcp.example.com/mcp',
+      transport: 'streamable-http',
+      headers: { authorization: 'Bearer token-example' },
+      timeoutMs: 60_000,
+    });
+
+    await expect(runMcpConsoleToolAction({
+      workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {},
+    })).resolves.toEqual({
+      result: { content: [{ type: 'text', text: '[REDACTED]' }] },
+    });
+    expect(JSON.stringify(mocks.logRequest.mock.calls[0][0])).not.toContain('token-example');
+  });
+
+  it('does not treat local MCP environment values as remote credentials', async () => {
+    mocks.deploymentFindFirst.mockResolvedValue({
+      id: 'dep1',
+      source: 'docker',
+      marketInstall: null,
+      toolkitLinks: [],
+      installCfg: { env: { MODE: 'dev' } },
+    });
+    mocks.mcpRpc.mockResolvedValue({ content: [{ type: 'text', text: 'development ready' }] });
+
+    await expect(runMcpConsoleToolAction({
+      workspace: 'mine', deploymentId: 'dep1', toolName: 'read', arguments: {},
+    })).resolves.toEqual({
+      result: { content: [{ type: 'text', text: 'development ready' }] },
+    });
   });
 
   it('rejects unauthorized, stopped, and unknown tool calls before MCP execution', async () => {

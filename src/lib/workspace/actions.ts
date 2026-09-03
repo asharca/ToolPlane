@@ -14,7 +14,7 @@ import {
   liveStatus,
 } from '@/lib/process/supervisor';
 import { removeDeploymentContainer } from '@/lib/process/deployment-runtime-container';
-import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import { resolveSpawnSpec, type SpawnSpec } from '@/lib/process/spawn-spec';
 import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
 import {
@@ -42,6 +42,8 @@ import {
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
 import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
+import { mcpHeaderSecrets, redactMcpResult } from '@/lib/process/mcp-result-redaction';
+import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -461,7 +463,7 @@ export async function updateMcpToolExposureAction(
 
 export type McpConsoleToolResult = {
   result?: Record<string, unknown>;
-  error?: 'notAuthorized' | 'deploymentNotFound' | 'deploymentNotRunning' | 'invalidToolCall' | 'toolCallFailed';
+  error?: 'notAuthorized' | 'deploymentNotFound' | 'deploymentNotRunning' | 'sandboxRequired' | 'invalidToolCall' | 'toolCallFailed';
 };
 
 export async function runMcpConsoleToolAction(input: {
@@ -491,6 +493,11 @@ export async function runMcpConsoleToolAction(input: {
   if (!ctx) return { error: 'notAuthorized' };
   const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!deployment) return { error: 'deploymentNotFound' };
+  if (deployment.source === 'remote' && !usesDefaultRemoteRuntime(deployment)) {
+    return { error: 'sandboxRequired' };
+  }
+  const remoteSpec = deployment.source === 'remote' ? remoteMcpSpec(deployment) : null;
+  if (deployment.source === 'remote' && !remoteSpec) return { error: 'toolCallFailed' };
   if (liveStatus(deployment.id) !== 'running') return { error: 'deploymentNotRunning' };
 
   const availableTools = await listMcpTools(deployment.id);
@@ -505,26 +512,39 @@ export async function runMcpConsoleToolAction(input: {
       deployment.id,
       'tools/call',
       { name: toolName, arguments: input.arguments },
-      30_000,
+      remoteSpec ? remoteSpec.timeoutMs + 5_000 : 30_000,
       { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
     );
   } catch {
     result = null;
   }
+  const secretValues = remoteSpec ? mcpHeaderSecrets(remoteSpec.headers) : [];
+  const safeResult = result && (secretValues.length ? redactMcpResult(result, secretValues) : result);
   await logRequest({
     workspaceId: ctx.ws.id,
     deploymentId: deployment.id,
     method: 'POST',
     path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
-    statusCode: result ? 200 : 502,
+    statusCode: safeResult ? 200 : 502,
     durationMs: Date.now() - startedAt,
     requestBody,
-    responseBody: JSON.stringify(result ?? { error: 'unreachable' }).slice(0, 16_000),
+    responseBody: JSON.stringify(safeResult ?? { error: 'unreachable' }).slice(0, 16_000),
   });
-  return result ? { result } : { error: 'toolCallFailed' };
+  return safeResult ? { result: safeResult } : { error: 'toolCallFailed' };
 }
 
 const MAX_DEPLOYMENT_NAME_LENGTH = 80;
+
+function remoteMcpSpec(
+  deployment: Parameters<typeof resolveSpawnSpec>[0],
+): Extract<SpawnSpec, { kind: 'remote' }> | null {
+  try {
+    const spec = resolveSpawnSpec(deployment);
+    return spec.kind === 'remote' ? spec : null;
+  } catch {
+    return null;
+  }
+}
 
 type DeploymentEnvironmentPatch = {
   set: Record<string, string>;

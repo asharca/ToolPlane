@@ -9,8 +9,8 @@ import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   connectMcpInspectorAction,
   runMcpInspectorToolAction,
-  type McpInspectorError,
 } from '@/lib/workspace/inspector-actions';
+import { runMcpConsoleToolAction } from '@/lib/workspace/actions';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
 
 type Tool = {
@@ -70,6 +70,7 @@ export function ToolPlayground({
   sandboxes = [],
   connectedSandboxId,
   credentialsRequired = false,
+  defaultRuntime = false,
 }: {
   deploymentId: string;
   workspace: string;
@@ -77,6 +78,7 @@ export function ToolPlayground({
   sandboxes?: InspectorSandbox[];
   connectedSandboxId?: string;
   credentialsRequired?: boolean;
+  defaultRuntime?: boolean;
 }) {
   const t = useTranslations('console.mcp');
   const router = useRouter();
@@ -84,19 +86,20 @@ export function ToolPlayground({
   const initialSandboxId = sandboxes.some((sandbox) => sandbox.id === connectedSandboxId)
     ? connectedSandboxId!
     : sandboxes.find((sandbox) => sandbox.networkEnabled)?.id ?? sandboxes[0]?.id ?? '';
+  const initiallyConnected = defaultRuntime || connectedSandboxId === initialSandboxId;
   const [sandboxId, setSandboxId] = useState(initialSandboxId);
   const [activeSandboxId, setActiveSandboxId] = useState(
-    connectedSandboxId === initialSandboxId ? initialSandboxId : '',
+    initiallyConnected ? initialSandboxId : '',
   );
   const [availableTools, setAvailableTools] = useState<Tool[]>(
-    connectedSandboxId === initialSandboxId ? tools : [],
+    initiallyConnected ? tools : [],
   );
   const [selected, setSelected] = useState(
-    connectedSandboxId === initialSandboxId ? tools[0]?.name ?? '' : '',
+    initiallyConnected ? tools[0]?.name ?? '' : '',
   );
   const current = availableTools.find((tool) => tool.name === selected);
   const [args, setArgs] = useState(() => skeletonArgs(
-    connectedSandboxId === initialSandboxId ? tools[0] : undefined,
+    initiallyConnected ? tools[0] : undefined,
   ));
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +116,7 @@ export function ToolPlayground({
     setLog(null);
   }
 
-  function inspectorError(error: McpInspectorError): string {
+  function inspectorError(error: string): string {
     if (error === 'sandboxRequired') return t('connectInspectorFirst');
     if (error === 'sandboxNotRunning') return t('startSandboxFirst');
     if (error === 'sandboxNetworkDisabled') return t('sandboxNetworkDisabled');
@@ -195,13 +198,20 @@ export function ToolPlayground({
       if (current?.annotations?.destructiveHint && !window.confirm(t('confirmDestructiveTool'))) return;
       const request = { method: 'tools/call', params: { name: selected, arguments: parsedArgs } };
       const startedAt = performance.now();
-      const response = await runMcpInspectorToolAction({
-        workspace,
-        deploymentId,
-        sandboxId,
-        toolName: selected,
-        arguments: parsedArgs as Record<string, unknown>,
-      });
+      const response = defaultRuntime
+        ? await runMcpConsoleToolAction({
+            workspace,
+            deploymentId,
+            toolName: selected,
+            arguments: parsedArgs as Record<string, unknown>,
+          })
+        : await runMcpInspectorToolAction({
+            workspace,
+            deploymentId,
+            sandboxId,
+            toolName: selected,
+            arguments: parsedArgs as Record<string, unknown>,
+          });
       if (response.error) {
         setLog({ request, response, durationMs: Math.round(performance.now() - startedAt) });
         setError(response.error === 'toolCallFailed'
@@ -252,7 +262,7 @@ export function ToolPlayground({
     );
   }
 
-  if (sandboxes.length === 0) {
+  if (!defaultRuntime && sandboxes.length === 0) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/45 px-4 py-3">
         <div className="flex min-w-0 items-start gap-2.5">
@@ -268,7 +278,7 @@ export function ToolPlayground({
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="flex flex-wrap items-end gap-2">
+      {!defaultRuntime ? <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-[15rem] flex-1 text-xs font-medium text-muted-foreground">
           {t('inspectorSandbox')}
           <NativeSelect
@@ -307,13 +317,13 @@ export function ToolPlayground({
             {connecting ? t('connectingInspector') : t('connectInspector')}
           </button>
         )}
-      </div>
+      </div> : null}
 
       {error && !availableTools.length ? (
         <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive-text">{error}</pre>
       ) : null}
 
-      {activeSandboxId !== sandboxId ? (
+      {!defaultRuntime && activeSandboxId !== sandboxId ? (
         <p className="text-sm text-muted-foreground">{t('connectInspectorHint')}</p>
       ) : availableTools.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('noToolsAvailable')}</p>
