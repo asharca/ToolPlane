@@ -7,6 +7,7 @@ import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
 const mocks = vi.hoisted(() => ({
   connectMcpInspectorAction: vi.fn(),
   runMcpInspectorToolAction: vi.fn(),
+  runMcpConsoleToolAction: vi.fn(),
   startSandboxAction: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -15,6 +16,7 @@ vi.mock('@/lib/workspace/inspector-actions', () => ({
   connectMcpInspectorAction: mocks.connectMcpInspectorAction,
   runMcpInspectorToolAction: mocks.runMcpInspectorToolAction,
 }));
+vi.mock('@/lib/workspace/actions', () => ({ runMcpConsoleToolAction: mocks.runMcpConsoleToolAction }));
 vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: mocks.startSandboxAction }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 
@@ -46,6 +48,7 @@ describe('ToolPlayground', () => {
     vi.restoreAllMocks();
     mocks.connectMcpInspectorAction.mockReset();
     mocks.runMcpInspectorToolAction.mockReset();
+    mocks.runMcpConsoleToolAction.mockReset();
     mocks.startSandboxAction.mockReset();
     mocks.refresh.mockReset();
   });
@@ -73,6 +76,39 @@ describe('ToolPlayground', () => {
       arguments: { message: '' },
     });
     expect(await screen.findByText('HELLO')).toBeInTheDocument();
+  });
+
+  it('uses the managed runtime without requiring an inspector sandbox', async () => {
+    mocks.runMcpConsoleToolAction.mockResolvedValue({
+      result: { content: [{ type: 'text', text: 'HELLO' }] },
+    });
+
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />);
+    expect(screen.queryByRole('button', { name: /connect inspector/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /run tool/i }));
+
+    expect(mocks.runMcpConsoleToolAction).toHaveBeenCalledWith({
+      workspace: 'acme',
+      deploymentId: 'dep1',
+      toolName: 'echo',
+      arguments: { message: '' },
+    });
+    expect(mocks.runMcpInspectorToolAction).not.toHaveBeenCalled();
+    expect(await screen.findByText('HELLO')).toBeInTheDocument();
+  });
+
+  it('updates a managed runtime when tools arrive after provisioning', async () => {
+    const { rerender } = render(
+      <ToolPlayground key="managed:" workspace="acme" deploymentId="dep1" tools={[]} defaultRuntime />,
+    );
+
+    expect(screen.getByText(/no tools are currently available/i)).toBeInTheDocument();
+    rerender(
+      <ToolPlayground key="managed:echo|add" workspace="acme" deploymentId="dep1" tools={tools} defaultRuntime />,
+    );
+
+    expect(await screen.findByRole('button', { name: 'echo' })).toBeInTheDocument();
   });
 
   it('shows an empty state when there are no tools', () => {

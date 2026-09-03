@@ -877,8 +877,7 @@ export function AgentSettingsForm({
                   scheduleAutoSave();
                 }}
                 onConfigure={() => {
-                  const returnTo = `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=agent`;
-                  window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+                  window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                 }}
                 trigger={(
                   <button type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">

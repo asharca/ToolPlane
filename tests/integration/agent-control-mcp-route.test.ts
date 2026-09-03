@@ -10,6 +10,7 @@ import { createApiToken } from '@/lib/auth/tokens';
 import { POST } from '@/app/api/v1/workspaces/[slug]/agents/mcp/route';
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const appOrigin = new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost').origin;
 let ownerId = '';
 let memberId = '';
 let outsiderId = '';
@@ -151,7 +152,7 @@ function rpcRequest(
   params?: Record<string, unknown>,
   origin?: string,
 ) {
-  return new Request(`http://localhost/api/v1/workspaces/${workspaceSlug}/agents/mcp`, {
+  return new Request(`${appOrigin}/api/v1/workspaces/${workspaceSlug}/agents/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -198,7 +199,7 @@ describe('Agent Control MCP route authorization and creation', () => {
       ownerToken,
       'tools/list',
       undefined,
-      'http://localhost',
+      appOrigin,
     ));
     expect(sameOrigin.status).toBe(200);
   });

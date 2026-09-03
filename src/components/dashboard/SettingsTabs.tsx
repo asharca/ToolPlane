@@ -2,7 +2,6 @@
 
 import {
   CreditCard,
-  Cpu,
   KeyRound,
   Plug,
   Settings,
@@ -23,7 +22,6 @@ export function SettingsTabs({ slug }: { slug: string }) {
   const tabs: { label: string; href: string; icon: LucideIcon }[] = [
     { label: t('general'), href: withReturnTo(base), icon: Settings },
     { label: t('tokens'), href: withReturnTo(`${base}/tokens`), icon: KeyRound },
-    { label: t('modelProviders'), href: withReturnTo(`${base}/providers`), icon: Cpu },
   ];
   const muted: { label: string; icon: LucideIcon }[] = [
     { label: t('integrations'), icon: Plug },

@@ -9,6 +9,7 @@ import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-ca
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
+import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
@@ -46,13 +47,20 @@ export default async function DeploymentToolPage({
       status: true,
       serverId: true,
       server: { select: { name: true, slug: true, installCfg: true } },
+      marketInstall: { select: { id: true } },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
     },
   });
   if (!deployment) notFound();
 
   const base = `/app/${encodeURIComponent(slug)}/mcp/${encodeURIComponent(deployment.id)}`;
   const inspectorConnection = readMcpInspectorConnection(deployment.installCfg);
-  if (deployment.source === 'remote') {
+  const defaultRemoteRuntime = usesDefaultRemoteRuntime(deployment);
+  if (deployment.source === 'remote' && !defaultRemoteRuntime) {
     if (!inspectorConnection) redirect(`${base}?tab=tools`);
     const sandbox = await db.sandbox.findFirst({
       where: {
@@ -72,17 +80,18 @@ export default async function DeploymentToolPage({
   const running = effectiveStatus(deployment.id, deployment.status) === 'running';
   const savedTools = hasMcpToolCatalog(deployment.installCfg)
     ? readMcpToolCatalog(deployment.installCfg)
-    : deployment.source === 'remote'
+    : deployment.source === 'remote' && !defaultRemoteRuntime
       ? []
       : readMcpToolCatalog(deployment.server?.installCfg);
-  const liveTools = deployment.source !== 'remote' && running ? await listMcpTools(deployment.id) : [];
-  const refreshedConfig = deployment.source !== 'remote' && running && liveTools.length === 0
+  const readsLiveTools = deployment.source !== 'remote' || defaultRemoteRuntime;
+  const liveTools = readsLiveTools && running ? await listMcpTools(deployment.id) : [];
+  const refreshedConfig = readsLiveTools && running && liveTools.length === 0
     ? await db.deployment.findFirst({
         where: { id: deployment.id, workspaceId: workspace.id },
         select: { installCfg: true },
       })
     : null;
-  const tools = deployment.source !== 'remote' && running
+  const tools = readsLiveTools && running
     ? liveTools.length
       ? liveTools
       : hasMcpToolCatalog(refreshedConfig?.installCfg)

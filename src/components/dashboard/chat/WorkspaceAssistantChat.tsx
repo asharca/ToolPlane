@@ -356,8 +356,7 @@ function AssistantEditor({
                         setModel(selection.model);
                       }}
                       onConfigure={() => {
-                        const returnTo = assistant ? chatHref(slug, assistant.id) : `/app/${encodeURIComponent(slug)}/chat`;
-                        window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+                        window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
                         <button type="button" aria-label={`${t('model')}: ${model || t('selectModel')}`} className="ui-input mt-1.5 flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
@@ -938,8 +937,7 @@ export function WorkspaceAssistantChat({
                       pending={busy}
                       onSelect={(selection) => void updateAssistantModel(selection)}
                       onConfigure={() => {
-                        const returnTo = chatHref(slug, activeAssistant.id, activeThread?.id);
-                        window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+                        window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
                         <button

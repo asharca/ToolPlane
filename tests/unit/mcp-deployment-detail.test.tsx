@@ -76,7 +76,11 @@ vi.mock('@/components/dashboard/CopyButton', () => ({ CopyButton: () => null }))
 vi.mock('@/components/dashboard/ReadyToConnectBanner', () => ({ ReadyToConnectBanner: () => null }));
 vi.mock('@/components/dashboard/ConnectDialog', () => ({ ConnectDialog: () => null }));
 vi.mock('@/components/dashboard/TabBar', () => ({ TabBar: () => null }));
-vi.mock('@/components/dashboard/ToolPlayground', () => ({ ToolPlayground: () => <div>Playground</div> }));
+vi.mock('@/components/dashboard/ToolPlayground', () => ({
+  ToolPlayground: ({ defaultRuntime }: { defaultRuntime?: boolean }) => (
+    <div data-testid="playground" data-default-runtime={defaultRuntime ? 'true' : 'false'}>Playground</div>
+  ),
+}));
 vi.mock('@/components/dashboard/McpToolExposureEditor', () => ({ McpToolExposureEditor: () => <div>Exposure</div> }));
 vi.mock('@/components/dashboard/VariablesEditor', () => ({ VariablesEditor: () => null }));
 vi.mock('@/components/dashboard/McpJsonConfigEditor', () => ({ McpJsonConfigEditor: () => null }));
@@ -176,6 +180,29 @@ describe('workspace MCP deployment detail', () => {
     expect(screen.getByText('Playground')).toBeInTheDocument();
   });
 
+  it('uses the managed runtime for a self-created remote MCP without an inspector', async () => {
+    mocks.deployment.mockResolvedValue({
+      ...baseDeployment,
+      name: 'Private remote MCP',
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      marketInstall: null,
+      toolkitLinks: [],
+      installCfg: { network: 'isolated', env: {}, toolCatalog: tools },
+    });
+
+    render(await DeploymentInspectorPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
+      searchParams: Promise.resolve({ tab: 'tools' }),
+    }));
+
+    expect(mocks.listMcpTools).toHaveBeenCalledWith('deployment-1');
+    expect(screen.getByRole('link', { name: 'search_products' })).toBeInTheDocument();
+    expect(screen.getByTestId('playground')).toHaveAttribute('data-default-runtime', 'true');
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+  });
+
   it('shows one tool with its complete parameter schema on the scoped detail route', async () => {
     render(await DeploymentToolPage({
       params: Promise.resolve({
@@ -201,6 +228,29 @@ describe('workspace MCP deployment detail', () => {
       },
     }));
     expect(mocks.listMcpTools).toHaveBeenCalledWith('deployment-1');
+  });
+
+  it('opens a self-created remote tool deep link through its managed runtime', async () => {
+    mocks.deployment.mockResolvedValue({
+      ...baseDeployment,
+      name: 'Private remote MCP',
+      source: 'remote',
+      sourceRef: 'https://mcp.example.com/mcp',
+      marketInstall: null,
+      toolkitLinks: [],
+      installCfg: { network: 'isolated', env: {}, toolCatalog: tools },
+    });
+
+    render(await DeploymentToolPage({
+      params: Promise.resolve({
+        workspace: 'acme', deploymentId: 'deployment-1', toolName: 'search_products',
+      }),
+    }));
+
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
+    expect(mocks.listMcpTools).toHaveBeenCalledWith('deployment-1');
+    expect(screen.getByRole('heading', { level: 1, name: 'search_products' })).toBeInTheDocument();
   });
 
   it.each(['stopped', 'error'])('keeps a useful empty state while the runtime is %s', async (status) => {
@@ -301,6 +351,8 @@ describe('workspace MCP deployment detail', () => {
       source: 'remote',
       sourceRef: 'https://mcp.example.com/mcp',
       status: 'stopped',
+      marketInstall: { id: 'market-install-1' },
+      toolkitLinks: [],
       installCfg: {
         toolCatalog: tools,
         mcpInspector: { sandboxId: 'sandbox-1', connectedAt: '2026-08-29T00:00:00.000Z' },
