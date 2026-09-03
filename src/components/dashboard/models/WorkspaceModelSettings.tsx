@@ -67,7 +67,7 @@ function ModelPreferenceRow({
           pending={pending}
           pendingValue={pendingValue}
           onSelect={save}
-          onConfigure={() => window.location.assign(`/app/${encodeURIComponent(slug)}/settings/providers`)}
+          onConfigure={() => window.location.assign(`/app/${encodeURIComponent(slug)}/providers`)}
           trigger={(
             <button
               type="button"

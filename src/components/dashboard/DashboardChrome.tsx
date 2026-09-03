@@ -26,7 +26,6 @@ export function DashboardChrome({
   userLabel,
   workspaces,
   supportEmail,
-  currentVersion,
   isAdmin = false,
   children,
 }: {
@@ -35,7 +34,6 @@ export function DashboardChrome({
   userLabel: string;
   workspaces: Workspace[];
   supportEmail: string;
-  currentVersion: string;
   isAdmin?: boolean;
   children: ReactNode;
 }) {
@@ -84,7 +82,6 @@ export function DashboardChrome({
               workspaceName={workspaceName}
               userLabel={userLabel}
               workspaces={workspaces}
-              currentVersion={currentVersion}
               isAdmin={isAdmin}
               mobileOpen={open}
               onClose={closeMenu}
@@ -107,7 +104,7 @@ export function DashboardChrome({
                 </button>
                 <DashboardLogo />
               </div>
-              <DashboardTabBar />
+              <DashboardTabBar canInstall={isAdmin} />
               <DashboardTabContent>{children}</DashboardTabContent>
             </div>
           </div>

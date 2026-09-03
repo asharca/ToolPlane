@@ -4,7 +4,6 @@ import { type MouseEvent, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { HoverCard } from 'radix-ui';
 import {
   Plug,
   Brain,
@@ -15,18 +14,15 @@ import {
   MessageSquare,
   TerminalSquare,
   LibraryBig,
+  Cpu,
   Layers3,
   PanelLeftClose,
   PanelLeftOpen,
-  GitFork,
-  ExternalLink,
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { SITE } from '@/lib/site';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { DashboardLogo } from './DashboardLogo';
-import { SystemUpdateButton } from './SystemUpdateButton';
 import { useDashboardTabs } from './DashboardTabs';
 
 type NavItem = {
@@ -46,16 +42,14 @@ const NAV_ITEMS: NavItem[] = [
   { labelKey: 'skills', segment: 'skills', icon: Brain },
   { labelKey: 'toolkits', segment: 'toolkits', icon: Wrench },
   { labelKey: 'sandboxes', segment: 'sandboxes', icon: Boxes },
+  { labelKey: 'modelProviders', segment: 'providers', icon: Cpu },
 ];
-
-const SOURCE_REPOSITORY = SITE.sourceUrl.replace(/^https?:\/\/github\.com\//, '');
 
 export function DashboardSidebar({
   slug,
   workspaceName,
   userLabel,
   workspaces,
-  currentVersion,
   isAdmin = false,
   mobileOpen = false,
   onClose,
@@ -66,7 +60,6 @@ export function DashboardSidebar({
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
-  currentVersion: string;
   isAdmin?: boolean;
   mobileOpen?: boolean;
   onClose?: () => void;
@@ -139,67 +132,57 @@ export function DashboardSidebar({
       role={mobileOpen ? 'dialog' : undefined}
       aria-modal={mobileOpen ? true : undefined}
       aria-label={mobileOpen ? t('navigation') : undefined}
-      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col bg-shell text-shell-foreground shadow-2xl transition-[transform,width] duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:shadow-none ${
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col overflow-hidden bg-shell text-shell-foreground shadow-2xl transition-[transform,width] duration-200 ease-out lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:shadow-none ${
         collapsed ? 'lg:w-16' : 'lg:w-64'
       } ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
     >
       <div className={`flex h-14 shrink-0 items-center justify-between px-4 ${
-        collapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-start lg:px-3'
+        collapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-between lg:px-3'
       }`}>
         <div className="lg:hidden"><DashboardLogo /></div>
-        <HoverCard.Root openDelay={200} closeDelay={150}>
-          <HoverCard.Trigger asChild>
-            <Link
-              href={`${base}/chat`}
-              onClick={(event) => handleWorkspaceRoute(event, `${base}/chat`)}
-              aria-label="ToolPlane"
-              className={`hidden items-center justify-center rounded-xl lg:flex ${
-                collapsed
-                  ? 'size-9 bg-brand text-sm font-bold tracking-tight text-brand-foreground shadow-sm'
-                  : 'h-9 px-1.5 hover:bg-accent/70'
-              }`}
+        {collapsed ? (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-controls="dashboard-sidebar"
+            aria-expanded={false}
+            aria-label={t('expandSidebar')}
+            title={t('expandSidebar')}
+            className="group relative hidden size-9 items-center justify-center overflow-hidden rounded-xl bg-brand text-brand-foreground shadow-sm outline-none transition-[background-color,color] duration-200 ease-out focus-visible:ring-2 focus-visible:ring-brand/40 lg:flex"
+          >
+            <span
+              aria-hidden="true"
+              className="flex transition-[opacity,transform] duration-200 ease-out group-hover:scale-90 group-hover:opacity-0 group-focus-visible:scale-90 group-focus-visible:opacity-0"
             >
-              {collapsed ? <Layers3 className="size-[18px]" strokeWidth={1.9} /> : <DashboardLogo />}
-            </Link>
-          </HoverCard.Trigger>
-          <HoverCard.Portal>
-            <HoverCard.Content
-              side="right"
-              align="start"
-              sideOffset={8}
-              collisionPadding={8}
-              className="z-50 w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=right]:slide-in-from-left-2"
+              <Layers3 className="size-[18px]" strokeWidth={1.9} />
+            </span>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 flex scale-75 items-center justify-center opacity-0 transition-[opacity,transform] duration-200 ease-out group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100"
             >
-              <div className="flex items-center gap-2.5">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand text-brand-foreground">
-                  <Layers3 className="size-4" strokeWidth={1.9} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">ToolPlane</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {t('version')} {currentVersion}
-                  </p>
-                </div>
-              </div>
-              <a
-                href={SITE.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 flex items-center gap-2 rounded-md px-1.5 py-1.5 text-xs transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <GitFork className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block">{t('sourceCode')}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">{SOURCE_REPOSITORY}</span>
-                </span>
-                <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
-              </a>
-              <SystemUpdateButton canInstall={isAdmin} />
-            </HoverCard.Content>
-          </HoverCard.Portal>
-        </HoverCard.Root>
+              <PanelLeftOpen className="size-[18px]" />
+            </span>
+          </button>
+        ) : (
+          <>
+            <div className="hidden h-9 w-36 items-center px-1.5 lg:flex">
+              <DashboardLogo />
+            </div>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-controls="dashboard-sidebar"
+              aria-expanded={true}
+              aria-label={t('collapseSidebar')}
+              title={t('collapseSidebar')}
+              className="ui-button-ghost ui-icon-button hidden lg:flex"
+            >
+              <PanelLeftClose className="size-[18px]" />
+            </button>
+          </>
+        )}
         <div className="lg:hidden">
           <button
             ref={closeButtonRef}
@@ -213,7 +196,7 @@ export function DashboardSidebar({
         </div>
       </div>
 
-      <nav aria-label={t('navigation')} className={`min-h-0 flex-1 overflow-y-auto px-3 py-2 ${
+      <nav aria-label={t('navigation')} className={`min-h-0 flex-1 overflow-y-auto px-3 py-2 transition-[padding] duration-200 ease-out ${
         collapsed ? 'lg:px-2' : 'lg:px-3'
       }`}>
         <ul className="space-y-0.5 lg:space-y-1">
@@ -230,7 +213,7 @@ export function DashboardSidebar({
                   aria-current={active ? 'page' : undefined}
                   aria-label={label}
                   title={collapsed ? label : undefined}
-                  className={`relative flex h-11 w-full items-center gap-3 rounded-xl px-3 text-sm transition-colors ${
+                  className={`relative flex h-11 w-full items-center gap-3 overflow-hidden rounded-xl px-3 text-sm transition-[width,height,border-radius,background-color,color] duration-200 ease-out ${
                     collapsed
                       ? 'lg:mx-auto lg:size-9 lg:justify-center lg:gap-0 lg:rounded-full lg:px-0'
                       : 'lg:h-10 lg:rounded-lg'
@@ -241,7 +224,9 @@ export function DashboardSidebar({
                   }`}
                 >
                   <Icon className="size-[18px] shrink-0" />
-                  <span className={`min-w-0 flex-1 truncate ${collapsed ? 'lg:sr-only' : ''}`}>{label}</span>
+                  <span className={`min-w-0 flex-1 truncate transition-[max-width,opacity,transform] duration-150 ease-out ${
+                    collapsed ? 'lg:max-w-0 lg:translate-x-1 lg:opacity-0' : 'lg:max-w-48 lg:translate-x-0 lg:opacity-100'
+                  }`}>{label}</span>
                 </Link>
               </li>
             );
@@ -249,7 +234,7 @@ export function DashboardSidebar({
         </ul>
       </nav>
 
-      <div className={`flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 ${
+      <div className={`flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 transition-[padding] duration-200 ease-out ${
         collapsed ? 'lg:items-center lg:px-2' : 'lg:px-3'
       }`}>
         <WorkspaceSwitcher
@@ -265,24 +250,15 @@ export function DashboardSidebar({
           onClick={onClose}
           aria-label={t('settings')}
           title={collapsed ? t('settings') : undefined}
-          className={`ui-button-ghost justify-start px-3 ${
+          className={`ui-button-ghost justify-start overflow-hidden px-3 transition-[width,border-radius,background-color,color] duration-200 ease-out ${
             collapsed ? 'lg:w-9 lg:justify-center lg:rounded-full lg:px-0' : ''
           }`}
         >
           <Settings className="size-[18px]" />
-          <span className={collapsed ? 'lg:hidden' : ''}>{t('settings')}</span>
+          <span className={`whitespace-nowrap transition-[max-width,opacity,transform] duration-150 ease-out ${
+            collapsed ? 'lg:max-w-0 lg:translate-x-1 lg:opacity-0' : 'lg:max-w-40 lg:translate-x-0 lg:opacity-100'
+          }`}>{t('settings')}</span>
         </Link>
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          aria-controls="dashboard-sidebar"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
-          title={collapsed ? t('expandSidebar') : t('collapseSidebar')}
-          className="ui-button-ghost ui-icon-button hidden lg:flex"
-        >
-          {collapsed ? <PanelLeftOpen className="size-[18px]" /> : <PanelLeftClose className="size-[18px]" />}
-        </button>
       </div>
     </aside>
   );

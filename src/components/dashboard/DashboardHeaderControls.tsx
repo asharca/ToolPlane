@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/Dialog';
 import { SITE, mailto } from '@/lib/site';
 import { useDashboardRuntimeConfig } from './DashboardRuntimeConfig';
+import { SystemUpdateButton } from './SystemUpdateButton';
 
 type Command = {
   id: string;
@@ -46,7 +47,7 @@ function workspaceSlug(pathname: string): string | null {
   return parts[1] === 'app' && parts[2] ? parts[2] : null;
 }
 
-export function DashboardHeaderControls() {
+export function DashboardHeaderControls({ canInstall = false }: { canInstall?: boolean }) {
   const t = useTranslations('console.header');
   const router = useRouter();
   const pathname = usePathname() ?? '';
@@ -223,6 +224,8 @@ export function DashboardHeaderControls() {
           </DialogContent>
         </DialogPortal>
       </Dialog>
+
+      <SystemUpdateButton canInstall={canInstall} />
 
       <a
         href={mailto(supportEmail)}

@@ -95,15 +95,13 @@ describe('DashboardTabsProvider', () => {
     expect(activeTab()).toHaveTextContent(label);
   });
 
-  it('keeps the originating tab while settings is open', () => {
-    navigation.pathname = '/app/smoke/settings/providers';
-    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fagents%3F__dashboardTab%3Dagents-tab';
+  it('opens model providers as its own tab', () => {
+    navigation.pathname = '/app/smoke/providers';
+    navigation.search = '';
 
     renderTabs();
 
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(activeTab()).toHaveAttribute('data-tab-id', 'agents-tab');
-    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+    expect(activeTab()).toHaveTextContent('Model Providers');
   });
 
   it('keeps the originating tab while agent settings is open', () => {

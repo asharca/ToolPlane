@@ -285,8 +285,7 @@ export function AgentModelDialog({
         closeOnSelect={false}
         onSelect={selectModel}
         onConfigure={() => {
-          const returnTo = `${window.location.pathname}${window.location.search}`;
-          router.push(`/app/${encodeURIComponent(slug)}/settings/providers?returnTo=${encodeURIComponent(returnTo)}`);
+          router.push(`/app/${encodeURIComponent(slug)}/providers`);
         }}
         trigger={trigger}
       />

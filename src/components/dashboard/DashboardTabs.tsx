@@ -366,7 +366,7 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
   return <DashboardTabsContext.Provider value={value}>{children}</DashboardTabsContext.Provider>;
 }
 
-export function DashboardTabBar() {
+export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }) {
   const { activeTabId, base, closeTab, newTab, openInNewWindow, reorderTabs, selectTab, tabs, togglePinned } = useDashboardTabs();
   const sidebarT = useTranslations('console.sidebar');
   const tabT = useTranslations('console.tabs');
@@ -386,7 +386,7 @@ export function DashboardTabBar() {
           <button type="button" aria-label={tabT('new')} title={tabT('new')} onClick={newTab} className="ui-button-ghost ui-icon-button"><Plus className="size-4" /></button>
         </li>
       </ol>
-      <DashboardHeaderControls />
+      <DashboardHeaderControls canInstall={canInstall} />
     </nav>
   );
 }

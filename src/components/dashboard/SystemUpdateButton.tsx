@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { Check, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { Popover } from 'radix-ui';
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH = '/api/v1/admin/system/update?local=1';
 const RESTART_POLL_INTERVAL_MS = 1_500;
@@ -47,7 +48,7 @@ type UpdateWaitResult =
   | { status: 'failed'; message: string }
   | { status: 'timeout' };
 
-type UiState = 'idle' | 'checking' | 'updating' | 'restarting' | 'error';
+type UiState = 'idle' | 'checking' | 'updating' | 'applying' | 'restarting' | 'error';
 
 function versionsMatch(current: string, expected: string | null): boolean {
   return Boolean(expected && current.trim() === expected.trim());
@@ -141,13 +142,18 @@ export async function waitForSystemUpdateReady(
 
 export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
   const t = useTranslations('console.systemUpdate');
+  const settingsT = useTranslations('console.settings');
+  const sidebarT = useTranslations('console.sidebar');
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [uiState, setUiState] = useState<UiState>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const restartPollRef = useRef<AbortController | null>(null);
+  const checkedOnMountRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    setUiState((state) => (state === 'updating' || state === 'restarting' ? state : 'checking'));
+    setUiState((state) => (
+      state === 'updating' || state === 'applying' || state === 'restarting' ? state : 'checking'
+    ));
     setStatus(null);
     setMessage(null);
     try {
@@ -167,6 +173,12 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
     return () => restartPollRef.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if (checkedOnMountRef.current) return;
+    checkedOnMountRef.current = true;
+    void refresh();
+  }, [refresh]);
+
   const waitForRestart = useCallback(
     async (latestVersion: string | null, previousRuntimeId: string | null, requestError?: string) => {
       restartPollRef.current?.abort();
@@ -176,9 +188,15 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
         previousRuntimeId,
         signal: controller.signal,
         onProgress(updateJob) {
-          if (updateJob?.status === 'restarting') {
+          if (updateJob?.status === 'downloading') {
+            setUiState('updating');
+            setMessage(updateJob.message ?? t('updating'));
+          } else if (updateJob?.status === 'applying') {
+            setUiState('applying');
+            setMessage(updateJob.message ?? t('applying'));
+          } else if (updateJob?.status === 'restarting') {
             setUiState('restarting');
-            setMessage(t('restarting'));
+            setMessage(updateJob.message ?? t('restarting'));
           }
         },
         fallbackFailureMessage: t('systemUpdateFailed'),
@@ -200,6 +218,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
       !status?.canUpdate
       || status.updateAvailable !== true
       || uiState === 'updating'
+      || uiState === 'applying'
       || uiState === 'restarting'
     ) return;
     if (!window.confirm(t('confirmUpdate', { version: status.latestVersion ?? '' }))) return;
@@ -227,7 +246,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
       }
       if (result.status === 'updating' || result.status === 'restarting') {
         setUiState(result.status === 'restarting' ? 'restarting' : 'updating');
-        setMessage(result.status === 'restarting' ? t('restarting') : null);
+        setMessage(result.status === 'restarting' ? t('restarting') : t('updating'));
         void waitForRestart(
           result.latestVersion ?? targetVersion,
           result.runtimeId ?? previousRuntimeId,
@@ -249,10 +268,11 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
     }
   };
 
-  const busy = uiState === 'checking' || uiState === 'updating' || uiState === 'restarting';
+  const busy = uiState === 'checking' || uiState === 'updating' || uiState === 'applying' || uiState === 'restarting';
   let label = t('checkAndUpdate');
   if (uiState === 'checking') label = t('checking');
   else if (uiState === 'updating') label = t('updating');
+  else if (uiState === 'applying') label = t('applying');
   else if (uiState === 'restarting') label = t('restartingShort');
   else if (uiState === 'error') label = t('failed');
   else if (status && !status.canUpdate) label = t('unavailable');
@@ -263,46 +283,133 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
     status?.currentVersion,
     status?.latestVersion,
   );
-  const detail = message || versionDetail || status?.artifactName || null;
+  const detail = message || status?.reason || null;
   const showUpdate = canInstall && status?.canUpdate === true && status.updateAvailable === true;
+  const hasUpdate = status?.updateAvailable === true;
+  const triggerLabel = hasUpdate
+    ? `${settingsT('systemUpdate')}: ${t('updateAvailable')}`
+    : settingsT('systemUpdate');
+  const activeStage = uiState === 'updating' ? 0 : uiState === 'applying' ? 1 : uiState === 'restarting' ? 2 : -1;
+  const stages = [
+    t('downloading'),
+    t('applying'),
+    t('restartingShort'),
+  ];
 
   return (
-    <div className="mt-2 border-t border-border/70 pt-2">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{label}</span>
+    <Popover.Root onOpenChange={(open) => {
+      if (open && !busy) void refresh();
+    }}>
+      <Popover.Trigger asChild>
         <button
           type="button"
-          onClick={refresh}
-          disabled={busy}
-          aria-label={t('checkAndUpdate')}
-          title={t('checkAndUpdate')}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+          aria-label={triggerLabel}
+          title={triggerLabel}
+          className="ui-button-ghost ui-icon-button"
         >
-          <RefreshCw className={`size-3.5 ${busy ? 'animate-spin' : ''}`} />
+          <span className="relative flex size-4">
+            {busy ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {hasUpdate ? <span aria-hidden="true" className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-500" /> : null}
+          </span>
         </button>
-      </div>
-      {detail ? (
-        <p className="mt-0.5 truncate text-[10px] leading-4 text-muted-foreground" title={detail}>
-          {detail}
-        </p>
-      ) : null}
-      {showUpdate ? (
-        <button
-          type="button"
-          onClick={runUpdate}
-          disabled={uiState === 'updating' || uiState === 'restarting'}
-          className="ui-button-primary ui-button-sm mt-2 w-full disabled:cursor-wait disabled:opacity-70"
+      </Popover.Trigger>
+
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          align="end"
+          sideOffset={8}
+          collisionPadding={8}
+          aria-label={settingsT('systemUpdate')}
+          className="z-50 w-80 max-w-[calc(100vw-1rem)] space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl outline-none"
         >
-          {uiState === 'updating' || uiState === 'restarting'
-            ? <RefreshCw className="size-3.5 animate-spin" />
-            : <Download className="size-3.5" />}
-          {uiState === 'updating'
-            ? t('updating')
-            : uiState === 'restarting'
-              ? t('restartingShort')
-              : t('updateNow')}
-        </button>
-      ) : null}
-    </div>
+          <div className="flex items-start gap-3">
+            <div aria-live="polite" className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">{settingsT('systemUpdate')}</p>
+              <p role={uiState === 'error' ? 'alert' : 'status'} className="mt-1 text-sm font-medium text-foreground">{label}</p>
+              {detail ? (
+                <p className="mt-0.5 break-words text-xs leading-5 text-muted-foreground" title={detail}>
+                  {detail}
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={busy}
+              aria-label={t('checkAndUpdate')}
+              title={t('checkAndUpdate')}
+              className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {versionDetail ? (
+            <div className="flex items-center justify-between gap-3 border-y border-border py-2 text-xs">
+              <span className="text-muted-foreground">{sidebarT('version')}</span>
+              <span className="truncate font-medium text-foreground" title={versionDetail}>{versionDetail}</span>
+            </div>
+          ) : null}
+
+          {status?.releaseName ? (
+            status.releaseUrl ? (
+              <a
+                href={status.releaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <span className="truncate">{status.releaseName}</span>
+                <ExternalLink className="size-3.5 shrink-0" />
+              </a>
+            ) : (
+              <p className="truncate text-xs text-muted-foreground">{status.releaseName}</p>
+            )
+          ) : null}
+
+          {activeStage >= 0 ? (
+            <ol aria-label={t('updateProgress')} className="flex flex-col gap-2">
+              {stages.map((stage, index) => {
+                const complete = index < activeStage;
+                const active = index === activeStage;
+                return (
+                  <li key={stage} className={`flex items-center gap-2 text-xs ${
+                    active ? 'font-medium text-foreground' : complete ? 'text-foreground' : 'text-muted-foreground'
+                  }`}>
+                    <span className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
+                      active ? 'bg-brand text-brand-foreground' : complete ? 'bg-brand-soft text-brand' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {complete ? <Check className="size-3" /> : active ? <RefreshCw className="size-3 animate-spin" /> : index + 1}
+                    </span>
+                    <span>{stage}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
+
+          {showUpdate ? (
+            <button
+              type="button"
+              onClick={runUpdate}
+              disabled={uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'}
+              className="ui-button-primary ui-button-sm w-full disabled:cursor-wait disabled:opacity-70"
+            >
+              {uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'
+                ? <RefreshCw className="size-3.5 animate-spin" />
+                : <Download className="size-3.5" />}
+              {uiState === 'updating'
+                ? t('updating')
+                : uiState === 'applying'
+                  ? t('applying')
+                  : uiState === 'restarting'
+                    ? t('restartingShort')
+                    : t('updateNow')}
+            </button>
+          ) : null}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
