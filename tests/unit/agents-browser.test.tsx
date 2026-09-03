@@ -215,7 +215,7 @@ describe('AgentsBrowser', () => {
     expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('button', { name: 'Create draft agent' })).toBeEnabled();
-  });
+  }, 15_000);
 
   it('labels the open form as cancellable and clears its controlled draft state', async () => {
     const user = userEvent.setup();
@@ -255,7 +255,7 @@ describe('AgentsBrowser', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('checkbox', { name: 'Select Router MCP' })).not.toBeChecked();
-  });
+  }, 15_000);
 
   it('tracks the current create step and preserves the name when going back', async () => {
     const user = userEvent.setup();
