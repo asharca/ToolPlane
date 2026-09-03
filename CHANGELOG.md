@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.0](https://github.com/asharca/ToolPlane/compare/v0.25.0...v0.26.0) (2026-09-03)
+
+
+### Features
+
+* **console:** add collapsible workspace sidebar ([#105](https://github.com/asharca/ToolPlane/issues/105)) ([d3c6ae7](https://github.com/asharca/ToolPlane/commit/d3c6ae7d9c2756a28bcd19ba0caa3c4be5fe169f))
+* **console:** improve workspace navigation and updates ([0f67442](https://github.com/asharca/ToolPlane/commit/0f6744288cc9813b0412a733e185594a7c101881))
+* improve managed MCPs and console updates ([2c48e84](https://github.com/asharca/ToolPlane/commit/2c48e847a52c0e5dcc9a35ad04879f27148ff1aa))
+* **mcp:** add managed remote runtime ([de3f5be](https://github.com/asharca/ToolPlane/commit/de3f5be77e1db37b2223a975cbd7514b0e7a4252))
+
 ## [0.25.0](https://github.com/asharca/ToolPlane/compare/v0.24.0...v0.25.0) (2026-09-02)
 
 
