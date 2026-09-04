@@ -28,7 +28,8 @@ No Docker image push or GitHub Release happens during normal development.
 
 ## Release flow
 
-1. Merge conventional commits into `main`.
+1. Merge pull requests into `main` with **Squash and merge**. This keeps one
+   releasable commit per pull request and prevents duplicate changelog entries.
 2. When you want to prepare a release, open GitHub Actions and run the
    `release-please` workflow on `main`.
 3. The workflow opens or updates a release PR that bumps `package.json` and
