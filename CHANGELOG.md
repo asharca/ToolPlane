@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.27.0](https://github.com/asharca/ToolPlane/compare/v0.26.0...v0.27.0) (2026-09-04)
+
+
+### Features
+
+* **console:** improve work feedback and resource management ([dd347cc](https://github.com/asharca/ToolPlane/commit/dd347cc031c9123c633938a12851020a3e67213e))
+* **console:** improve work feedback and resource management ([089773b](https://github.com/asharca/ToolPlane/commit/089773bf8c979081d777f4b1a56f7fed644f6ed6))
+
+
+### Bug Fixes
+
+* **connector:** skip npm audit during hosted install ([105f22f](https://github.com/asharca/ToolPlane/commit/105f22f53fa74abf26e9ca64e2cb9374ac8a8ca2))
+
 ## [0.26.0](https://github.com/asharca/ToolPlane/compare/v0.25.0...v0.26.0) (2026-09-03)
 
 
