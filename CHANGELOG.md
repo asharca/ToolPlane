@@ -5,7 +5,6 @@
 
 ### Features
 
-* **console:** improve work feedback and resource management ([dd347cc](https://github.com/asharca/ToolPlane/commit/dd347cc031c9123c633938a12851020a3e67213e))
 * **console:** improve work feedback and resource management ([089773b](https://github.com/asharca/ToolPlane/commit/089773bf8c979081d777f4b1a56f7fed644f6ed6))
 
 
