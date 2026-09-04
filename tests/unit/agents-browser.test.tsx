@@ -20,7 +20,6 @@ vi.mock('next/navigation', () => ({
 
 async function openBlankCreate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'New agent' }));
-  await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
 }
 
 describe('AgentsBrowser', () => {
@@ -33,8 +32,7 @@ describe('AgentsBrowser', () => {
     navigation.push.mockReset();
   });
 
-  it('offers blank and market starts from Work, then preserves its return path', async () => {
-    const user = userEvent.setup();
+  it('opens the blank form directly from Work and preserves its return path', () => {
     navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
     render(
       <AgentsBrowser
@@ -44,11 +42,11 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Choose from the agent market' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Choose from the agent market' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
     expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Choose from the agent market' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('link', { name: 'Choose from the agent market' })).not.toBeInTheDocument();
+    expect(document.querySelector('#agent-create-source')).not.toBeInTheDocument();
     expect(document.querySelector<HTMLInputElement>('input[name="returnTo"]')).toHaveValue('/app/acme/work');
   });
 
@@ -101,7 +99,7 @@ describe('AgentsBrowser', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toBeInTheDocument();
     expect(screen.queryByText('Existing Agent')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
   });
@@ -281,10 +279,7 @@ describe('AgentsBrowser', () => {
     expect(screen.getByLabelText('Name')).toBeVisible();
     expect(screen.getByLabelText('Name')).toHaveValue('Research agent');
 
-    await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByRole('button', { name: 'Create a blank agent' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Create a blank agent' }));
-    expect(screen.getByLabelText('Name')).toHaveValue('Research agent');
+    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
   });
 
   it('shows progress and completion feedback while creating an agent', async () => {

@@ -61,7 +61,6 @@ import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerBut
 import {
   AssistantMarkdown,
   AssistantReply,
-  ConversationPendingIndicator,
   assistantMessageActionClassName,
 } from '@/components/dashboard/ConversationMessage';
 import { callSandboxTool, SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
@@ -111,6 +110,9 @@ type WorkPart = {
   url?: string;
   toolCallId?: string;
   toolName?: string;
+  deploymentName?: string;
+  originalToolName?: string;
+  durationMs?: number;
   input?: unknown;
   output?: unknown;
   isError?: boolean;
@@ -127,12 +129,24 @@ type WorkActivity = {
   text?: string;
   toolCallId?: string;
   toolName?: string;
+  deploymentName?: string;
+  originalToolName?: string;
+  durationMs?: number;
   input?: unknown;
   output?: unknown;
   isError?: boolean;
 };
 
-type WorkMessage = { id: string; role: string; parts: WorkPart[] };
+type WorkMessage = { id: string; role: string; createdAt?: string; parts: WorkPart[] };
+
+type WorkTiming = {
+  startedAt: number;
+  completedAt?: number;
+  durationMs?: number;
+  approvalWaitMs?: number;
+  runtimeKind?: string;
+  modelName?: string;
+};
 
 type WorkApproval = {
   id: string;
@@ -152,6 +166,8 @@ type WorkItem = {
   acceptanceCriteria: string | null;
   runtimeKind: string;
   status: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
   maxSteps: number;
   stepCount: number;
   waitingQuestion: string | null;
@@ -169,7 +185,7 @@ type WorkItem = {
   approvals: WorkApproval[];
 };
 
-const ACTIVE_STATUSES = new Set(['queued', 'running', 'cancelling']);
+const ACTIVE_STATUSES = new Set(['queued', 'running', 'waiting_approval', 'cancelling']);
 const STOPPABLE_STATUSES = new Set(['queued', 'running', 'waiting_approval']);
 const MESSAGEABLE_STATUSES = new Set(['idle', 'waiting_user', 'completed', 'failed']);
 const ARCHIVABLE_STATUSES = new Set(['idle', 'completed', 'failed', 'cancelled']);
@@ -192,6 +208,106 @@ function runtimeLabel(kind: string | null | undefined): string {
   if (kind === 'dsh') return 'DeepSeek Harness';
   if (kind === 'hermes') return 'Hermes';
   return 'Pi';
+}
+
+function formatWorkDuration(durationMs: number | undefined): string | null {
+  if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return null;
+  if (durationMs < 1_000) return `${Math.round(durationMs)} ms`;
+  const seconds = durationMs / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+}
+
+function parseWorkTiming(value: unknown): WorkTiming | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  const startedAt = typeof data.startedAt === 'number' && Number.isFinite(data.startedAt) && data.startedAt > 0
+    ? data.startedAt
+    : null;
+  if (startedAt === null) return null;
+  const completedAt = typeof data.completedAt === 'number' && Number.isFinite(data.completedAt) && data.completedAt >= startedAt
+    ? data.completedAt
+    : undefined;
+  const durationMs = typeof data.durationMs === 'number' && Number.isFinite(data.durationMs) && data.durationMs >= 0
+    ? data.durationMs
+    : undefined;
+  const approvalWaitMs = typeof data.approvalWaitMs === 'number' && Number.isFinite(data.approvalWaitMs) && data.approvalWaitMs >= 0
+    ? data.approvalWaitMs
+    : undefined;
+  return {
+    startedAt,
+    ...(completedAt === undefined ? {} : { completedAt }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(approvalWaitMs === undefined ? {} : { approvalWaitMs }),
+    ...(typeof data.runtimeKind === 'string' && data.runtimeKind ? { runtimeKind: data.runtimeKind } : {}),
+    ...(typeof data.modelName === 'string' && data.modelName ? { modelName: data.modelName } : {}),
+  };
+}
+
+function messageWorkTiming(message: WorkMessage): WorkTiming | null {
+  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
+    const part = message.parts[index];
+    if (part?.type !== 'data-work-timing') continue;
+    const timing = parseWorkTiming(part.data);
+    if (timing) return timing;
+  }
+  return null;
+}
+
+function workTimingDuration(timing: WorkTiming | null, now?: number): number | undefined {
+  if (!timing) return undefined;
+  const finishedAt = timing.completedAt ?? now;
+  const total = timing.durationMs
+    ?? (finishedAt === undefined ? undefined : Math.max(0, finishedAt - timing.startedAt));
+  if (total === undefined) return undefined;
+  return Math.max(0, total - (timing.approvalWaitMs ?? 0));
+}
+
+function WorkElapsed({
+  timing,
+  live = false,
+  dataUi,
+  className,
+  separator = false,
+}: {
+  timing: WorkTiming | null;
+  live?: boolean;
+  dataUi: string;
+  className?: string;
+  separator?: boolean;
+}) {
+  const [now, setNow] = useState<number | null>(null);
+  const startedAt = timing?.startedAt;
+  const completedAt = timing?.completedAt;
+  useEffect(() => {
+    if (!live || startedAt === undefined || completedAt !== undefined) return undefined;
+    const update = () => setNow(Date.now());
+    update();
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
+  }, [completedAt, live, startedAt]);
+  const duration = workTimingDuration(timing, live ? now ?? undefined : undefined);
+  const label = formatWorkDuration(duration);
+  return label ? (
+    <>
+      {separator ? <span aria-hidden="true" className="shrink-0 text-muted-foreground">·</span> : null}
+      <span data-ui={dataUi} className={className} title={`${Math.round(duration ?? 0)} ms`}>{label}</span>
+    </>
+  ) : null;
+}
+
+function workToolLabel(part: Pick<WorkPart, 'deploymentName' | 'originalToolName' | 'toolName'>): string {
+  if (part.deploymentName && part.originalToolName) return `${part.deploymentName} · ${part.originalToolName}`;
+  return part.originalToolName ?? part.toolName ?? 'Tool';
+}
+
+function formatWorkMessageTime(value: string | undefined): { label: string; title: string } | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return {
+    label: date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+    title: date.toLocaleString(),
+  };
 }
 
 function workHref(slug: string, id: string) {
@@ -399,17 +515,27 @@ function WorkDirectoryControl({
 
 function WorkTranscript({
   agentName,
+  modelName: fallbackModelName,
   messages,
-  status,
   streamText,
   streamActivities,
+  streamStartedAt,
+  streamRuntimeKind,
+  streamModelName,
+  sessionStartedAt,
+  sessionCompletedAt,
   streaming,
 }: {
   agentName: string;
+  modelName?: string | null;
   messages: WorkMessage[];
-  status: string;
   streamText: string;
   streamActivities: WorkActivity[];
+  streamStartedAt?: number;
+  streamRuntimeKind?: string;
+  streamModelName?: string;
+  sessionStartedAt?: string | null;
+  sessionCompletedAt?: string | null;
   streaming: boolean;
 }) {
   const t = useTranslations('console.work');
@@ -417,9 +543,10 @@ function WorkTranscript({
   const common = useTranslations('common');
   const copyButtonClassName = `${assistantMessageActionClassName} opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/message:opacity-100 group-hover/message:opacity-100`;
   const transcript = streaming
-    ? [...messages, {
+      ? [...messages, {
         id: 'work-stream',
         role: 'assistant',
+        ...(streamStartedAt ? { createdAt: new Date(streamStartedAt).toISOString() } : {}),
         parts: [
           ...streamActivities.map((activity): WorkPart => {
             if (activity.type === 'tool') {
@@ -427,6 +554,9 @@ function WorkTranscript({
                 type: 'work-tool',
                 toolCallId: activity.toolCallId,
                 toolName: activity.toolName,
+                deploymentName: activity.deploymentName,
+                originalToolName: activity.originalToolName,
+                durationMs: activity.durationMs,
                 input: activity.input,
                 output: activity.output,
                 isError: activity.isError,
@@ -443,6 +573,14 @@ function WorkTranscript({
             };
           }),
           ...(streamText ? [{ type: 'text', text: streamText }] : []),
+          ...(streamStartedAt ? [{
+            type: 'data-work-timing',
+            data: {
+              startedAt: streamStartedAt,
+              ...(streamRuntimeKind ? { runtimeKind: streamRuntimeKind } : {}),
+              ...(streamModelName ? { modelName: streamModelName } : {}),
+            },
+          }] : []),
         ],
       }]
     : messages;
@@ -460,31 +598,36 @@ function WorkTranscript({
     <div className="mx-auto w-full max-w-[53rem] px-6 py-1.5">
       {transcript.map((message) => {
         const isStreamingMessage = message.id === 'work-stream';
+        const messageTime = formatWorkMessageTime(message.createdAt);
+        const persistedTiming = messageWorkTiming(message);
+        const sessionStart = Date.parse(sessionStartedAt ?? '');
+        const sessionEnd = Date.parse(sessionCompletedAt ?? '');
+        const fallbackTiming: WorkTiming | null = !persistedTiming
+          && !isStreamingMessage
+          && message.role === 'assistant'
+          && messages.filter((item) => item.role === 'assistant').length === 1
+          && Number.isFinite(sessionStart)
+          && Number.isFinite(sessionEnd)
+          && sessionEnd >= sessionStart
+          ? { startedAt: sessionStart, completedAt: sessionEnd, durationMs: sessionEnd - sessionStart }
+          : null;
+        const messageTiming = persistedTiming ?? fallbackTiming;
+        const messageModelName = messageTiming?.modelName ?? resolveContextUsage([message])?.modelName ?? fallbackModelName;
         const rawText = message.parts
           .filter((part) => part.type === 'text' && typeof part.text === 'string')
           .map((part) => part.text)
           .join('\n');
         const text = isStreamingMessage ? rawText : rawText.trim();
-        const toolParts = message.parts.filter((part) => part.type === 'work-tool');
-        const reasoningParts = message.parts.filter((part) => part.type === 'reasoning');
-        const allRuntimeParts = message.parts.filter((part) => part.type === 'work-runtime');
-        const runtimeParts = (reasoningParts.length || toolParts.length)
-          && allRuntimeParts.every((part) => part.status !== 'failed' && part.status !== 'cancelled')
-          ? [] : allRuntimeParts;
-        const processParts = [...reasoningParts, ...toolParts, ...runtimeParts];
-        const activeTool = [...toolParts].reverse().find((part) => part.status === 'running');
-        const activeReasoning = reasoningParts.some((part) => part.status === 'running');
-        const activeRuntime = runtimeParts.find((part) => part.status === 'running');
-        const processRunning = Boolean(activeTool || activeReasoning || activeRuntime);
-        const processFailed = processParts.some((part) => part.isError || part.status === 'failed');
-        const processCancelled = processParts.some((part) => part.status === 'cancelled');
-        const activeLabel = activeTool?.toolName
-          ? t('usingTool', { tool: activeTool.toolName })
-          : activeReasoning
-            ? t('thinking')
-            : activeRuntime
-              ? t('runtimeWorking', { runtime: runtimeLabel(activeRuntime.runtimeKind) })
-              : '';
+        const processParts = message.parts.filter((part) => (
+          part.type === 'reasoning'
+          || part.type === 'work-tool'
+          || (part.type === 'work-runtime' && (part.status === 'failed' || part.status === 'cancelled'))
+        ));
+        const visibleProcessParts = processParts.filter((part) => (
+          part.type !== 'work-runtime' || !isStreamingMessage || part.status !== 'running'
+        ));
+        const processFailed = visibleProcessParts.some((part) => part.isError || part.status === 'failed');
+        const processCancelled = visibleProcessParts.some((part) => part.status === 'cancelled');
         const fileParts = message.parts.filter((part) => (
           part.type === 'file'
           && typeof part.filename === 'string'
@@ -506,6 +649,63 @@ function WorkTranscript({
             ))}
           </div>
         ) : null;
+        const processTimeline = (live: boolean) => visibleProcessParts.map((part, index) => {
+          if (part.type === 'work-runtime') {
+            return (
+              <div key={`${message.id}-runtime-${index}`} className="flex min-h-7 items-center gap-2 rounded-md px-1 text-muted-foreground">
+                {part.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : part.status === 'failed' ? <CircleAlert className="size-3.5 text-red-600" /> : part.status === 'cancelled' ? <CirclePause className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+                <TerminalSquare className="size-3.5" />
+                <span>{part.status === 'running' ? t('runtimeWorking', { runtime: runtimeLabel(part.runtimeKind) }) : part.status === 'cancelled' ? t('runtimeCancelled', { runtime: runtimeLabel(part.runtimeKind) }) : runtimeLabel(part.runtimeKind)}</span>
+              </div>
+            );
+          }
+          if (part.type === 'reasoning') {
+            const running = part.status === 'running';
+            return (
+              <details key={`${message.id}-reasoning-${index}`} open={live && running} className="group/reasoning rounded-md">
+                <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
+                  {running ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                  <Activity className="size-3.5" />
+                  <span>{running ? t('thinking') : t('thought')}</span>
+                  {part.text ? <ChevronRight className="ml-auto size-3.5 transition-transform group-open/reasoning:rotate-90" /> : null}
+                </summary>
+                {part.text ? <pre className="ml-5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground">{part.text}</pre> : null}
+              </details>
+            );
+          }
+          if (part.type !== 'work-tool') return null;
+          const running = part.status === 'running';
+          const failed = part.isError || part.status === 'failed';
+          const cancelled = part.status === 'cancelled';
+          const toolLabel = workToolLabel(part);
+          const duration = formatWorkDuration(part.durationMs);
+          return (
+            <details key={part.toolCallId ?? `${message.id}-${index}`} open={live ? running || failed : failed} className={cx('group/tool rounded-md', failed && 'bg-red-500/5')}>
+              <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 marker:content-none hover:bg-muted/50">
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/tool:rotate-90" />
+                <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{toolLabel}</span>
+                {!running && duration ? <span className="shrink-0 text-[10px] text-muted-foreground" title={`${part.durationMs} ms`}>{duration}</span> : null}
+                <span className={cx('inline-flex shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium', failed ? 'text-red-700 dark:text-red-300' : 'text-muted-foreground')}>
+                  {running ? <Loader2 className="size-3 animate-spin" /> : failed ? <CircleAlert className="size-3" /> : cancelled ? <CirclePause className="size-3" /> : <CheckCircle2 className="size-3" />}
+                  {running ? t('toolRunning') : failed ? t('toolFailed') : cancelled ? t('toolCancelled') : t('toolCompleted')}
+                </span>
+              </summary>
+              <div className="ml-5 space-y-3 px-2 py-2">
+                <div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolInput')}</p>
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">{formatValue(part.input)}</pre>
+                </div>
+                {!running && part.output !== undefined ? (
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolOutput')}</p>
+                    <pre className={cx('max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md p-2 text-[11px] leading-relaxed', failed ? 'bg-red-500/5 text-red-800 dark:text-red-200' : 'bg-muted/30 text-foreground')}>{formatValue(part.output)}</pre>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          );
+        });
 
         if (message.role === 'user') {
           return (
@@ -520,7 +720,17 @@ function WorkTranscript({
                 </div>
               </div>
               {text ? (
-                <div className="mr-10 min-h-[26px]">
+                <div className="mr-10 flex min-h-[26px] items-center justify-end gap-2">
+                  {messageTime ? (
+                    <time
+                      data-ui="work-message-time"
+                      dateTime={message.createdAt}
+                      title={messageTime.title}
+                      className="text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+                    >
+                      {messageTime.label}
+                    </time>
+                  ) : null}
                   <CopyButton text={text} label={common('copy')} iconOnly className={copyButtonClassName} />
                 </div>
               ) : null}
@@ -532,6 +742,27 @@ function WorkTranscript({
           <AssistantReply
             key={message.id}
             agentName={agentName}
+            headerMeta={(
+              <>
+                {messageModelName ? <span data-ui="assistant-reply-model" title={messageModelName} className="min-w-0 truncate text-xs font-normal text-muted-foreground">{messageModelName}</span> : null}
+                {messageTime ? (
+                  <time
+                    data-ui="work-message-time"
+                    dateTime={message.createdAt}
+                    title={messageTime.title}
+                    className="shrink-0 text-[10px] font-normal text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+                  >
+                    {messageTime.label}
+                  </time>
+                ) : null}
+                <WorkElapsed
+                  timing={messageTiming}
+                  live={isStreamingMessage}
+                  dataUi="work-message-duration"
+                  className="shrink-0 text-[10px] font-normal text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+                />
+              </>
+            )}
             streaming={isStreamingMessage}
             actions={!isStreamingMessage && text ? (
               <CopyButton text={text} label={common('copy')} iconOnly className={copyButtonClassName} />
@@ -539,74 +770,32 @@ function WorkTranscript({
           >
             <div className="min-w-0">
               {attachmentLinks}
-              {processParts.length ? (
-                <details open={isStreamingMessage || processFailed} className="group/process my-1.5 text-xs">
-                  <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-                    <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
-                    {processRunning ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : processFailed ? <CircleAlert className="size-3.5 shrink-0 text-red-600" /> : processCancelled ? <CirclePause className="size-3.5 shrink-0" /> : <CheckCircle2 className="size-3.5 shrink-0" />}
-                    <span className="shrink-0 font-medium text-foreground">{processRunning ? t('processing') : processFailed ? t('processFailed') : processCancelled ? t('processCancelled') : t('processed')}</span>
-                    {activeLabel ? <span className="min-w-0 truncate text-[11px]">{activeLabel}</span> : null}
-                  </summary>
-                  <div className="ml-5 py-1">
-                    {runtimeParts.map((part, index) => (
-                      <div key={`${message.id}-runtime-${index}`} className="flex min-h-7 items-center gap-2 rounded-md px-1 text-muted-foreground">
-                        {part.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : part.status === 'failed' ? <CircleAlert className="size-3.5 text-red-600" /> : part.status === 'cancelled' ? <CirclePause className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
-                        <TerminalSquare className="size-3.5" />
-                        <span>{part.status === 'running' ? t('runtimeWorking', { runtime: runtimeLabel(part.runtimeKind) }) : part.status === 'cancelled' ? t('runtimeCancelled', { runtime: runtimeLabel(part.runtimeKind) }) : runtimeLabel(part.runtimeKind)}</span>
-                      </div>
-                    ))}
-                    {reasoningParts.map((part, index) => (
-                      <details key={`${message.id}-reasoning-${index}`} open={part.status === 'running'} className="group/reasoning rounded-md">
-                        <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-                          {part.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                          <Activity className="size-3.5" />
-                          <span>{part.status === 'running' ? t('thinking') : t('thought')}</span>
-                          {part.text ? <ChevronRight className="ml-auto size-3.5 transition-transform group-open/reasoning:rotate-90" /> : null}
-                        </summary>
-                        {part.text ? <pre className="ml-5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground">{part.text}</pre> : null}
-                      </details>
-                    ))}
-                    {toolParts.map((part, index) => {
-                      const running = part.status === 'running';
-                      const failed = part.isError || part.status === 'failed';
-                      const cancelled = part.status === 'cancelled';
-                      return (
-                        <details key={part.toolCallId ?? `${message.id}-${index}`} open={failed} className={cx('group/tool rounded-md', failed && 'bg-red-500/5')}>
-                          <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 marker:content-none hover:bg-muted/50">
-                            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/tool:rotate-90" />
-                            <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-                            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{part.toolName}</span>
-                            <span className={cx('inline-flex shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium', failed ? 'text-red-700 dark:text-red-300' : 'text-muted-foreground')}>
-                              {running ? <Loader2 className="size-3 animate-spin" /> : failed ? <CircleAlert className="size-3" /> : cancelled ? <CirclePause className="size-3" /> : <CheckCircle2 className="size-3" />}
-                              {running ? t('toolRunning') : failed ? t('toolFailed') : cancelled ? t('toolCancelled') : t('toolCompleted')}
-                            </span>
-                          </summary>
-                          <div className="ml-5 space-y-3 px-2 py-2">
-                            <div>
-                              <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolInput')}</p>
-                              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">{formatValue(part.input)}</pre>
-                            </div>
-                            {!running && part.output !== undefined ? (
-                              <div>
-                                <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolOutput')}</p>
-                                <pre className={cx('max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md p-2 text-[11px] leading-relaxed', failed ? 'bg-red-500/5 text-red-800 dark:text-red-200' : 'bg-muted/30 text-foreground')}>{formatValue(part.output)}</pre>
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
-                      );
-                    })}
+              {isStreamingMessage || visibleProcessParts.length ? (
+                isStreamingMessage ? (
+                  <div data-ui="work-process" className="my-1.5 space-y-1 text-xs">
+                    <div className="flex min-h-7 items-center gap-1.5 px-1 text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      <span className="font-medium text-foreground">{t('processing')}</span>
+                      <WorkElapsed timing={messageTiming} live separator dataUi="work-process-duration" className="text-[10px] text-muted-foreground" />
+                    </div>
+                    {visibleProcessParts.length ? <div className="space-y-1">{processTimeline(true)}</div> : null}
                   </div>
-                </details>
+                ) : (
+                  <details data-ui="work-process" open={processFailed || processCancelled} className="group/process my-1.5 text-xs">
+                    <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
+                      <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
+                      {processFailed ? <CircleAlert className="size-3.5 shrink-0 text-red-600" /> : processCancelled ? <CirclePause className="size-3.5 shrink-0" /> : <CheckCircle2 className="size-3.5 shrink-0" />}
+                      <span className="shrink-0 font-medium text-foreground">{processFailed ? t('processFailed') : processCancelled ? t('processCancelled') : t('processed')}</span>
+                      <WorkElapsed timing={messageTiming} separator dataUi="work-process-duration" className="shrink-0 text-[10px] text-muted-foreground" />
+                    </summary>
+                    <div className="ml-5 py-1">
+                      {processTimeline(false)}
+                    </div>
+                  </details>
+                )
               ) : null}
               {text ? (
                 <AssistantMarkdown text={text} streaming={isStreamingMessage} />
-              ) : null}
-              {isStreamingMessage && !text && !processParts.length ? (
-                <ConversationPendingIndicator
-                  label={status === 'queued' ? t('preparingReply') : t('generatingReply')}
-                  className="py-0.5 pl-0"
-                />
               ) : null}
             </div>
           </AssistantReply>
@@ -746,6 +935,9 @@ export function WorkspaceWork({
     workSessionId: string;
     text: string;
     activities: WorkActivity[];
+    startedAt?: number;
+    runtimeKind?: string;
+    modelName?: string;
   }>({ workSessionId: '', text: '', activities: [] });
   const agent = useMemo(() => agents.find((item) => item.id === agentId) ?? null, [agents, agentId]);
   const selectedAgent = selected ? agents.find((item) => item.id === selected.agentId) ?? null : null;
@@ -785,6 +977,9 @@ export function WorkspaceWork({
   const selectedStatus = selected?.status;
   const streamText = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.text : '';
   const streamActivities = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.activities : EMPTY_WORK_ACTIVITIES;
+  const streamStartedAt = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.startedAt : undefined;
+  const streamRuntimeKind = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.runtimeKind : undefined;
+  const streamModelName = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.modelName : undefined;
   const contextUsage = useMemo(() => resolveContextUsage(selected?.messages ?? [], {
     maxTokens: controlAgent?.contextWindow,
     modelName: controlAgent?.model,
@@ -897,20 +1092,39 @@ export function WorkspaceWork({
     };
 
     source.addEventListener('snapshot', (event) => {
-      const next = payload<{ text?: string; activities?: WorkActivity[]; active?: boolean; done?: boolean }>(event);
+      const next = payload<{
+        text?: string;
+        activities?: WorkActivity[];
+        active?: boolean;
+        done?: boolean;
+        startedAt?: number;
+        runtimeKind?: string;
+        modelName?: string;
+      }>(event);
       if (!next) return;
       setStreamOutput({
         workSessionId: selectedWorkSessionId,
         text: next.text ?? '',
         activities: Array.isArray(next.activities) ? next.activities : [],
+        ...(typeof next.startedAt === 'number' ? { startedAt: next.startedAt } : {}),
+        ...(typeof next.runtimeKind === 'string' ? { runtimeKind: next.runtimeKind } : {}),
+        ...(typeof next.modelName === 'string' ? { modelName: next.modelName } : {}),
       });
       if (next.done) {
         void finish();
         return;
       }
     });
-    source.addEventListener('start', () => {
-      setStreamOutput({ workSessionId: selectedWorkSessionId, text: '', activities: [] });
+    source.addEventListener('start', (event) => {
+      const next = payload<{ startedAt?: number; runtimeKind?: string; modelName?: string }>(event);
+      setStreamOutput({
+        workSessionId: selectedWorkSessionId,
+        text: '',
+        activities: [],
+        ...(typeof next?.startedAt === 'number' ? { startedAt: next.startedAt } : {}),
+        ...(typeof next?.runtimeKind === 'string' ? { runtimeKind: next.runtimeKind } : {}),
+        ...(typeof next?.modelName === 'string' ? { modelName: next.modelName } : {}),
+      });
       void refreshSelected();
     });
     source.addEventListener('delta', (event) => {
@@ -920,6 +1134,9 @@ export function WorkspaceWork({
         workSessionId: selectedWorkSessionId,
         text: (current.workSessionId === selectedWorkSessionId ? current.text : '') + next.delta,
         activities: current.workSessionId === selectedWorkSessionId ? current.activities : [],
+        ...(current.workSessionId === selectedWorkSessionId && current.startedAt !== undefined ? { startedAt: current.startedAt } : {}),
+        ...(current.workSessionId === selectedWorkSessionId && current.runtimeKind ? { runtimeKind: current.runtimeKind } : {}),
+        ...(current.workSessionId === selectedWorkSessionId && current.modelName ? { modelName: current.modelName } : {}),
       }));
     });
     source.addEventListener('activity', (event) => {
@@ -929,6 +1146,9 @@ export function WorkspaceWork({
         workSessionId: selectedWorkSessionId,
         text: current.workSessionId === selectedWorkSessionId ? current.text : '',
         activities: next.activities ?? [],
+        ...(current.workSessionId === selectedWorkSessionId && current.startedAt !== undefined ? { startedAt: current.startedAt } : {}),
+        ...(current.workSessionId === selectedWorkSessionId && current.runtimeKind ? { runtimeKind: current.runtimeKind } : {}),
+        ...(current.workSessionId === selectedWorkSessionId && current.modelName ? { modelName: current.modelName } : {}),
       }));
       if (next.activities.some((activity) => activity.toolName === 'Hermes approval' && activity.status === 'running')) {
         void refreshSelected();
@@ -1431,10 +1651,15 @@ export function WorkspaceWork({
               <>
                 <WorkTranscript
                   agentName={controlAgent?.name ?? t('agent')}
+                  modelName={selected?.hermesModel ?? selectedAgent?.model ?? null}
                   messages={selected.messages}
-                  status={selected.status}
                   streamText={streamText}
                   streamActivities={streamActivities}
+                  streamStartedAt={streamStartedAt}
+                  streamRuntimeKind={streamRuntimeKind}
+                  streamModelName={streamModelName}
+                  sessionStartedAt={selected.startedAt}
+                  sessionCompletedAt={selected.completedAt}
                   streaming={selectedActive}
                 />
                 {selected.artifacts.length ? (

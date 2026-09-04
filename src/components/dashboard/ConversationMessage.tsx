@@ -84,6 +84,7 @@ function PlainAssistantMarkdown({
 
 type AssistantReplyProps = Omit<ComponentPropsWithoutRef<'article'>, 'children'> & {
   agentName: string;
+  headerMeta?: ReactNode;
   children?: ReactNode;
   actions?: ReactNode;
   streaming?: boolean;
@@ -92,6 +93,7 @@ type AssistantReplyProps = Omit<ComponentPropsWithoutRef<'article'>, 'children'>
 
 export const AssistantReply = forwardRef<HTMLElement, AssistantReplyProps>(function AssistantReply({
   agentName,
+  headerMeta,
   children,
   actions,
   streaming = false,
@@ -112,7 +114,10 @@ export const AssistantReply = forwardRef<HTMLElement, AssistantReplyProps>(funct
         <Bot className="size-[15px]" />
       </div>
       <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] flex-1">
-        <div className="text-sm font-semibold leading-5 text-foreground">{agentName}</div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className="min-w-0 truncate text-sm font-semibold leading-5 text-foreground">{agentName}</div>
+          {headerMeta}
+        </div>
         <div className="mt-2 min-w-0 break-words text-sm leading-[1.65] text-foreground" aria-live={streaming ? 'polite' : undefined}>
           {children ?? (streaming ? placeholder : null)}
         </div>

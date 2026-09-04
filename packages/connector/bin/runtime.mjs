@@ -34,7 +34,7 @@ Usage:
   connector connect --server <url> --token <token> [--root <path>] [--screen-vnc <127.0.0.1:port|auto>]
 
 Example:
-  npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox"
+  npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox"
 `);
   process.exit(exitCode);
 }

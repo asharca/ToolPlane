@@ -32,6 +32,7 @@ describe('buildToolSet', () => {
     const key = toolKey('run1', 'echo');
     const keys = Object.keys(set);
     expect(keys).toEqual([key]);
+    expect(set[key]?.toolplaneOrigin).toEqual({ deploymentId: 'run1', originalToolName: 'echo' });
     expect(deps.listMcpTools).not.toHaveBeenCalledWith('stopped2');
     expect(deps.loadMcpToolPolicies).toHaveBeenCalledWith(['run1', 'stopped2'], 'ws1');
 

@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   ensureHermesProfileProjection: vi.fn(),
   getProvider: vi.fn(),
   workspaceUpdate: vi.fn(),
+  deleteManagedAgent: vi.fn(),
   redirect: vi.fn(),
 }));
 
@@ -93,6 +94,7 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
   syncHermesRuntime: mocks.syncHermesRuntime,
   upgradeHermesRuntime: mocks.upgradeHermesRuntime,
 }));
+vi.mock('@/lib/agents/deletion', () => ({ deleteManagedAgent: mocks.deleteManagedAgent }));
 vi.mock('@/lib/agents/hermes/profiles', () => ({
   ensureHermesProfileProjection: mocks.ensureHermesProfileProjection,
   hasHermesProfileModel: (
@@ -115,6 +117,7 @@ import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
   createAgentAction,
+  deleteAgentAction,
   updateAgentAction,
   updateAgentModelAction,
   updateHermesConversationSelectionAction,
@@ -333,6 +336,31 @@ describe('createAgentAction', () => {
       expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('deleteAgentAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    mocks.deleteManagedAgent.mockResolvedValue(true);
+  });
+
+  it('deletes a Hermes agent from the unified sandbox view and returns there', async () => {
+    const form = runtimeForm();
+    form.set('returnTo', '/app/acme/sandboxes');
+
+    await deleteAgentAction(form);
+
+    expect(mocks.deleteManagedAgent).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      agentId: 'agent-1',
+      actorId: 'user-1',
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/agents');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/sandboxes');
+    expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/sandboxes');
+  });
 });
 
 describe('model configuration action', () => {

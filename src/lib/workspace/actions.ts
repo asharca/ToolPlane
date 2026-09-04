@@ -44,6 +44,7 @@ import { runMcpDeploymentOperation } from '@/lib/workspace/mcp-operation';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 import { mcpHeaderSecrets, redactMcpResult } from '@/lib/process/mcp-result-redaction';
 import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
+import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
 
 export type WorkspaceInviteState = { error?: string; message?: string };
 
@@ -52,6 +53,8 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_DEPLOYMENT_ENV_VARS = 100;
 const MAX_DEPLOYMENT_ENV_VALUE_LENGTH = 16_000;
 const MAX_DEPLOYMENT_ENV_LENGTH = 64_000;
+const MAX_DEPLOYMENT_ID_LENGTH = 128;
+const MAX_INSTALLED_SKILL_ID_LENGTH = 128;
 
 function mcpProcessOptions(workspaceId: string, deploymentId: string) {
   return {
@@ -67,6 +70,19 @@ async function authorizedWorkspace(slug: string) {
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) return null;
   return { user, ws };
+}
+
+function selectedInstalledSkillIds(formData: FormData): string[] | null {
+  const values = formData.getAll('installId');
+  if (values.length === 0 || values.length > MAX_TOOLKIT_BATCH_ITEMS) return null;
+  const ids: string[] = [];
+  for (const value of values) {
+    if (typeof value !== 'string') return null;
+    const id = value.trim();
+    if (!id || id.length > MAX_INSTALLED_SKILL_ID_LENGTH) return null;
+    ids.push(id);
+  }
+  return [...new Set(ids)];
 }
 
 async function deploymentInWorkspace(deploymentId: string, workspaceId: string) {
@@ -85,6 +101,60 @@ async function deploymentInWorkspace(deploymentId: string, workspaceId: string) 
         take: 1,
       },
     },
+  });
+}
+
+function selectedDeploymentIds(formData: FormData): string[] | null {
+  const values = formData.getAll('deploymentId');
+  if (values.length === 0 || values.length > MAX_TOOLKIT_BATCH_ITEMS) return null;
+  const ids: string[] = [];
+  for (const value of values) {
+    if (typeof value !== 'string') return null;
+    const id = value.trim();
+    if (!id || id.length > MAX_DEPLOYMENT_ID_LENGTH) return null;
+    ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
+async function selectedDeploymentsInWorkspace(deploymentIds: string[], workspaceId: string) {
+  const deployments = await db.deployment.findMany({
+    where: {
+      id: { in: deploymentIds },
+      workspaceId,
+      OR: [{ source: null }, { source: { not: 'sandbox' } }],
+    },
+    include: {
+      server: { select: { name: true, slug: true, installCfg: true } },
+      marketInstall: { select: { id: true } },
+      toolkitLinks: {
+        where: { toolkit: { marketInstall: { isNot: null } } },
+        select: { toolkitId: true },
+        take: 1,
+      },
+    },
+  });
+  return deployments.length === deploymentIds.length ? deployments : null;
+}
+
+async function removeWorkspaceDeployment(workspaceId: string, deploymentId: string) {
+  return runMcpDeploymentOperation(workspaceId, deploymentId, async () => {
+    const dep = await deploymentInWorkspace(deploymentId, workspaceId);
+    if (!dep || dep.marketInstall || dep.toolkitLinks?.length) return null;
+
+    await killProcess(dep.id, { preventRestart: true });
+    if (dep.source) {
+      // A failed Docker bridge can leave its named runtime container alive after
+      // its local supervisor exits. Remove it before its read-only config volume.
+      await removeDeploymentContainer(dep.id);
+      // Clean a stale named volume even if the final file was deleted just before
+      // a failed restart. Builtin deployments have no container volume at all.
+      await removeDeploymentConfigVolume(dep.id);
+    }
+    await db.deployment.deleteMany({
+      where: { id: dep.id, workspaceId },
+    });
+    return { serverSlug: dep.server?.slug ?? null };
   });
 }
 
@@ -842,25 +912,7 @@ export async function removeDeploymentAction(formData: FormData) {
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
-    const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-    if (!dep) return null;
-    if (dep.marketInstall || dep.toolkitLinks?.length) return null;
-
-    await killProcess(dep.id, { preventRestart: true });
-    if (dep.source) {
-      // A failed Docker bridge can leave its named runtime container alive after
-      // its local supervisor exits. Remove it before its read-only config volume.
-      await removeDeploymentContainer(dep.id);
-      // Clean a stale named volume even if the final file was deleted just before
-      // a failed restart. Builtin deployments have no container volume at all.
-      await removeDeploymentConfigVolume(dep.id);
-    }
-    await db.deployment.deleteMany({
-      where: { id: dep.id, workspaceId: ctx.ws.id },
-    });
-    return { serverSlug: dep.server?.slug ?? null };
-  });
+  const operation = await removeWorkspaceDeployment(ctx.ws.id, deploymentId);
   if (!operation.accepted || !operation.value) return;
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/market/mcp`);
@@ -872,26 +924,62 @@ export async function removeDeploymentAction(formData: FormData) {
   redirect(`/app/${slug}/mcp`);
 }
 
+export async function removeDeploymentsAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentIds = selectedDeploymentIds(formData);
+  if (!slug || !deploymentIds) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const deployments = await selectedDeploymentsInWorkspace(deploymentIds, ctx.ws.id);
+  if (!deployments || deployments.some((dep) => dep.marketInstall || dep.toolkitLinks.length)) return;
+
+  const removed = [] as Array<{ serverSlug: string | null }>;
+  for (const deployment of deployments) {
+    const operation = await removeWorkspaceDeployment(ctx.ws.id, deployment.id);
+    if (operation.accepted && operation.value) removed.push(operation.value);
+  }
+  if (!removed.length) return;
+
+  revalidatePath(`/app/${slug}/mcp`);
+  revalidatePath(`/app/${slug}/market/mcp`);
+  for (const serverSlug of new Set(removed.map(({ serverSlug }) => serverSlug).filter(Boolean))) {
+    revalidatePath(`/app/${slug}/market/mcp/${serverSlug}`);
+  }
+}
+
 export async function startDeploymentAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const deploymentId = String(formData.get('deploymentId') ?? '');
   if (!slug || !deploymentId) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const operation = await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
+  await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
-    if (!dep) return 'missing' as const;
-    if (!(await deploymentEnvironmentIsReady(dep))) return 'setup_required' as const;
+    if (!dep || !(await deploymentEnvironmentIsReady(dep))) return;
     await startProcess(dep.id, resolveSpawnSpec(dep), mcpProcessOptions(ctx.ws.id, dep.id));
-    return 'started' as const;
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
-  if (!operation.accepted || operation.value === 'missing') return;
-  if (operation.value === 'setup_required') {
-    return redirect(`/app/${slug}/mcp/${deploymentId}?tab=variables`);
+}
+
+export async function startDeploymentsAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentIds = selectedDeploymentIds(formData);
+  if (!slug || !deploymentIds) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const deployments = await selectedDeploymentsInWorkspace(deploymentIds, ctx.ws.id);
+  if (!deployments) return;
+
+  for (const deployment of deployments) {
+    await runMcpDeploymentOperation(ctx.ws.id, deployment.id, async () => {
+      const current = await deploymentInWorkspace(deployment.id, ctx.ws.id);
+      if (!current || !(await deploymentEnvironmentIsReady(current))) return;
+      await startProcess(current.id, resolveSpawnSpec(current), mcpProcessOptions(ctx.ws.id, current.id));
+    });
   }
-  return redirect(`/app/${slug}/mcp/${deploymentId}?tab=logs#runtime-logs`);
+  revalidatePath(`/app/${slug}/mcp`);
+  for (const deployment of deployments) revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
 }
 
 export async function stopDeploymentAction(formData: FormData) {
@@ -911,6 +999,30 @@ export async function stopDeploymentAction(formData: FormData) {
   });
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deploymentId}`);
+}
+
+export async function stopDeploymentsAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const deploymentIds = selectedDeploymentIds(formData);
+  if (!slug || !deploymentIds) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return;
+  const deployments = await selectedDeploymentsInWorkspace(deploymentIds, ctx.ws.id);
+  if (!deployments) return;
+
+  for (const deployment of deployments) {
+    await runMcpDeploymentOperation(ctx.ws.id, deployment.id, async () => {
+      const current = await deploymentInWorkspace(deployment.id, ctx.ws.id);
+      if (!current) return;
+      if (missingDeploymentEnvironment(current).length > 0) {
+        await markDeploymentSetupRequired(current.id);
+      } else {
+        await stopProcess(current.id);
+      }
+    });
+  }
+  revalidatePath(`/app/${slug}/mcp`);
+  for (const deployment of deployments) revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
 }
 
 export async function restartDeploymentAction(formData: FormData) {
@@ -986,33 +1098,44 @@ export async function installSkillAction(formData: FormData) {
 
 export async function uninstallSkillAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
-  const installId = String(formData.get('installId') ?? '');
-  if (!slug || !installId) return;
+  const installIds = selectedInstalledSkillIds(formData);
+  if (!slug || !installIds) return;
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
 
-  const installed = await db.installedSkill.findFirst({
-    where: { id: installId, workspaceId: ctx.ws.id },
-    select: {
-      skill: { select: { slug: true } },
-      marketInstall: { select: { id: true } },
-      toolkitLinks: {
-        where: { toolkit: { marketInstall: { isNot: null } } },
-        select: { toolkitId: true },
-        take: 1,
+  const installed = await db.$transaction(async (tx) => {
+    const selected = await tx.installedSkill.findMany({
+      where: { id: { in: installIds }, workspaceId: ctx.ws.id },
+      select: {
+        id: true,
+        skill: { select: { slug: true } },
+        marketInstall: { select: { id: true } },
+        toolkitLinks: {
+          where: { toolkit: { marketInstall: { isNot: null } } },
+          select: { toolkitId: true },
+          take: 1,
+        },
       },
-    },
+    });
+    if (selected.length !== installIds.length
+      || selected.some((skill) => skill.marketInstall || skill.toolkitLinks.length)) return null;
+
+    const deleted = await tx.installedSkill.deleteMany({
+      where: {
+        id: { in: installIds },
+        workspaceId: ctx.ws.id,
+        marketInstall: { is: null },
+        toolkitLinks: { none: { toolkit: { marketInstall: { isNot: null } } } },
+      },
+    });
+    if (deleted.count !== installIds.length) throw new Error('Selected skills changed before uninstall completed.');
+    return selected;
   });
   if (!installed) return;
-  if (installed.marketInstall || installed.toolkitLinks?.length) return;
-
-  await db.installedSkill.deleteMany({
-    where: { id: installId, workspaceId: ctx.ws.id },
-  });
   revalidatePath(`/app/${slug}/skills`);
   revalidatePath(`/app/${slug}/market/skills`);
-  if (installed.skill?.slug) {
-    revalidatePath(`/app/${slug}/market/skills/${installed.skill.slug}`);
+  for (const skill of installed) {
+    if (skill.skill?.slug) revalidatePath(`/app/${slug}/market/skills/${skill.skill.slug}`);
   }
 }
 

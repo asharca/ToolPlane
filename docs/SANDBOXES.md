@@ -136,7 +136,7 @@ hosts. Linux, macOS, Windows PowerShell, and Windows Command Prompt all use the
 same one-line command:
 
 ```text
-npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
+npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
 ```
 
 The connector requires Node.js 20+, outbound access to ToolPlane's HTTP and
@@ -161,7 +161,7 @@ with password**, not the Mac account password.
 Android uses the same connector through a nearby computer with `adb` installed:
 
 ```text
-npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
+npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3002" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
 ```
 
 The phone may use USB debugging or Android 11+ Wireless debugging. `auto`

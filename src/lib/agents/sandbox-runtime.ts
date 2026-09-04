@@ -7,6 +7,9 @@ import { db } from '@/lib/db';
 import { estimateContextTokens, type ContextUsageSnapshot } from '@/lib/context-usage';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { sandboxContainerName } from '@/lib/sandboxes/runtime';
+import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
+import { safeSkillFilePath, type SkillBundleFile } from '@/lib/skills/bundle';
+import { skillLabel } from '@/lib/workspace/skill-label';
 import type { SkillForPrompt } from './resolve';
 
 export const SANDBOX_RUNTIME_PACKAGES = {
@@ -37,8 +40,6 @@ const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
-const MAX_SYSTEM_PROMPT_BYTES = 96 * 1024;
-const MAX_SKILL_BYTES = 48 * 1024;
 const RUNTIME_TEMP_ROOT = '/workspace/.toolplane/runtime-tmp';
 const NPM_CACHE = '/workspace/.toolplane/npm-cache';
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -102,6 +103,9 @@ export type SandboxRuntimeActivity = {
   delta?: string;
   toolCallId?: string;
   toolName?: string;
+  durationMs?: number;
+  deploymentId?: string;
+  originalToolName?: string;
   input?: unknown;
   output?: unknown;
   isError?: boolean;
@@ -136,7 +140,7 @@ type DockerExecOptions = {
   executable: string;
   user?: string;
   args?: string[];
-  stdin?: string;
+  stdin?: string | Buffer;
   env?: Record<string, string>;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -164,7 +168,8 @@ function displayValue(value: unknown, maxBytes = 20_000): string {
 }
 
 function safeSegment(value: string, fallback: string): string {
-  return value.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120) || fallback;
+  const segment = value.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120);
+  return segment && segment !== '.' && segment !== '..' ? segment : fallback;
 }
 
 function runtimeFilePath(part: SandboxRuntimeMessage['parts'][number]): string | null {
@@ -223,22 +228,39 @@ export function buildSandboxTranscript(messages: readonly SandboxRuntimeMessage[
   }).join('\n\n').trim();
 }
 
-function skillName(skill: SkillForPrompt): string {
-  return skill.name?.trim() || skill.skill?.name?.trim() || skill.slug?.trim() || skill.skill?.slug?.trim() || 'Skill';
+export type SandboxSkillBundle = {
+  directory: string;
+  markdown: string;
+  files: SkillBundleFile[];
+};
+
+function sandboxSkillDirectoryName(skill: SkillForPrompt, used: Set<string>): string {
+  const label = skillLabel({
+    skillId: skill.skillId,
+    skill: skill.skill,
+    name: skill.name ?? null,
+    slug: skill.slug ?? null,
+    source: skill.source ?? null,
+  });
+  const base = label.slug
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'skill';
+  let directory = base;
+  for (let suffix = 2; used.has(directory); suffix += 1) directory = `${base}-${suffix}`;
+  used.add(directory);
+  return directory;
 }
 
-/** Sandbox CLIs cannot call ToolPlane's skill_read_file, so give them SKILL.md directly. */
-export function inlineSandboxSkills(
-  systemPrompt: string | null | undefined,
-  skills: readonly SkillForPrompt[],
-): string {
-  const sections = systemPrompt?.trim() ? [systemPrompt.trim()] : [];
-  for (const skill of skills) {
-    const content = skill.content?.trim() || skill.skill?.content?.trim();
-    if (!content) continue;
-    sections.push(`## Skill: ${skillName(skill)}\n${byteSlice(content, MAX_SKILL_BYTES)}`);
-  }
-  return byteSlice(sections.join('\n\n---\n\n'), MAX_SYSTEM_PROMPT_BYTES);
+export function buildSandboxSkillBundles(skills: readonly SkillForPrompt[]): SandboxSkillBundle[] {
+  const usedDirectories = new Set<string>();
+  return skills.map((skill) => ({
+    directory: sandboxSkillDirectoryName(skill, usedDirectories),
+    markdown: buildInstalledSkillMarkdown(skill),
+    files: installedSkillExtraFiles(skill),
+  }));
 }
 
 export function dshProviderProtocol(format: string): string {
@@ -278,12 +300,38 @@ function mcpName(server: SandboxRuntimeMcpServer, index: number): string {
   return `tp_${index + 1}_${stem}`.slice(0, 32);
 }
 
+export function resolveSandboxMcpToolOrigin(
+  toolName: string | undefined,
+  servers: readonly SandboxRuntimeMcpServer[],
+): Pick<SandboxRuntimeActivity, 'deploymentId' | 'originalToolName'> | null {
+  if (!toolName) return null;
+  const pi = /^mcp__s(\d+)_t\d+__/.exec(toolName);
+  if (pi) {
+    const server = servers[Number(pi[1]) - 1];
+    // Pi's generated suffix is sanitized and can be truncated. The extension
+    // reports the exact name separately, so do not present this fallback as raw.
+    return server ? { deploymentId: server.deploymentId } : null;
+  }
+  for (const [index, server] of servers.entries()) {
+    const alias = mcpName(server, index);
+    for (const prefix of [`mcp__${alias}__`, `${alias}__`]) {
+      if (!toolName.startsWith(prefix) || toolName.length === prefix.length) continue;
+      return { deploymentId: server.deploymentId, originalToolName: toolName.slice(prefix.length) };
+    }
+  }
+  return null;
+}
+
 export function sandboxRuntimeCanReachProxy(network: string): boolean {
   return network !== 'none';
 }
 
 export function sandboxRuntimeStateRoot(runtimeKind: SandboxAgentRuntimeKind, agentId: string): string {
   return `/workspace/.toolplane/runtimes/${runtimeKind}/agents/${safeSegment(agentId, 'agent')}`;
+}
+
+export function sandboxRuntimeSkillRoot(runtimeKind: SandboxAgentRuntimeKind, agentId: string): string {
+  return `${sandboxRuntimeStateRoot(runtimeKind, agentId)}/skills`;
 }
 
 export function sandboxRuntimeExecWrapper(controlPrefix: string): string {
@@ -295,12 +343,19 @@ export function buildDshPatch(options: {
   modelId: string;
   modelProxyBase: string;
   systemPrompt: string;
+  skillRoot: string;
   mcpServers?: readonly SandboxRuntimeMcpServer[];
   eventPluginPath?: string;
 }): string {
   const protocol = dshProviderProtocol(options.provider.format);
   const proxy = httpUrl(options.modelProxyBase, 'model proxy URL');
   const rows = [
+    '- id: skill-filesystem',
+    '  config:',
+    '    includeDefaultRoots: false',
+    '    customSkillDirs:',
+    `      - ${yamlString(options.skillRoot)}`,
+    '    watch: false',
     '- id: llm-pi-ai',
     '  config:',
     '    providers:',
@@ -435,6 +490,7 @@ export function buildPiMcpConfig(servers: readonly SandboxRuntimeMcpServer[]): s
   return JSON.stringify({
     servers: servers.map((server, index) => ({
       name: mcpName(server, index),
+      deploymentId: server.deploymentId,
       url: httpUrl(server.url, 'MCP proxy URL'),
     })),
   });
@@ -555,7 +611,7 @@ export default async function toolplaneMcpExtension(pi) {
   let registeredTools = 0;
   for (let serverIndex = 0; serverIndex < config.servers.length; serverIndex += 1) {
     const server = config.servers[serverIndex];
-    if (!server || typeof server.name !== 'string' || typeof server.url !== 'string') {
+    if (!server || typeof server.name !== 'string' || typeof server.deploymentId !== 'string' || typeof server.url !== 'string') {
       throw new Error('Invalid ToolPlane MCP server entry');
     }
     const catalog = await rpc(server, 'tools/list');
@@ -570,7 +626,13 @@ export default async function toolplaneMcpExtension(pi) {
         label: wireName,
         description: short((tool.description || '') + '\nMCP server: ' + server.name),
         parameters: toolParameters(tool.inputSchema),
-        async execute(_toolCallId, params, signal) {
+        async execute(toolCallId, params, signal) {
+          process.stdout.write(JSON.stringify({
+            type: 'toolplane_mcp_origin',
+            toolCallId,
+            deploymentId: server.deploymentId,
+            originalToolName: wireName,
+          }) + '\\n');
           const result = await rpc(server, 'tools/call', { name: wireName, arguments: params || {} }, signal);
           const content = Array.isArray(result.content) ? result.content : [];
           if (result.isError) throw new Error(errorText(content) || 'MCP tool returned an error');
@@ -650,6 +712,20 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
   }
   if (!value || typeof value !== 'object') return null;
   const payload = value as Record<string, unknown>;
+  if (payload.type === 'toolplane_mcp_origin'
+    && typeof payload.toolCallId === 'string'
+    && typeof payload.deploymentId === 'string'
+    && typeof payload.originalToolName === 'string') {
+    return {
+      activities: [{
+        type: 'tool',
+        status: 'running',
+        toolCallId: payload.toolCallId,
+        deploymentId: payload.deploymentId,
+        originalToolName: payload.originalToolName,
+      }],
+    };
+  }
   if (payload.type === 'message_update' && payload.assistantMessageEvent
     && typeof payload.assistantMessageEvent === 'object') {
     const event = payload.assistantMessageEvent as Record<string, unknown>;
@@ -1024,7 +1100,7 @@ function runTrackedDockerExec(options: DockerExecOptions): Promise<string> {
 async function writeSandboxFile(
   container: string,
   path: string,
-  content: string,
+  content: string | Buffer,
   signal?: AbortSignal,
 ): Promise<void> {
   const script = 'set -eu; umask 077; mkdir -p "$(dirname "$1")"; cat > "$1"';
@@ -1037,6 +1113,43 @@ async function writeSandboxFile(
     signal,
     timeoutMs: 30_000,
   });
+}
+
+async function materializeSandboxSkills(
+  container: string,
+  skillRoot: string,
+  skills: readonly SkillForPrompt[],
+  signal?: AbortSignal,
+): Promise<void> {
+  const reset = `
+set -eu
+root=$1
+case "$root" in /workspace/.toolplane/runtimes/*/agents/*/skills) ;; *) exit 2 ;; esac
+rm -rf -- "$root"
+mkdir -p "$root"
+`;
+  await runTrackedDockerExec({
+    container,
+    workdir: '/workspace',
+    executable: 'sh',
+    args: ['-c', reset, 'toolplane-reset-skills', skillRoot],
+    signal,
+    timeoutMs: 30_000,
+  });
+  for (const bundle of buildSandboxSkillBundles(skills)) {
+    const directory = `${skillRoot}/${bundle.directory}`;
+    await writeSandboxFile(container, `${directory}/SKILL.md`, bundle.markdown, signal);
+    for (const file of bundle.files) {
+      const path = safeSkillFilePath(file.path);
+      if (!path) continue;
+      await writeSandboxFile(
+        container,
+        `${directory}/${path}`,
+        file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : file.content,
+        signal,
+      );
+    }
+  }
 }
 
 async function removeSandboxFiles(container: string, paths: string[]): Promise<void> {
@@ -1150,19 +1263,30 @@ async function reportContextUsage(
 async function reportActivities(
   options: RunSandboxAgentTurnOptions,
   activities: readonly SandboxRuntimeActivity[],
+  mcpServers: readonly SandboxRuntimeMcpServer[] = [],
 ) {
   if (!options.onActivity) return;
   for (const activity of activities) {
-    await options.onActivity({
+    const origin = activity.type === 'tool'
+      ? resolveSandboxMcpToolOrigin(activity.toolName, mcpServers)
+      : null;
+    const enriched = {
       ...activity,
-      ...(activity.delta ? { delta: redact(activity.delta, [options.runtimeAccessToken]) } : {}),
-      ...(activity.toolName ? { toolName: redact(activity.toolName, [options.runtimeAccessToken]) } : {}),
-      ...(activity.input === undefined
+      ...(activity.deploymentId || !origin?.deploymentId ? {} : { deploymentId: origin.deploymentId }),
+      ...(activity.originalToolName || !origin?.originalToolName ? {} : { originalToolName: origin.originalToolName }),
+    };
+    await options.onActivity({
+      ...enriched,
+      ...(enriched.delta ? { delta: redact(enriched.delta, [options.runtimeAccessToken]) } : {}),
+      ...(enriched.toolName ? { toolName: redact(enriched.toolName, [options.runtimeAccessToken]) } : {}),
+      ...(enriched.deploymentId ? { deploymentId: redact(enriched.deploymentId, [options.runtimeAccessToken]) } : {}),
+      ...(enriched.originalToolName ? { originalToolName: redact(enriched.originalToolName, [options.runtimeAccessToken]) } : {}),
+      ...(enriched.input === undefined
         ? {}
-        : { input: redact(displayValue(activity.input), [options.runtimeAccessToken]) }),
-      ...(activity.output === undefined
+        : { input: redact(displayValue(enriched.input), [options.runtimeAccessToken]) }),
+      ...(enriched.output === undefined
         ? {}
-        : { output: redact(displayValue(activity.output), [options.runtimeAccessToken]) }),
+        : { output: redact(displayValue(enriched.output), [options.runtimeAccessToken]) }),
     });
   }
 }
@@ -1174,6 +1298,7 @@ async function runPi(
   workdir: string,
   systemPrompt: string,
   prompt: string,
+  skillRoot: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
 ): Promise<string> {
   const stateRoot = sandboxRuntimeStateRoot('pi', options.agentId);
@@ -1192,6 +1317,7 @@ async function runPi(
   const args = [
     '--mode', 'json', '--no-session', '--no-approve', '--offline',
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
+    '--skill', skillRoot,
     '--provider', 'toolplane', '--model', options.modelId,
   ];
   let lineBuffer = '';
@@ -1207,7 +1333,7 @@ async function runPi(
       streamed += delta;
       await options.onTextDelta?.(delta);
     }
-    if (parsed.activities) await reportActivities(options, parsed.activities);
+    if (parsed.activities) await reportActivities(options, parsed.activities, mcpServers);
     if (parsed.assistantText) assistantFallback = redact(parsed.assistantText, [options.runtimeAccessToken]);
     if (parsed.contextTokens !== undefined) {
       exactUsage = true;
@@ -1283,6 +1409,7 @@ async function runClaudeCode(
   const args = [
     '--bare', '--print', '--verbose', '--output-format', 'stream-json',
     '--include-partial-messages', '--no-session-persistence',
+    '--setting-sources', 'user',
     '--dangerously-skip-permissions', '--model', options.modelId,
     ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
   ];
@@ -1318,7 +1445,7 @@ async function runClaudeCode(
       streamed += delta;
       await options.onTextDelta?.(delta);
     }
-    if (parsed.activities) await reportActivities(options, parsed.activities);
+    if (parsed.activities) await reportActivities(options, parsed.activities, mcpServers);
     if (parsed.result) finalResult = redact(parsed.result, [options.runtimeAccessToken]);
     if (parsed.assistantText) assistantFallback = redact(parsed.assistantText, [options.runtimeAccessToken]);
     if (parsed.contextTokens !== undefined) {
@@ -1380,6 +1507,7 @@ async function runDsh(
   workdir: string,
   systemPrompt: string,
   prompt: string,
+  skillRoot: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
 ): Promise<string> {
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
@@ -1394,6 +1522,7 @@ async function runDsh(
     modelId: options.modelId,
     modelProxyBase,
     systemPrompt,
+    skillRoot,
     mcpServers,
     eventPluginPath,
   });
@@ -1411,7 +1540,7 @@ async function runDsh(
       streamed += delta;
       await options.onTextDelta?.(delta);
     }
-    if (parsed.activities) await reportActivities(options, parsed.activities);
+    if (parsed.activities) await reportActivities(options, parsed.activities, mcpServers);
   };
   try {
     const output = await runTrackedDockerExec({
@@ -1472,14 +1601,16 @@ export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): 
   const workdir = normalizeSandboxWorkingDirectory(options.workingDirectory);
   const prompt = buildSandboxTranscript(options.messages);
   if (!prompt) throw new Error('The sandbox runtime turn has no user-visible message.');
-  const systemPrompt = inlineSandboxSkills(options.systemPrompt, options.skills ?? []);
+  const systemPrompt = options.systemPrompt?.trim() ?? '';
   const mcpServers = (options.mcpServers ?? []).filter((server) => server.deploymentId !== sandboxDeploymentId);
   const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
+  const skillRoot = sandboxRuntimeSkillRoot(options.runtimeKind, options.agentId);
+  await materializeSandboxSkills(container, skillRoot, options.skills ?? [], options.signal);
   if (options.runtimeKind === 'pi') {
-    return runPi(options, container, binary, workdir, systemPrompt, prompt, mcpServers);
+    return runPi(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers);
   }
   if (options.runtimeKind === 'claude-code') {
     return runClaudeCode(options, container, binary, workdir, systemPrompt, prompt, mcpServers);
   }
-  return runDsh(options, container, binary, workdir, systemPrompt, prompt, mcpServers);
+  return runDsh(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers);
 }

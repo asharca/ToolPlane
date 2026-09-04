@@ -26,6 +26,7 @@ import {
 } from '@/lib/agents/hermes/runtime';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import { effectiveStatus } from '@/lib/process/supervisor';
+import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { normalizeWorkDirectory } from './sessions';
 import {
   finishWorkOutput,
@@ -77,6 +78,9 @@ type WorkToolPart = {
   type: 'work-tool';
   toolCallId: string;
   toolName: string;
+  deploymentName?: string;
+  originalToolName?: string;
+  durationMs?: number;
   input: unknown;
   output?: unknown;
   isError: boolean;
@@ -92,6 +96,26 @@ type WorkTracePart = WorkToolPart | {
   runtimeKind: string;
   status: 'completed' | 'failed' | 'cancelled';
 };
+
+type WorkProcessPart = Exclude<WorkTracePart, { type: 'work-runtime' }>;
+
+type WorkTurnTiming = {
+  startedAt: number;
+  completedAt: number;
+  durationMs: number;
+  approvalWaitMs?: number;
+  runtimeKind: string;
+  modelName?: string;
+};
+
+function hermesMcpToolOrigin(toolName: string, deploymentIds: readonly string[]) {
+  const deploymentId = [...deploymentIds]
+    .sort((left, right) => right.length - left.length)
+    .find((id) => toolName.startsWith(`${id}__`));
+  if (!deploymentId) return null;
+  const originalToolName = toolName.slice(deploymentId.length + 2);
+  return originalToolName ? { deploymentId, originalToolName } : null;
+}
 
 type CoordinatorState = {
   draining: boolean;
@@ -248,6 +272,7 @@ function withApprovals(
   controller: AbortController,
   currentOutcome: () => WorkOutcome,
   nextToolCallId: (toolName: string) => string | undefined,
+  onWait?: (durationMs: number) => void,
 ): AgentToolSet {
   const { signal } = controller;
   return Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, {
@@ -274,7 +299,13 @@ function withApprovals(
       });
       if (!approval) throw new Error('Work is no longer running.');
       releaseWorkSlot(work.id);
-      const decision = await waitForApproval(approval.id, signal);
+      const waitStartedAt = Date.now();
+      let decision: Awaited<ReturnType<typeof waitForApproval>>;
+      try {
+        decision = await waitForApproval(approval.id, signal);
+      } finally {
+        onWait?.(Math.max(0, Date.now() - waitStartedAt));
+      }
       if (decision === 'denied') {
         const error = `Approval denied for ${name}.`;
         await db.workSession.updateMany({
@@ -366,6 +397,7 @@ async function resolveHermesWorkApproval(
   controller: AbortController,
   request: HermesWorkApproval,
   toolCallId: string,
+  onWait?: (durationMs: number) => void,
 ): Promise<'allow' | 'deny'> {
   const approval = await db.$transaction(async (tx) => {
     const waiting = await tx.workSession.updateMany({
@@ -389,7 +421,13 @@ async function resolveHermesWorkApproval(
   });
   if (!approval) throw new Error('Work is no longer running.');
   releaseWorkSlot(work.id);
-  const decision = await waitForApproval(approval.id, controller.signal);
+  const waitStartedAt = Date.now();
+  let decision: Awaited<ReturnType<typeof waitForApproval>>;
+  try {
+    decision = await waitForApproval(approval.id, controller.signal);
+  } finally {
+    onWait?.(Math.max(0, Date.now() - waitStartedAt));
+  }
   await acquireWorkSlot(work.id, controller.signal);
   const resumed = await db.workSession.updateMany({
     where: { id: work.id, workspaceId: work.workspaceId, status: 'waiting_approval' },
@@ -407,11 +445,13 @@ async function appendAssistantResult(
   text: string,
   trace: WorkTracePart[],
   contextUsage?: ContextUsageSnapshot,
+  timing?: WorkTurnTiming,
 ) {
   const parts: Prisma.InputJsonValue[] = [
     ...trace as unknown as Prisma.InputJsonValue[],
     ...(text ? [{ type: 'text', text, state: 'done' } as Prisma.InputJsonValue] : []),
     ...(contextUsage ? [{ type: 'data-context-usage', data: contextUsage } as Prisma.InputJsonValue] : []),
+    ...(timing ? [{ type: 'data-work-timing', data: timing } as Prisma.InputJsonValue] : []),
   ];
   if (!parts.length) return;
   await db.message.create({
@@ -445,7 +485,14 @@ async function executeWork(workSessionId: string) {
   }
   const controller = new AbortController();
   registerWorkRun(work.id, controller);
-  startWorkOutput(work.id);
+  const runStartedAt = Date.now();
+  const initialSnapshot = snapshot(work.runtimeSnapshot);
+  const initialModelName = initialSnapshot.model ?? work.conversation.hermesModel ?? undefined;
+  startWorkOutput(work.id, {
+    startedAt: runStartedAt,
+    runtimeKind: work.runtimeKind,
+    ...(initialModelName ? { modelName: initialModelName } : {}),
+  });
   publishWorkActivity(work.id, {
     id: 'runtime',
     type: 'runtime',
@@ -453,84 +500,170 @@ async function executeWork(workSessionId: string) {
     runtimeKind: work.runtimeKind,
   });
   const toolTrace = new Map<string, WorkToolPart>();
+  const toolStartedAt = new Map<string, number>();
+  const trace: WorkProcessPart[] = [];
   let reasoningText = '';
+  let activeReasoningText = '';
+  let activeReasoningId: string | null = null;
+  let reasoningSequence = 0;
   let reasoningActive = false;
   let runtimeStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
   let tracePersisted = false;
   let contextUsage: ContextUsageSnapshot | undefined;
+  let approvalWaitMs = 0;
+  let deploymentNames = new Map<string, string>();
+  let resolvedDeploymentIds: string[] = [];
+
+  const turnTiming = (completedAt = Date.now()): WorkTurnTiming => {
+    const modelName = contextUsage?.modelName ?? initialModelName;
+    return {
+      startedAt: runStartedAt,
+      completedAt,
+      durationMs: Math.max(0, completedAt - runStartedAt),
+      ...(approvalWaitMs > 0 ? { approvalWaitMs } : {}),
+      runtimeKind: work.runtimeKind,
+      ...(modelName ? { modelName } : {}),
+    };
+  };
 
   const finishReasoning = () => {
     if (!reasoningActive) return;
     reasoningActive = false;
+    const text = activeReasoningText;
+    const id = activeReasoningId ?? `reasoning:${++reasoningSequence}`;
+    if (text) trace.push({ type: 'reasoning', text, state: 'done' });
+    activeReasoningText = '';
+    activeReasoningId = null;
     publishWorkActivity(work.id, {
-      id: 'reasoning',
+      id,
       type: 'reasoning',
       status: 'completed',
-      ...(reasoningText ? { text: reasoningText } : {}),
+      ...(text ? { text } : {}),
     });
   };
   const onActivity = (activity: SandboxRuntimeActivity) => {
     if (activity.type === 'reasoning') {
-      if (activity.delta && reasoningText.length < MAX_REASONING_CHARACTERS) {
-        reasoningText += activity.delta.slice(0, MAX_REASONING_CHARACTERS - reasoningText.length);
+      if (!reasoningActive && activity.status === 'running') {
+        reasoningActive = true;
+        activeReasoningId = `reasoning:${++reasoningSequence}`;
       }
-      reasoningActive = activity.status === 'running';
-      publishWorkActivity(work.id, {
-        id: 'reasoning',
-        type: 'reasoning',
-        status: activity.status,
-        ...(reasoningText ? { text: reasoningText } : {}),
-      });
+      if (activity.delta && reasoningText.length < MAX_REASONING_CHARACTERS) {
+        const delta = activity.delta.slice(0, MAX_REASONING_CHARACTERS - reasoningText.length);
+        reasoningText += delta;
+        activeReasoningText += delta;
+      }
+      if (activity.status === 'running') {
+        publishWorkActivity(work.id, {
+          id: activeReasoningId ?? `reasoning:${++reasoningSequence}`,
+          type: 'reasoning',
+          status: 'running',
+          ...(activeReasoningText ? { text: activeReasoningText } : {}),
+        });
+      } else if (reasoningActive || activeReasoningText) {
+        reasoningActive = true;
+        finishReasoning();
+      } else {
+        const text = activity.delta?.slice(0, MAX_REASONING_CHARACTERS) ?? '';
+        if (text) trace.push({ type: 'reasoning', text, state: 'done' });
+        publishWorkActivity(work.id, {
+          id: `reasoning:${++reasoningSequence}`,
+          type: 'reasoning',
+          status: 'completed',
+          ...(text ? { text } : {}),
+        });
+      }
       return;
     }
     finishReasoning();
     if (!activity.toolCallId) return;
     const previous = toolTrace.get(activity.toolCallId);
+    const runtimeOrigin = !activity.deploymentId && work.runtimeKind === 'hermes'
+      ? hermesMcpToolOrigin(activity.toolName ?? '', resolvedDeploymentIds)
+      : null;
+    const candidateDeploymentId = activity.deploymentId ?? runtimeOrigin?.deploymentId;
+    const deploymentId = candidateDeploymentId && resolvedDeploymentIds.includes(candidateDeploymentId)
+      ? candidateDeploymentId
+      : undefined;
+    const deploymentName = deploymentId
+      ? deploymentNames.get(deploymentId) ?? previous?.deploymentName
+      : previous?.deploymentName;
+    const originalToolName = deploymentId
+      ? activity.originalToolName ?? runtimeOrigin?.originalToolName ?? previous?.originalToolName
+      : previous?.originalToolName;
+    const startedAt = toolStartedAt.get(activity.toolCallId);
+    const reportedDurationMs = typeof activity.durationMs === 'number'
+      && Number.isFinite(activity.durationMs)
+      && activity.durationMs >= 0
+      ? Math.round(activity.durationMs)
+      : undefined;
+    if (activity.status === 'running' && startedAt === undefined) {
+      toolStartedAt.set(activity.toolCallId, Date.now());
+    }
+    const durationMs = activity.status === 'running'
+      ? previous?.durationMs
+      : previous?.durationMs
+        ?? reportedDurationMs
+        ?? (startedAt === undefined ? undefined : Math.max(0, Date.now() - startedAt));
     const part: WorkToolPart = {
       type: 'work-tool',
       toolCallId: activity.toolCallId,
       toolName: activity.toolName ?? previous?.toolName ?? 'Tool',
+      ...(deploymentName ? { deploymentName } : {}),
+      ...(originalToolName ? { originalToolName } : {}),
+      ...(durationMs === undefined ? {} : { durationMs }),
       input: activity.input === undefined ? (previous?.input ?? null) : activity.input,
       ...(activity.output === undefined ? {} : { output: activity.output }),
       isError: activity.status === 'failed' || activity.isError === true,
       status: activity.status,
     };
-    toolTrace.set(activity.toolCallId, { ...previous, ...part });
+    const next = previous ? Object.assign(previous, part) : part;
+    if (!previous) {
+      toolTrace.set(activity.toolCallId, next);
+      trace.push(next);
+    }
     publishWorkActivity(work.id, {
       id: `tool:${activity.toolCallId}`,
       type: 'tool',
       status: activity.status,
       toolCallId: activity.toolCallId,
-      toolName: part.toolName,
-      input: part.input,
-      ...(part.output === undefined ? {} : { output: part.output }),
-      isError: part.isError,
+      toolName: next.toolName,
+      ...(next.deploymentName ? { deploymentName: next.deploymentName } : {}),
+      ...(next.originalToolName ? { originalToolName: next.originalToolName } : {}),
+      ...(next.durationMs === undefined ? {} : { durationMs: next.durationMs }),
+      input: next.input,
+      ...(next.output === undefined ? {} : { output: next.output }),
+      isError: next.isError,
     });
   };
   const settleUnfinishedTools = (status: 'failed' | 'cancelled') => {
     for (const [toolCallId, part] of toolTrace) {
       if (part.status !== 'running') continue;
-      const settled = { ...part, status, isError: status === 'failed' };
-      toolTrace.set(toolCallId, settled);
+      const startedAt = toolStartedAt.get(toolCallId);
+      const durationMs = part.durationMs ?? (startedAt === undefined ? undefined : Math.max(0, Date.now() - startedAt));
+      const settled = Object.assign(part, {
+        status,
+        isError: status === 'failed',
+        ...(durationMs === undefined ? {} : { durationMs }),
+      } as const);
       publishWorkActivity(work.id, {
         id: `tool:${toolCallId}`,
         type: 'tool',
         status,
         toolCallId,
         toolName: settled.toolName,
+        ...(settled.deploymentName ? { deploymentName: settled.deploymentName } : {}),
+        ...(settled.originalToolName ? { originalToolName: settled.originalToolName } : {}),
+        ...(settled.durationMs === undefined ? {} : { durationMs: settled.durationMs }),
         input: settled.input,
         isError: settled.isError,
       });
     }
   };
   const traceParts = (): WorkTracePart[] => {
-    const parts: WorkTracePart[] = [
-      ...(reasoningText ? [{ type: 'reasoning' as const, text: reasoningText, state: 'done' as const }] : []),
-      ...toolTrace.values(),
-    ];
+    const parts: WorkTracePart[] = [...trace];
     return runtimeStatus === 'completed' && parts.length
       ? parts
-      : [{ type: 'work-runtime', runtimeKind: work.runtimeKind, status: runtimeStatus }, ...parts];
+      : [...parts, { type: 'work-runtime', runtimeKind: work.runtimeKind, status: runtimeStatus }];
   };
   try {
     const stillRunning = await db.workSession.count({ where: { id: work.id, status: 'running' } });
@@ -581,6 +714,24 @@ async function executeWork(workSessionId: string) {
     resolved.subAgents = [];
     if (resolved.knowledgeBases && knowledgeBaseIds) {
       resolved.knowledgeBases = resolved.knowledgeBases.filter((link) => knowledgeBaseIds.has(link.knowledgeBase.id));
+    }
+    resolvedDeploymentIds = resolved.deploymentIds;
+    if (resolvedDeploymentIds.length) {
+      const deployments = await db.deployment.findMany({
+        where: { workspaceId: work.workspaceId, id: { in: resolvedDeploymentIds } },
+        select: {
+          id: true,
+          serverId: true,
+          name: true,
+          source: true,
+          sourceRef: true,
+          server: { select: { name: true } },
+        },
+      });
+      deploymentNames = new Map(deployments.map((deployment) => [
+        deployment.id,
+        deploymentLabel(deployment).name,
+      ]));
     }
 
     const outcome: { current: WorkOutcome } = { current: { kind: 'running' } };
@@ -652,6 +803,7 @@ async function executeWork(workSessionId: string) {
               toolCallId,
               toolName,
               output: { durationSeconds: duration },
+              ...(duration > 0 ? { durationMs: Math.round(duration * 1_000) } : {}),
               isError: error,
             });
           },
@@ -683,7 +835,13 @@ async function executeWork(workSessionId: string) {
               toolName: 'Hermes approval',
               input: { command: request.command, description: request.description },
             });
-            const decision = await resolveHermesWorkApproval(work, controller, request, toolCallId);
+            const decision = await resolveHermesWorkApproval(
+              work,
+              controller,
+              request,
+              toolCallId,
+              (durationMs) => { approvalWaitMs += durationMs; },
+            );
             onActivity({
               type: 'tool',
               status: 'completed',
@@ -730,12 +888,17 @@ async function executeWork(workSessionId: string) {
         depth: 0,
         visited: new Set([work.agentId]),
       });
+      const nativeToolOrigins = new Map<string, { deploymentId: string; originalToolName: string }>();
+      for (const [toolName, tool] of Object.entries(baseTools)) {
+        if (tool.toolplaneOrigin) nativeToolOrigins.set(toolName, tool.toolplaneOrigin);
+      }
       const approvedTools = withApprovals(
         { ...baseTools, ...workHostTools((next) => { outcome.current = next; }, workingDirectory) },
         work,
         controller,
         () => outcome.current,
         (toolName) => calls.get(toolName)?.shift()?.id,
+        (durationMs) => { approvalWaitMs += durationMs; },
       );
       const tools = withWorkingDirectory(
         approvedTools,
@@ -755,21 +918,39 @@ async function executeWork(workSessionId: string) {
         maxSteps: saved.agentMaxSteps ?? agent.maxSteps,
         signal: controller.signal,
         onEvent: (event) => {
-          if (event.type === 'toolcall_end') {
+          if (event.type === 'thinking_start') {
+            onActivity({ type: 'reasoning', status: 'running' });
+          } else if (event.type === 'thinking_delta') {
+            onActivity({ type: 'reasoning', status: 'running', delta: event.delta });
+          } else if (event.type === 'thinking_end') {
+            onActivity({ type: 'reasoning', status: 'completed' });
+          } else if (event.type === 'text_delta') {
+            finishReasoning();
+            publishWorkOutput(work.id, event.delta);
+          } else if (event.type === 'toolcall_end') {
+            finishReasoning();
             calls.set(event.toolCall.name, [...(calls.get(event.toolCall.name) ?? []), event.toolCall]);
+            const origin = nativeToolOrigins.get(event.toolCall.name);
+            onActivity({
+              type: 'tool',
+              status: 'running',
+              toolCallId: event.toolCall.id,
+              toolName: event.toolCall.name,
+              ...(origin ? { deploymentId: origin.deploymentId, originalToolName: origin.originalToolName } : {}),
+              input: event.toolCall.arguments,
+            });
           }
         },
-        onToolResult: async (toolCall, output, isError) => {
-          await appendAssistantResult(work.conversationId, '', [{
-            type: 'work-tool',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            input: toolCall.arguments,
-            output,
-            isError,
-            status: isError ? 'failed' : 'completed',
-          }]);
-        },
+        onToolResult: (toolCall, output, isError) => onActivity({
+          type: 'tool',
+          status: isError ? 'failed' : 'completed',
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          input: toolCall.arguments,
+          output,
+          isError,
+        }),
+        onContextUsage: (usage) => { contextUsage = usage; },
       });
     }
     if (controller.signal.aborted) throw abortError(controller.signal);
@@ -780,12 +961,12 @@ async function executeWork(workSessionId: string) {
     finishReasoning();
     settleUnfinishedTools('failed');
     publishWorkActivity(work.id, {
-      id: 'runtime',
+      id: 'runtime:final',
       type: 'runtime',
       status: 'completed',
       runtimeKind: work.runtimeKind,
     });
-    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage);
+    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming());
     tracePersisted = true;
     if (finalOutcome.kind === 'complete') {
       await db.workSession.updateMany({
@@ -821,14 +1002,14 @@ async function executeWork(workSessionId: string) {
     finishReasoning();
     settleUnfinishedTools(runtimeStatus);
     publishWorkActivity(work.id, {
-      id: 'runtime',
+      id: 'runtime:final',
       type: 'runtime',
       status: runtimeStatus,
       runtimeKind: work.runtimeKind,
     });
     if (!tracePersisted) {
       try {
-        await appendAssistantResult(work.conversationId, '', traceParts(), contextUsage);
+        await appendAssistantResult(work.conversationId, '', traceParts(), contextUsage, turnTiming());
         tracePersisted = true;
       } catch (traceError) {
         console.error(`[work] ${work.id} activity persistence failed`, traceError);

@@ -30,6 +30,8 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     acceptanceCriteria: session.acceptanceCriteria,
     runtimeKind: session.runtimeKind,
     status: session.status,
+    startedAt: session.startedAt?.toISOString() ?? null,
+    completedAt: session.completedAt?.toISOString() ?? null,
     maxSteps: session.maxSteps,
     stepCount: session.stepCount,
     waitingQuestion: session.waitingQuestion,
@@ -54,6 +56,7 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     messages: detail?.conversation.messages.map((message) => ({
       id: message.id,
       role: message.role,
+      createdAt: message.createdAt.toISOString(),
       parts: message.parts as Array<{
         type: string;
         text?: string;

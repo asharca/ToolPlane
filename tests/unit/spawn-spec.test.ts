@@ -542,7 +542,7 @@ describe('resolveSpawnSpec', () => {
     );
 
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/srv/workspace" --screen-vnc "auto"`,
+      `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/srv/workspace" --screen-vnc "auto"`,
     );
   });
 
@@ -556,7 +556,7 @@ describe('resolveSpawnSpec', () => {
     );
 
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox" --screen-vnc "auto"`,
+      `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "C:\\Users\\Ada Lovelace\\ToolPlane Sandbox" --screen-vnc "auto"`,
     );
   });
 
@@ -568,7 +568,7 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector.serverUrl).toBe('https://app.example.com');
     expect(connectorClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
+      `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 
@@ -576,7 +576,7 @@ describe('resolveSpawnSpec', () => {
     const connector = buildConnectorConfig({ serverUrl: 'https://app.example.com' }, 'mcpcon_deadbeef');
 
     expect(connectorAndroidClientCommand(connector, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/sdcard/ToolPlane" --android "auto"`,
+      `npx -y --no-audit --package "https://app.example.com/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "https://app.example.com" --token "mcpcon_deadbeef" --root "/sdcard/ToolPlane" --android "auto"`,
     );
   });
 
@@ -614,7 +614,7 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector).not.toBeNull();
     expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
+      `npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 
@@ -634,7 +634,7 @@ describe('resolveSpawnSpec', () => {
 
     expect(connector).not.toBeNull();
     expect(connectorClientCommand(connector!, 'mcpcon_deadbeef')).toBe(
-      `npx -y --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
+      `npx -y --no-audit --package "http://localhost:3002/api/v1/connectors/package.tgz?v=${CONNECTOR_PACKAGE_VERSION}" connector connect --server "http://localhost:3002" --token "mcpcon_deadbeef" --root "~/toolplane-sandbox" --screen-vnc "auto"`,
     );
   });
 

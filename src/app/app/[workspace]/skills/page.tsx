@@ -1,21 +1,20 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Brain, CheckCircle2, Store } from 'lucide-react';
+import { CheckCircle2, Store } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getSkillImportSettings } from '@/lib/admin/settings';
 import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { uninstallSkillAction } from '@/lib/workspace/actions';
 import { AddSkillDialog } from '@/components/dashboard/AddSkillDialog';
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardTable,
   DashboardToolbar,
 } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
+import { InstalledSkillsTable } from '@/components/dashboard/InstalledSkillsTable';
 
 export const dynamic = 'force-dynamic';
 
@@ -162,74 +161,15 @@ export default async function SkillsPage({
         ) : null}
 
         {skills.length > 0 ? (
-          <DashboardTable
-            headers={[
-              { label: t('skillColumn') },
-              { label: t('added') },
-              { label: t('actions'), align: 'right' },
-            ]}
-          >
-            {skills.map((s) => {
-              const label = skillLabel(s);
-              return (
-                <tr key={s.id}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      {s.skill?.iconUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={s.skill.iconUrl}
-                          alt=""
-                          width={20}
-                          height={20}
-                          className="size-5 rounded object-cover"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden="true"
-                          className="flex size-5 items-center justify-center rounded bg-brand-soft text-foreground"
-                        >
-                          <Brain className="size-3.5" />
-                        </span>
-                      )}
-                      <Link
-                        href={`/app/${slug}/skills/${s.id}`}
-                        className="font-medium text-foreground hover:underline"
-                      >
-                        {label.name}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {fmt(s.createdAt, timeZone, locale)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-4">
-                      <Link
-                        href={`/app/${slug}/skills/${s.id}`}
-                        className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        {t('use')}
-                      </Link>
-                      <a
-                        href={`/api/v1/skills/${s.id}/download`}
-                        className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        {t('downloadSkillmd')}
-                      </a>
-                      <form action={uninstallSkillAction}>
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="installId" value={s.id} />
-                        <button className="text-xs text-muted-foreground transition-colors hover:text-red-600">
-                          {t('uninstall')}
-                        </button>
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </DashboardTable>
+          <InstalledSkillsTable
+            slug={slug}
+            skills={skills.map((skill) => ({
+              id: skill.id,
+              name: skillLabel(skill).name,
+              iconUrl: skill.skill?.iconUrl ?? null,
+              createdAt: fmt(skill.createdAt, timeZone, locale),
+            }))}
+          />
         ) : null}
       </DashboardPage>
     </>

@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { McpDeploymentsBrowser } from '@/components/dashboard/McpDeploymentsBrowser';
 
 vi.mock('@/lib/workspace/actions', () => ({
+  removeDeploymentsAction: vi.fn(),
   removeDeploymentAction: vi.fn(),
   restartDeploymentAction: vi.fn(),
+  startDeploymentsAction: vi.fn(),
   startDeploymentAction: vi.fn(),
+  stopDeploymentsAction: vi.fn(),
   stopDeploymentAction: vi.fn(),
 }));
 
@@ -32,6 +35,60 @@ const deployments = [
 ];
 
 describe('McpDeploymentsBrowser', () => {
+  it('replaces the desktop header with batch actions after selecting deployments', async () => {
+    const user = userEvent.setup();
+    render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
+
+    const table = screen.getByRole('table');
+    const selectMatches = within(table).getByRole('checkbox', { name: 'Select all matching (2)' });
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    await user.click(selectMatches);
+    const toolbar = within(table).getByRole('toolbar', { name: '2 selected' });
+    const headers = within(table).getAllByRole('columnheader');
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toHaveAttribute('colspan', '5');
+    expect(within(table).queryByRole('checkbox', { name: 'Select all matching (2)' })).not.toBeInTheDocument();
+    const batchForms = [...table.querySelectorAll('form')].filter(
+      (form) => new FormData(form).getAll('deploymentId').length === 2,
+    );
+    expect(batchForms.map((form) => new FormData(form).getAll('deploymentId'))).toEqual([
+      ['running-mcp', 'failed-mcp'],
+      ['running-mcp', 'failed-mcp'],
+      ['running-mcp', 'failed-mcp'],
+    ]);
+    expect(within(toolbar).getByRole('button', { name: 'Start' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+
+    await user.click(within(toolbar).getByRole('button', { name: 'Clear selection' }));
+    expect(within(table).queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(5);
+    expect(within(table).getByRole('checkbox', { name: 'Select all matching (2)' })).toBeInTheDocument();
+  });
+
+  it('preserves desktop row selections while filtering', async () => {
+    const user = userEvent.setup();
+    render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
+
+    const table = screen.getByRole('table');
+    await user.click(within(table).getByRole('checkbox', { name: 'Select Filesystem' }));
+    expect(within(table).getByRole('toolbar', { name: '1 selected' })).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('Search MCP...'), 'private');
+    await user.click(within(table).getByRole('checkbox', { name: 'Select Private API' }));
+    expect(within(table).getByRole('toolbar', { name: '2 selected' })).toBeInTheDocument();
+  });
+
+  it('opens deployment details from the full identity cell without an Inspect action', () => {
+    render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
+
+    const links = screen.getAllByRole('link', { name: /Filesystem/ });
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toHaveAttribute('href', '/app/acme/mcp/running-mcp');
+    expect(links.find((link) => link.closest('table'))?.parentElement).toHaveClass('p-0');
+    expect(screen.queryByRole('link', { name: 'Inspect' })).not.toBeInTheDocument();
+  });
+
   it('filters deployments by text and live status without leaving the page', async () => {
     const user = userEvent.setup();
     render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);

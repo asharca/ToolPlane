@@ -1,9 +1,7 @@
 import { getLocale, getTranslations } from 'next-intl/server';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
 import {
-  ArrowLeft,
   CheckCircle2,
   Download,
   ExternalLink,
@@ -231,16 +229,10 @@ export default async function SkillInspectorPage({
   return (
     <>
       <DashboardHeader
-        title={label.name}
-        actions={
-          <Link
-            href={`/app/${slug}/skills`}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            <ArrowLeft className="size-4" />
-            {t('back')}
-          </Link>
-        }
+        breadcrumb={[
+          { label: t('title'), href: `/app/${slug}/skills` },
+          { label: label.name },
+        ]}
       />
       <div className="ui-page w-full max-w-none space-y-5">
         <section className="ui-panel overflow-hidden">

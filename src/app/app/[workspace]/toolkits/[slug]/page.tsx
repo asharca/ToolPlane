@@ -5,7 +5,6 @@ import { headers } from 'next/headers';
 import {
   Brain,
   CopyPlus,
-  Download,
   Globe,
   Pencil,
   Server as ServerIcon,
@@ -138,17 +137,6 @@ export default async function ToolkitDetailPage({
           { label: t('title'), href: `/app/${wsSlug}/toolkits` },
           { label: toolkitSlug },
         ]}
-        actions={
-          <a
-            href={installUrl}
-            aria-label={t('installScript')}
-            title={t('installScript')}
-            className="ui-button-primary ui-icon-button sm:h-9 sm:w-auto sm:gap-1.5 sm:px-3"
-          >
-            <Download className="size-4" />
-            <span className="hidden sm:inline">{t('installScript')}</span>
-          </a>
-        }
       />
       <div className="ui-page space-y-5">
         <div className="space-y-2">

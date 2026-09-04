@@ -16,7 +16,7 @@ describe('Work output channel', () => {
     const first = subscribeWorkOutput(workSessionId, (event) => events.push(event));
 
     expect(first.snapshot).toEqual({ text: '', activities: [], active: false, done: false });
-    startWorkOutput(workSessionId);
+    startWorkOutput(workSessionId, { startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a' });
     publishWorkActivity(workSessionId, {
       id: 'tool:call-1', type: 'tool', status: 'running', toolCallId: 'call-1', toolName: 'read_file', input: '{}',
     });
@@ -34,22 +34,30 @@ describe('Work output channel', () => {
       }],
       active: true,
       done: false,
+      startedAt: 1_000,
+      runtimeKind: 'pi',
+      modelName: 'model-a',
     });
 
     finishWorkOutput(workSessionId);
     expect(events.map((event) => event.type)).toEqual(['start', 'activity', 'activity', 'delta', 'delta', 'done']);
     expect(events.at(-1)?.snapshot).toEqual({
       text: 'Hello', activities: late.snapshot.activities, active: false, done: true,
+      startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a',
     });
 
     const finished = subscribeWorkOutput(workSessionId, () => {});
     expect(finished.snapshot).toEqual({
       text: 'Hello', activities: late.snapshot.activities, active: false, done: true,
+      startedAt: 1_000, runtimeKind: 'pi', modelName: 'model-a',
     });
 
-    startWorkOutput(workSessionId);
+    startWorkOutput(workSessionId, { startedAt: 2_000, runtimeKind: 'hermes', modelName: 'model-b' });
     const nextTurn = subscribeWorkOutput(workSessionId, () => {});
-    expect(nextTurn.snapshot).toEqual({ text: '', activities: [], active: true, done: false });
+    expect(nextTurn.snapshot).toEqual({
+      text: '', activities: [], active: true, done: false,
+      startedAt: 2_000, runtimeKind: 'hermes', modelName: 'model-b',
+    });
     finishWorkOutput(workSessionId);
     first.unsubscribe();
     late.unsubscribe();

@@ -2464,6 +2464,7 @@
       "restart": "重启",
       "start": "启动",
       "delete": "删除",
+      "deleteAgentAndRuntime": "删除所属智能体、其 Hermes 运行时及所有对话？",
       "name": "名称",
       "stopping": "停止中…",
       "restarting": "重启中…",

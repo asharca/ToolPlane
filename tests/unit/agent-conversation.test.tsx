@@ -420,9 +420,11 @@ describe('AgentConversation', () => {
     expect(screen.getByRole('button', { name: 'Stop' })).toHaveClass('text-destructive');
     expect(screen.getByRole('button', { name: 'Stop' }).querySelector('svg')).toHaveClass('lucide-circle-pause');
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('Preparing');
+    expect(status).toHaveAttribute('aria-label');
+    expect(status.textContent?.trim()).toBe('');
     expect(status.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
     expect(document.querySelectorAll('[data-ui="conversation-pending-dot"]')).toHaveLength(3);
+    expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
   });
 
   it('renders reasoning and tool activity inside the assistant message', () => {
@@ -458,11 +460,51 @@ describe('AgentConversation', () => {
 
     const process = screen.getByText('Processed').closest('[data-ui="assistant-process"]');
     expect(process).toBeInTheDocument();
+    expect(process?.tagName).toBe('DETAILS');
+    expect(process).not.toHaveAttribute('open');
     expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
     expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Here is the answer.');
     expect(screen.getByText('Checking the available sources.')).toBeInTheDocument();
     expect(screen.getByText('Search result with citation')).toBeInTheDocument();
     expect(screen.queryByText('Agent is responding')).not.toBeInTheDocument();
+  });
+
+  it('renders live reasoning and tools directly without a generic process heading', () => {
+    const messages = [{
+      id: 'm-live-process',
+      role: 'assistant' as const,
+      parts: [
+        { type: 'reasoning', text: 'Checking the available sources.' },
+        {
+          type: 'tool-mcp__tp_1_dep-one__read/file',
+          toolCallId: 'call-1',
+          state: 'input-available',
+          input: { path: 'README.md' },
+        },
+      ],
+    }] as HermesUIMessage[];
+    chatMocks.useChat.mockReturnValue({
+      messages,
+      sendMessage: chatMocks.sendMessage,
+      setMessages: chatMocks.setMessages,
+      stop: chatMocks.stop,
+      regenerate: chatMocks.regenerate,
+      addToolResult: vi.fn(),
+      addToolOutput: vi.fn(),
+      addToolApprovalResponse: vi.fn(),
+      status: 'streaming',
+      error: undefined,
+    });
+
+    renderConversation({ initialMessages: messages });
+
+    const process = document.querySelector('[data-ui="assistant-process"]');
+    expect(process?.tagName).toBe('DIV');
+    expect(process).toHaveTextContent('Checking the available sources.');
+    expect(screen.getByText('read/file')).toBeInTheDocument();
+    expect(screen.queryByText('mcp__tp_1_dep-one__read/file')).not.toBeInTheDocument();
+    expect(screen.queryByText('Processing')).not.toBeInTheDocument();
+    expect(screen.queryByText('Processed')).not.toBeInTheDocument();
   });
 
   it('sends the Cherry-style web search toggle with the turn', async () => {

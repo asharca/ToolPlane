@@ -412,14 +412,87 @@ export async function writeHermesChatStream(params: {
   if (!response.body) throw new Error('Hermes runtime returned an empty stream.');
 
   const textPartId = `hermes-${params.conversationId}`;
-  params.writer.write({ type: 'text-start', id: textPartId });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let streamedText = '';
   let completedText = '';
   let completed = false;
+  let hasProcessEvents = false;
   let effectiveSessionId = response.headers.get('x-hermes-session-id') || runtimeSessionId;
+  let activeTextPartId: string | null = null;
+  let textSequence = 0;
+  let reasoningPartId: string | null = null;
+  let reasoningSequence = 0;
+  let toolSequence = 0;
+  const pendingToolCallIds = new Map<string, string[]>();
+
+  const endText = () => {
+    if (!activeTextPartId) return;
+    params.writer.write({ type: 'text-end', id: activeTextPartId });
+    activeTextPartId = null;
+  };
+  const startText = () => {
+    if (activeTextPartId) return activeTextPartId;
+    activeTextPartId = textSequence === 0 ? textPartId : `${textPartId}-${textSequence}`;
+    textSequence += 1;
+    params.writer.write({ type: 'text-start', id: activeTextPartId });
+    return activeTextPartId;
+  };
+  const writeText = (delta: string) => {
+    if (!delta) return;
+    params.writer.write({ type: 'text-delta', id: startText(), delta });
+  };
+  const endReasoning = () => {
+    if (!reasoningPartId) return;
+    params.writer.write({ type: 'reasoning-end', id: reasoningPartId });
+    reasoningPartId = null;
+  };
+  const startReasoning = () => {
+    if (reasoningPartId) return reasoningPartId;
+    reasoningPartId = `hermes-${params.conversationId}-reasoning-${reasoningSequence++}`;
+    params.writer.write({ type: 'reasoning-start', id: reasoningPartId });
+    return reasoningPartId;
+  };
+  const toolName = (data: Record<string, unknown>) => (
+    typeof data.tool_name === 'string' && data.tool_name.trim() ? data.tool_name : 'tool'
+  );
+  const startTool = (data: Record<string, unknown>, callId?: string) => {
+    const name = toolName(data);
+    const id = callId ?? `hermes-${params.conversationId}-tool-${toolSequence++}`;
+    if (!callId) {
+      const ids = pendingToolCallIds.get(name) ?? [];
+      ids.push(id);
+      pendingToolCallIds.set(name, ids);
+    }
+    params.writer.write({ type: 'tool-input-start', toolCallId: id, toolName: name });
+    params.writer.write({
+      type: 'tool-input-available',
+      toolCallId: id,
+      toolName: name,
+      input: data.args ?? {},
+    });
+    return id;
+  };
+  const completeTool = (data: Record<string, unknown>, failed: boolean) => {
+    const name = toolName(data);
+    const ids = pendingToolCallIds.get(name);
+    const id = ids?.shift() ?? startTool(data, `hermes-${params.conversationId}-tool-${toolSequence++}`);
+    if (failed) {
+      const errorText = typeof data.error === 'string'
+        ? data.error
+        : typeof data.preview === 'string' && data.preview
+          ? data.preview
+          : 'Tool failed.';
+      params.writer.write({ type: 'tool-output-error', toolCallId: id, errorText });
+      return;
+    }
+    params.writer.write({
+      type: 'tool-output-available',
+      toolCallId: id,
+      output: data.result ?? data.preview ?? null,
+    });
+  };
 
   const handleBlock = (block: string) => {
     if (!sessionEvents) {
@@ -431,7 +504,7 @@ export async function writeHermesChatStream(params: {
       const delta = textDelta(data);
       if (delta) {
         streamedText += delta;
-        params.writer.write({ type: 'text-delta', id: textPartId, delta });
+        writeText(delta);
       }
       return;
     }
@@ -440,9 +513,25 @@ export async function writeHermesChatStream(params: {
     if (item.event === 'assistant.delta') {
       const delta = typeof item.data.delta === 'string' ? item.data.delta : '';
       if (delta) {
+        endReasoning();
         streamedText += delta;
-        params.writer.write({ type: 'text-delta', id: textPartId, delta });
+        writeText(delta);
       }
+    } else if (item.event === 'tool.progress') {
+      hasProcessEvents = true;
+      endText();
+      const delta = typeof item.data.delta === 'string' ? item.data.delta : '';
+      if (delta) params.writer.write({ type: 'reasoning-delta', id: startReasoning(), delta });
+    } else if (item.event === 'tool.started') {
+      hasProcessEvents = true;
+      endText();
+      endReasoning();
+      startTool(item.data);
+    } else if (item.event === 'tool.completed' || item.event === 'tool.failed') {
+      hasProcessEvents = true;
+      endText();
+      endReasoning();
+      completeTool(item.data, item.event === 'tool.failed');
     } else if (item.event === 'assistant.completed' && typeof item.data.content === 'string') {
       completedText = item.data.content;
       completed = true;
@@ -470,14 +559,15 @@ export async function writeHermesChatStream(params: {
   handleBlock(buffer);
   if (!completed) throw new Error('Hermes runtime ended the stream before the turn completed.');
   if (!streamedText && completedText) {
-    params.writer.write({ type: 'text-delta', id: textPartId, delta: completedText });
+    writeText(completedText);
   }
-  params.writer.write({ type: 'text-end', id: textPartId });
+  endReasoning();
+  endText();
   const safeSessionId = effectiveSessionId.trim();
   if (!safeSessionId || safeSessionId.length > 256 || /[\u0000-\u001f]/.test(safeSessionId)) {
     throw new Error('Hermes runtime returned an invalid session ID.');
   }
-  const segments = sessionEvents
+  const segments = sessionEvents && !hasProcessEvents
     ? await readHermesAssistantSegments(baseUrl, safeSessionId, params.signal)
     : [];
   if (segments.length) {

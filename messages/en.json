@@ -2464,6 +2464,7 @@
       "restart": "Restart",
       "start": "Start",
       "delete": "Delete",
+      "deleteAgentAndRuntime": "Delete the owner agent, its Hermes runtime, and all conversations?",
       "name": "Name",
       "stopping": "Stopping…",
       "restarting": "Restarting…",
