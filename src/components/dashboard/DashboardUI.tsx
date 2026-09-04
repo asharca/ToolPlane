@@ -174,7 +174,7 @@ export function DashboardTable({
   className,
   ariaLabel,
 }: {
-  headers: Array<{ label?: ReactNode; className?: string; align?: 'left' | 'right' }>;
+  headers: Array<{ label?: ReactNode; className?: string; align?: 'left' | 'right'; colSpan?: number }>;
   children: ReactNode;
   minWidth?: string;
   panel?: boolean;

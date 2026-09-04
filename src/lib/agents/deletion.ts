@@ -58,6 +58,10 @@ export async function deleteManagedAgent(input: {
     if (!await cleanupHermesRuntime(input.workspaceId, targetId)) return false;
   }
   for (const sandbox of targets.sandboxes) {
+    if (sandbox.kind === 'hermes') {
+      for (const volumeName of sandbox.snapshotVolumeNames) await removeDockerVolumeStrict(volumeName);
+      continue;
+    }
     if (sandbox.kind !== 'docker') continue;
     await killProcess(sandbox.deploymentId, { preventRestart: true, finalStatus: 'deleting' });
     for (const volumeName of sandbox.snapshotVolumeNames) await removeDockerVolumeStrict(volumeName);

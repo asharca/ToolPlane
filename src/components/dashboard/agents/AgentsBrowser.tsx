@@ -91,7 +91,7 @@ export type AgentMarketOption = {
 };
 
 type CreateStep = 'basic' | 'instructions' | 'tools';
-type CreateSource = 'choose' | 'blank' | 'market';
+type CreateSource = 'blank' | 'market';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -149,7 +149,7 @@ export function AgentsBrowser({
   const createOnly = searchParams.get('create') === '1';
   const [creating, setCreating] = useState(createOnly);
   const [createSource, setCreateSource] = useState<CreateSource>(
-    createOnly && searchParams.get('source') === 'market' ? 'market' : 'choose',
+    createOnly && searchParams.get('source') === 'market' ? 'market' : 'blank',
   );
   const [createStep, setCreateStep] = useState<CreateStep>('basic');
   const [agentName, setAgentName] = useState('');
@@ -210,7 +210,7 @@ export function AgentsBrowser({
       return;
     }
     setCreating(false);
-    setCreateSource('choose');
+    setCreateSource('blank');
     setCreateStep('basic');
     setAgentName('');
     setRuntime(null);
@@ -250,15 +250,11 @@ export function AgentsBrowser({
             onClick={() => {
               if (creating) closeCreateForm();
               else {
-                setCreateSource('choose');
+                setCreateSource('blank');
                 setCreating(true);
               }
             }}
-            aria-controls={createSource === 'blank'
-              ? 'agent-create-form'
-              : createSource === 'market'
-                ? 'agent-market-source'
-                : 'agent-create-source'}
+            aria-controls={createSource === 'market' ? 'agent-market-source' : 'agent-create-form'}
             aria-expanded={creating}
             className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
           >
@@ -285,60 +281,7 @@ export function AgentsBrowser({
         </div>
       ) : null}
 
-      {creating && createSource === 'choose' ? (
-        <section
-          id="agent-create-source"
-          className={cx(
-            'flex min-h-0 flex-col bg-background',
-            createOnly ? 'h-full' : 'ui-panel min-h-[32rem]',
-          )}
-        >
-          <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-5 py-10 sm:px-8">
-            <div>
-              <h3 className="text-xl font-semibold text-foreground">{t('chooseAgentStartingPoint')}</h3>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('chooseAgentStartingPointDescription')}</p>
-            </div>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setCreateSource('blank')}
-                aria-label={t('createBlankAgent')}
-                className="group flex min-h-32 items-start gap-4 rounded-lg border border-border bg-card p-5 text-left transition-colors hover:bg-muted/40"
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-accent-foreground">
-                  <Plus className="size-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold text-foreground">{t('createBlankAgent')}</span>
-                  <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{t('createBlankAgentDescription')}</span>
-                </span>
-                <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setCreateSource('market')}
-                aria-label={t('chooseFromAgentMarket')}
-                className="group flex min-h-32 items-start gap-4 rounded-lg border border-border bg-card p-5 text-left transition-colors hover:bg-muted/40"
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                  <Store className="size-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-semibold text-foreground">{t('chooseFromAgentMarket')}</span>
-                  <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">{t('chooseFromAgentMarketDescription')}</span>
-                </span>
-                <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-              </button>
-            </div>
-          </div>
-          <div className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
-            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
-              <X className="size-4 shrink-0" />
-              {t('cancel')}
-            </button>
-          </div>
-        </section>
-      ) : creating && createSource === 'market' ? (
+      {creating && createSource === 'market' ? (
         <section
           id="agent-market-source"
           className={cx(
@@ -349,7 +292,7 @@ export function AgentsBrowser({
           <header className="flex shrink-0 items-start gap-3 px-5 py-4 sm:px-6">
             <button
               type="button"
-              onClick={() => setCreateSource('choose')}
+              onClick={() => setCreateSource('blank')}
               aria-label={t('back')}
               className="ui-button-ghost ui-icon-button shrink-0"
             >
@@ -493,6 +436,27 @@ export function AgentsBrowser({
                 <div>
                   <h3 id="agent-create-basic-title" className="text-base font-semibold text-foreground">{t('basic')}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{t('generalSettingsDescription')}</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
+                  <button
+                    type="button"
+                    aria-pressed={createSource === 'blank'}
+                    onClick={() => setCreateSource('blank')}
+                    className={cx('ui-button-secondary h-8 px-3 text-xs', createSource === 'blank' && 'bg-background text-foreground')}
+                  >
+                    <Plus className="size-3.5" />
+                    {t('createBlankAgent')}
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={createSource === 'market'}
+                    onClick={() => setCreateSource('market')}
+                    className={cx('ui-button-secondary h-8 px-3 text-xs', createSource === 'market' && 'bg-background text-foreground')}
+                  >
+                    <Store className="size-3.5" />
+                    {t('chooseFromAgentMarket')}
+                  </button>
                 </div>
 
                 {!hasProviders ? (
@@ -704,17 +668,16 @@ export function AgentsBrowser({
               <X className="size-4 shrink-0" />
               {t('cancel')}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (createStepIndex > 0) setCreateStep(createSteps[createStepIndex - 1]!.id);
-                else setCreateSource('choose');
-              }}
-              className="ui-button-secondary h-10 gap-2 px-4"
-            >
-              <ChevronLeft className="size-4 shrink-0" />
-              {t('back')}
-            </button>
+            {createStepIndex > 0 ? (
+              <button
+                type="button"
+                onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
+                className="ui-button-secondary h-10 gap-2 px-4"
+              >
+                <ChevronLeft className="size-4 shrink-0" />
+                {t('back')}
+              </button>
+            ) : null}
             {lastCreateStep ? (
               <SubmitButton
                 pendingLabel={t('creatingAgent')}

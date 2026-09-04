@@ -218,29 +218,29 @@ export function ToolkitsBrowser({
             >
               {filtered.map((toolkit) => (
                 <tr key={toolkit.id}>
+                  <td className="p-0">
+                    <Link
+                      href={`/app/${slug}/toolkits/${toolkit.slug}`}
+                      className="block px-4 py-3 font-medium text-foreground transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                    >
+                      {toolkit.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <Link
-                        href={`/app/${slug}/toolkits/${toolkit.slug}`}
-                        className="font-medium text-foreground hover:underline"
-                      >
-                        {toolkit.name}
-                      </Link>
+                    <div className="flex flex-wrap items-center gap-2.5">
                       <ToolkitAvailabilityPill
                         workspaceSlug={slug}
                         toolkit={toolkit}
                         kind="visibility"
                         canManage={canManagePublishing}
                       />
+                      <ToolkitAvailabilityPill
+                        workspaceSlug={slug}
+                        toolkit={toolkit}
+                        kind="enabled"
+                        canManage={canManagePublishing}
+                      />
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <ToolkitAvailabilityPill
-                      workspaceSlug={slug}
-                      toolkit={toolkit}
-                      kind="enabled"
-                      canManage={canManagePublishing}
-                    />
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {toolkit.toolCount}

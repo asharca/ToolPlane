@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLAUDE_RUNTIME_USER,
   SANDBOX_RUNTIME_PACKAGES,
+  buildSandboxSkillBundles,
   buildClaudeMcpConfig,
   buildDshPatch,
   buildPiMcpConfig,
@@ -9,14 +10,15 @@ import {
   buildSandboxTranscript,
   dshProviderProtocol,
   dshEventTapSource,
-  inlineSandboxSkills,
   normalizeSandboxWorkingDirectory,
   parseClaudeStreamLine,
   parseDshEventLine,
   parsePiStreamLine,
   piMcpExtensionSource,
+  resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
   sandboxRuntimeExecWrapper,
+  sandboxRuntimeSkillRoot,
   sandboxRuntimeStateRoot,
 } from '@/lib/agents/sandbox-runtime';
 import type { SkillForPrompt } from '@/lib/agents/resolve';
@@ -98,6 +100,11 @@ describe('sandbox Agent runtime helpers', () => {
       type: 'tool', status: 'running', toolCallId: 'call-1', toolName: 'read_file', input: { path: 'README.md' },
     }] });
     expect(parsePiStreamLine(JSON.stringify({
+      type: 'toolplane_mcp_origin', toolCallId: 'call-1', deploymentId: 'dep-1', originalToolName: 'read/file',
+    }))).toEqual({ activities: [{
+      type: 'tool', status: 'running', toolCallId: 'call-1', deploymentId: 'dep-1', originalToolName: 'read/file',
+    }] });
+    expect(parsePiStreamLine(JSON.stringify({
       type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'read_file', result: 'contents', isError: false,
     }))).toEqual({ activities: [{
       type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', output: 'contents', isError: false,
@@ -131,6 +138,7 @@ describe('sandbox Agent runtime helpers', () => {
       { deploymentId: 'dep-1', url: 'http://host.docker.internal:3000/api/v1/agent-runtime/mcp/dep-1/rpc' },
     ]);
     expect(mcp).toContain('dep-1/rpc');
+    expect(mcp).toContain('"deploymentId":"dep-1"');
     expect(mcp).not.toContain('runtime-secret');
     const extension = piMcpExtensionSource();
     expect(extension).toContain("rpc(server, 'tools/list')");
@@ -140,9 +148,25 @@ describe('sandbox Agent runtime helpers', () => {
     expect(extension).toContain("redirect: 'error'");
     expect(extension).toContain('MAX_SCHEMA_BYTES = 64 * 1024');
     expect(extension).toContain('MAX_REGISTERED_TOOLS = 256');
+    expect(extension).toContain("type: 'toolplane_mcp_origin'");
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(extension).toString('base64')}`;
     const loaded = await import(/* @vite-ignore */ moduleUrl) as { default?: unknown };
     expect(loaded.default).toBeTypeOf('function');
+  });
+
+  it('recovers MCP origin only from stable runtime aliases', () => {
+    const servers = [
+      { deploymentId: 'dep-one', url: 'https://runtime.example/one' },
+      { deploymentId: 'dep-two', url: 'https://runtime.example/two' },
+    ];
+    expect(resolveSandboxMcpToolOrigin('mcp__s2_t4__search_files', servers)).toEqual({ deploymentId: 'dep-two' });
+    expect(resolveSandboxMcpToolOrigin('mcp__tp_1_dep-one__read/file', servers)).toEqual({
+      deploymentId: 'dep-one', originalToolName: 'read/file',
+    });
+    expect(resolveSandboxMcpToolOrigin('tp_2_dep-two__write_file', servers)).toEqual({
+      deploymentId: 'dep-two', originalToolName: 'write_file',
+    });
+    expect(resolveSandboxMcpToolOrigin('bash', servers)).toBeNull();
   });
 
   it('generates a DSH proxy profile and env-backed MCP auth without embedding a token', async () => {
@@ -151,6 +175,7 @@ describe('sandbox Agent runtime helpers', () => {
       modelId: 'model\nname',
       modelProxyBase: 'http://host.docker.internal:3000/api/v1/agent-runtime/model/provider-1',
       systemPrompt: 'line one\nline two',
+      skillRoot: '/workspace/.toolplane/runtimes/dsh/agents/agent-1/skills',
       mcpServers: [{ deploymentId: 'dep-1', url: 'http://host.docker.internal:3000/api/v1/agent-runtime/mcp/dep-1/rpc' }],
       eventPluginPath: '/workspace/.toolplane/runtime-tmp/events.mjs',
     });
@@ -161,6 +186,9 @@ describe('sandbox Agent runtime helpers', () => {
     expect(patch).not.toContain('Bearer runtime-secret');
     expect(patch.match(/^- insert:$/gm)).toHaveLength(1);
     expect(patch).toContain('file:///workspace/.toolplane/runtime-tmp/events.mjs');
+    expect(patch).toContain('includeDefaultRoots: false');
+    expect(patch).toContain('customSkillDirs:');
+    expect(patch).toContain('/workspace/.toolplane/runtimes/dsh/agents/agent-1/skills');
     const eventTap = dshEventTapSource('__EVENT__');
     expect(eventTap).toContain("ctx.on('session/event'");
     expect(eventTap).toContain('process.stdout.write');
@@ -180,19 +208,39 @@ describe('sandbox Agent runtime helpers', () => {
     expect(sandboxRuntimeStateRoot('claude-code', 'agent/a')).toBe('/workspace/.toolplane/runtimes/claude-code/agents/agent_a');
     expect(sandboxRuntimeStateRoot('dsh', 'agent/a')).toBe('/workspace/.toolplane/runtimes/dsh/agents/agent_a');
     expect(sandboxRuntimeStateRoot('pi', 'agent/a')).toBe('/workspace/.toolplane/runtimes/pi/agents/agent_a');
+    expect(sandboxRuntimeStateRoot('pi', '..')).toBe('/workspace/.toolplane/runtimes/pi/agents/agent');
+    expect(sandboxRuntimeSkillRoot('pi', 'agent/a')).toBe('/workspace/.toolplane/runtimes/pi/agents/agent_a/skills');
+    expect(sandboxRuntimeSkillRoot('claude-code', 'agent/a'))
+      .toBe(`${sandboxRuntimeStateRoot('claude-code', 'agent/a')}/skills`);
     const wrapper = sandboxRuntimeExecWrapper('__CONTROL__');
     expect(wrapper).toContain('> "$pid_file"');
     expect(wrapper).toContain("trap 'rm -f -- \"$pid_file\"' EXIT");
   });
 
-  it('inlines SKILL.md and scopes Claude MCP credentials to the generated config', () => {
-    const skill: SkillForPrompt = {
-      skillId: 'skill-1',
+  it('projects complete skill directories and scopes Claude MCP credentials to the generated config', () => {
+    const bundles = buildSandboxSkillBundles([{
+      skillId: null,
+      slug: 'Deploy Tool',
       name: 'Deploy',
       content: 'Always run the smoke check.',
+      files: [
+        { path: 'references/checklist.md', content: '# Checklist' },
+        { path: 'scripts/deploy.sh', content: 'ZWNobyBkZXBsb3k=', encoding: 'base64' },
+      ],
       skill: null,
-    };
-    expect(inlineSandboxSkills('Base prompt', [skill])).toContain('## Skill: Deploy\nAlways run the smoke check.');
+    }, {
+      skillId: null,
+      slug: 'Deploy Tool',
+      name: 'Deploy again',
+      content: 'Second.',
+      skill: null,
+    }] satisfies SkillForPrompt[]);
+    expect(bundles.map((bundle) => bundle.directory)).toEqual(['deploy-tool', 'deploy-tool-2']);
+    expect(bundles[0]?.markdown).toContain('Always run the smoke check.');
+    expect(bundles[0]?.files).toEqual([
+      { path: 'references/checklist.md', content: '# Checklist' },
+      { path: 'scripts/deploy.sh', content: 'ZWNobyBkZXBsb3k=', encoding: 'base64' },
+    ]);
     const config = JSON.parse(buildClaudeMcpConfig([
       { deploymentId: 'dep-1', url: 'https://runtime.example/mcp/dep-1/rpc' },
     ], 'runtime-secret')) as { mcpServers: Record<string, { headers: { Authorization: string } }> };

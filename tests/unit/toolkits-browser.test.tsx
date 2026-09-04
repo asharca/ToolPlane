@@ -30,6 +30,14 @@ const toolkits: ToolkitRow[] = [
 ];
 
 describe('ToolkitsBrowser', () => {
+  it('opens toolkit details from the full identity cell', () => {
+    render(<ToolkitsBrowser slug="acme" toolkits={toolkits} />);
+
+    const link = screen.getByRole('link', { name: 'Research stack' });
+    expect(link).toHaveAttribute('href', '/app/acme/toolkits/research-stack');
+    expect(link.parentElement).toHaveClass('p-0');
+  });
+
   it('can open the create form from a market handoff', () => {
     render(<ToolkitsBrowser slug="acme" toolkits={toolkits} startCreating />);
 

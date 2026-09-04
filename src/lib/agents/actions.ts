@@ -555,6 +555,7 @@ export async function deleteAgentAction(formData: FormData) {
   })) return;
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
+  revalidatePath(`/app/${slug}/sandboxes`);
   redirect(safeRelativePath(formData.get('returnTo')) ?? `/app/${slug}/agents`);
 }
 

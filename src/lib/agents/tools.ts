@@ -73,6 +73,7 @@ export async function buildToolSet(
         name: toolKey(deploymentId, t.name),
         description: t.description ?? t.name,
         parameters: jsonSchema((t.inputSchema ?? { type: 'object', properties: {} }) as Record<string, unknown>),
+        toolplaneOrigin: { deploymentId, originalToolName: t.name },
         execute: async (args: Record<string, unknown>) => {
           // Agent tool calls go straight to the MCP process (not through the
           // gateway route), so record them here too — otherwise agent-driven

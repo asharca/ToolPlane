@@ -49,6 +49,7 @@ import { beginWorkspaceOperation } from '@/lib/workspace/operation-gate';
 import {
   ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance,
+  stopHermesRuntime,
   syncHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
 import { setHermesRuntimeEnv } from '@/lib/agents/mutations';
@@ -1026,8 +1027,15 @@ export async function stopSandboxAction(formData: FormData) {
   if (!ctx || !sandboxId) return;
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-    if (!sandbox || sandbox.kind === 'hermes') return;
+    if (!sandbox) return;
     if (sandboxLifecycleBlocked(sandbox)) return;
+    if (sandbox.kind === 'hermes') {
+      const agentId = await hermesAgentIdForSandbox(ctx.ws.id, sandbox.id);
+      if (!agentId) return;
+      await stopHermesRuntime(ctx.ws.id, agentId);
+      revalidatePath(`/app/${slug}/agents/${agentId}`);
+      return;
+    }
     await stopProcess(sandbox.deploymentId);
     if (sandbox.kind === 'connector') disconnectConnector(sandbox.id, 'sandbox stopped');
   });

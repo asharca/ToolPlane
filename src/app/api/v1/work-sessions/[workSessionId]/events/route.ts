@@ -26,7 +26,11 @@ function completedOutput(messages: Array<{ role: string; parts: unknown }>): Wor
     }
   }
   const text: string[] = [];
-  const activities = new Map<string, WorkOutputActivity>();
+  const activities: WorkOutputActivity[] = [];
+  const toolIndexes = new Map<string, number>();
+  let reasoningSequence = 0;
+  let runtimeSequence = 0;
+  let timing: Pick<WorkOutputSnapshot, 'startedAt' | 'runtimeKind' | 'modelName'> = {};
   for (const message of messages.slice(lastUser + 1)) {
     if (message.role !== 'assistant' || !Array.isArray(message.parts)) continue;
     for (const [index, part] of message.parts.entries()) {
@@ -34,16 +38,16 @@ function completedOutput(messages: Array<{ role: string; parts: unknown }>): Wor
       const value = part as Record<string, unknown>;
       if (value.type === 'text' && typeof value.text === 'string') text.push(value.text);
       if (value.type === 'reasoning' && typeof value.text === 'string') {
-        activities.set('reasoning', {
-          id: 'reasoning',
+        activities.push({
+          id: `reasoning:${++reasoningSequence}`,
           type: 'reasoning',
           status: 'completed',
           text: value.text,
         });
       }
       if (value.type === 'work-runtime' && typeof value.runtimeKind === 'string') {
-        activities.set('runtime', {
-          id: 'runtime',
+        activities.push({
+          id: `runtime:${++runtimeSequence}`,
           type: 'runtime',
           status: value.status === 'failed' ? 'failed' : value.status === 'cancelled' ? 'cancelled' : 'completed',
           runtimeKind: value.runtimeKind,
@@ -52,20 +56,42 @@ function completedOutput(messages: Array<{ role: string; parts: unknown }>): Wor
       if (value.type === 'work-tool') {
         const toolCallId = typeof value.toolCallId === 'string' ? value.toolCallId : `history-${index}`;
         const isError = value.isError === true || value.status === 'failed';
-        activities.set(`tool:${toolCallId}`, {
-          id: `tool:${toolCallId}`,
+        const id = `tool:${toolCallId}`;
+        const activity: WorkOutputActivity = {
+          id,
           type: 'tool',
           status: isError ? 'failed' : value.status === 'running' ? 'running' : value.status === 'cancelled' ? 'cancelled' : 'completed',
           toolCallId,
           toolName: typeof value.toolName === 'string' ? value.toolName : 'Tool',
+          ...(typeof value.deploymentName === 'string' ? { deploymentName: value.deploymentName } : {}),
+          ...(typeof value.originalToolName === 'string' ? { originalToolName: value.originalToolName } : {}),
+          ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
           input: value.input,
           output: value.output,
           isError,
-        });
+        };
+        const previousIndex = toolIndexes.get(id);
+        if (previousIndex === undefined) {
+          toolIndexes.set(id, activities.length);
+          activities.push(activity);
+        } else {
+          activities[previousIndex] = { ...activities[previousIndex], ...activity };
+        }
+      }
+      if (value.type === 'data-work-timing' && value.data && typeof value.data === 'object' && !Array.isArray(value.data)) {
+        const data = value.data as Record<string, unknown>;
+        const startedAt = typeof data.startedAt === 'number' && Number.isFinite(data.startedAt) && data.startedAt > 0
+          ? data.startedAt
+          : undefined;
+        timing = {
+          ...(startedAt === undefined ? {} : { startedAt }),
+          ...(typeof data.runtimeKind === 'string' && data.runtimeKind ? { runtimeKind: data.runtimeKind } : {}),
+          ...(typeof data.modelName === 'string' && data.modelName ? { modelName: data.modelName } : {}),
+        };
       }
     }
   }
-  return { text: text.join('\n'), activities: [...activities.values()], active: false, done: true };
+  return { text: text.join('\n'), activities, active: false, done: true, ...timing };
 }
 
 function outputData(snapshot: WorkOutputSnapshot, delta?: string, activity?: WorkOutputActivity) {

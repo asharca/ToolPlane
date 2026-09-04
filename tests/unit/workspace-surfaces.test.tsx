@@ -291,10 +291,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
         acceptanceCriteria: 'Release is live', runtimeKind: 'pi', status: 'completed',
         maxSteps: 12, stepCount: 0, waitingQuestion: null, result: null, error: null,
         artifacts: [], approvals: [], conversationId: 'conversation-1', messages: [
-          { id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Ship it' }] },
+          { id: 'message-user', role: 'user', createdAt: '2026-09-03T01:02:03.000Z', parts: [{ type: 'text', text: 'Ship it' }] },
           {
             id: 'message-assistant',
             role: 'assistant',
+            createdAt: '2026-09-03T01:02:04.000Z',
             parts: [
               { type: 'text', text: 'Release shipped' },
               { type: 'data-context-usage', data: { usedTokens: 64, maxTokens: 100, modelName: 'gpt-test', estimated: false } },
@@ -332,6 +333,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const copyButtons = screen.getAllByRole('button', { name: 'Copy' });
     expect(copyButtons).toHaveLength(2);
     expect(copyButtons[0]).toHaveClass('opacity-0', 'group-hover/message:opacity-100', 'group-focus-within/message:opacity-100');
+    const reply = screen.getByText('Release shipped').closest('[data-ui="assistant-reply"]');
+    expect(reply?.querySelector('[data-ui="assistant-reply-model"]')).toHaveTextContent('gpt-test');
+    const replyTime = reply?.querySelector('time[data-ui="work-message-time"]');
+    expect(replyTime).toHaveAttribute('dateTime', '2026-09-03T01:02:04.000Z');
+    expect(replyTime).toHaveClass('opacity-0', 'group-hover/message:opacity-100');
     expect(screen.getByRole('meter', { name: 'Context usage 64%' })).toHaveAttribute('aria-valuenow', '64');
   });
 
@@ -343,8 +349,9 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       artifacts: [], approvals: [], conversationId: 'conversation-1', messages: [
         { id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Reply slowly' }] },
         { id: 'message-assistant', role: 'assistant', parts: [
-          { type: 'work-tool', toolCallId: 'call-1', toolName: 'read_file', input: '{}', output: 'contents', isError: false, status: 'completed' as const },
+          { type: 'work-tool', toolCallId: 'call-1', toolName: 'read_file', deploymentName: 'Local filesystem', originalToolName: 'read_file', durationMs: 1200, input: '{}', output: 'contents', isError: false, status: 'completed' as const },
           { type: 'text', text: 'Hello' },
+          { type: 'data-work-timing', data: { startedAt: 1_700_000_000_000, completedAt: 1_700_000_029_000, durationMs: 29_000, runtimeKind: 'pi', modelName: 'model-a' } },
         ] },
       ],
       sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
@@ -364,20 +371,21 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId="work-1"
     />);
 
-    expect(await screen.findByText('Generating')).toBeInTheDocument();
+    expect(screen.queryByText('Generating')).not.toBeInTheDocument();
     expect(WorkEventSource.latest?.url).toBe('/api/v1/work-sessions/work-1/events');
     expect(fetchMock).not.toHaveBeenCalled();
 
     act(() => WorkEventSource.latest?.emit('activity', { activities: [{
       id: 'tool:call-1', type: 'tool', status: 'running', toolCallId: 'call-1', toolName: 'read_file', input: '{}',
     }] }));
-    expect(await screen.findByText('Using read_file')).toBeInTheDocument();
+    expect(screen.queryByText('Using read_file')).not.toBeInTheDocument();
     expect(screen.getAllByText('read_file')).toHaveLength(1);
     act(() => WorkEventSource.latest?.emit('activity', { activities: [{
-      id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', input: '{}', output: 'contents',
+      id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', deploymentName: 'Local filesystem', originalToolName: 'read_file', durationMs: 1200, input: '{}', output: 'contents',
     }] }));
     expect(await screen.findByText('Completed')).toBeInTheDocument();
-    expect(screen.getAllByText('read_file')).toHaveLength(1);
+    expect(screen.getByText('Local filesystem · read_file')).toBeInTheDocument();
+    expect(screen.getByText('1.2 s')).toBeInTheDocument();
 
     act(() => WorkEventSource.latest?.emit('delta', { delta: 'Hel' }));
     expect(await screen.findByText('Hel')).toBeInTheDocument();
@@ -388,7 +396,111 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     act(() => WorkEventSource.latest?.emit('done', {}));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getAllByText('Hello')).toHaveLength(1));
-    expect(screen.getAllByText('read_file')).toHaveLength(1);
+    expect(screen.getByText('Local filesystem · read_file')).toBeInTheDocument();
+    const completedProcess = document.querySelector('details[data-ui="work-process"]');
+    expect(completedProcess).not.toBeNull();
+    expect(completedProcess).not.toHaveAttribute('open');
+    expect(completedProcess?.querySelector('summary')).toHaveTextContent('Processed');
+    expect(completedProcess?.querySelector('[data-ui="work-process-duration"]')).toHaveTextContent('29 s');
+    expect(screen.getByText('Hello').closest('details')).toBeNull();
+  });
+
+  it('keeps a text-only completed Work reply free of an empty process group', () => {
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      sessions={[{
+        id: 'work-text-only', agentId: 'agent-1', title: 'Text reply', task: 'Say hello',
+        acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
+        startedAt: '2026-09-03T01:00:00.000Z', completedAt: '2026-09-03T01:00:29.041Z',
+        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+        artifacts: [], approvals: [], conversationId: 'conversation-text-only', messages: [
+          { id: 'message-user', role: 'user', createdAt: '2026-09-03T01:00:00.000Z', parts: [{ type: 'text', text: 'Hello' }] },
+          { id: 'message-assistant', role: 'assistant', parts: [
+            { type: 'work-runtime', runtimeKind: 'pi', status: 'completed' as const },
+            { type: 'text', text: 'Hi' },
+          ], createdAt: '2026-09-03T01:00:29.041Z' },
+        ],
+        sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
+      }]}
+      selectedWorkSessionId="work-text-only"
+    />);
+
+    const reply = screen.getByText('Hi').closest('[data-ui="assistant-reply"]');
+    expect(reply?.querySelector('[data-ui="work-message-duration"]')).toHaveTextContent('29 s');
+    expect(screen.queryByText('Pi')).not.toBeInTheDocument();
+    expect(screen.queryByText('Processed')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-ui="work-process"]')).toBeNull();
+  });
+
+  it('renders live Work activities in arrival order', async () => {
+    vi.stubGlobal('EventSource', WorkEventSource);
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      sessions={[{
+        id: 'work-live-order', agentId: 'agent-1', title: 'Live order', task: 'Trace order',
+        acceptanceCriteria: null, runtimeKind: 'claude-code', status: 'running',
+        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+        artifacts: [], approvals: [], conversationId: 'conversation-live-order',
+        messages: [{ id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Trace this' }] }],
+        sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
+      }]}
+      selectedWorkSessionId="work-live-order"
+    />);
+
+    expect(screen.queryByText('Generating')).not.toBeInTheDocument();
+    expect(screen.getByText('Processing')).toBeInTheDocument();
+    act(() => WorkEventSource.latest?.emit('activity', { activities: [
+      { id: 'runtime', type: 'runtime', status: 'running', runtimeKind: 'claude-code' },
+      { id: 'reasoning:1', type: 'reasoning', status: 'completed', text: 'thought before' },
+      { id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'live_tool', input: {} },
+      { id: 'runtime:final', type: 'runtime', status: 'failed', runtimeKind: 'claude-code' },
+    ] }));
+
+    const content = document.querySelector('[data-ui="work.transcript"]')?.textContent ?? '';
+    const thought = content.indexOf('thought before');
+    const tool = content.indexOf('live_tool');
+    const terminalRuntime = content.indexOf('Claude Code');
+    expect([thought, tool, terminalRuntime].every((position) => position >= 0)).toBe(true);
+    expect([thought, tool, terminalRuntime]).toEqual([
+      ...[thought, tool, terminalRuntime].sort((left, right) => left - right),
+    ]);
+  });
+
+  it('keeps persisted Work process parts in execution order', () => {
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      sessions={[{
+        id: 'work-order', agentId: 'agent-1', title: 'Trace order', task: 'Trace order',
+        acceptanceCriteria: null, runtimeKind: 'pi', status: 'failed',
+        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: 'Stopped',
+        artifacts: [], approvals: [], conversationId: 'conversation-order', messages: [
+          { id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Trace this' }] },
+          { id: 'message-assistant', role: 'assistant', parts: [
+            { type: 'reasoning', text: 'plan-before' },
+            { type: 'work-tool', toolCallId: 'call-1', toolName: 'first_tool', input: {} },
+            { type: 'work-runtime', runtimeKind: 'claude-code', status: 'failed' as const },
+            { type: 'reasoning', text: 'plan-after' },
+            { type: 'work-tool', toolCallId: 'call-2', toolName: 'second_tool', input: {} },
+            { type: 'text', text: 'Done' },
+          ] },
+        ],
+        sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
+      }]}
+      selectedWorkSessionId="work-order"
+    />);
+
+    const transcript = document.querySelector('[data-ui="work.transcript"]');
+    const content = transcript?.textContent ?? '';
+    const positions = ['plan-before', 'first_tool', 'Claude Code', 'plan-after', 'second_tool']
+      .map((marker) => content.indexOf(marker));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 
   it('keeps a Work reader above streaming output until they return to the latest message', () => {

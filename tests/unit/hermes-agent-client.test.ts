@@ -181,6 +181,95 @@ describe('Hermes chat projection', () => {
     });
   });
 
+  it('maps session process events to reasoning and FIFO tool chunks without replacing them with transcript segments', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(capabilities())
+      .mockResolvedValueOnce(Response.json({ object: 'hermes.session' }, { status: 201 }))
+      .mockResolvedValueOnce(new Response([
+        'event: assistant.delta',
+        'data: {"delta":"I will inspect."}',
+        '',
+        'event: tool.progress',
+        'data: {"tool_name":"_thinking","delta":"Inspecting files"}',
+        '',
+        'event: tool.started',
+        'data: {"tool_name":"read_file","args":{"path":"a.txt"}}',
+        '',
+        'event: tool.started',
+        'data: {"tool_name":"read_file","args":{"path":"b.txt"}}',
+        '',
+        'event: tool.completed',
+        'data: {"tool_name":"read_file"}',
+        '',
+        'event: tool.failed',
+        'data: {"tool_name":"read_file","preview":"Permission denied"}',
+        '',
+        'event: assistant.delta',
+        'data: {"delta":"Done."}',
+        '',
+        'event: assistant.completed',
+        'data: {"content":"Done."}',
+        '',
+      ].join('\n'), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const write = vi.fn();
+
+    await writeHermesChatStream({
+      agent: {
+        id: 'agent-1',
+        slug: 'hermes',
+        workspaceId: 'workspace-1',
+        runtime: { id: 'runtime-1', kind: 'hermes' },
+      },
+      messages: [{
+        id: 'user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'Inspect the files.' }],
+      }],
+      conversationId: 'conversation-1',
+      writer: { write } as unknown as UIMessageStreamWriter<HermesUIMessage>,
+    });
+
+    const chunks = write.mock.calls.map(([chunk]) => chunk as Record<string, unknown>);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(chunks.map((chunk) => chunk.type)).toEqual([
+      'text-start', 'text-delta', 'text-end',
+      'reasoning-start', 'reasoning-delta', 'reasoning-end',
+      'tool-input-start', 'tool-input-available',
+      'tool-input-start', 'tool-input-available',
+      'tool-output-available', 'tool-output-error',
+      'text-start', 'text-delta', 'text-end',
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === 'text-start')).toEqual([
+      { type: 'text-start', id: 'hermes-conversation-1' },
+      { type: 'text-start', id: 'hermes-conversation-1-1' },
+    ]);
+    expect(chunks).toContainEqual({ type: 'reasoning-start', id: 'hermes-conversation-1-reasoning-0' });
+    expect(chunks).toContainEqual({
+      type: 'reasoning-delta', id: 'hermes-conversation-1-reasoning-0', delta: 'Inspecting files',
+    });
+    expect(chunks).toContainEqual({ type: 'reasoning-end', id: 'hermes-conversation-1-reasoning-0' });
+    expect(chunks.filter((chunk) => chunk.type === 'tool-input-available')).toEqual([
+      {
+        type: 'tool-input-available',
+        toolCallId: 'hermes-conversation-1-tool-0',
+        toolName: 'read_file',
+        input: { path: 'a.txt' },
+      },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'hermes-conversation-1-tool-1',
+        toolName: 'read_file',
+        input: { path: 'b.txt' },
+      },
+    ]);
+    expect(chunks.filter((chunk) => String(chunk.type).startsWith('tool-output'))).toEqual([
+      { type: 'tool-output-available', toolCallId: 'hermes-conversation-1-tool-0', output: null },
+      { type: 'tool-output-error', toolCallId: 'hermes-conversation-1-tool-1', errorText: 'Permission denied' },
+    ]);
+    expect(chunks.some((chunk) => chunk.type === 'data-hermes-messages')).toBe(false);
+  });
+
   it('uses a cloned conversation runtime-session alias for Hermes requests', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(capabilities())

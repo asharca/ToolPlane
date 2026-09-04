@@ -7,6 +7,9 @@ export type WorkOutputSnapshot = {
   activities: WorkOutputActivity[];
   active: boolean;
   done: boolean;
+  startedAt?: number;
+  runtimeKind?: string;
+  modelName?: string;
 };
 
 export type WorkOutputActivity = {
@@ -17,6 +20,9 @@ export type WorkOutputActivity = {
   text?: string;
   toolCallId?: string;
   toolName?: string;
+  deploymentName?: string;
+  originalToolName?: string;
+  durationMs?: number;
   input?: unknown;
   output?: unknown;
   isError?: boolean;
@@ -60,6 +66,9 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
     activities: channel.activities.map((activity) => ({ ...activity })),
     active: channel.active,
     done: channel.done,
+    ...(channel.startedAt === undefined ? {} : { startedAt: channel.startedAt }),
+    ...(channel.runtimeKind === undefined ? {} : { runtimeKind: channel.runtimeKind }),
+    ...(channel.modelName === undefined ? {} : { modelName: channel.modelName }),
   };
 }
 
@@ -73,7 +82,10 @@ function notifyOutput(channel: WorkOutputChannel, event: WorkOutputEvent) {
   }
 }
 
-export function startWorkOutput(workSessionId: string) {
+export function startWorkOutput(
+  workSessionId: string,
+  metadata: Pick<WorkOutputSnapshot, 'startedAt' | 'runtimeKind' | 'modelName'> = {},
+) {
   const channel = outputChannel(workSessionId);
   if (channel.cleanup) clearTimeout(channel.cleanup);
   channel.cleanup = undefined;
@@ -81,6 +93,9 @@ export function startWorkOutput(workSessionId: string) {
   channel.activities = [];
   channel.active = true;
   channel.done = false;
+  channel.startedAt = metadata.startedAt ?? Date.now();
+  channel.runtimeKind = metadata.runtimeKind;
+  channel.modelName = metadata.modelName;
   notifyOutput(channel, { type: 'start', snapshot: outputSnapshot(channel) });
 }
 

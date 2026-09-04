@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   setConnectorSetupTokenCookie: vi.fn(),
   runHermesRuntimeMaintenance: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
+  stopHermesRuntime: vi.fn(),
   setHermesRuntimeEnv: vi.fn(),
   syncHermesRuntime: vi.fn(),
   headers: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock('@/lib/sandboxes/connector-setup-token', () => ({
 vi.mock('@/lib/agents/hermes/runtime', () => ({
   ensureHermesRuntimeReady: mocks.ensureHermesRuntimeReady,
   runHermesRuntimeMaintenance: mocks.runHermesRuntimeMaintenance,
+  stopHermesRuntime: mocks.stopHermesRuntime,
   syncHermesRuntime: mocks.syncHermesRuntime,
 }));
 vi.mock('@/lib/agents/mutations', () => ({ setHermesRuntimeEnv: mocks.setHermesRuntimeEnv }));
@@ -213,6 +215,7 @@ describe('renameSandboxAction', () => {
     mocks.removeDockerVolumeCopyHelper.mockResolvedValue(undefined);
     mocks.setHermesRuntimeEnv.mockResolvedValue(true);
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 8642 });
+    mocks.stopHermesRuntime.mockResolvedValue(undefined);
     mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
     mocks.headers.mockResolvedValue(new Headers({
       'x-forwarded-host': 'connect.example.com',
@@ -429,6 +432,18 @@ describe('renameSandboxAction', () => {
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/work');
+  });
+
+  it('stops an agent-managed Hermes sandbox through its runtime', async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(hermesSandbox());
+    mocks.agentRuntimeFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+
+    await stopSandboxAction(renameForm('Ignored'));
+
+    expect(mocks.stopHermesRuntime).toHaveBeenCalledWith('ws1', 'agent-1');
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/agents/agent-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/sandboxes');
   });
 
   it('creates the connector without collecting connection settings or exposing a token', async () => {

@@ -29,6 +29,7 @@ import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefres
 import { SandboxCreateForm } from '@/components/dashboard/sandboxes/SandboxCreateForm';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
 import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
+import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -45,18 +46,18 @@ import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/co
 export const dynamic = 'force-dynamic';
 
 const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
+const LIFECYCLE_BLOCKED_STATUSES = new Set([
+  'copying',
+  'copy_failed',
+  'restoring',
+  'restore_failed',
+  'restore_cleanup_required',
+  'upgrading',
+  'deleting',
+]);
 
 function formatDate(d: Date, timeZone: string, locale: string): string {
   return formatInTimeZone(d, timeZone, { month: 'short', day: 'numeric', year: 'numeric' }, locale);
-}
-
-function formatDateTime(d: Date, timeZone: string, locale: string): string {
-  return formatInTimeZone(d, timeZone, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }, locale);
 }
 
 function compactVolumeName(sandboxId: string): string {
@@ -212,7 +213,12 @@ export default async function SandboxesPage({
     const status = managedStatus(runtime);
     return status === 'running' || status === 'provisioning';
   }).length;
-  const agentLinkCount = sandboxes.reduce((sum, sandbox) => sum + sandbox._count.agentLinks, 0);
+  const agentLinkCount = sandboxes.reduce((sum, sandbox) => sum + sandbox._count.agentLinks, 0)
+    + managedRuntimes.length;
+  const sandboxRows = [
+    ...sandboxes.map((sandbox) => ({ type: 'sandbox' as const, createdAt: sandbox.createdAt, sandbox })),
+    ...managedRuntimes.map((runtime) => ({ type: 'hermes' as const, createdAt: runtime.sandbox.createdAt, runtime })),
+  ].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
 
   return (
     <>
@@ -236,7 +242,7 @@ export default async function SandboxesPage({
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           <SandboxStat label={t('docker')} value={dockerCount} icon={Cpu} />
           <SandboxStat label={t('connectors')} value={connectorCount} icon={Laptop} />
-          <SandboxStat label={t('managedRuntimes')} value={managedRuntimes.length} icon={Container} />
+          <SandboxStat label={t('hermes')} value={managedRuntimes.length} icon={Container} />
           <SandboxStat label={t('running')} value={runningCount} icon={Terminal} />
           <SandboxStat
             label={t('agentLinks')}
@@ -246,160 +252,16 @@ export default async function SandboxesPage({
           />
         </div>
 
-        {managedRuntimes.length > 0 ? (
-          <DashboardSection title={t('managedAgentSandboxes')} count={managedRuntimes.length}>
-            <p className="-mt-1 mb-3 max-w-3xl text-xs leading-5 text-muted-foreground">
-              {t('managedAgentSandboxesDescription')}
-            </p>
-            <div className="space-y-3 xl:hidden">
-              {managedRuntimes.map((runtime) => {
-                const status = managedStatus(runtime);
-                const agentHref = `/app/${slug}/agents/${runtime.agent.id}`;
-                const imported = isImportedHermesArchive(runtime.sandbox.config);
-                return (
-                  <article key={runtime.id} className="ui-panel p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                          <Container className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <h3 className="truncate text-sm font-semibold text-foreground">{runtime.sandbox.name}</h3>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {runtime.sandbox.slug}{imported ? ` · ${t('importedHermesArchiveLabel')}` : ''}
-                          </p>
-                        </div>
-                      </div>
-                      <StatusBadge status={status} />
-                    </div>
-
-                    {runtime.lastError ? (
-                      <p className="mt-3 break-words rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                        {runtime.lastError}
-                      </p>
-                    ) : null}
-
-                    <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-                      <div>
-                        <dt className="text-muted-foreground">{t('ownerAgent')}</dt>
-                        <dd className="mt-1">
-                          <Link href={agentHref} className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline">
-                            <Bot className="size-3.5 text-muted-foreground" />
-                            {runtime.agent.name}
-                          </Link>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">{t('lastSync')}</dt>
-                        <dd className="mt-1 font-medium text-foreground">
-                          {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone, locale) : t('neverSynced')}
-                        </dd>
-                      </div>
-                      <div className="min-w-0 sm:col-span-2">
-                        <dt className="text-muted-foreground">{t('imageAndStorage')}</dt>
-                        <dd className="mt-1 min-w-0">
-                          <div className="truncate text-foreground" title={runtime.image}>{runtime.image}</div>
-                          <div
-                            className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground"
-                            title={sandboxVolumeName(runtime.sandbox.id)}
-                          >
-                            <HardDrive className="size-3 shrink-0" />
-                            <span className="truncate">{compactVolumeName(runtime.sandbox.id)}</span>
-                          </div>
-                        </dd>
-                      </div>
-                    </dl>
-
-                    <HermesRuntimeDialogLauncher
-                      runtime={managedRuntimeDialogData(runtime, status)}
-                      className="mt-4 border-t border-border pt-3"
-                    />
-                  </article>
-                );
-              })}
-            </div>
-            <DashboardTable
-              minWidth="58rem"
-              className="hidden xl:block"
-              headers={[
-                { label: t('runtime') },
-                { label: t('ownerAgent') },
-                { label: t('status') },
-                { label: t('imageAndStorage') },
-                { label: t('lastSync') },
-                { label: t('actions'), align: 'right' },
-              ]}
-            >
-              {managedRuntimes.map((runtime) => {
-                const status = managedStatus(runtime);
-                const agentHref = `/app/${slug}/agents/${runtime.agent.id}`;
-                const imported = isImportedHermesArchive(runtime.sandbox.config);
-                return (
-                  <tr key={runtime.id}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                          <Container className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <div className="font-medium text-foreground">{runtime.sandbox.name}</div>
-                          <div className="text-xs text-muted-foreground">{runtime.sandbox.slug}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link href={agentHref} className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline">
-                        <Bot className="size-3.5 text-muted-foreground" />
-                        {runtime.agent.name}
-                      </Link>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {imported ? t('importedHermesArchiveLabel') : t('managedByAgent')}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={status} />
-                      {runtime.lastError ? (
-                        <div className="mt-1 max-w-48 truncate text-xs text-red-600" title={runtime.lastError}>
-                          {runtime.lastError}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="max-w-sm px-4 py-3 text-xs text-muted-foreground">
-                      <div className="truncate" title={runtime.image}>{runtime.image}</div>
-                      <div
-                        className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-muted-foreground/70"
-                        title={sandboxVolumeName(runtime.sandbox.id)}
-                      >
-                        <HardDrive className="size-3 shrink-0" />
-                        {compactVolumeName(runtime.sandbox.id)}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {runtime.lastSyncedAt ? formatDateTime(runtime.lastSyncedAt, timeZone, locale) : t('neverSynced')}
-                    </td>
-                    <td className="px-4 py-3">
-                      <HermesRuntimeDialogLauncher
-                        compact
-                        runtime={managedRuntimeDialogData(runtime, status)}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </DashboardTable>
-          </DashboardSection>
-        ) : null}
-
-        <DashboardSection title={t('userSandboxes')} count={sandboxes.length}>
-          {sandboxes.length === 0 ? (
+        <DashboardSection title={t('sandboxes')} count={sandboxRows.length}>
+          {sandboxRows.length === 0 ? (
             <DashboardEmptyState
               icon={Boxes}
-              title={t('noUserSandboxesYet')}
+              title={t('noSandboxesYet')}
               description={t('createALinuxSandboxThenAttachItToAnAgentFromTheAgentSettingsPage')}
             />
           ) : (
             <DashboardTable
-              minWidth="60rem"
+              minWidth="68rem"
               headers={[
                 { label: t('sandbox') },
                 { label: t('mode') },
@@ -411,38 +273,119 @@ export default async function SandboxesPage({
                 { label: t('actions'), align: 'right' },
               ]}
             >
-              {sandboxes.map((s) => {
+              {sandboxRows.map((row) => {
+                if (row.type === 'hermes') {
+                  const runtime = row.runtime;
+                  const status = managedStatus(runtime);
+                  const running = status === 'running' || status === 'provisioning';
+                  const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
+                  const imported = isImportedHermesArchive(runtime.sandbox.config);
+                  return (
+                    <tr key={runtime.id}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                            <Container className="size-4" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="font-medium text-foreground">{runtime.sandbox.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {runtime.sandbox.slug}{imported ? ` · ${t('importedHermesArchiveLabel')}` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
+                          <Container className="size-3.5" />
+                          {t('hermes')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={status} />
+                        {runtime.lastError ? (
+                          <div className="mt-1 max-w-48 truncate text-xs text-red-600" title={runtime.lastError}>
+                            {runtime.lastError}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="max-w-xs px-4 py-3 text-xs text-muted-foreground">
+                        <div className="truncate" title={runtime.image}>{runtime.image}</div>
+                        <div
+                          className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-muted-foreground/70"
+                          title={sandboxVolumeName(runtime.sandbox.id)}
+                        >
+                          <HardDrive className="size-3 shrink-0" />
+                          {compactVolumeName(runtime.sandbox.id)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/app/${slug}/agents/${runtime.agent.id}`}
+                          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
+                        >
+                          <Bot className="size-3.5 text-muted-foreground" />
+                          {runtime.agent.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{runtime.sandbox.snapshots.length}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{formatDate(runtime.sandbox.createdAt, timeZone, locale)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-3">
+                          <HermesRuntimeDialogLauncher compact runtime={managedRuntimeDialogData(runtime, status)} />
+                          {!lifecycleBlocked ? running ? (
+                            <form action={stopSandboxAction}>
+                              <input type="hidden" name="workspace" value={slug} />
+                              <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
+                              <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                                {t('stop')}
+                              </SubmitButton>
+                            </form>
+                          ) : (
+                            <form action={startSandboxAction}>
+                              <input type="hidden" name="workspace" value={slug} />
+                              <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
+                              <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                                {t('start')}
+                              </SubmitButton>
+                            </form>
+                          ) : null}
+                          <DeleteAgentButton
+                            compact
+                            slug={slug}
+                            agentId={runtime.agent.id}
+                            returnTo={`/app/${slug}/sandboxes`}
+                            prompt={t('deleteAgentAndRuntime')}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                const s = row.sandbox;
                 const status = effectiveStatus(s.deploymentId, s.deployment.status);
                 const running = status === 'running' || status === 'provisioning';
-                const lifecycleBlocked = [
-                  'copying',
-                  'copy_failed',
-                  'restoring',
-                  'restore_failed',
-                  'restore_cleanup_required',
-                  'upgrading',
-                  'deleting',
-                ]
-                  .includes(status);
+                const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
                 const connector = connectorFromConfig(s.config);
                 const disabledLegacy = s.kind === 'host' || s.kind === 'ssh' || (s.kind === 'connector' && !connector);
                 return (
                   <tr key={s.id}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                          {s.kind === 'connector' ? <Laptop className="size-4" /> : <Terminal className="size-4" />}
-                        </span>
-                        <div>
-                          <Link
-                            href={`/app/${slug}/sandboxes/${s.id}`}
-                            className="font-medium text-foreground hover:underline"
-                          >
-                            {s.name}
-                          </Link>
-                          <div className="text-xs text-muted-foreground">{s.slug}</div>
+                    <td className="p-0">
+                      <Link
+                        href={`/app/${slug}/sandboxes/${s.id}`}
+                        className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex size-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                            {s.kind === 'connector' ? <Laptop className="size-4" /> : <Terminal className="size-4" />}
+                          </span>
+                          <div>
+                            <div className="font-medium text-foreground">{s.name}</div>
+                            <div className="text-xs text-muted-foreground">{s.slug}</div>
+                          </div>
                         </div>
-                      </div>
+                      </Link>
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
@@ -473,9 +416,6 @@ export default async function SandboxesPage({
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone, locale)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-3">
-                        <Link href={`/app/${slug}/sandboxes/${s.id}`} className={rowButton}>
-                          {t('inspect')}
-                        </Link>
                         {disabledLegacy || lifecycleBlocked ? null : running ? (
                           <>
                             <form action={stopSandboxAction}>

@@ -202,6 +202,7 @@ export function EmptyState({
 export type DataTableHeader = {
   align?: 'left' | 'right';
   className?: string;
+  colSpan?: number;
   label?: ReactNode;
 };
 
@@ -244,6 +245,7 @@ export function DataTable({
               <th
                 key={index}
                 scope="col"
+                colSpan={header.colSpan}
                 className={cx(
                   'px-4 py-3 font-medium',
                   header.align === 'right' && 'text-right',

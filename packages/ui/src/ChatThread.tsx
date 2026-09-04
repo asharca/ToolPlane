@@ -258,6 +258,12 @@ function toolKindLabel(kind: ToolKind, labels: ChatThreadLabels) {
   }[kind];
 }
 
+function displayToolName(toolName: string) {
+  const sandboxAlias = /^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__(.+)$/.exec(toolName);
+  if (sandboxAlias) return sandboxAlias[1];
+  return toolName;
+}
+
 function UserText({ text }: TextMessagePartProps) {
   const transform = useContext(UserTextTransformContext);
   return <span className="block whitespace-pre-wrap [&:not(:last-child)]:mb-2">{transform(text)}</span>;
@@ -292,6 +298,7 @@ function PlainAssistantText() {
 
 function ReasoningPart({ text, status }: ReasoningMessagePartProps) {
   const labels = useLabels();
+  if (!text.trim()) return null;
   const running = status.type === 'running';
   return (
     <details open={running} className="group/reasoning rounded-md">
@@ -337,6 +344,7 @@ function ToolPart({
   respondToApproval,
 }: ToolCallMessagePartProps) {
   const labels = useLabels();
+  const displayName = displayToolName(toolName);
   const kind = toolKind(toolName);
   const Icon = kind === 'skill'
     ? Brain
@@ -369,7 +377,7 @@ function ToolPart({
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
-          <span className="font-medium text-foreground">{toolName}</span>
+          <span className="font-medium text-foreground">{displayName}</span>
           <span className="ml-1.5 text-[11px]">{toolKindLabel(kind, labels)}</span>
         </span>
         <span className={cx(
@@ -422,42 +430,52 @@ function ToolPart({
 function AssistantProcess() {
   const labels = useLabels();
   const running = useAuiState((state) => state.chainOfThought.status.type === 'running');
+  const hasContent = useAuiState((state) => state.chainOfThought.parts.some((part) => (
+    part.type === 'tool-call' || (part.type === 'reasoning' && Boolean(part.text.trim()))
+  )));
   const failed = useAuiState((state) => state.chainOfThought.parts.some((part) => (
     part.type === 'tool-call' && part.isError
   )));
-  const activeLabel = useAuiState((state) => {
-    const part = state.chainOfThought.parts.at(-1);
-    if (!running || !part) return '';
-    return part.type === 'tool-call' ? labels.usingTool(part.toolName) : labels.thinking;
-  });
+  if (!hasContent) return null;
+
+  const timeline = (
+    <div className="ml-5 py-1">
+      <ChainOfThoughtPrimitive.Parts components={{ Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }} />
+    </div>
+  );
+
+  if (running) {
+    return (
+      <ChainOfThoughtPrimitive.Root asChild>
+        <div data-ui="assistant-process" className="my-1.5 text-xs">
+          {timeline}
+        </div>
+      </ChainOfThoughtPrimitive.Root>
+    );
+  }
 
   return (
     <ChainOfThoughtPrimitive.Root asChild>
-      <details open={running || failed} data-ui="assistant-process" className="group/process my-1.5 text-xs">
+      <details open={failed} data-ui="assistant-process" className="group/process my-1.5 text-xs">
         <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
           <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
-          {running
-            ? <Loader2 className="size-3.5 shrink-0 animate-spin" />
-            : failed
-              ? <CircleAlert className="size-3.5 shrink-0 text-red-600" />
-              : <CheckCircle2 className="size-3.5 shrink-0" />}
+          {failed
+            ? <CircleAlert className="size-3.5 shrink-0 text-red-600" />
+            : <CheckCircle2 className="size-3.5 shrink-0" />}
           <span className="shrink-0 font-medium text-foreground">
-            {running ? labels.processing : failed ? labels.processFailed : labels.processed}
+            {failed ? labels.processFailed : labels.processed}
           </span>
-          {activeLabel ? <span className="min-w-0 truncate text-[11px]">{activeLabel}</span> : null}
         </summary>
-        <div className="ml-5 py-1">
-          <ChainOfThoughtPrimitive.Parts components={{ Reasoning: ReasoningPart, tools: { Fallback: ToolPart } }} />
-        </div>
+        {timeline}
       </details>
     </ChainOfThoughtPrimitive.Root>
   );
 }
 
-function PendingIndicator({ label }: { label: string }) {
+function PendingIndicator() {
+  const { generatingReply } = useLabels();
   return (
-    <div role="status" data-ui="conversation-pending" className="flex items-center gap-2 py-0.5 text-[13px] text-muted-foreground">
-      <span>{label}</span>
+    <div role="status" aria-label={generatingReply} data-ui="conversation-pending" className="flex items-center py-0.5 text-[13px] text-muted-foreground">
       <span aria-hidden="true" className="flex items-center gap-1">
         <span data-ui="conversation-pending-dot" className="size-1 animate-bounce rounded-full bg-current [animation-delay:-300ms]" />
         <span data-ui="conversation-pending-dot" className="size-1 animate-bounce rounded-full bg-current [animation-delay:-150ms]" />
@@ -468,11 +486,9 @@ function PendingIndicator({ label }: { label: string }) {
 }
 
 function AssistantPendingPart() {
-  const labels = useLabels();
   const running = useAuiState((state) => state.message.status?.type === 'running');
-  const hasParts = useAuiState((state) => state.message.parts.length > 0);
   if (!running) return null;
-  return <PendingIndicator label={hasParts ? labels.generatingReply : labels.preparingReply} />;
+  return <PendingIndicator />;
 }
 
 function attachmentUrl(attachment: Attachment) {

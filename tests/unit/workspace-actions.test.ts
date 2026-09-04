@@ -4,17 +4,21 @@ const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   deploymentFindFirst: vi.fn(),
+  deploymentFindMany: vi.fn(),
   deploymentConfigFileFindMany: vi.fn(),
   deploymentCreate: vi.fn(),
   deploymentUpsert: vi.fn(),
   deploymentDeleteMany: vi.fn(),
   deploymentUpdate: vi.fn(),
+  installedSkillFindMany: vi.fn(),
+  installedSkillDeleteMany: vi.fn(),
   marketInstallUpdateMany: vi.fn(),
   serverFindUnique: vi.fn(),
   userFindUnique: vi.fn(),
   membershipFindUnique: vi.fn(),
   membershipCreate: vi.fn(),
   startProcess: vi.fn(),
+  stopProcess: vi.fn(),
   restartProcess: vi.fn(),
   liveStatus: vi.fn(),
   listMcpTools: vi.fn(),
@@ -35,10 +39,15 @@ vi.mock('@/lib/db', () => ({
     const client = {
     deployment: {
       findFirst: mocks.deploymentFindFirst,
+      findMany: mocks.deploymentFindMany,
       create: mocks.deploymentCreate,
       upsert: mocks.deploymentUpsert,
       deleteMany: mocks.deploymentDeleteMany,
       update: mocks.deploymentUpdate,
+    },
+    installedSkill: {
+      findMany: mocks.installedSkillFindMany,
+      deleteMany: mocks.installedSkillDeleteMany,
     },
     server: {
       findUnique: mocks.serverFindUnique,
@@ -65,7 +74,7 @@ vi.mock('@/lib/db', () => ({
 }));
 vi.mock('@/lib/process/supervisor', () => ({
   startProcess: mocks.startProcess,
-  stopProcess: vi.fn(),
+  stopProcess: mocks.stopProcess,
   restartProcess: mocks.restartProcess,
   killProcess: mocks.killProcess,
   liveStatus: mocks.liveStatus,
@@ -92,21 +101,32 @@ import {
   cloneDeploymentAction,
   inviteWorkspaceMemberAction,
   removeDeploymentAction,
+  removeDeploymentsAction,
   renameDeploymentAction,
   revealMcpJsonConfigAction,
   runMcpConsoleToolAction,
   setDeploymentEnvAction,
   startDeploymentAction,
+  startDeploymentsAction,
+  stopDeploymentsAction,
   restartDeploymentAction,
   rebuildDeploymentAction,
   updateMcpToolExposureAction,
   updateMcpJsonConfigAction,
+  uninstallSkillAction,
 } from '@/lib/workspace/actions';
 
 function formData(deploymentId: string): FormData {
   const fd = new FormData();
   fd.set('workspace', 'mine');
   fd.set('deploymentId', deploymentId);
+  return fd;
+}
+
+function batchFormData(deploymentIds: string[]): FormData {
+  const fd = new FormData();
+  fd.set('workspace', 'mine');
+  for (const deploymentId of deploymentIds) fd.append('deploymentId', deploymentId);
   return fd;
 }
 
@@ -135,6 +155,77 @@ function deployFormData(serverId = 'server1'): FormData {
   fd.set('serverId', serverId);
   return fd;
 }
+
+function skillFormData(...installIds: string[]): FormData {
+  const fd = new FormData();
+  fd.set('workspace', 'mine');
+  installIds.forEach((installId) => fd.append('installId', installId));
+  return fd;
+}
+
+describe('uninstallSkillAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+  });
+
+  it('uninstalls every selected skill after validating the whole selection', async () => {
+    mocks.installedSkillFindMany.mockResolvedValue([
+      { id: 'skill-1', skill: { slug: 'first' }, marketInstall: null, toolkitLinks: [] },
+      { id: 'skill-2', skill: { slug: 'second' }, marketInstall: null, toolkitLinks: [] },
+    ]);
+    mocks.installedSkillDeleteMany.mockResolvedValue({ count: 2 });
+
+    await uninstallSkillAction(skillFormData(' skill-1 ', 'skill-2', 'skill-1'));
+
+    expect(mocks.installedSkillFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ['skill-1', 'skill-2'] }, workspaceId: 'ws1' },
+    }));
+    expect(mocks.installedSkillDeleteMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['skill-1', 'skill-2'] },
+        workspaceId: 'ws1',
+        marketInstall: { is: null },
+        toolkitLinks: { none: { toolkit: { marketInstall: { isNot: null } } } },
+      },
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/skills');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/market/skills/first');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/market/skills/second');
+  });
+
+  it('does not partially uninstall when a selected skill is missing or outside the workspace', async () => {
+    mocks.installedSkillFindMany.mockResolvedValue([
+      { id: 'skill-1', skill: { slug: 'first' }, marketInstall: null, toolkitLinks: [] },
+    ]);
+
+    await uninstallSkillAction(skillFormData('skill-1', 'foreign-skill'));
+
+    expect(mocks.installedSkillDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('does not partially uninstall when a selected skill is marketplace-managed', async () => {
+    mocks.installedSkillFindMany.mockResolvedValue([
+      { id: 'skill-1', skill: { slug: 'first' }, marketInstall: null, toolkitLinks: [] },
+      { id: 'skill-2', skill: { slug: 'managed' }, marketInstall: { id: 'market-install' }, toolkitLinks: [] },
+    ]);
+
+    await uninstallSkillAction(skillFormData('skill-1', 'skill-2'));
+
+    expect(mocks.installedSkillDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed or oversized selections before querying installed skills', async () => {
+    await uninstallSkillAction(skillFormData(' '.repeat(129)));
+    await uninstallSkillAction(skillFormData(...Array.from({ length: 201 }, (_, index) => `skill-${index}`)));
+
+    expect(mocks.installedSkillFindMany).not.toHaveBeenCalled();
+    expect(mocks.installedSkillDeleteMany).not.toHaveBeenCalled();
+  });
+});
 
 describe('deployServerAction', () => {
   beforeEach(() => {
@@ -333,10 +424,7 @@ describe('removeDeploymentAction', () => {
     expect(mocks.listMcpTools).toHaveBeenCalledWith('dep1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
-    expect(mocks.redirect).toHaveBeenCalledWith(
-      '/app/mine/mcp/dep1?tab=logs#runtime-logs',
-    );
-    expect(mocks.redirect).toHaveBeenCalledTimes(1);
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
   it('restarts deployments and opens the runtime log stream', async () => {
@@ -395,8 +483,7 @@ describe('removeDeploymentAction', () => {
     expect(mocks.killProcess).toHaveBeenCalledWith('dep1', { finalStatus: 'setup_required' });
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.resolveSpawnSpec).not.toHaveBeenCalled();
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/mine/mcp/dep1?tab=variables');
-    expect(mocks.redirect).toHaveBeenCalledTimes(1);
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
   it('stops a live runtime instead of restarting it with an empty required variable', async () => {
@@ -436,6 +523,113 @@ describe('removeDeploymentAction', () => {
 
     expect(mocks.killProcess).toHaveBeenCalledWith('dep-copy', { finalStatus: 'setup_required' });
     expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+});
+
+describe('batch deployment lifecycle actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'user1' });
+    mocks.resolveSpawnSpec.mockReturnValue({ kind: 'builtin' });
+  });
+
+  it('starts every valid selected deployment once', async () => {
+    const dep1 = { id: 'dep1', workspaceId: 'ws1', source: null, installCfg: {}, marketInstall: null, toolkitLinks: [] };
+    const dep2 = { id: 'dep2', workspaceId: 'ws1', source: 'npm', installCfg: {}, marketInstall: null, toolkitLinks: [] };
+    mocks.deploymentFindMany.mockResolvedValue([dep1, dep2]);
+    mocks.deploymentFindFirst.mockResolvedValueOnce(dep1).mockResolvedValueOnce(dep2);
+
+    await startDeploymentsAction(batchFormData(['dep1', 'dep2', 'dep1']));
+
+    expect(mocks.deploymentFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: { in: ['dep1', 'dep2'] },
+        workspaceId: 'ws1',
+        OR: [{ source: null }, { source: { not: 'sandbox' } }],
+      },
+    }));
+    expect(mocks.startProcess.mock.calls.map(([id]) => id)).toEqual(['dep1', 'dep2']);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp/dep2');
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it('stops every valid selected deployment', async () => {
+    const dep1 = { id: 'dep1', workspaceId: 'ws1', source: null, installCfg: {}, marketInstall: null, toolkitLinks: [] };
+    const dep2 = { id: 'dep2', workspaceId: 'ws1', source: 'npm', installCfg: {}, marketInstall: null, toolkitLinks: [] };
+    mocks.deploymentFindMany.mockResolvedValue([dep1, dep2]);
+    mocks.deploymentFindFirst.mockResolvedValueOnce(dep1).mockResolvedValueOnce(dep2);
+
+    await stopDeploymentsAction(batchFormData(['dep1', 'dep2']));
+
+    expect(mocks.stopProcess).toHaveBeenNthCalledWith(1, 'dep1');
+    expect(mocks.stopProcess).toHaveBeenNthCalledWith(2, 'dep2');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/mcp');
+  });
+
+  it('removes every valid selected deployment without redirecting', async () => {
+    const dep1 = {
+      id: 'dep1', workspaceId: 'ws1', source: 'npm', installCfg: {},
+      server: { slug: 'first' }, marketInstall: null, toolkitLinks: [],
+    };
+    const dep2 = {
+      id: 'dep2', workspaceId: 'ws1', source: null, installCfg: {},
+      server: { slug: 'second' }, marketInstall: null, toolkitLinks: [],
+    };
+    mocks.deploymentFindMany.mockResolvedValue([dep1, dep2]);
+    mocks.deploymentFindFirst.mockResolvedValueOnce(dep1).mockResolvedValueOnce(dep2);
+
+    await removeDeploymentsAction(batchFormData(['dep1', 'dep2']));
+
+    expect(mocks.killProcess.mock.calls.map(([id]) => id)).toEqual(['dep1', 'dep2']);
+    expect(mocks.deploymentDeleteMany).toHaveBeenCalledTimes(2);
+    expect(mocks.removeDeploymentContainer).toHaveBeenCalledWith('dep1');
+    expect(mocks.removeDeploymentConfigVolume).toHaveBeenCalledWith('dep1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/market/mcp/first');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/market/mcp/second');
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it('does not apply a mixed workspace selection', async () => {
+    mocks.deploymentFindMany.mockResolvedValue([
+      { id: 'dep1', workspaceId: 'ws1', source: null, installCfg: {}, marketInstall: null, toolkitLinks: [] },
+    ]);
+    const selected = batchFormData(['dep1', 'foreign-dep']);
+
+    await startDeploymentsAction(selected);
+    await stopDeploymentsAction(selected);
+    await removeDeploymentsAction(selected);
+
+    expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.stopProcess).not.toHaveBeenCalled();
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it('does not partially remove a selection containing a protected deployment', async () => {
+    mocks.deploymentFindMany.mockResolvedValue([
+      { id: 'dep1', workspaceId: 'ws1', source: null, installCfg: {}, marketInstall: null, toolkitLinks: [] },
+      { id: 'market-dep', workspaceId: 'ws1', source: null, installCfg: {}, marketInstall: { id: 'install1' }, toolkitLinks: [] },
+    ]);
+
+    await removeDeploymentsAction(batchFormData(['dep1', 'market-dep']));
+
+    expect(mocks.deploymentFindFirst).not.toHaveBeenCalled();
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed or oversized selections before querying deployments', async () => {
+    await removeDeploymentsAction(batchFormData(['x'.repeat(129)]));
+    await removeDeploymentsAction(batchFormData(
+      Array.from({ length: 201 }, (_, index) => `dep-${index}`),
+    ));
+
+    expect(mocks.deploymentFindMany).not.toHaveBeenCalled();
+    expect(mocks.killProcess).not.toHaveBeenCalled();
   });
 });
 
