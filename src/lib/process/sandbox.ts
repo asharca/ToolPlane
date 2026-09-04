@@ -56,5 +56,5 @@ export function sandboxFlags(network: McpNetwork): string[] {
 }
 
 export function envFlags(env: Record<string, string>): string[] {
-  return Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+  return Object.keys(env).flatMap((key) => ['-e', key]);
 }

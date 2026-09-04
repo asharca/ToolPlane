@@ -1,3 +1,5 @@
+import { resolveMaxSteps } from '../constants';
+
 export type HermesProviderProjection = {
   id: string;
   name: string;
@@ -83,7 +85,7 @@ export function hermesProviderName(providerId: string): string {
 }
 
 export function renderHermesConfig(input: HermesConfigProjection): string {
-  const maxTurns = Math.max(1, Math.min(Math.trunc(input.maxSteps) || 1, 500));
+  const maxTurns = resolveMaxSteps(input.maxSteps);
   const providers = input.providers.map((provider) => ({
     ...provider,
     models: [...new Set(provider.models.map((model) => model.trim()).filter(Boolean))],

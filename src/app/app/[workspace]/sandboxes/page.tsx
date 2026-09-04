@@ -29,7 +29,6 @@ import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefres
 import { SandboxCreateForm } from '@/components/dashboard/sandboxes/SandboxCreateForm';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
 import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
-import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -130,13 +129,16 @@ function isImportedHermesArchive(config: unknown): boolean {
 
 export default async function SandboxesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspace: string }>;
+  searchParams: Promise<{ scope?: string }>;
 }) {
   const t = await getTranslations('console.sandboxes');
   const common = await getTranslations('common');
   const locale = await getLocale();
-  const { workspace: slug } = await params;
+  const [{ workspace: slug }, { scope: requestedScope }] = await Promise.all([params, searchParams]);
+  const scope = requestedScope === 'agents' || requestedScope === 'users' ? requestedScope : 'all';
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const timeZone = resolveUserTimeZone(user);
@@ -215,10 +217,25 @@ export default async function SandboxesPage({
   }).length;
   const agentLinkCount = sandboxes.reduce((sum, sandbox) => sum + sandbox._count.agentLinks, 0)
     + managedRuntimes.length;
-  const sandboxRows = [
+  const allSandboxRows = [
     ...sandboxes.map((sandbox) => ({ type: 'sandbox' as const, createdAt: sandbox.createdAt, sandbox })),
     ...managedRuntimes.map((runtime) => ({ type: 'hermes' as const, createdAt: runtime.sandbox.createdAt, runtime })),
   ].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+  const sandboxRows = allSandboxRows.filter((row) => {
+    if (scope === 'all') return true;
+    if (row.type === 'hermes') return scope === 'agents';
+    return scope === 'agents' ? row.sandbox.agentLinks.length > 0 : row.sandbox.agentLinks.length === 0;
+  });
+  const sectionTitle = scope === 'agents'
+    ? t('agentSandboxes')
+    : scope === 'users'
+      ? t('userCreatedSandboxes')
+      : t('sandboxes');
+  const filters = [
+    { value: 'all', label: t('sandboxes'), href: `/app/${slug}/sandboxes` },
+    { value: 'agents', label: t('agentSandboxes'), href: `/app/${slug}/sandboxes?scope=agents` },
+    { value: 'users', label: t('userCreatedSandboxes'), href: `/app/${slug}/sandboxes?scope=users` },
+  ];
 
   return (
     <>
@@ -252,7 +269,26 @@ export default async function SandboxesPage({
           />
         </div>
 
-        <DashboardSection title={t('sandboxes')} count={sandboxRows.length}>
+        <DashboardSection
+          title={sectionTitle}
+          count={sandboxRows.length}
+          actions={(
+            <div className="flex items-center gap-1 rounded-md border border-border p-1">
+              {filters.map((filter) => (
+                <Link
+                  key={filter.value}
+                  href={filter.href}
+                  aria-current={scope === filter.value ? 'page' : undefined}
+                  className={scope === filter.value
+                    ? 'rounded px-2 py-1 text-xs font-medium text-foreground bg-muted'
+                    : 'rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground'}
+                >
+                  {filter.label}
+                </Link>
+              ))}
+            </div>
+          )}
+        >
           {sandboxRows.length === 0 ? (
             <DashboardEmptyState
               icon={Boxes}
@@ -350,13 +386,6 @@ export default async function SandboxesPage({
                               </SubmitButton>
                             </form>
                           ) : null}
-                          <DeleteAgentButton
-                            compact
-                            slug={slug}
-                            agentId={runtime.agent.id}
-                            returnTo={`/app/${slug}/sandboxes`}
-                            prompt={t('deleteAgentAndRuntime')}
-                          />
                         </div>
                       </td>
                     </tr>
@@ -369,6 +398,7 @@ export default async function SandboxesPage({
                 const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
                 const connector = connectorFromConfig(s.config);
                 const disabledLegacy = s.kind === 'host' || s.kind === 'ssh' || (s.kind === 'connector' && !connector);
+                const agent = s.agentLinks[0]?.agent;
                 return (
                   <tr key={s.id}>
                     <td className="p-0">
@@ -411,7 +441,17 @@ export default async function SandboxesPage({
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{s._count.agentLinks}</td>
+                    <td className="px-4 py-3">
+                      {agent ? (
+                        <Link
+                          href={`/app/${slug}/agents/${agent.id}`}
+                          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
+                        >
+                          <Bot className="size-3.5 text-muted-foreground" />
+                          {agent.name}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{s._count.snapshots}</td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone, locale)}</td>
                     <td className="px-4 py-3">
@@ -442,21 +482,27 @@ export default async function SandboxesPage({
                             </SubmitButton>
                           </form>
                         )}
-                        <form action={deleteSandboxAction}>
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input type="hidden" name="sandboxId" value={s.id} />
-                          <ConfirmSubmitButton
-                            triggerLabel={t('delete')}
-                            confirmLabel={common('confirm')}
-                            cancelLabel={common('cancel')}
-                            prompt={t('deleteSandboxShortPrompt', { name: s.name })}
-                            pendingLabel={t('deletingSandbox')}
-                            triggerClassName="text-xs text-muted-foreground transition-colors hover:text-red-600"
-                            confirmClassName="text-xs font-medium text-red-600 hover:text-red-700"
-                            cancelClassName="text-xs text-muted-foreground hover:text-foreground"
-                            promptClassName="max-w-36 text-right text-xs text-muted-foreground"
-                          />
-                        </form>
+                        {agent ? (
+                          <Link href={`/app/${slug}/agents/${agent.id}`} className={rowButton}>
+                            {t('openAgent')}
+                          </Link>
+                        ) : (
+                          <form action={deleteSandboxAction}>
+                            <input type="hidden" name="workspace" value={slug} />
+                            <input type="hidden" name="sandboxId" value={s.id} />
+                            <ConfirmSubmitButton
+                              triggerLabel={t('delete')}
+                              confirmLabel={common('confirm')}
+                              cancelLabel={common('cancel')}
+                              prompt={t('deleteSandboxShortPrompt', { name: s.name })}
+                              pendingLabel={t('deletingSandbox')}
+                              triggerClassName="text-xs text-muted-foreground transition-colors hover:text-red-600"
+                              confirmClassName="text-xs font-medium text-red-600 hover:text-red-700"
+                              cancelClassName="text-xs text-muted-foreground hover:text-foreground"
+                              promptClassName="max-w-36 text-right text-xs text-muted-foreground"
+                            />
+                          </form>
+                        )}
                       </div>
                     </td>
                   </tr>

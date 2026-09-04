@@ -10,6 +10,10 @@ vi.mock('@/lib/auth/actions', () => ({
   logoutAction: vi.fn(),
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/app/acme/work',
+}));
+
 import { WorkspaceSwitcher } from '@/components/dashboard/WorkspaceSwitcher';
 
 const workspaces = [
@@ -40,10 +44,21 @@ describe('WorkspaceSwitcher', () => {
       'aria-current',
       'page',
     );
-    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute(
-      'href',
-      '/app/staging/chat',
+    expect(screen.getByRole('link', { name: /Staging/ })).toHaveAttribute('href', '/app/staging/work');
+  });
+
+  it('uses the workspace initials in compact mode', () => {
+    render(
+      <WorkspaceSwitcher
+        slug="acme"
+        workspaceName="Acme Studio"
+        userLabel="me@x.com"
+        workspaces={workspaces}
+        compact
+      />,
     );
+
+    expect(screen.getByText('AS')).toBeInTheDocument();
   });
 
   it('reveals an inline create form', async () => {

@@ -18,8 +18,10 @@ import {
   resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
   sandboxRuntimeExecWrapper,
+  sandboxSkillBundleDigest,
   sandboxRuntimeSkillRoot,
   sandboxRuntimeStateRoot,
+  waitForSandboxRuntimeInstall,
 } from '@/lib/agents/sandbox-runtime';
 import type { SkillForPrompt } from '@/lib/agents/resolve';
 import { agentRuntimeSupportsProviderFormat } from '@/lib/agents/runtime-kind';
@@ -122,6 +124,31 @@ describe('sandbox Agent runtime helpers', () => {
       type: 'message_end',
       message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'bad request' },
     }))).toEqual({ error: 'bad request', isError: true });
+  });
+
+  it('scopes pnpm lifecycle scripts to each dedicated runtime', () => {
+    expect(SANDBOX_RUNTIME_PACKAGES.pi).toMatchObject({
+      ignoreScripts: true,
+      allowBuilds: [],
+    });
+    expect(SANDBOX_RUNTIME_PACKAGES['claude-code']).toMatchObject({
+      ignoreScripts: false,
+      allowBuilds: ['@anthropic-ai/claude-code'],
+    });
+    expect(SANDBOX_RUNTIME_PACKAGES.dsh.allowBuilds).toContain('@deepseek-ai/dsh-subprocess-local');
+  });
+
+  it('lets one cancelled caller stop waiting without cancelling a shared runtime install', async () => {
+    const controller = new AbortController();
+    let finishInstall!: (value: string) => void;
+    const install = new Promise<string>((resolve) => { finishInstall = resolve; });
+    const cancelled = waitForSandboxRuntimeInstall(install, controller.signal);
+    const waiting = waitForSandboxRuntimeInstall(install);
+
+    controller.abort();
+    await expect(cancelled).rejects.toThrow('Sandbox runtime aborted.');
+    finishInstall('/runtime/bin/dsh');
+    await expect(waiting).resolves.toBe('/runtime/bin/dsh');
   });
 
   it('configures Pi with env-only model auth and a real dynamic MCP extension', async () => {
@@ -241,6 +268,11 @@ describe('sandbox Agent runtime helpers', () => {
       { path: 'references/checklist.md', content: '# Checklist' },
       { path: 'scripts/deploy.sh', content: 'ZWNobyBkZXBsb3k=', encoding: 'base64' },
     ]);
+    expect(sandboxSkillBundleDigest(bundles)).toMatch(/^[a-f0-9]{64}$/);
+    expect(sandboxSkillBundleDigest(bundles)).not.toBe(sandboxSkillBundleDigest([
+      { ...bundles[0]!, markdown: `${bundles[0]!.markdown}\nChanged` },
+      bundles[1]!,
+    ]));
     const config = JSON.parse(buildClaudeMcpConfig([
       { deploymentId: 'dep-1', url: 'https://runtime.example/mcp/dep-1/rpc' },
     ], 'runtime-secret')) as { mcpServers: Record<string, { headers: { Authorization: string } }> };

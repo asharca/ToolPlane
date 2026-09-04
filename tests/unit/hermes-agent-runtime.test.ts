@@ -85,7 +85,7 @@ describe('Hermes agent runtime contract', () => {
 
   it('renders managed runtime settings without taking ownership of the system prompt', () => {
     const config = renderHermesConfig({
-      maxSteps: 12,
+      maxSteps: 1000,
       providers: [{
         id: 'anthropic-provider',
         name: 'Anthropic production',
@@ -104,6 +104,7 @@ describe('Hermes agent runtime contract', () => {
     expect(config).toContain('name: "Anthropic production"');
     expect(config).toContain('"claude-haiku": {}');
     expect(config).toContain('Authorization: "Bearer runtime-token"');
+    expect(config).toContain('max_turns: 1000');
     expect(config).toContain('hard_stop_enabled: true');
     expect(config).toContain('platforms:\n  api_server:\n    enabled: true');
     expect(config).not.toContain('system_prompt');

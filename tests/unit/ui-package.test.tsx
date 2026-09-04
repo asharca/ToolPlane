@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   Alert,
   Badge,
+  BreadcrumbItem,
+  Breadcrumbs,
   Button,
   ChatShell,
   Checkbox,
@@ -20,6 +22,7 @@ import {
   IconButton,
   Input,
   NativeSelect,
+  NavigationTabs,
   Page,
   Panel,
   Radio,
@@ -27,6 +30,7 @@ import {
   Tab,
   TabList,
   Textarea,
+  WorkspaceTabBar,
   type ConversationSidebarGroup,
 } from '@toolplane/ui';
 
@@ -99,6 +103,11 @@ describe('@toolplane/ui', () => {
     const researchDisclosure = screen.getByRole('button', {
       name: 'Hide conversations: Research assistant',
     });
+    expect(researchDisclosure.nextElementSibling).toHaveClass(
+      'grid-cols-[0fr]',
+      'group-hover:grid-cols-[1fr]',
+      'group-has-[:focus-visible]:grid-cols-[1fr]',
+    );
     await user.click(researchDisclosure);
     expect(screen.queryByRole('button', { name: 'Today notes' })).not.toBeInTheDocument();
     await user.click(researchDisclosure);
@@ -119,7 +128,14 @@ describe('@toolplane/ui', () => {
     await user.click(screen.getByRole('button', { name: 'New conversation: Research assistant' }));
     await user.click(screen.getByRole('button', { name: 'Research assistant' }));
     await user.click(screen.getByRole('button', { name: 'Old research' }));
-    await user.click(screen.getByRole('button', { name: 'Rename conversation: Old research' }));
+    const rename = screen.getByRole('button', { name: 'Rename conversation: Old research' });
+    expect(rename.closest('[data-toolplane-ui="sidebar-action-rail"]')).toHaveClass(
+      'grid-cols-[0fr]',
+      'transition-[grid-template-columns,opacity]',
+      'group-hover:grid-cols-[1fr]',
+      'focus-within:grid-cols-[1fr]',
+    );
+    await user.click(rename);
     await user.click(screen.getByRole('button', { name: 'Delete conversation: Old research' }));
 
     expect(onCreateGroup).toHaveBeenCalledOnce();
@@ -253,6 +269,16 @@ describe('@toolplane/ui', () => {
             <Tab current>Overview</Tab>
             <Tab>Logs</Tab>
           </TabList>
+          <TabList navigation label="Marketplace types">
+            <Tab asChild navigation current><a href="#servers">Servers</a></Tab>
+          </TabList>
+          <NavigationTabs aria-label="Deployment sections">
+            <Tab asChild navigation current><a href="#overview">Overview</a></Tab>
+          </NavigationTabs>
+          <Breadcrumbs>
+            <BreadcrumbItem>Deployments</BreadcrumbItem>
+            <BreadcrumbItem current separator="/">Weather</BreadcrumbItem>
+          </Breadcrumbs>
           <DataTable label="Deployments" headers={[{ label: 'Name' }, { label: 'Status' }]}>
             <tr><td>Weather</td><td>Running</td></tr>
           </DataTable>
@@ -264,6 +290,9 @@ describe('@toolplane/ui', () => {
     expect(screen.getByText('Running', { selector: '[data-toolplane-ui="badge"]' })).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Restart required');
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('navigation', { name: 'Marketplace types' })).toHaveAttribute('data-toolplane-ui', 'tab-list');
+    expect(screen.getByRole('navigation', { name: 'Deployment sections' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent('Deployments/Weather');
     expect(screen.getByRole('region', { name: 'Deployments' })).toHaveAttribute('tabindex', '0');
     for (const header of screen.getAllByRole('columnheader')) expect(header).toHaveAttribute('scope', 'col');
   });
@@ -286,6 +315,45 @@ describe('@toolplane/ui', () => {
     expect(screen.getByRole('dialog', { name: 'Delete deployment' })).toHaveAccessibleDescription('This cannot be undone.');
     await user.keyboard('{Escape}');
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('delegates workspace-tab actions without owning route state', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onNewTab = vi.fn();
+    const onOpenInNewWindow = vi.fn();
+    const onReorder = vi.fn();
+    const onSelect = vi.fn();
+    const onTogglePinned = vi.fn();
+
+    render(
+      <WorkspaceTabBar
+        activeTabId="agents"
+        tabs={[
+          { id: 'agents', label: 'Agents', icon: () => <span />, pinned: false },
+          { id: 'skills', label: 'Skills', icon: () => <span />, pinned: true },
+        ]}
+        onClose={onClose}
+        onNewTab={onNewTab}
+        onOpenInNewWindow={onOpenInNewWindow}
+        onReorder={onReorder}
+        onSelect={onSelect}
+        onTogglePinned={onTogglePinned}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Agents' }));
+    await user.click(screen.getByRole('button', { name: 'Pin Agents' }));
+    await user.click(screen.getByRole('button', { name: 'Open Agents in new window' }));
+    await user.click(screen.getByRole('button', { name: 'Close Agents' }));
+    await user.click(screen.getByRole('button', { name: 'New tab' }));
+
+    expect(onSelect).toHaveBeenCalledWith('agents');
+    expect(onTogglePinned).toHaveBeenCalledWith('agents');
+    expect(onOpenInNewWindow).toHaveBeenCalledWith('agents');
+    expect(onClose).toHaveBeenCalledWith('agents');
+    expect(onNewTab).toHaveBeenCalledOnce();
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it('keeps package source independent from ToolPlane and Next.js', () => {

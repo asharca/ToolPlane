@@ -92,6 +92,7 @@ export default async function SandboxDetailPage({
 
   const sandbox = await getSandbox(ws.id, sandboxId);
   if (!sandbox) notFound();
+  const agent = sandbox.agentLinks[0]?.agent;
 
   const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
   const running = status === 'running' || status === 'provisioning';
@@ -390,38 +391,52 @@ export default async function SandboxDetailPage({
                     />
                   ) : null}
 
-                  <section className="pt-5">
-                    <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h3>
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                      <p className="max-w-xl text-xs leading-5 text-muted-foreground">
-                        {t(sandbox.kind === 'docker'
-                          ? 'deleteSandboxDescription'
-                          : 'deleteExternalSandboxDescription')}
-                      </p>
-                      <form action={deleteSandboxAction}>
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="sandboxId" value={sandbox.id} />
-                        <ConfirmSubmitButton
-                          triggerLabel={t('delete')}
-                          confirmLabel={common('confirm')}
-                          cancelLabel={common('cancel')}
-                          prompt={t(sandbox.kind === 'docker'
-                            ? 'deleteSandboxPrompt'
-                            : 'deleteExternalSandboxPrompt', { name: sandbox.name })}
-                          pendingLabel={t('deletingSandbox')}
-                          triggerClassName="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
-                          confirmClassName="ui-button-primary h-9 bg-red-600 text-sm text-white hover:bg-red-700"
-                          cancelClassName="ui-button-ghost h-9 text-sm"
-                          promptClassName="max-w-sm text-xs text-muted-foreground"
-                        />
-                      </form>
-                    </div>
-                  </section>
+                  {agent ? (
+                    <section className="pt-5">
+                      <h3 className="text-sm font-semibold text-foreground">{t('managedByAgent')}</h3>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                          {t('deleteAgentSandboxFromAgent')}
+                        </p>
+                        <Link href={`/app/${slug}/agents/${agent.id}`} className="ui-button-secondary h-9 text-sm">
+                          {t('openAgent')}
+                        </Link>
+                      </div>
+                    </section>
+                  ) : (
+                    <section className="pt-5">
+                      <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h3>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                          {t(sandbox.kind === 'docker'
+                            ? 'deleteSandboxDescription'
+                            : 'deleteExternalSandboxDescription')}
+                        </p>
+                        <form action={deleteSandboxAction}>
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input type="hidden" name="sandboxId" value={sandbox.id} />
+                          <ConfirmSubmitButton
+                            triggerLabel={t('delete')}
+                            confirmLabel={common('confirm')}
+                            cancelLabel={common('cancel')}
+                            prompt={t(sandbox.kind === 'docker'
+                              ? 'deleteSandboxPrompt'
+                              : 'deleteExternalSandboxPrompt', { name: sandbox.name })}
+                            pendingLabel={t('deletingSandbox')}
+                            triggerClassName="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
+                            confirmClassName="ui-button-primary h-9 bg-red-600 text-sm text-white hover:bg-red-700"
+                            cancelClassName="ui-button-ghost h-9 text-sm"
+                            promptClassName="max-w-sm text-xs text-muted-foreground"
+                          />
+                        </form>
+                      </div>
+                    </section>
+                  )}
                 </div>
               </SandboxSettingsDialog>
               {lifecycleBlocked ? null : (
-                <Link href={`/app/${slug}/agents`} className={rowButton}>
-                  {t('attachToAgent')}
+                <Link href={agent ? `/app/${slug}/agents/${agent.id}` : `/app/${slug}/agents`} className={rowButton}>
+                  {agent ? t('openAgent') : t('attachToAgent')}
                 </Link>
               )}
               {disabledLegacy || lifecycleBlocked ? null : running ? (

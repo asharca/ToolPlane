@@ -1370,17 +1370,17 @@ async function launchProcess(
   const runtimeEventToken = managedSpec.kind === 'bridge' || managedSpec.kind === 'remote'
     ? randomUUID()
     : '';
-  // The bridge keeps the app env only so it inherits DOCKER_HOST; it scrubs that
-  // down to an allowlist before spawning the docker CLI. The MCP's own env is
-  // already baked into spec.args as `-e` flags, so it is NOT injected here.
+  // Keep app secrets out of the bridge. Docker argv contains only env names;
+  // their exact deployment-scoped values travel in the bridge environment.
   const env =
     managedSpec.kind === 'bridge'
       ? {
-          ...process.env,
+          ...dockerCliEnv(),
           MCP_PORT: '0',
           MCP_NAME: managedSpec.name,
           MCP_COMMAND: managedSpec.command,
           MCP_ARGS: JSON.stringify(managedSpec.args),
+          MCP_CHILD_ENV: JSON.stringify(managedSpec.containerEnv ?? managedSpec.env),
           MCP_CONTAINER_NAME: managedSpec.command === 'docker'
             ? deploymentContainerName(deploymentId)
             : '',

@@ -1,6 +1,10 @@
 import type { UIMessage } from 'ai';
 import { z } from 'zod';
-import { REASONING_EFFORTS, type ReasoningEffort } from '@/lib/agents/constants';
+import {
+  AGENT_STEP_BOUNDS,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from '@/lib/agents/constants';
 
 const nullableTrimmedString = (max: number) => z.string().trim().max(max).nullable();
 
@@ -9,7 +13,10 @@ const assistantFields = {
   systemPrompt: nullableTrimmedString(50_000).optional(),
   modelProviderId: z.string().trim().min(1).nullable().optional(),
   model: nullableTrimmedString(240).optional(),
-  maxSteps: z.number().int().min(1).max(20).optional(),
+  maxSteps: z.number().int()
+    .min(AGENT_STEP_BOUNDS.min)
+    .max(AGENT_STEP_BOUNDS.max)
+    .optional(),
   deploymentIds: z.array(z.string().trim().min(1)).max(50)
     .transform((ids) => [...new Set(ids)]).optional(),
 };
@@ -20,7 +27,11 @@ export const CreateChatAssistantSchema = z.object({
   ...assistantFields,
 });
 
-export const UpdateChatAssistantSchema = z.object({ ...assistantFields, name: assistantFields.name.optional() }).refine(
+export const UpdateChatAssistantSchema = z.object({
+  ...assistantFields,
+  name: assistantFields.name.optional(),
+  pinned: z.boolean().optional(),
+}).refine(
   (value) => Object.keys(value).length > 0,
   { message: 'At least one field is required' },
 );
@@ -34,7 +45,9 @@ export const UpdateChatThreadSchema = z.object({
   title: nullableTrimmedString(200).optional(),
   activeMessageId: z.string().trim().min(1).optional(),
 }).refine((value) => (
-  value.assistantId !== undefined || value.title !== undefined || value.activeMessageId !== undefined
+  value.assistantId !== undefined
+  || value.title !== undefined
+  || value.activeMessageId !== undefined
 ), {
   message: 'At least one field is required',
 });

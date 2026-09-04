@@ -112,7 +112,7 @@ describe('Agent Control MCP protocol', () => {
       providerId: 'provider-1',
       providerIds: [],
       model: 'gpt-test',
-      maxSteps: 8,
+      maxSteps: 100,
       deploymentIds: [],
       installedSkillIds: [],
       toolkitIds: [],

@@ -180,7 +180,7 @@ describe.sequential('admin marketplace catalog management', () => {
       status: 'published',
       isFeatured: false,
       systemPrompt: 'Research carefully and cite sources.',
-      maxSteps: 10,
+      maxSteps: 1000,
       modelFormat: 'openai-compatible',
       model: 'gpt-test',
       serverIds: [server.id],
@@ -188,7 +188,7 @@ describe.sequential('admin marketplace catalog management', () => {
     const updatedTemplate = await getAdminAssistantTemplate(created.id);
     expect(updatedTemplate).toMatchObject({
       listing: { latestVersion: 2, name: 'Platform Assistant v2' },
-      manifest: { assistant: { systemPrompt: 'Research carefully and cite sources.', maxSteps: 10 } },
+      manifest: { assistant: { systemPrompt: 'Research carefully and cite sources.', maxSteps: 1000 } },
     });
     expect(await db.marketRelease.findUnique({
       where: { id: updated.latestReleaseId! },

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu } from 'radix-ui';
+import { SidebarActionRail } from '@toolplane/ui';
 import {
   AlertCircle,
   Bot,
@@ -322,44 +323,50 @@ export function WorkspaceChat({
                 return (
                   <li key={agent.id} className="py-0.5">
                     <div className={cx(
-                      'group flex h-8 min-w-0 items-center rounded-lg transition-colors',
+                      'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
                       agent.id === activeAgent.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60 hover:text-foreground',
                     )}>
-                      <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]">
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-3.5" /></span>
-                        <span className={cx('min-w-0 flex-1 truncate', agent.id === activeAgent.id && 'font-medium')}>{agent.name}</span>
-                      </div>
-                      <span className={cx('mr-1 size-1.5 shrink-0 rounded-full', agent.ready ? 'bg-emerald-500' : 'bg-amber-500')} title={agent.ready ? t('ready1') : t('needsModel')} />
-                      <form
-                        action={createConversationAction}
-                        onSubmit={() => {
-                          setExpandedAgents((current) => ({ ...current, [agent.id]: true }));
-                          showChatOnNarrow();
-                        }}
-                        className="shrink-0"
-                      >
-                        <input type="hidden" name="workspace" value={slug} />
-                        <input type="hidden" name="agentId" value={agent.id} />
-                        <button
-                          type="submit"
-                          aria-label={newChatLabel}
-                          title={newChatLabel}
-                          className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-background hover:text-foreground group-hover:opacity-100"
-                        >
-                          <Plus className="size-3.5" />
-                        </button>
-                      </form>
                       <button
                         type="button"
-                        aria-label={agent.name}
                         aria-expanded={expanded}
                         aria-controls={`agent-conversations-${agent.id}`}
                         title={expanded ? t('hideConversations') : t('showConversations')}
                         onClick={() => setExpandedAgents((current) => ({ ...current, [agent.id]: !expanded }))}
-                        className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                        className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-[13px] outline-none"
                       >
-                        <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                        <span className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                          <Bot className="size-3.5" />
+                          <span
+                            className={cx('absolute right-0 top-0 size-1.5 rounded-full ring-1 ring-background', agent.ready ? 'bg-emerald-500' : 'bg-amber-500')}
+                            title={agent.ready ? t('ready1') : t('needsModel')}
+                          />
+                        </span>
+                        <span className={cx('min-w-0 flex-1 truncate', agent.id === activeAgent.id && 'font-medium')}>{agent.name}</span>
+                        <span aria-hidden="true" className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex">
+                          <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                        </span>
                       </button>
+                      <SidebarActionRail hasLeadingSlot revealOnCellFocus>
+                        <form
+                          action={createConversationAction}
+                          onSubmit={() => {
+                            setExpandedAgents((current) => ({ ...current, [agent.id]: true }));
+                            showChatOnNarrow();
+                          }}
+                          className="flex shrink-0"
+                        >
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input type="hidden" name="agentId" value={agent.id} />
+                          <button
+                            type="submit"
+                            aria-label={newChatLabel}
+                            title={newChatLabel}
+                            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                          >
+                            <Plus className="size-3.5" />
+                          </button>
+                        </form>
+                      </SidebarActionRail>
                     </div>
 
                     {expanded ? (
@@ -371,15 +378,19 @@ export function WorkspaceChat({
                             const confirmingDelete = deleteConfirmId === item.id;
                             const generatingTitle = generatingTitleId === item.id;
                             const row = (
-                              <div className="group/conversation relative rounded-lg data-[state=open]:bg-muted/60">
+                              <div className={cx(
+                                'group group/conversation relative flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 transition-colors data-[state=open]:bg-muted/60',
+                                item.id === activeConversationId
+                                  ? 'bg-muted font-medium text-foreground'
+                                  : renaming
+                                    ? 'bg-muted/60 text-foreground'
+                                    : 'text-foreground/75 hover:bg-muted/60 hover:text-foreground',
+                              )}>
                                 {renaming ? (
                                   <form
                                     action={renameConversationAction}
                                     onSubmit={() => setInlineRenameId(null)}
-                                    className={cx(
-                                      'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2',
-                                      item.id === activeConversationId ? 'bg-muted text-foreground' : 'bg-muted/60 text-foreground',
-                                    )}
+                                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-5"
                                   >
                                     <input type="hidden" name="workspace" value={slug} />
                                     <input type="hidden" name="agentId" value={agent.id} />
@@ -416,11 +427,7 @@ export function WorkspaceChat({
                                     } : undefined}
                                     aria-current={item.id === activeConversationId ? 'page' : undefined}
                                     title={item.lastMessageAt ? t('lastMessageOn', { date: item.lastMessageAt }) : t('chatCreatedOn', { date: item.createdAt })}
-                                    className={cx(
-                                      'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 transition-colors',
-                                      item.editable && 'pr-7',
-                                      item.id === activeConversationId ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60 hover:text-foreground',
-                                    )}
+                                    className="flex h-full min-w-0 flex-1 items-center gap-1.5"
                                   >
                                     <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
                                     <span className={cx('min-w-0 flex-1 truncate', item.source && 'capitalize', generatingTitle && 'animate-pulse')}>{label}</span>

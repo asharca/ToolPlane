@@ -810,9 +810,9 @@ async function lockProvider(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   providerId: string,
-): Promise<{ id: string; format: string } | null> {
-  const providers = await tx.$queryRaw<Array<{ id: string; format: string }>>`
-    SELECT "id", "format"
+): Promise<{ id: string; format: string; models: string[] } | null> {
+  const providers = await tx.$queryRaw<Array<{ id: string; format: string; models: string[] }>>`
+    SELECT "id", "format", "models"
     FROM "ModelProvider"
     WHERE "id" = ${providerId} AND "workspaceId" = ${workspaceId}
     FOR UPDATE
@@ -879,6 +879,9 @@ export async function createConfiguredAgent(
         const provider = await lockProvider(tx, workspaceId, cfg.providerId);
         if (!provider) throw new AgentConfigurationError(`Unknown model provider: ${cfg.providerId}`);
         assertRuntimeProviderFormat(options.runtime, provider.format);
+        if (cfg.model && !provider.models.includes(cfg.model)) {
+          throw new AgentConfigurationError(`Unknown or unavailable model: ${cfg.model}`);
+        }
       }
 
       // Interactive transactions use one pg connection; keep these awaits
@@ -1003,7 +1006,12 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
     } else if (providerId) {
       const provider = await lockProvider(tx, workspaceId, providerId);
       if (!provider) providerId = null;
-      else assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
+      else {
+        assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
+        if (cfg.model && !provider.models.includes(cfg.model)) {
+          throw new AgentConfigurationError(`Unknown or unavailable model: ${cfg.model}`);
+        }
+      }
     }
     await tx.agent.updateMany({
       where: { id: agentId, workspaceId },
@@ -1082,7 +1090,12 @@ export async function updateAgentModelSelection(
 
     const providerId = requestedProviderIds[0];
     const provider = providerId ? await lockProvider(tx, workspaceId, providerId) : null;
-    if (provider) assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
+    if (provider) {
+      assertRuntimeProviderFormat(agent.runtimeKind, provider.format);
+      if (model && !provider.models.includes(model)) {
+        throw new AgentConfigurationError(`Unknown or unavailable model: ${model}`);
+      }
+    }
     const validProviderId = provider?.id ?? null;
     await tx.agent.updateMany({
       where: { id: agentId, workspaceId },
@@ -1510,14 +1523,28 @@ export async function deleteAgent(workspaceId: string, agentId: string) {
     }, { isolationLevel: 'Serializable' });
   }
 
-  const runtime = await db.agentRuntime.findFirst({
-    where: { agentId, workspaceId },
-    select: { sandbox: { select: { deploymentId: true } } },
-  });
+  const [runtime, sandboxes] = await Promise.all([
+    db.agentRuntime.findFirst({
+      where: { agentId, workspaceId },
+      select: { sandbox: { select: { deploymentId: true } } },
+    }),
+    db.sandbox.findMany({
+      where: { workspaceId, agentLinks: { some: { agentId } } },
+      select: { deploymentId: true },
+    }),
+  ]);
+  const sandboxDeploymentIds = [
+    ...sandboxes.map(({ deploymentId }) => deploymentId),
+    ...(runtime ? [runtime.sandbox.deploymentId] : []),
+  ];
   await db.$transaction(async (tx) => {
-    if (runtime) {
+    if (sandboxDeploymentIds.length > 0) {
       await tx.deployment.deleteMany({
-        where: { id: runtime.sandbox.deploymentId, workspaceId, source: 'sandbox' },
+        where: {
+          id: { in: [...new Set(sandboxDeploymentIds)] },
+          workspaceId,
+          source: 'sandbox',
+        },
       });
     }
     await tx.agent.deleteMany({ where: { id: agentId, workspaceId } });

@@ -45,6 +45,26 @@ const baseProps = {
 };
 
 describe('AgentSettingsForm', () => {
+  it('keeps the editable identity, runtime, and model together in General', () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        providerId="provider-1"
+        model="gpt-4.1"
+        activeSection="general"
+        showNavigation={false}
+      />,
+    );
+
+    expect(screen.getByLabelText('Name')).toHaveValue('Test agent');
+    expect(screen.getByLabelText('Runtime')).toHaveTextContent('Pi');
+    expect(screen.getByRole('button', { name: 'Model: gpt-4.1' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'General' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'General' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Identity, model, and execution defaults.')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 attached')).not.toBeInTheDocument();
+  });
+
   it.each([
     ['pi', ['read', 'bash', 'edit', 'write'], 'Glob'],
     ['claude-code', ['Read', 'Bash', 'Glob', 'Workflow'], 'read_image'],
@@ -331,6 +351,9 @@ describe('AgentSettingsForm', () => {
     const view = render(<AgentSettingsForm {...props} />);
 
     expect(screen.queryByRole('navigation', { name: 'Configuration navigation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'MCP' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'MCP' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Select the workspace capabilities this agent can use.')).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Select RouterOS MCP' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Save now' })).not.toBeInTheDocument();
 

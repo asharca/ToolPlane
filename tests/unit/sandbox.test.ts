@@ -49,8 +49,8 @@ describe('sandboxFlags', () => {
 });
 
 describe('envFlags', () => {
-  it('maps to -e KEY=VALUE pairs', () => {
-    expect(envFlags({ A: '1', B: '2' })).toEqual(['-e', 'A=1', '-e', 'B=2']);
+  it('maps to value-free Docker env flags', () => {
+    expect(envFlags({ A: '1', B: '2' })).toEqual(['-e', 'A', '-e', 'B']);
   });
   it('empty for no env', () => {
     expect(envFlags({})).toEqual([]);

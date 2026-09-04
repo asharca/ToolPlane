@@ -43,7 +43,9 @@ function handle(msg) {
       result: { tools: [{ name: 'ping_tool', description: 'returns pong', inputSchema: { type: 'object', properties: {} } }] },
     });
   } else if (method === 'tools/call') {
-    send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'pong' }] } });
+    const envName = msg.params?.arguments?.env;
+    const text = typeof envName === 'string' ? (process.env[envName] || '') : 'pong';
+    send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } });
   } else {
     send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found' } });
   }

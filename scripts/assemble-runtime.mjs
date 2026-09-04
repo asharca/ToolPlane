@@ -2,6 +2,7 @@
 
 import { access, chmod, cp, lstat, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -137,6 +138,25 @@ async function pruneNodePty(output) {
   await Promise.all(packageRoots.map((packageRoot) => pruneNodePtyPackage(packageRoot, platform)));
 }
 
+async function pruneShikiRuntime(packageRoot) {
+  for (const entry of await readdir(packageRoot, { withFileTypes: true })) {
+    const entryPath = path.join(packageRoot, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === '@types' || (entry.name === 'cjs' && path.basename(packageRoot) === 'dist')) {
+        await rm(entryPath, { recursive: true, force: true });
+      } else {
+        await pruneShikiRuntime(entryPath);
+      }
+    } else if (
+      /\.d\.(?:mts|ts)$|\.map$|\.min\.js$|^README(?:\.|$)/i.test(entry.name)
+      || entry.name === 'onig.wasm'
+      || entry.name === 'wasm-inlined.mjs'
+    ) {
+      await rm(entryPath, { force: true });
+    }
+  }
+}
+
 async function writeLegacyEntrypointShims(output) {
   const binRoot = path.join(output, 'node_modules', '.bin');
   const embeddedRuntimeRoot = path.join(output, 'node_modules', '.toolplane-runtime');
@@ -257,6 +277,30 @@ await copyRuntimePackage(
   ],
 );
 await copyRuntimePackage('undici');
+const streamdownNodeModules = enclosingNodeModules(
+  await realpath(path.join(root, 'node_modules', '@streamdown', 'code')),
+);
+const shikiSource = await realpath(path.join(streamdownNodeModules, 'shiki'));
+const shikiNodeModules = enclosingNodeModules(shikiSource);
+const shikiRuntimeRoot = path.join(outputRoot, path.relative(root, shikiSource));
+await copyRuntimePackage(
+  'shiki',
+  shikiNodeModules,
+  path.join(outputRoot, path.relative(root, shikiNodeModules)),
+);
+// Streamdown supplies Shiki's JavaScript regex engine; type/docs/source-map and
+// Oniguruma-only assets are not runtime inputs and would exceed the release budget.
+await pruneShikiRuntime(shikiRuntimeRoot);
+const shikiRuntimeAlias = (await readdir(path.join(outputRoot, '.next', 'node_modules')))
+  .find((entry) => entry.startsWith('shiki-'));
+if (!shikiRuntimeAlias) throw new Error('Next standalone Shiki runtime alias is missing');
+const requireFromRuntime = createRequire(path.join(outputRoot, '.next', 'server', 'runtime-check.cjs'));
+const shikiRuntime = await import(pathToFileURL(requireFromRuntime.resolve(shikiRuntimeAlias)).href);
+await Promise.all([
+  shikiRuntime.bundledLanguages.typescript(),
+  shikiRuntime.bundledThemes['github-light'](),
+  shikiRuntime.bundledThemes['github-dark'](),
+]);
 const remoteMcpSdkRoot = path.join(outputRoot, 'node_modules/@modelcontextprotocol/sdk/dist/esm');
 await Promise.all([
   'client/index.js',

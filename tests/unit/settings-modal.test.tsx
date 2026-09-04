@@ -23,4 +23,20 @@ describe('SettingsModal', () => {
 
     expect(replaceMock).toHaveBeenCalledWith('/app/acme/mcp?__dashboardTab=tab-1');
   });
+
+  it('keeps compact modals full-screen on mobile and constrains them on larger screens', () => {
+    render(
+      <SettingsModal title="Settings" fallbackHref="/app/acme/chat" compact>
+        Content
+      </SettingsModal>,
+    );
+
+    expect(screen.getByRole('dialog')).toHaveClass(
+      '!h-full',
+      '!w-full',
+      '!rounded-none',
+      'sm:!h-[min(600px,76vh)]',
+      'sm:!max-w-[720px]',
+    );
+  });
 });

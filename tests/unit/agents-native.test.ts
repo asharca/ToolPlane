@@ -73,7 +73,7 @@ describe('runNativeAgent', () => {
     });
   });
 
-  it('executes tool calls returned by the final allowed model step', async () => {
+  it('fails explicitly when the final allowed model step still requests tools', async () => {
     const execute = vi.fn(async () => ({ accepted: true }));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(sse([
       {
@@ -94,7 +94,7 @@ describe('runNativeAgent', () => {
       },
     ])));
 
-    await runNativeAgent({
+    await expect(runNativeAgent({
       provider: { name: 'P', format: 'openai', baseUrl: 'https://example.test/v1', apiKey: 'secret' },
       modelId: 'gpt-x',
       systemPrompt: '',
@@ -108,7 +108,7 @@ describe('runNativeAgent', () => {
         }),
       },
       maxSteps: 1,
-    });
+    })).rejects.toThrow('Agent reached the 1-turn tool-call limit before completing its response.');
 
     expect(execute).toHaveBeenCalledOnce();
   });

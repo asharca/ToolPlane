@@ -55,7 +55,11 @@ export default async function AgentsPage({
     : null;
 
   return (
-    <SettingsModal title={create === '1' ? t('newAgent') : t('title')} fallbackHref={`/app/${slug}/work`}>
+    <SettingsModal
+      title={create === '1' ? t('newAgent') : t('title')}
+      fallbackHref={`/app/${slug}/work`}
+      compact={create === '1'}
+    >
       <div className="h-full overflow-y-auto">
         <AgentsBrowser
         slug={slug}

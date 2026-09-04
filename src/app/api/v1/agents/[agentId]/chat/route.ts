@@ -304,6 +304,7 @@ export async function POST(
     const system = sandboxRuntime
       ? agent.systemPrompt
       : assembleSystemPrompt(agent.systemPrompt, resolved.skills, Boolean(resolved.knowledgeBases?.length));
+    let executionSucceeded = false;
     const stream = createUIMessageStream<HermesUIMessage>({
       originalMessages: messages,
       execute: async ({ writer }) => {
@@ -320,6 +321,7 @@ export async function POST(
             onActivity: uiStream.onActivity,
           });
           uiStream.finish();
+          executionSucceeded = true;
           return;
         }
         const uiStream = createNativeUiStreamBridge(writer, `native-${agent.id}`);
@@ -336,13 +338,13 @@ export async function POST(
           onToolResult: uiStream.onToolResult,
         });
         uiStream.finish();
+        executionSucceeded = true;
       },
       onError: (error) => {
         return error instanceof Error ? error.message : 'Agent request failed.';
       },
       onFinish: async ({ responseMessage, isAborted }) => {
-        if (isAborted) return;
-        if (!conversationId) return;
+        if (isAborted || req.signal.aborted || !executionSucceeded || !conversationId) return;
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
         }

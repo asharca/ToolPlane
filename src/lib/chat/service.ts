@@ -5,6 +5,7 @@ import {
   attachmentIdsFromParts,
   claimWorkspaceAttachments,
 } from '@/lib/attachments/messages';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { getAssistantMarketTemplate } from '@/lib/market/skills';
 import {
   chatBranchNavigation,
@@ -157,7 +158,7 @@ async function validateAssistantResources(
 export async function listChatAssistantsForWorkspace(workspaceId: string) {
   return db.chatAssistant.findMany({
     where: { workspaceId },
-    orderBy: { updatedAt: 'desc' },
+    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
     include: {
       modelProvider: providerForClient,
       mcpGrants: grantForClient,
@@ -245,7 +246,7 @@ export async function createChatAssistant(userId: string, input: CreateChatAssis
     systemPrompt: input.systemPrompt ?? null,
     modelProviderId: input.modelProviderId ?? null,
     model: input.model ?? null,
-    maxSteps: input.maxSteps ?? 8,
+    maxSteps: input.maxSteps ?? AGENT_STEP_BOUNDS.default,
     marketTemplateReleaseId: input.marketTemplateReleaseId ?? null,
     mcpGrants: {
       create: (input.deploymentIds ?? []).map((deploymentId) => ({ deploymentId })),
@@ -385,6 +386,7 @@ export async function updateChatAssistant(
       where: { id: assistantId },
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
         ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
         ...(input.modelProviderId !== undefined
           ? { modelProviderId: input.modelProviderId, ...(input.modelProviderId === null && input.model === undefined ? { model: null } : {}) }

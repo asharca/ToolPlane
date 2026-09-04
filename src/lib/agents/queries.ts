@@ -337,7 +337,7 @@ export async function resolveAgentMarketSetupGuide(
 export async function listAgents(workspaceId: string) {
   return db.agent.findMany({
     where: { workspaceId, ...ORDINARY_AGENT_FILTER },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
     include: {
       provider: { select: { name: true } },
       modelProviders: {

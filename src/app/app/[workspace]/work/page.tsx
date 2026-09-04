@@ -32,8 +32,6 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
     status: session.status,
     startedAt: session.startedAt?.toISOString() ?? null,
     completedAt: session.completedAt?.toISOString() ?? null,
-    maxSteps: session.maxSteps,
-    stepCount: session.stepCount,
     waitingQuestion: session.waitingQuestion,
     result: session.result,
     error: session.error,
@@ -140,6 +138,7 @@ export default async function WorkspaceWorkPage({
             return {
               id: agent.id,
               name: agent.name,
+              pinned: agent.pinned,
               supportsWork,
               ready: Boolean(
                 supportsWork
@@ -160,23 +159,31 @@ export default async function WorkspaceWorkPage({
               model: agent.model,
               contextWindow: modelContext?.maxTokens ?? null,
               contextWindowEstimated: modelContext?.estimated ?? true,
-              sandboxes: runtimeSandbox ? [{
-                id: runtimeSandbox.id,
-                name: runtimeSandbox.name,
-                kind: runtimeSandbox.kind,
-                deploymentId: runtimeSandbox.deploymentId,
-                running: effectiveStatus(runtimeSandbox.deploymentId, runtimeSandbox.deployment.status) === 'running',
-                isDefault: true,
-              }] : agent.sandboxes
+              sandboxes: runtimeSandbox ? [runtimeSandbox].map((sandbox) => {
+                const status = effectiveStatus(sandbox.deploymentId, sandbox.deployment.status);
+                return {
+                  id: sandbox.id,
+                  name: sandbox.name,
+                  kind: sandbox.kind,
+                  deploymentId: sandbox.deploymentId,
+                  status,
+                  running: status === 'running',
+                  isDefault: true,
+                };
+              }) : agent.sandboxes
                 .filter((link) => link.sandbox.kind === 'docker' && link.sandbox.network !== 'none')
-                .map((link) => ({
-                  id: link.sandboxId,
-                  name: link.sandbox.name,
-                  kind: link.sandbox.kind,
-                  deploymentId: link.sandbox.deploymentId,
-                  running: effectiveStatus(link.sandbox.deploymentId, link.sandbox.deployment.status) === 'running',
-                  isDefault: link.isDefault,
-                })),
+                .map((link) => {
+                  const status = effectiveStatus(link.sandbox.deploymentId, link.sandbox.deployment.status);
+                  return {
+                    id: link.sandboxId,
+                    name: link.sandbox.name,
+                    kind: link.sandbox.kind,
+                    deploymentId: link.sandbox.deploymentId,
+                    status,
+                    running: status === 'running',
+                    isDefault: link.isDefault,
+                  };
+                }),
             };
           })}
         sessions={sessions.map(serializeWorkSession)}

@@ -47,6 +47,7 @@ import { CloneAgentButton } from '@/components/dashboard/agents/CloneAgentButton
 import { DeleteAgentButton } from '@/components/dashboard/agents/DeleteAgentButton';
 import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
 import { AgentMarketInstallForm } from '@/components/dashboard/market/AgentMarketInstallForm';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
@@ -147,15 +148,22 @@ export function AgentsBrowser({
   const returnTo = `${pathname}${query ? `?${query}` : ''}`;
   const requestedReturnTo = searchParams.get('returnTo') ?? '';
   const createOnly = searchParams.get('create') === '1';
+  const defaultNativeModel = createOptions.defaultModel && createOptions.providers.some((provider) => (
+    provider.id === createOptions.defaultModel?.providerId
+    && provider.models.includes(createOptions.defaultModel.model)
+    && agentRuntimeSupportsProviderFormat('claude-code', provider.format)
+  ))
+    ? createOptions.defaultModel
+    : null;
   const [creating, setCreating] = useState(createOnly);
   const [createSource, setCreateSource] = useState<CreateSource>(
     createOnly && searchParams.get('source') === 'market' ? 'market' : 'blank',
   );
   const [createStep, setCreateStep] = useState<CreateStep>('basic');
   const [agentName, setAgentName] = useState('');
-  const [runtime, setRuntime] = useState<AgentRuntimeKind | null>(null);
-  const [providerId, setProviderId] = useState(createOptions.defaultModel?.providerId ?? '');
-  const [modelId, setModelId] = useState(createOptions.defaultModel?.model ?? '');
+  const [runtime, setRuntime] = useState<AgentRuntimeKind>('claude-code');
+  const [providerId, setProviderId] = useState(defaultNativeModel?.providerId ?? '');
+  const [modelId, setModelId] = useState(defaultNativeModel?.model ?? '');
   const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => (
     new Set(createOptions.defaultModel?.providerId ? [createOptions.defaultModel.providerId] : [])
   ));
@@ -167,9 +175,12 @@ export function AgentsBrowser({
   const compatibleProviders = createOptions.providers.filter((provider) => (
     !runtime || agentRuntimeSupportsProviderFormat(runtime, provider.format)
   ));
-  const creatingDraft = runtime === null
-    || (runtime === 'hermes' ? selectedProviderIds.size === 0 : !providerId || !modelId);
   const selectedProvider = compatibleProviders.find((provider) => provider.id === providerId) ?? null;
+  const createReady = Boolean(agentName.trim()) && (
+    runtime === 'hermes'
+      ? selectedProviderIds.size > 0
+      : Boolean(selectedProvider && modelId && selectedProvider.models.includes(modelId))
+  );
   const providerOptions = createOptions.providers.map((provider) => ({
     id: provider.id,
     label: provider.name,
@@ -213,9 +224,9 @@ export function AgentsBrowser({
     setCreateSource('blank');
     setCreateStep('basic');
     setAgentName('');
-    setRuntime(null);
-    setProviderId(createOptions.defaultModel?.providerId ?? '');
-    setModelId(createOptions.defaultModel?.model ?? '');
+    setRuntime('claude-code');
+    setProviderId(defaultNativeModel?.providerId ?? '');
+    setModelId(defaultNativeModel?.model ?? '');
     setSelectedProviderIds(new Set(createOptions.defaultModel?.providerId ? [createOptions.defaultModel.providerId] : []));
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
@@ -304,7 +315,7 @@ export function AgentsBrowser({
             </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 sm:px-6">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
             {cloneError ? (
               <p role="alert" className="mb-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
                 {cloneError === 'release_not_found' || cloneError === 'listing_unavailable'
@@ -427,7 +438,7 @@ export function AgentsBrowser({
               </ol>
             </nav>
 
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <section
                 hidden={activeCreateStep !== 'basic'}
                 aria-labelledby="agent-create-basic-title"
@@ -633,6 +644,17 @@ export function AgentsBrowser({
                   <h3 id="agent-create-tools-title" className="text-base font-semibold text-foreground">{t('tools')}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{t('resourceSettingsDescription')}</p>
                 </div>
+                <label className="block max-w-48 text-xs font-medium text-muted-foreground">
+                  {t('maxToolSteps')}
+                  <input
+                    name="maxSteps"
+                    type="number"
+                    min={AGENT_STEP_BOUNDS.min}
+                    max={AGENT_STEP_BOUNDS.max}
+                    defaultValue={AGENT_STEP_BOUNDS.default}
+                    className="ui-input mt-1.5 h-9 w-full"
+                  />
+                </label>
                 <div className="grid items-start gap-4 lg:grid-cols-2">
                   <AgentResourceSelect
                     icon={Server}
@@ -682,21 +704,22 @@ export function AgentsBrowser({
               <SubmitButton
                 pendingLabel={t('creatingAgent')}
                 savedLabel={t('agentCreated')}
-                disabled={!runtime || !agentName.trim()}
+                disabled={!createReady}
                 className="ui-button-primary h-10 gap-2 px-4"
               >
                 <Plus className="size-[18px] shrink-0" />
-                {creatingDraft ? t('createDraftAgent') : t('createAgent')}
+                {t('createAgent')}
               </SubmitButton>
             ) : (
               <button
                 type="button"
+                disabled={activeCreateStep === 'basic' && !createReady}
                 onClick={() => {
                   const form = document.getElementById('agent-create-form') as HTMLFormElement | null;
                   if (activeCreateStep === 'basic' && form && !form.reportValidity()) return;
                   setCreateStep(createSteps[createStepIndex + 1]!.id);
                 }}
-                className="ui-button-primary h-10 gap-2 px-4"
+                className="ui-button-primary h-10 gap-2 px-4 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t('next')}
                 <ChevronRight className="size-4 shrink-0" />

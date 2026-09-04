@@ -94,7 +94,12 @@ describe('WorkspaceChat', () => {
     const supportDisclosure = within(rail).getByRole('button', { name: 'Support agent' });
     expect(researchDisclosure).toHaveAttribute('aria-expanded', 'true');
     expect(supportDisclosure).toHaveAttribute('aria-expanded', 'false');
-    expect(researchDisclosure.parentElement?.lastElementChild).toBe(researchDisclosure);
+    expect(researchDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
+    expect(researchDisclosure.nextElementSibling).toHaveClass(
+      'grid-cols-[0fr]',
+      'group-hover:grid-cols-[1fr]',
+      'group-has-[:focus-visible]:grid-cols-[1fr]',
+    );
     expect(within(rail).getByText('No conversations yet.')).toBeInTheDocument();
     fireEvent.click(researchDisclosure);
     expect(within(rail).queryByText('No conversations yet.')).not.toBeInTheDocument();

@@ -47,7 +47,7 @@ http_headers = { Authorization = "Bearer <API_TOKEN>" }
 5. 调用 `send_message_to_agent`；继续对话时传回 `conversationId`。
 
 模型配置可以省略，此时会创建可在控制台继续设置的 Draft Agent。
-`maxSteps` 范围为 `0..1000`，其中 `0` 表示使用运行时安全上限。
+`maxSteps` 表示单次回复的最大工具调用轮次，范围为 `1..1000`，默认值为 `100`。
 `create_agent` 是非幂等操作；如果客户端在响应前断线或超时，应先调用
 `list_agents` 确认是否已经创建，再决定是否重试。
 

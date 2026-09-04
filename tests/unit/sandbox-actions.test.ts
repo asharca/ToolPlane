@@ -161,6 +161,7 @@ function dockerSandbox(overrides: Record<string, unknown> = {}) {
     network: 'isolated',
     config: { env: { A: '1' } },
     snapshots: [],
+    agentLinks: [],
     deployment: {
       id: 'dep1',
       status: 'stopped',
@@ -239,7 +240,11 @@ describe('renameSandboxAction', () => {
 
     expect(mocks.sandboxFindFirst).toHaveBeenCalledWith({
       where: { id: 'sb1', workspaceId: 'ws1' },
-      include: { deployment: true, snapshots: true },
+      include: {
+        deployment: true,
+        snapshots: true,
+        agentLinks: { select: { agentId: true } },
+      },
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sandboxSnapshotFindFirst).not.toHaveBeenCalled();
@@ -1316,6 +1321,18 @@ describe('renameSandboxAction', () => {
     });
   });
 
+  it('does not delete a sandbox attached to an agent', async () => {
+    mocks.sandboxFindFirst.mockResolvedValue(dockerSandbox({
+      agentLinks: [{ agentId: 'agent-1' }],
+    }));
+
+    await deleteSandboxAction(renameForm('Ignored'));
+
+    expect(mocks.killProcess).not.toHaveBeenCalled();
+    expect(mocks.removeDockerSandboxRuntimeStrict).not.toHaveBeenCalled();
+    expect(mocks.deploymentDeleteMany).not.toHaveBeenCalled();
+  });
+
   it('keeps process restart blocked when strict Docker deletion fails', async () => {
     const sandbox = dockerSandbox({
       snapshots: [{ id: 'snap1', volumeName: 'snapshot-volume-1' }],
@@ -1376,6 +1393,7 @@ describe('renameSandboxAction', () => {
       workspaceId: 'ws1',
       deploymentId: 'dep1',
       kind: 'connector',
+      agentLinks: [],
       deployment: { id: 'dep1', installCfg: {} },
     });
 

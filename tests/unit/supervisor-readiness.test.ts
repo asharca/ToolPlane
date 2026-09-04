@@ -683,8 +683,8 @@ describe('supervisor readiness races', () => {
         kind: 'bridge',
         name: 'Named bridge',
         command: 'docker',
-        args: ['run', '--rm', 'example/mcp'],
-        env: {},
+        args: ['run', '--rm', '-e', 'MCP_TOKEN', 'example/mcp'],
+        env: { MCP_TOKEN: 'bridge-secret' },
       },
       { awaitReady: false },
     );
@@ -692,6 +692,10 @@ describe('supervisor readiness races', () => {
     const options = mocks.spawn.mock.calls[0]?.[2] as { env?: Record<string, string> };
     const args = JSON.parse(options.env?.MCP_ARGS ?? '[]') as string[];
     expect(args.slice(0, 4)).toEqual(['run', '--name', 'toolplane-mcp-named-bridge', '--rm']);
+    expect(args).toContain('MCP_TOKEN');
+    expect(JSON.stringify(args)).not.toContain('bridge-secret');
+    expect(JSON.parse(options.env?.MCP_CHILD_ENV ?? '{}')).toMatchObject({ MCP_TOKEN: 'bridge-secret' });
+    expect(options.env).not.toHaveProperty('TOOLPLANE_SUPERVISOR_DIR');
   });
 
   it('removes a stale managed container before materializing and launching its replacement', async () => {
@@ -837,8 +841,7 @@ describe('supervisor readiness races', () => {
         command: 'docker',
         args: [
           'run', '--rm', 'node:24-bookworm-slim',
-          '-e', 'GITHUB_TOOLSETS=all',
-          '-e', 'MANUAL_PIN=123',
+          '-e', 'GITHUB_TOOLSETS',
           '--password', 'argv-password',
           'ssh://git:url-password@example.test/repo',
         ],
@@ -850,7 +853,6 @@ describe('supervisor readiness races', () => {
 
     expect(supervisor.liveRedactionValues('runtime-progress')).toEqual(expect.arrayContaining([
       'super-secret-value',
-      '123',
       'argv-password',
       'url-password',
     ]));

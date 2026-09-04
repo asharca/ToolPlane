@@ -16,6 +16,8 @@ describe('Agent runtime access grants', () => {
   const originalSecret = process.env.AUTH_SECRET;
   const originalRuntimeOrigin = process.env.TOOLPLANE_RUNTIME_ORIGIN;
   const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalPort = process.env.PORT;
   const now = Date.UTC(2026, 7, 25, 12, 0, 0);
   const payload = {
     workspaceId: 'workspace-1',
@@ -35,6 +37,8 @@ describe('Agent runtime access grants', () => {
     process.env.AUTH_SECRET = originalSecret;
     process.env.TOOLPLANE_RUNTIME_ORIGIN = originalRuntimeOrigin;
     process.env.NEXT_PUBLIC_APP_URL = originalAppUrl;
+    (process.env as Record<string, string | undefined>).NODE_ENV = originalNodeEnv;
+    process.env.PORT = originalPort;
   });
 
   it('signs a scoped, expiring grant and rejects tampering or expiration', async () => {
@@ -87,5 +91,13 @@ describe('Agent runtime access grants', () => {
       .toBe('https://api.anthropic.com/v1/messages');
     expect(() => runtimeProviderUrl('https://provider.test/v1', ['..', 'secret']))
       .toThrow('path is invalid');
+  });
+
+  it('uses the active Next port for sandbox callbacks in development', () => {
+    (process.env as Record<string, string | undefined>).NODE_ENV = 'development';
+    process.env.PORT = '4312';
+    process.env.NEXT_PUBLIC_APP_URL = 'http://stale.example:3000';
+
+    expect(sandboxRuntimeOrigin()).toBe('http://host.docker.internal:4312');
   });
 });

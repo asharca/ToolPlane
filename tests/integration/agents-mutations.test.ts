@@ -64,7 +64,14 @@ beforeAll(async () => {
   const dep = await db.deployment.create({ data: { workspaceId, serverId: server.id } });
   deploymentId = dep.id;
   const provider = await db.modelProvider.create({
-    data: { workspaceId, name: 'P', format: 'openai', baseUrl: 'https://x/v1', apiKey: 'k' },
+    data: {
+      workspaceId,
+      name: 'P',
+      format: 'openai',
+      baseUrl: 'https://x/v1',
+      apiKey: 'k',
+      models: ['model-1', 'gpt-4.1', 'gpt-x'],
+    },
   });
   providerId = provider.id;
 });
@@ -128,6 +135,7 @@ describe('agents mutations', () => {
             format,
             baseUrl: 'https://provider.test/v1',
             apiKey: 'secret',
+            models: ['model-1'],
           },
         });
     const created = await createConfiguredAgent(
@@ -173,6 +181,60 @@ describe('agents mutations', () => {
     });
   });
 
+  it('rejects a model that is no longer available from its provider', async () => {
+    const before = await db.agent.count({ where: { workspaceId } });
+
+    await expect(createConfiguredAgent(
+      workspaceId,
+      {
+        name: `Stale model ${Date.now()}`,
+        systemPrompt: null,
+        providerId,
+        model: 'stale-model',
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [] },
+      { runtime: 'pi' },
+    )).rejects.toThrow('Unknown or unavailable model: stale-model');
+
+    await expect(db.agent.count({ where: { workspaceId } })).resolves.toBe(before);
+  });
+
+  it('rejects an unavailable model from both Agent edit paths', async () => {
+    const agent = await createAgent(workspaceId, `Edit stale model ${Date.now()}`, { runtime: 'pi' });
+    const config = {
+      name: agent.name,
+      systemPrompt: null,
+      providerId,
+      model: 'stale-model',
+      maxSteps: 8,
+    };
+
+    await expect(updateAgent(workspaceId, agent.id, config))
+      .rejects.toThrow('Unknown or unavailable model: stale-model');
+    await expect(updateAgentModelSelection(workspaceId, agent.id, [providerId], config.model))
+      .rejects.toThrow('Unknown or unavailable model: stale-model');
+    await expect(db.agent.findUnique({ where: { id: agent.id } })).resolves.toMatchObject({
+      providerId: null,
+      model: null,
+    });
+
+    await deleteAgent(workspaceId, agent.id);
+  });
+
+  it('deletes an agent-owned sandbox with its agent', async () => {
+    const agent = await createAgent(workspaceId, `Disposable sandbox ${Date.now()}`, { runtime: 'pi' });
+    const sandbox = await db.sandbox.findFirstOrThrow({
+      where: { workspaceId, agentLinks: { some: { agentId: agent.id } } },
+      select: { id: true, deploymentId: true },
+    });
+
+    await deleteAgent(workspaceId, agent.id);
+
+    await expect(db.sandbox.findUnique({ where: { id: sandbox.id } })).resolves.toBeNull();
+    await expect(db.deployment.findUnique({ where: { id: sandbox.deploymentId } })).resolves.toBeNull();
+  });
+
   it('rejects invalid sandbox and provider bindings for sandbox harness runtimes atomically', async () => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     async function sandbox(kind: string, network: string) {
@@ -201,6 +263,7 @@ describe('agents mutations', () => {
         format: 'anthropic',
         baseUrl: 'https://anthropic.test',
         apiKey: 'secret',
+        models: ['model-1'],
       },
     });
     const piProvider = await db.modelProvider.create({
@@ -260,6 +323,7 @@ describe('agents mutations', () => {
         format: 'anthropic',
         baseUrl: 'https://anthropic.test',
         apiKey: 'secret',
+        models: ['claude-sonnet'],
       },
     });
     const deployment = await db.deployment.create({
@@ -907,6 +971,7 @@ describe('agents mutations', () => {
         format: 'openai',
         baseUrl: 'https://disposable.test/v1',
         apiKey: 'k',
+        models: ['gpt-disposable'],
       },
     });
     const agent = await createAgent(workspaceId, 'Disposable provider agent', { runtime: 'pi' });

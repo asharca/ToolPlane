@@ -2,6 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
 import { Popover } from 'radix-ui';
 import { Check, ChevronsUpDown, LogOut, Plus, Shield } from 'lucide-react';
@@ -10,6 +11,22 @@ import { createWorkspaceAction } from '@/lib/workspace/actions';
 
 type Workspace = { id: string; slug: string; name: string };
 const WIDE_VIEWPORT_QUERY = '(min-width: 1024px)';
+const WORKSPACE_SECTIONS = new Set([
+  'agents',
+  'chat',
+  'knowledge',
+  'market',
+  'mcp',
+  'members',
+  'observability',
+  'providers',
+  'sandboxes',
+  'seller',
+  'settings',
+  'skills',
+  'toolkits',
+  'work',
+]);
 
 function subscribeToWideViewport(onChange: () => void) {
   const media = window.matchMedia?.(WIDE_VIEWPORT_QUERY);
@@ -24,6 +41,12 @@ function getWideViewportSnapshot() {
 
 function initialsOf(name: string): string {
   return (name.match(/\b\w/g) ?? ['W']).slice(0, 2).join('').toUpperCase();
+}
+
+function currentWorkspaceSection(slug: string, pathname: string): string {
+  const prefix = `/app/${slug}/`;
+  const section = pathname.startsWith(prefix) ? pathname.slice(prefix.length).split('/')[0] : '';
+  return section && WORKSPACE_SECTIONS.has(section) ? section : 'chat';
 }
 
 export function WorkspaceSwitcher({
@@ -43,6 +66,7 @@ export function WorkspaceSwitcher({
 }) {
   const t = useTranslations('console.workspaceSwitcher');
   const sidebarT = useTranslations('console.sidebar');
+  const pathname = usePathname() ?? '';
   const [creating, setCreating] = useState(false);
   const wideViewport = useSyncExternalStore(
     subscribeToWideViewport,
@@ -50,6 +74,7 @@ export function WorkspaceSwitcher({
     () => false,
   );
   const compactDesktop = compact && wideViewport;
+  const targetSection = currentWorkspaceSection(slug, pathname);
 
   return (
     <Popover.Root onOpenChange={(nextOpen) => !nextOpen && setCreating(false)}>
@@ -61,7 +86,7 @@ export function WorkspaceSwitcher({
           className={`flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/70 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
         >
           <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-brand-foreground shadow-sm ring-1 ring-brand/20">
-            {initialsOf(compact ? userLabel : workspaceName)}
+            {initialsOf(workspaceName)}
           </span>
           <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
             <span className="block truncate text-sm font-medium text-foreground">
@@ -95,7 +120,7 @@ export function WorkspaceSwitcher({
               return (
                 <Popover.Close key={w.id} asChild>
                   <Link
-                    href={`/app/${w.slug}/chat`}
+                    href={`/app/${w.slug}/${targetSection}`}
                     aria-current={active ? 'page' : undefined}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
                   >

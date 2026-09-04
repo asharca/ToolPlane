@@ -85,7 +85,7 @@ describe('DashboardTabsProvider', () => {
   });
 
   it.each([
-    ['work', 'Work'],
+    ['work', 'Agents'],
     ['knowledge', 'Knowledge'],
   ])('uses the sidebar name for the %s tab', (segment, label) => {
     navigation.pathname = `/app/smoke/${segment}`;
@@ -110,17 +110,17 @@ describe('DashboardTabsProvider', () => {
 
     renderTabs();
 
-    expect(activeTab()).toHaveTextContent('Chat');
+    expect(activeTab()).toHaveTextContent('Assistants');
     expect(activeTab()).toHaveAttribute('data-tab-id', 'chat-tab');
   });
 
-  it('keeps the Work tab while Agent management is open', () => {
+  it('keeps the Agents tab while Agent management is open', () => {
     navigation.pathname = '/app/smoke/agents';
     navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fwork%3F__dashboardTab%3Dwork-tab';
 
     renderTabs();
 
-    expect(activeTab()).toHaveTextContent('Work');
+    expect(activeTab()).toHaveTextContent('Agents');
     expect(activeTab()).toHaveAttribute('data-tab-id', 'work-tab');
   });
 
@@ -157,9 +157,9 @@ describe('DashboardTabsProvider', () => {
     renderTabs();
 
     await user.click(screen.getByRole('button', { name: 'New tab' }));
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Chat'));
+    await waitFor(() => expect(activeTab()).toHaveTextContent('Assistants'));
 
-    await user.click(screen.getByRole('button', { name: 'Close Chat' }));
+    await user.click(screen.getByRole('button', { name: 'Close Assistants' }));
 
     const fallbackHref = navigation.replace.mock.calls.at(-1)?.[0];
     expect(new URL(fallbackHref, 'https://toolplane.local').pathname).toBe('/app/smoke/agents');
@@ -180,7 +180,7 @@ describe('DashboardTabsProvider', () => {
       '_blank',
       'popup,noopener',
     );
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Chat'));
+    await waitFor(() => expect(activeTab()).toHaveTextContent('Assistants'));
   });
 
   it('drops saved overview tabs', () => {

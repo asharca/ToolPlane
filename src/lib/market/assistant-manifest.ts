@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { z } from 'zod';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { marketReleaseChecksum } from '@/lib/market/artifact';
 
 export const ASSISTANT_MARKET_MANIFEST_VERSION = 1 as const;
@@ -21,7 +22,7 @@ const assistantReleaseManifestSchema = z.object({
   assistant: z.object({
     name: z.string().min(1).max(120),
     systemPrompt: z.string().max(50_000).nullable(),
-    maxSteps: z.number().int().min(1).max(20),
+    maxSteps: z.number().int().min(AGENT_STEP_BOUNDS.min).max(AGENT_STEP_BOUNDS.max),
     modelRequirement: z.object({
       providerFormat: z.string().min(1).max(120),
       model: z.string().min(1).max(240).nullable(),

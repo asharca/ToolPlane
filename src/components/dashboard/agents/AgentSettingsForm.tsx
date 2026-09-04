@@ -203,23 +203,6 @@ export function AgentSettingsForm({
     browser: t('toolCategoryBrowser'),
     media: t('toolCategoryMedia'),
   };
-  const selectedProviderNames = providers
-    .filter((provider) => selectedProviderIds.has(provider.id))
-    .map((provider) => provider.name);
-  const selectedCapabilityCount = selectedDeploymentIds.size
-    + selectedSkillIds.size
-    + selectedToolkitIds.size
-    + selectedSandboxIds.size
-    + selectedSubAgentIds.size;
-  const modelSummary = isHermes
-    ? selectedProviderNames.length > 0
-      ? t('providerSummary', { count: selectedProviderNames.length, names: selectedProviderNames.join(', ') })
-      : t('noModelProvidersSelected')
-    : selectedProvider && selectedModel
-      ? `${providers.find((provider) => provider.id === selectedProvider)?.name ?? selectedProvider} · ${selectedModel}`
-      : selectedProvider
-        ? t('needsModel')
-        : t('needsProvider');
   const navigationGroups: Array<{
     label: string;
     items: Array<{ id: AgentSettingsSection; label: string; count?: number; icon: typeof Bot }>;
@@ -395,46 +378,10 @@ export function AgentSettingsForm({
               {state.error}
             </p>
           ) : null}
-      <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Bot className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('general')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('generalSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="space-y-4 px-4 py-4">
-          <div className="rounded-lg border border-border bg-muted/25 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                {isHermes ? <Container className="size-4 shrink-0 text-muted-foreground" /> : <Bot className="size-4 shrink-0 text-muted-foreground" />}
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('runtimeSummary')}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="rounded-md bg-background px-2 py-1 text-xs font-medium text-foreground ring-1 ring-border">
-                  {runtimeLabel}
-                </span>
-                {isHermes && runtime?.status ? (
-                  <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{runtime.status}</span>
-                ) : null}
-              </div>
-            </div>
-            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-              <div className="min-w-0">
-                <dt className="text-xs text-muted-foreground">{t('model')}</dt>
-                <dd className="mt-0.5 truncate font-medium text-foreground" title={modelSummary}>{modelSummary}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">{t('tools')}</dt>
-                <dd className="mt-0.5 font-medium text-foreground">{t('attachedCapabilities', { count: selectedCapabilityCount })}</dd>
-              </div>
-            </dl>
-          </div>
+      <section hidden={activeSection !== 'general'} aria-label={t('general')}>
+        <div className="space-y-5">
           <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <Bot className="size-4 shrink-0" />
-              {t('name')}
-            </span>
+            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
             <input
               name="name"
               value={nameValue}
@@ -443,67 +390,51 @@ export function AgentSettingsForm({
               className="ui-input h-10 w-full"
             />
           </label>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('runtime')}</span>
+            <div className="ui-input flex h-10 items-center justify-between gap-3 px-3 text-sm" aria-label={t('runtime')}>
+              <span className="truncate font-medium text-foreground">{runtimeLabel}</span>
+              {isHermes && runtime?.status ? (
+                <span className="shrink-0 text-xs text-muted-foreground">{runtime.status}</span>
+              ) : null}
+            </div>
+          </div>
         </div>
       </section>
 
-      <section hidden={activeSection !== 'instructions'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <FileText className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('instructions')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('instructionsSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          {isHermes ? (
-            <p className="rounded-lg border border-border bg-muted/25 px-3 py-3 text-sm leading-6 text-muted-foreground">
-              {t('hermesPromptManaged')}
-            </p>
-          ) : (
-            <label className="block">
-              <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                <FileText className="size-4 shrink-0" />
-                {t('systemPrompt')}
-              </span>
-              <textarea
-                name="systemPrompt"
-                value={systemPromptValue}
-                onChange={(event) => setSystemPromptValue(event.target.value)}
-                rows={9}
-                placeholder={t('youAreAHelpfulAssistant')}
-                className="ui-input min-h-52 w-full resize-y py-3"
-              />
-            </label>
-          )}
-        </div>
-      </section>
-
-      <section hidden={activeSection !== 'advanced'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('advanced')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('advancedSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <label className="block max-w-xs">
-            <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <Blocks className="size-4 shrink-0" />
-              {t('maxToolSteps')}
-            </span>
-            <input
-              name="maxSteps"
-              type="number"
-              min={AGENT_STEP_BOUNDS.min}
-              max={AGENT_STEP_BOUNDS.max}
-              value={maxStepsValue}
-              onChange={(event) => setMaxStepsValue(event.target.value)}
-              className="ui-input h-10 w-full"
+      <section hidden={activeSection !== 'instructions'} aria-label={t('instructions')}>
+        {isHermes ? (
+          <p className="rounded-md bg-muted/40 px-3 py-3 text-sm leading-6 text-muted-foreground">
+            {t('hermesPromptManaged')}
+          </p>
+        ) : (
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('systemPrompt')}</span>
+            <textarea
+              name="systemPrompt"
+              value={systemPromptValue}
+              onChange={(event) => setSystemPromptValue(event.target.value)}
+              rows={9}
+              placeholder={t('youAreAHelpfulAssistant')}
+              className="ui-input min-h-52 w-full resize-y py-3"
             />
-            <span className="mt-1 block text-xs font-normal text-muted-foreground">{t('0NoLimit')}</span>
           </label>
-        </div>
+        )}
+      </section>
+
+      <section hidden={activeSection !== 'advanced'} aria-label={t('advanced')}>
+        <label className="block max-w-xs">
+          <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('maxToolSteps')}</span>
+          <input
+            name="maxSteps"
+            type="number"
+            min={AGENT_STEP_BOUNDS.min}
+            max={AGENT_STEP_BOUNDS.max}
+            value={maxStepsValue}
+            onChange={(event) => setMaxStepsValue(event.target.value)}
+            className="ui-input h-10 w-full"
+          />
+        </label>
       </section>
 
       {isHermes && runtime ? (
@@ -674,175 +605,110 @@ export function AgentSettingsForm({
         </section>
       ) : null}
 
-      <section hidden={activeSection !== 'builtInTools'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Hammer className="size-[18px] shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-foreground">{t('builtInTools')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {isHermes
-                ? t('hermesBuiltInToolsDescription')
-                : t('builtInToolsDescription', { runtime: runtimeLabel })}
-            </p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <div
-            role="list"
-            aria-label={t('builtInTools')}
-            className="grid gap-x-8 gap-y-5 sm:grid-cols-2"
-          >
-            {builtInToolGroups.map((group) => (
-              <div key={group.category} role="listitem" className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {builtInToolCategoryLabels[group.category]}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-                  {group.tools.map((tool) => (
-                    <code key={tool} className="text-xs text-foreground">{tool}</code>
-                  ))}
-                </div>
+      <section hidden={activeSection !== 'builtInTools'} aria-label={t('builtInTools')}>
+        <div
+          role="list"
+          aria-label={t('builtInTools')}
+          className="grid gap-x-8 gap-y-5 sm:grid-cols-2"
+        >
+          {builtInToolGroups.map((group) => (
+            <div key={group.category} role="listitem" className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {builtInToolCategoryLabels[group.category]}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+                {group.tools.map((tool) => (
+                  <code key={tool} className="text-xs text-foreground">{tool}</code>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </section>
 
-      <section hidden={activeSection !== 'mcp'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Server className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('mcp')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <AgentResourceSelect
-            icon={Server}
-            label={t('mcp')}
-            name="deploymentId"
-            options={deployments}
-            selectedIds={selectedDeploymentIds}
-            onSelectionChange={(next) => {
-              setSelectedDeploymentIds(next);
-              scheduleAutoSave();
-            }}
-          />
-        </div>
+      <section hidden={activeSection !== 'mcp'} aria-label={t('mcp')}>
+        <AgentResourceSelect
+          icon={Server}
+          label={t('mcp')}
+          name="deploymentId"
+          options={deployments}
+          selectedIds={selectedDeploymentIds}
+          onSelectionChange={(next) => {
+            setSelectedDeploymentIds(next);
+            scheduleAutoSave();
+          }}
+        />
       </section>
 
-      <section hidden={activeSection !== 'skills'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <PackageCheck className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('skills')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <AgentResourceSelect
-            icon={PackageCheck}
-            label={t('skills')}
-            name="installedSkillId"
-            options={skills}
-            selectedIds={selectedSkillIds}
-            onSelectionChange={(next) => {
-              setSelectedSkillIds(next);
-              scheduleAutoSave();
-            }}
-          />
-        </div>
+      <section hidden={activeSection !== 'skills'} aria-label={t('skills')}>
+        <AgentResourceSelect
+          icon={PackageCheck}
+          label={t('skills')}
+          name="installedSkillId"
+          options={skills}
+          selectedIds={selectedSkillIds}
+          onSelectionChange={(next) => {
+            setSelectedSkillIds(next);
+            scheduleAutoSave();
+          }}
+        />
       </section>
 
-      <section hidden={activeSection !== 'toolkits'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Blocks className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('toolkits')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <AgentResourceSelect
-            icon={Blocks}
-            label={t('toolkits')}
-            name="toolkitId"
-            options={toolkits}
-            selectedIds={selectedToolkitIds}
-            onSelectionChange={(next) => {
-              setSelectedToolkitIds(next);
-              scheduleAutoSave();
-            }}
-          />
-        </div>
+      <section hidden={activeSection !== 'toolkits'} aria-label={t('toolkits')}>
+        <AgentResourceSelect
+          icon={Blocks}
+          label={t('toolkits')}
+          name="toolkitId"
+          options={toolkits}
+          selectedIds={selectedToolkitIds}
+          onSelectionChange={(next) => {
+            setSelectedToolkitIds(next);
+            scheduleAutoSave();
+          }}
+        />
       </section>
 
-      <section hidden={activeSection !== 'sandboxes'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Box className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('sandboxes')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <AgentResourceSelect
-            icon={Box}
-            label={t('sandboxes')}
-            name="sandboxId"
-            options={sandboxOptions}
-            selectedIds={selectedSandboxIds}
-            onSelectionChange={(next) => {
-              setSelectedSandboxIds(next);
-              if (!next.has(selectedDefaultSandboxId)) setSelectedDefaultSandboxId([...next][0] ?? '');
-              scheduleAutoSave();
-            }}
-            selectionMode={singleSandboxRuntime ? 'single-required' : 'multiple'}
-          />
-          {!singleSandboxRuntime && selectedSandboxIds.size ? (
-            <label className="mt-3 block text-xs text-muted-foreground">
-              <span className="mb-1 block">Default Work sandbox</span>
-              <NativeSelect name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
-                {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxOptions.find((item) => item.id === id)?.label ?? id}</option>)}
-              </NativeSelect>
-            </label>
-          ) : null}
-          {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
-        </div>
+      <section hidden={activeSection !== 'sandboxes'} aria-label={t('sandboxes')}>
+        <AgentResourceSelect
+          icon={Box}
+          label={t('sandboxes')}
+          name="sandboxId"
+          options={sandboxOptions}
+          selectedIds={selectedSandboxIds}
+          onSelectionChange={(next) => {
+            setSelectedSandboxIds(next);
+            if (!next.has(selectedDefaultSandboxId)) setSelectedDefaultSandboxId([...next][0] ?? '');
+            scheduleAutoSave();
+          }}
+          selectionMode={singleSandboxRuntime ? 'single-required' : 'multiple'}
+        />
+        {!singleSandboxRuntime && selectedSandboxIds.size ? (
+          <label className="mt-3 block text-xs text-muted-foreground">
+            <span className="mb-1 block">Default Work sandbox</span>
+            <NativeSelect name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
+              {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxOptions.find((item) => item.id === id)?.label ?? id}</option>)}
+            </NativeSelect>
+          </label>
+        ) : null}
+        {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
       </section>
 
-      <section hidden={activeSection !== 'subAgents'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Users className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('subAgents')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('resourceSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="px-4 py-4">
-          <AgentResourceSelect
-            icon={Users}
-            label={t('subAgents')}
-            name="subAgentId"
-            options={subAgents}
-            selectedIds={selectedSubAgentIds}
-            onSelectionChange={(next) => {
-              setSelectedSubAgentIds(next);
-              scheduleAutoSave();
-            }}
-          />
-        </div>
+      <section hidden={activeSection !== 'subAgents'} aria-label={t('subAgents')}>
+        <AgentResourceSelect
+          icon={Users}
+          label={t('subAgents')}
+          name="subAgentId"
+          options={subAgents}
+          selectedIds={selectedSubAgentIds}
+          onSelectionChange={(next) => {
+            setSelectedSubAgentIds(next);
+            scheduleAutoSave();
+          }}
+        />
       </section>
 
-      <section hidden={activeSection !== 'general'} className="rounded-lg border border-border bg-background">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <BrainCircuit className="size-[18px] shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">{isHermes ? t('modelProviders') : t('model')}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{t('generalSettingsDescription')}</p>
-          </div>
-        </div>
-        <div className="grid items-start gap-3 px-4 py-4 sm:grid-cols-2">
+      <section hidden={activeSection !== 'general'} aria-label={isHermes ? t('modelProviders') : t('model')}>
+        <div className="grid items-start gap-3 sm:grid-cols-2">
           {isHermes ? (
             <div className="space-y-2 sm:col-span-2">
               <AgentResourceSelect
@@ -862,10 +728,7 @@ export function AgentSettingsForm({
             <div className="sm:col-span-2">
               <input type="hidden" name="providerId" value={selectedProvider} />
               <input type="hidden" name="model" value={selectedModel} />
-              <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                <BrainCircuit className="size-4 shrink-0" />
-                {t('model')}
-              </span>
+              <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
               <ModelPicker
                 providers={compatibleProviders}
                 value={selectedProvider && selectedModel

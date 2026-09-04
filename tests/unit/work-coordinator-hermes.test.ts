@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   runHermesWork: vi.fn(),
   effectiveStatus: vi.fn(),
   releaseLease: vi.fn(),
+  generateWorkSessionTitle: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -33,6 +34,9 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 vi.mock('@/lib/agents/queries', () => ({ getAgentForRun: mocks.getAgentForRun }));
+vi.mock('@/lib/agents/conversation-naming', () => ({
+  generateWorkSessionTitle: mocks.generateWorkSessionTitle,
+}));
 vi.mock('@/lib/agents/mutations', () => ({
   ensureConversationRuntimeSession: vi.fn(async () => ({
     runtimeSessionId: 'conversation-1',
@@ -71,7 +75,7 @@ describe('Work coordinator', () => {
     delete (globalThis as { __workRunControllers?: unknown }).__workRunControllers;
     delete (globalThis as { __workOutputChannels?: unknown }).__workOutputChannels;
     mocks.workFindFirst.mockImplementation(async () => mocks.queued ? {
-      id: 'work-1', stepCount: 0, maxSteps: 12, deadlineAt: null, startedAt: null,
+      id: 'work-1', startedAt: null,
     } : null);
     mocks.workFindUnique.mockResolvedValue({
       id: 'work-1',
@@ -110,6 +114,7 @@ describe('Work coordinator', () => {
       return { count: 1 };
     });
     mocks.messageCreate.mockResolvedValue({ id: 'message-assistant' });
+    mocks.generateWorkSessionTitle.mockResolvedValue('Repository inspection');
     mocks.getAgentForRun.mockResolvedValue({
       id: 'agent-1',
       slug: 'hermes-worker',
@@ -176,6 +181,11 @@ describe('Work coordinator', () => {
         ]),
       }),
     });
+    expect(mocks.generateWorkSessionTitle).toHaveBeenCalledWith(
+      'workspace-1',
+      'agent-1',
+      'conversation-1',
+    );
     expect(mocks.releaseLease).toHaveBeenCalledOnce();
     expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'work-1', status: 'running' },
@@ -204,6 +214,28 @@ describe('Work coordinator', () => {
       { id: 'runtime:final', type: 'runtime', status: 'failed' },
     ]);
     unsubscribe();
+  });
+
+  it('finishes Work when automatic title generation fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mocks.generateWorkSessionTitle.mockRejectedValueOnce(new Error('Naming unavailable'));
+
+    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
+    const { subscribeWorkOutput } = await import('@/lib/work/run-control');
+    kickWorkCoordinator();
+
+    await vi.waitFor(() => expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'work-1', status: 'running' },
+      data: expect.objectContaining({ status: 'idle' }),
+    })));
+    const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
+    expect(snapshot.done).toBe(true);
+    unsubscribe();
+    expect(warning).toHaveBeenCalledWith(
+      '[work] work-1 title generation failed',
+      expect.any(Error),
+    );
+    warning.mockRestore();
   });
 
   it('labels Hermes MCP tools with the workspace deployment and original name', async () => {

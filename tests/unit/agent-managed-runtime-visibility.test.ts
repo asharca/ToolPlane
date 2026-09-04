@@ -35,6 +35,7 @@ describe('managed public runtime Agent visibility', () => {
   it('excludes managed runtime Agents from ordinary list and detail queries', async () => {
     await listAgents('workspace-1');
     expect(mocks.agentFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
       where: {
         workspaceId: 'workspace-1',
         publicRuntimeAllocation: { is: null },

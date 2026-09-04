@@ -12,7 +12,7 @@ function setReducedMotion(matches: boolean) {
 }
 
 function activeWord(container: HTMLElement) {
-  return container.querySelector('.animate-word-swap');
+  return container.querySelector('.tp-rotating-headline__word');
 }
 
 describe('RotatingHeadline', () => {

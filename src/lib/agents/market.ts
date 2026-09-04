@@ -2,6 +2,7 @@ import 'server-only';
 
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { AGENT_STEP_BOUNDS, resolveMaxSteps } from '@/lib/agents/constants';
 import { db } from '@/lib/db';
 import {
   isPlatformAgentListingOrigin,
@@ -57,7 +58,12 @@ const portableAgentSchema = z.object({
   name: z.string().min(1).max(240),
   slug: z.string().min(1).max(120),
   systemPrompt: z.string().max(200_000).nullable(),
-  maxSteps: z.number().int().min(0).max(1000),
+  // Zero is accepted only long enough to verify legacy v1 checksums; parsed
+  // manifests normalize it to the current default below.
+  maxSteps: z.union([
+    z.number().int().min(AGENT_STEP_BOUNDS.min).max(AGENT_STEP_BOUNDS.max),
+    z.literal(0),
+  ]),
   modelRequirement: modelRequirementSchema.nullable(),
   // Optional only for checksum-compatible parsing of legacy v1 releases.
   // Every newly published release writes an explicit Pi or Hermes runtime.
@@ -533,7 +539,13 @@ export function parseAgentReleaseManifest(raw: unknown, expectedChecksum?: strin
   if (expectedChecksum && agentReleaseChecksum(parsed.data) !== expectedChecksum) {
     throw new AgentMarketError('invalid_manifest', 'The agent release checksum does not match.');
   }
-  return parsed.data;
+  return {
+    ...parsed.data,
+    agents: parsed.data.agents.map((agent) => ({
+      ...agent,
+      maxSteps: agent.maxSteps === 0 ? AGENT_STEP_BOUNDS.default : agent.maxSteps,
+    })),
+  };
 }
 
 function withTrustedAgentMcpAllowedTools(
@@ -706,9 +718,7 @@ export async function buildCatalogAgentManifest(
       name: input.name.trim().slice(0, 240),
       slug: slugify(input.slug, 'agent'),
       systemPrompt: input.systemPrompt?.trim() || null,
-      maxSteps: Number.isFinite(input.maxSteps)
-        ? Math.max(0, Math.min(1000, Math.trunc(input.maxSteps)))
-        : 8,
+      maxSteps: resolveMaxSteps(input.maxSteps),
       modelRequirement: modelFormat && model ? { format: modelFormat, model } : null,
       runtime: { kind: 'pi' },
       deploymentKeys: deployments.map(({ key }) => key),
@@ -1116,7 +1126,7 @@ async function collectPortableManifest(
       name: agent.name,
       slug: slugify(agent.slug || agent.name, 'agent'),
       systemPrompt: isHermes ? null : agent.systemPrompt,
-      maxSteps: agent.maxSteps,
+      maxSteps: resolveMaxSteps(agent.maxSteps),
       modelRequirement: !isHermes && agent.provider && agent.provider.workspaceId === workspaceId && agent.model
         ? { format: agent.provider.format, model: agent.model }
         : null,

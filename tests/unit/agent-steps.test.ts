@@ -1,17 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { resolveMaxSteps, AGENT_STEPS_CEILING, AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import { resolveMaxSteps, AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 
 describe('resolveMaxSteps', () => {
-  it('maps 0 (no limit) to the safety ceiling', () => {
-    expect(resolveMaxSteps(0)).toBe(AGENT_STEPS_CEILING);
+  it('uses the Cherry-style bounded default', () => {
+    expect(AGENT_STEP_BOUNDS).toEqual({ min: 1, max: 1000, default: 100 });
   });
 
-  it('passes a positive cap through unchanged', () => {
+  it('passes an in-range cap through unchanged', () => {
     expect(resolveMaxSteps(18)).toBe(18);
     expect(resolveMaxSteps(AGENT_STEP_BOUNDS.default)).toBe(AGENT_STEP_BOUNDS.default);
   });
 
-  it('treats any non-positive value as no limit', () => {
-    expect(resolveMaxSteps(-5)).toBe(AGENT_STEPS_CEILING);
+  it('clamps runtime values to the supported range', () => {
+    expect(resolveMaxSteps(0)).toBe(100);
+    expect(resolveMaxSteps(-5)).toBe(100);
+    expect(resolveMaxSteps(1001)).toBe(1000);
+    expect(resolveMaxSteps(Number.NaN)).toBe(100);
   });
 });

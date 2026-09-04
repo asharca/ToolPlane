@@ -2,8 +2,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSettings } from '@/components/dashboard/agents/AgentSettings';
 
-vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: vi.fn() }));
-
 vi.mock('@/components/dashboard/agents/AgentSettingsForm', () => ({
   AgentSettingsForm: ({
     activeSection,
@@ -35,49 +33,6 @@ const settings = {
 };
 
 describe('AgentSettings', () => {
-  it('reports a missing dedicated sandbox before model readiness', () => {
-    render(
-      <AgentSettings
-        slug="acme"
-        agentId="agent-1"
-        settings={settings}
-        channelSettings={{ connections: [] }}
-        ready={false}
-        agentName="Release copilot"
-        providerLabel="OpenAI · gpt-5"
-      />,
-    );
-
-    expect(screen.getByText('needs sandbox')).toBeInTheDocument();
-  });
-
-  it('offers to start the selected sandbox when it is stopped', () => {
-    render(
-      <AgentSettings
-        slug="acme"
-        agentId="agent-1"
-        settings={{
-          ...settings,
-          sandboxes: [{
-            id: 'sandbox-1',
-            label: 'Workspace',
-            kind: 'docker',
-            network: 'isolated',
-            checked: true,
-            status: 'stopped',
-          }],
-        }}
-        channelSettings={{ connections: [] }}
-        ready
-        agentName="Release copilot"
-        providerLabel="OpenAI · gpt-5"
-      />,
-    );
-
-    const start = screen.getByRole('button', { name: 'Start' });
-    expect(start.closest('form')?.querySelector('input[name="sandboxId"]')).toHaveValue('sandbox-1');
-  });
-
   it('renders a settings workspace without the legacy conversation UI', () => {
     render(
       <AgentSettings
@@ -87,16 +42,16 @@ describe('AgentSettings', () => {
         channelSettings={{ connections: [] }}
         ready
         agentName="Release copilot"
-        providerLabel="OpenAI · gpt-5"
       />,
     );
 
     expect(screen.getByText('settings:general:false')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute(
-      'href',
-      '/app/acme/chat?agent=agent-1',
-    );
+    expect(screen.queryByText('OpenAI · gpt-5')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Chat' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Instructions' })).toBeInTheDocument();
+    expect(screen.queryByText('Basic')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Tools$/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Built-in tools' }));
     expect(screen.getByText('settings:builtInTools:false')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Message this agent')).not.toBeInTheDocument();
@@ -112,7 +67,6 @@ describe('AgentSettings', () => {
         channelSettings={{ connections: [] }}
         ready
         agentName="Release copilot"
-        providerLabel="OpenAI · gpt-5"
       />,
     );
 

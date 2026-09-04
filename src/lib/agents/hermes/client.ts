@@ -228,6 +228,27 @@ async function hermesProfileChatStream(params: {
       throw new Error(`Hermes profile "${profile}" has no available default model.`);
     }
   }
+
+  // Hermes' session API loses named-custom credentials after canonicalizing
+  // ToolPlane providers to "custom". The OpenAI-compatible path preserves them.
+  if (provider.replace(/^custom:/, '').startsWith('toolplane-')) {
+    return {
+      ...await hermesFetch({
+        agent: params.agent,
+        messages: params.messages,
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        stream: true,
+        profile,
+        provider,
+        model,
+        reasoningEffort: params.reasoningEffort,
+        writeLease: params.writeLease,
+        signal: params.signal,
+      }),
+      sessionEvents: false,
+    };
+  }
   const userMessage = params.messages.filter((message) => message.role === 'user').at(-1);
   if (!userMessage) throw new Error('Hermes chat requires a user message.');
 

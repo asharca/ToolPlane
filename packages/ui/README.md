@@ -56,6 +56,7 @@ export function Toolbar() {
 - `@toolplane/ui/feedback` — badges, status, alerts, and spinners.
 - `@toolplane/ui/dialog` and `@toolplane/ui/overlays` — Dialog, Popover, Tooltip, Context Menu, and Hover Card primitives.
 - `@toolplane/ui/chat-shell`, `@toolplane/ui/chat-thread`, and `@toolplane/ui/conversation-sidebar` — chat composition.
+- The root export also includes `ToolPlaneLogo`, `ContentPage`, `RotatingHeadline`, `SafeStreamdown`, `Breadcrumbs`, `NavigationTabs`, and `WorkspaceTabBar`.
 
 Next.js routing, translations, server actions, authentication, and domain data stay in the host. Pass those through children, labels, callbacks, and thin adapters.
 

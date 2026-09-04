@@ -948,6 +948,18 @@ async function updateRuntimeState(
   await db.agentRuntime.updateMany({ where: { id: runtimeId, workspaceId }, data });
 }
 
+async function startHermesProcess(
+  workspaceId: string,
+  agentId: string,
+  deployment: Parameters<typeof resolveSpawnSpec>[0] & { id: string },
+): Promise<void> {
+  await startProcess(deployment.id, resolveSpawnSpec(deployment), {
+    awaitReady: false,
+    workspaceId,
+    onReady: async () => { await ensureHermesRuntimeReady(workspaceId, agentId); },
+  });
+}
+
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1288,10 +1300,7 @@ async function runHermesRuntimeMaintenanceUnlocked<T>(
     if (quiesce && !reprojected && resumeAllowed) {
       if (wasActive && quiesceAttempted) {
         try {
-          await startProcess(deployment.id, resolveSpawnSpec(deployment), {
-            awaitReady: false,
-            workspaceId,
-          });
+          await startHermesProcess(workspaceId, agentId, deployment);
           await updateRuntimeState(workspaceId, runtime.id, {
             status: 'provisioning',
             lastError: null,
@@ -1585,10 +1594,7 @@ async function copyHermesRuntimeVolumeUnlocked<T>(
     return result;
   }
   try {
-    await startProcess(sourceDeployment.id, resolveSpawnSpec(sourceDeployment), {
-      awaitReady: false,
-      workspaceId,
-    });
+    await startHermesProcess(workspaceId, sourceAgentId, sourceDeployment);
     await updateRuntimeState(workspaceId, sourceRuntime.id, {
       status: 'provisioning',
       lastError: null,
@@ -1791,10 +1797,7 @@ async function syncHermesRuntimeUnlocked(
       }
       if (!livePort(deploymentId)) {
         options.signal?.throwIfAborted();
-        await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
-          awaitReady: false,
-          workspaceId,
-        });
+        await startHermesProcess(workspaceId, agentId, runtime.sandbox.deployment);
         await updateRuntimeState(workspaceId, runtime.id, {
           status: 'provisioning',
           lastStartedAt: new Date(),
@@ -1883,10 +1886,7 @@ async function syncHermesRuntimeUnlocked(
 
     if (!configured || options.start === false) return { status: nextStatus };
     options.signal?.throwIfAborted();
-    await startProcess(deploymentId, resolveSpawnSpec(runtime.sandbox.deployment), {
-      awaitReady: false,
-      workspaceId,
-    });
+    await startHermesProcess(workspaceId, agentId, runtime.sandbox.deployment);
     return { status: 'provisioning' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

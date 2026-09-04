@@ -25,7 +25,6 @@ type CreateWorkSessionInput = {
   sandboxId?: string;
   task: string;
   acceptanceCriteria?: string;
-  maxSteps?: number;
   workingDirectory?: string;
   attachments?: PreparedWorkAttachment[];
   reasoningEffort?: ReasoningEffort;
@@ -86,7 +85,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
   const workingDirectory = normalizeWorkDirectory(input.workingDirectory ?? '.');
   if (!workingDirectory) return null;
   const acceptanceCriteria = input.acceptanceCriteria?.trim().slice(0, 20_000) || null;
-  const maxSteps = Math.min(100, Math.max(1, Math.trunc(input.maxSteps ?? 12)));
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
       where: { id: input.agentId, workspaceId: input.workspaceId },
@@ -226,7 +224,6 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           workingDirectory,
         },
         status: 'queued',
-        maxSteps,
       },
       include: { conversation: true, sandbox: { include: { deployment: true } } },
     });
@@ -346,8 +343,6 @@ export async function resumeWorkSession(
       waitingQuestion: null,
       completedAt: null,
       cancelRequestedAt: null,
-      stepCount: 0,
-      deadlineAt: null,
     },
   });
   if (updated.count === 1) return { ok: true, changed: true, status: 'queued' };
@@ -396,7 +391,6 @@ export async function appendWorkSessionInput(
         waitingQuestion: null,
         completedAt: null,
         cancelRequestedAt: null,
-        ...(work.status === 'waiting_user' ? {} : { stepCount: 0, deadlineAt: null }),
       },
     });
     if (updated.count !== 1) {

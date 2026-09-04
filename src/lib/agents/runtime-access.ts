@@ -119,8 +119,12 @@ export async function agentRuntimeTokenFromRequest(
 }
 
 export function sandboxRuntimeOrigin(): string {
+  const developmentOrigin = runtimeEnv('NODE_ENV') === 'development' && runtimeEnv('PORT')
+    ? `http://localhost:${runtimeEnv('PORT')}`
+    : undefined;
   const configured = runtimeEnv('TOOLPLANE_RUNTIME_ORIGIN')
     || runtimeEnv('TOOLPLANE_HERMES_CALLBACK_URL')
+    || developmentOrigin
     || runtimeEnv('NEXT_PUBLIC_APP_URL')
     || `http://localhost:${runtimeEnv('PORT') || '3000'}`;
   const url = new URL(configured);

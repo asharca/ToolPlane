@@ -367,7 +367,7 @@ describe('Hermes chat projection', () => {
     );
   });
 
-  it('re-resolves a profile default for every turn', async () => {
+  it('re-resolves defaults and bypasses broken Hermes session routing for ToolPlane providers', async () => {
     profileMocks.listModels
       .mockResolvedValueOnce({
         profile: 'default',
@@ -381,14 +381,18 @@ describe('Hermes chat projection', () => {
         model: 'model-b',
         providers: [{ id: 'toolplane-provider', name: 'ToolPlane', models: ['model-b'] }],
       });
-    const fetchMock = vi.fn();
-    for (let turn = 0; turn < 2; turn += 1) {
-      fetchMock
-        .mockResolvedValueOnce(capabilities())
-        .mockResolvedValueOnce(Response.json({}, { status: turn === 0 ? 201 : 409 }))
-        .mockResolvedValueOnce(doneStream())
-        .mockResolvedValueOnce(Response.json({ data: [] }));
-    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(capabilities())
+      .mockResolvedValueOnce(Response.json({}, { status: 201 }))
+      .mockResolvedValueOnce(doneStream())
+      .mockResolvedValueOnce(Response.json({ data: [] }))
+      .mockResolvedValueOnce(capabilities())
+      .mockResolvedValueOnce(new Response([
+        'data: {"choices":[{"delta":{"content":"Done."}}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const input = {
       agent: {
@@ -408,9 +412,15 @@ describe('Hermes chat projection', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({
       provider: 'openrouter', model: 'model-a',
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[6][1]?.body))).toMatchObject({
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      'http://127.0.0.1:4312/hermes/v1/chat/completions',
+      expect.objectContaining({ body: expect.any(String) }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[5][1]?.body))).toMatchObject({
       provider: 'toolplane-provider', model: 'model-b',
     });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it('falls back to the legacy default-profile stream with full history', async () => {

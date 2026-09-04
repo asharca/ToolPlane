@@ -43,6 +43,21 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+@keyframes tp-word-swap {
+  from {
+    opacity: 0;
+    transform: translateY(0.15em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tp-rotating-headline__word {
+  animation: tp-word-swap 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 :is(
   [data-toolplane-ui],
   [data-chat-ui="chat-shell"],

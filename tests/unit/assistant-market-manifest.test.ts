@@ -49,4 +49,10 @@ describe('assistant market manifests', () => {
     });
     expect(JSON.stringify(result)).not.toContain(secret);
   });
+
+  it('uses the shared agent tool-loop bounds', () => {
+    expect(buildAssistantReleaseManifest({ ...source, maxSteps: 1_000 }).assistant.maxSteps).toBe(1_000);
+    expect(() => buildAssistantReleaseManifest({ ...source, maxSteps: 0 })).toThrow('invalid');
+    expect(() => buildAssistantReleaseManifest({ ...source, maxSteps: 1_001 })).toThrow('invalid');
+  });
 });

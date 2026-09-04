@@ -6,7 +6,11 @@ export async function listSandboxes(workspaceId: string) {
   return db.sandbox.findMany({
     where: { workspaceId, kind: { not: 'hermes' } },
     orderBy: { createdAt: 'desc' },
-    include: { deployment: true, _count: { select: { agentLinks: true, snapshots: true } } },
+    include: {
+      deployment: true,
+      agentLinks: { select: { agent: { select: { id: true, name: true } } } },
+      _count: { select: { agentLinks: true, snapshots: true } },
+    },
   });
 }
 

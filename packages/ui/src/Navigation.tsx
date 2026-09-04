@@ -30,20 +30,102 @@ export function Chip({ active = false, asChild = false, className, ...props }: C
 
 export type TabListProps = ComponentPropsWithoutRef<'div'> & {
   label: string;
+  navigation?: boolean;
 };
 
-export function TabList({ className, label, ...props }: TabListProps) {
+export function TabList({ className, label, navigation = false, ...props }: TabListProps) {
+  const classes = cx(
+    'inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-muted p-1 ring-1 ring-border/70',
+    className,
+  );
+
+  if (navigation) {
+    return (
+      <nav
+        {...props}
+        aria-label={label}
+        data-toolplane-ui="tab-list"
+        className={classes}
+      />
+    );
+  }
+
   return (
     <div
       {...props}
       data-toolplane-ui="tab-list"
       role="tablist"
       aria-label={label}
-      className={cx(
-        'inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-xl bg-muted p-1 ring-1 ring-border/70',
-        className,
-      )}
+      className={classes}
     />
+  );
+}
+
+export type NavigationTabsProps = ComponentPropsWithoutRef<'nav'> & {
+  contentClassName?: string;
+};
+
+export function NavigationTabs({
+  children,
+  className,
+  contentClassName,
+  ...props
+}: NavigationTabsProps) {
+  return (
+    <nav
+      {...props}
+      data-toolplane-ui="navigation-tabs"
+      className={cx('max-w-full overflow-x-auto pb-1', className)}
+    >
+      <div className={cx('inline-flex min-w-max items-center gap-1 rounded-xl bg-muted p-1 ring-1 ring-border/70', contentClassName)}>
+        {children}
+      </div>
+    </nav>
+  );
+}
+
+export type BreadcrumbsProps = ComponentPropsWithoutRef<'nav'>;
+
+export function Breadcrumbs({
+  'aria-label': ariaLabel = 'Breadcrumb',
+  children,
+  className,
+  ...props
+}: BreadcrumbsProps) {
+  return (
+    <nav
+      {...props}
+      aria-label={ariaLabel}
+      data-toolplane-ui="breadcrumbs"
+      className={cx('min-w-0 overflow-hidden', className)}
+    >
+      <ol className="flex min-w-0 items-center gap-2 overflow-hidden">{children}</ol>
+    </nav>
+  );
+}
+
+export type BreadcrumbItemProps = ComponentPropsWithoutRef<'li'> & {
+  current?: boolean;
+  separator?: ReactNode;
+};
+
+export function BreadcrumbItem({
+  children,
+  className,
+  current = false,
+  separator,
+  ...props
+}: BreadcrumbItemProps) {
+  return (
+    <li {...props} className={cx('flex min-w-0 items-center gap-2', className)}>
+      {separator ? <span aria-hidden="true" className="shrink-0 text-muted-foreground/55">{separator}</span> : null}
+      <span
+        aria-current={current ? 'page' : undefined}
+        className={cx('truncate', current ? 'text-muted-foreground' : 'font-semibold text-foreground')}
+      >
+        {children}
+      </span>
+    </li>
   );
 }
 

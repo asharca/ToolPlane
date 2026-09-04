@@ -126,6 +126,24 @@ describe('mcp-stdio-bridge', () => {
     expect(call.result.content[0].text).toBe('pong');
   });
 
+  it('passes only the configured MCP environment to the child', async () => {
+    const started = await startBridge({
+      env: {
+        MCP_CHILD_ENV: JSON.stringify({ MCP_TEST_SECRET: 'forwarded-secret' }),
+        DATABASE_URL: 'app-secret-must-not-reach-child',
+      },
+    });
+
+    const configured = await rpc(started.port, 'tools/call', {
+      name: 'ping_tool', arguments: { env: 'MCP_TEST_SECRET' },
+    });
+    const appSecret = await rpc(started.port, 'tools/call', {
+      name: 'ping_tool', arguments: { env: 'DATABASE_URL' },
+    });
+    expect(configured.result.content[0].text).toBe('forwarded-secret');
+    expect(appSecret.result.content[0].text).toBe('');
+  });
+
   it('keeps a delayed initialize alive while the MCP reports progress', async () => {
     const started = await startBridge({
       args: [DELAYED_FIXTURE, '--delay-ms=600', '--progress-ms=35'],

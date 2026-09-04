@@ -3,11 +3,26 @@ import { db } from '@/lib/db';
 import { startProcess } from './supervisor';
 import { resolveSpawnSpec, type DeploymentForSpawn, type SpawnSpec } from './spawn-spec';
 
-type RunningDeployment = DeploymentForSpawn & { id: string };
+type HermesRuntimeRef = { agentId: string; kind: string; workspaceId: string };
+type RunningDeployment = DeploymentForSpawn & {
+  id: string;
+  sandbox?: { agentRuntime?: (HermesRuntimeRef & {
+    agent: { publicRuntimeAllocation: { id: string } | null };
+  }) | null } | null;
+};
 
 export type ReconcileDeps = {
   loadRunning: () => Promise<RunningDeployment[]>;
-  start: (id: string, spec: SpawnSpec) => Promise<void>;
+  start: (
+    id: string,
+    spec: SpawnSpec,
+    options?: {
+      awaitReady?: boolean;
+      workspaceId?: string;
+      onReady?: () => void | Promise<void>;
+    },
+  ) => Promise<void>;
+  ensureHermesReady?: (workspaceId: string, agentId: string) => Promise<void>;
 };
 
 const defaultDeps: ReconcileDeps = {
@@ -20,6 +35,9 @@ const defaultDeps: ReconcileDeps = {
           select: {
             agentRuntime: {
               select: {
+                agentId: true,
+                kind: true,
+                workspaceId: true,
                 agent: { select: { publicRuntimeAllocation: { select: { id: true } } } },
               },
             },
@@ -35,6 +53,10 @@ const defaultDeps: ReconcileDeps = {
     )) as RunningDeployment[];
   },
   start: startProcess,
+  ensureHermesReady: async (workspaceId, agentId) => {
+    const { ensureHermesRuntimeReady } = await import('@/lib/agents/hermes/runtime');
+    await ensureHermesRuntimeReady(workspaceId, agentId);
+  },
 };
 
 // On server startup the in-memory process table is empty, but the DB may still
@@ -47,7 +69,16 @@ export async function reconcileDeployments(deps: ReconcileDeps = defaultDeps): P
   let started = 0;
   for (const d of deployments) {
     try {
-      await deps.start(d.id, resolveSpawnSpec(d));
+      const runtime = d.sandbox?.agentRuntime;
+      if (runtime?.kind === 'hermes' && deps.ensureHermesReady) {
+        await deps.start(d.id, resolveSpawnSpec(d), {
+          awaitReady: false,
+          workspaceId: runtime.workspaceId,
+          onReady: () => deps.ensureHermesReady!(runtime.workspaceId, runtime.agentId),
+        });
+      } else {
+        await deps.start(d.id, resolveSpawnSpec(d), { awaitReady: false });
+      }
       started += 1;
     } catch {
       // startProcess persists 'error' on failure; keep reconciling the others.

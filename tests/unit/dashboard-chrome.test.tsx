@@ -59,39 +59,38 @@ describe('DashboardChrome sidebar', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders the fixed compact workspace rail', () => {
+  it('renders an expanded workspace navigation by default', () => {
     renderChrome();
 
     const sidebar = screen.getByRole('complementary');
-    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-    expect(sidebar.className).toContain('w-16');
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    expect(sidebar.className).toContain('lg:w-64');
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
     expect(screen.queryByText('Discover', { exact: true })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/app/smoke/chat');
-    expect(screen.queryByRole('link', { name: 'Agents' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Assistants' })).toHaveAttribute('href', '/app/smoke/chat');
+    expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/app/smoke/work');
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/smoke/skills');
+    expect(screen.getByRole('link', { name: 'Members' })).toHaveAttribute('href', '/app/smoke/members');
     expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
   });
 
-  it('expands and collapses the desktop sidebar', async () => {
+  it('collapses and expands the desktop sidebar', async () => {
     const user = userEvent.setup();
     renderChrome();
 
     const sidebar = screen.getByRole('complementary');
-    const expandButton = screen.getByRole('button', { name: 'Expand sidebar' });
-    expect(expandButton).toHaveAttribute('aria-controls', 'dashboard-sidebar');
-    expect(expandButton.className).toContain('group');
-    await user.click(expandButton);
-
-    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
-    expect(sidebar.className).toContain('lg:w-64');
     const collapseButton = screen.getByRole('button', { name: 'Collapse sidebar' });
     expect(collapseButton).toHaveAttribute('aria-expanded', 'true');
     expect(collapseButton).toHaveClass('ui-icon-button');
     expect(collapseButton.parentElement).toHaveClass('lg:justify-between');
-
     await user.click(collapseButton);
     expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+
+    const expandButton = screen.getByRole('button', { name: 'Expand sidebar' });
+    expect(expandButton).toHaveAttribute('aria-controls', 'dashboard-sidebar');
+    expect(expandButton.className).toContain('group');
+    await user.click(expandButton);
+    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
   });
 
   it('shows the admin console inside the account menu only for administrators', async () => {
@@ -99,7 +98,7 @@ describe('DashboardChrome sidebar', () => {
     renderChrome(true);
 
     expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
+    await user.click(screen.getByRole('button', { name: /Smoke Workspace.*smoke@example\.com/ }));
     expect(await screen.findByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
   });
 
@@ -107,7 +106,7 @@ describe('DashboardChrome sidebar', () => {
     const user = userEvent.setup();
     renderChrome();
 
-    await user.click(screen.getByRole('button', { name: 'Smoke Workspace · smoke@example.com' }));
+    await user.click(screen.getByRole('button', { name: /Smoke Workspace.*smoke@example\.com/ }));
     expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
   });
 
