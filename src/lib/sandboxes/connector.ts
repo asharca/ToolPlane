@@ -143,6 +143,7 @@ function connectorClientCommandParts(
   const parts = [
     'npx',
     '-y',
+    '--no-audit',
     '--package',
     portableQuotedArg(connectorPackageSpec(config)),
     'connector',

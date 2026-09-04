@@ -84,7 +84,7 @@ describe('connector CLI portability', () => {
     const tarballPath = path.join(temp, CONNECTOR_TARBALL_FILENAME);
     try {
       writeFileSync(tarballPath, await buildConnectorPackageTarball(process.cwd()));
-      const command = `npx -y --package "${tarballPath}" connector --help`;
+      const command = `npx -y --no-audit --package "${tarballPath}" connector --help`;
       const shells = process.platform === 'win32'
         ? (() => {
             const powershellScript = path.join(temp, 'install.ps1');

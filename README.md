@@ -104,7 +104,7 @@ User-machine sandboxes do not require SSH or Chisel. Linux, macOS, Windows
 PowerShell, and Windows Command Prompt use the same one-line command:
 
 ```text
-npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
+npx -y --no-audit --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "~/toolplane-sandbox" --screen-vnc "auto"
 ```
 
 `--screen-vnc auto` exposes a VNC server already listening on
@@ -115,7 +115,7 @@ VNC address supplied by ToolPlane.
 Android phones use an ADB bridge on the computer running the connector:
 
 ```text
-npx -y --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
+npx -y --no-audit --package "http://localhost:3000/api/v1/connectors/package.tgz?v=0.1.13" connector connect --server "http://localhost:3000" --token "mcpcon_..." --root "/sdcard/ToolPlane" --android "auto"
 ```
 
 Install `adb`, authorize exactly one USB or Wireless debugging device, then run
