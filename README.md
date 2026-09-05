@@ -232,9 +232,14 @@ For local debugging, layer `docker-compose.dev.yml` on top to expose Postgres on
 
 Recommended repository settings:
 
-- Default branch protection on `main`
-- Required checks: `pnpm lint`, `pnpm test`, `pnpm build`
+- Protected `main`: require an up-to-date PR, including for administrators
+- Required checks: `validate`, `connector (ubuntu-latest)`,
+  `connector (macos-latest)`, and `connector (windows-latest)`
 - Secrets: deployment credentials, registry credentials, production env vars
+
+Full CI runs on PRs or a manual trigger, not again after a merge to `main`.
+The shared `@asharca/ui` package is maintained in `asharca/ui`; ToolPlane
+consumes released npm versions. See [the UI and CI workflow](docs/UI_LIBRARY.md).
 
 Suggested repository description:
 
