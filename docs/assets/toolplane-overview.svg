@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">ToolPlane 架构概览</title>
+  <desc id="desc">ToolPlane 将公开目录、工作区控制台和 JSON API 连接到 Agent、MCP、Skill、Toolkit、Sandbox 与可观测性。</desc>
+  <rect width="1200" height="675" fill="#f8fafc"/>
+  <path d="M0 118H1200M0 558H1200" stroke="#e2e8f0" stroke-width="2"/>
+
+  <g font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif">
+    <text x="72" y="74" fill="#0f172a" font-size="32" font-weight="700">ToolPlane</text>
+    <text x="72" y="105" fill="#475569" font-size="17">Self-hosted control plane for AI agents</text>
+
+    <g fill="#64748b" font-size="15" font-weight="700" text-anchor="middle">
+      <text x="262" y="163">DIRECTORY</text>
+      <text x="600" y="163">WORKSPACE CONSOLE</text>
+      <text x="938" y="163">JSON API</text>
+    </g>
+
+    <g stroke="#cbd5e1" stroke-width="2" fill="#ffffff">
+      <rect x="112" y="188" width="300" height="102" rx="10"/>
+      <rect x="450" y="188" width="300" height="102" rx="10"/>
+      <rect x="788" y="188" width="300" height="102" rx="10"/>
+    </g>
+    <g fill="#0f172a" font-size="22" font-weight="700" text-anchor="middle">
+      <text x="262" y="231">Browse &amp; discover</text>
+      <text x="600" y="231">Deploy &amp; compose</text>
+      <text x="938" y="231">Integrate &amp; automate</text>
+    </g>
+    <g fill="#64748b" font-size="15" text-anchor="middle">
+      <text x="262" y="260">MCPs, clients, and skills</text>
+      <text x="600" y="260">Workspaces and runtimes</text>
+      <text x="938" y="260">MCP, chat, and clients</text>
+    </g>
+
+    <path d="M262 291V340H600V291M938 291V340H600" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M600 340V376" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M591 365L600 376L609 365" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="424" y="379" width="352" height="112" rx="14" fill="#0f172a"/>
+    <text x="600" y="426" fill="#ffffff" font-size="28" font-weight="700" text-anchor="middle">ToolPlane Control Plane</text>
+    <text x="600" y="457" fill="#cbd5e1" font-size="16" text-anchor="middle">Access, configuration, lifecycle, and observability</text>
+
+    <path d="M486 491V522H186M531 491V522H396M669 491V522H804M714 491V522H1014M600 491V579" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <g stroke="#cbd5e1" stroke-width="2" fill="#ffffff">
+      <rect x="72" y="522" width="228" height="92" rx="10"/>
+      <rect x="282" y="522" width="228" height="92" rx="10"/>
+      <rect x="690" y="522" width="228" height="92" rx="10"/>
+      <rect x="900" y="522" width="228" height="92" rx="10"/>
+    </g>
+    <g font-size="20" font-weight="700" text-anchor="middle">
+      <text x="186" y="558" fill="#2563eb">MCP &amp; Skills</text>
+      <text x="396" y="558" fill="#0f766e">Toolkit</text>
+      <text x="804" y="558" fill="#ea580c">Agent</text>
+      <text x="1014" y="558" fill="#7c3aed">Sandbox</text>
+    </g>
+    <g fill="#64748b" font-size="14" text-anchor="middle">
+      <text x="186" y="584">Live tool processes</text>
+      <text x="396" y="584">Reusable bundles</text>
+      <text x="804" y="584">Models and tools</text>
+      <text x="1014" y="584">Isolated execution</text>
+    </g>
+
+    <rect x="494" y="579" width="212" height="58" rx="10" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+    <text x="600" y="615" fill="#0369a1" font-size="18" font-weight="700" text-anchor="middle">Observability &amp; Audit</text>
+  </g>
+</svg>
