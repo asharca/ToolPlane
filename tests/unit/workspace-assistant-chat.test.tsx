@@ -39,6 +39,7 @@ function renderChat(
   assistants: Parameters<typeof WorkspaceAssistantChat>[0]['assistants'] = [{
     id: 'assistant-1',
     name: 'Helper',
+    pinned: false,
     systemPrompt: null,
     modelProviderId: 'provider-1',
     model: 'model-1',
@@ -74,6 +75,23 @@ describe('WorkspaceAssistantChat', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllGlobals());
 
+  it('uses the sidebar header to add assistants and list existing conversations', async () => {
+    const user = userEvent.setup();
+    renderChat();
+
+    expect(screen.getByRole('button', { name: 'Add assistant' })).toHaveTextContent('Add assistant');
+    await user.click(screen.getByRole('button', { name: 'List options' }));
+    expect(screen.getByRole('link', { name: 'Choose from assistant market' })).toHaveAttribute(
+      'href',
+      '/app/acme/market/assistants',
+    );
+    await user.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(screen.queryByText('First thread')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Add assistant' }));
+    expect(screen.getByRole('dialog', { name: 'Add assistant' })).toBeInTheDocument();
+  });
+
   it('uses the API step limit and enables persisted branch regeneration', async () => {
     renderChat();
 
@@ -86,7 +104,70 @@ describe('WorkspaceAssistantChat', () => {
     }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
-    expect(screen.getByRole('spinbutton', { name: 'Maximum MCP steps' })).toHaveAttribute('max', '20');
+    await userEvent.click(screen.getByRole('button', { name: 'MCP access' }));
+    expect(screen.getByRole('spinbutton', { name: 'Maximum tool-call rounds' })).toHaveAttribute('max', '1000');
+  });
+
+  it('shows Edit, Pin, and Delete in order in the assistant actions menu', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      assistant: { id: 'assistant-1' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const confirmMock = vi.fn().mockReturnValue(false);
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', confirmMock);
+    renderChat();
+
+    const actionsButton = screen.getByRole('button', { name: 'Actions for Helper' });
+
+    await user.click(actionsButton);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Pin', 'Delete']);
+
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect(screen.getByRole('dialog', { name: 'Assistant settings' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(actionsButton);
+    await user.click(screen.getByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/chat/assistants/assistant-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    }));
+
+    await user.click(actionsButton);
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(confirmMock).toHaveBeenCalledWith('Delete this assistant and all of its chats?');
+  });
+
+  it('shows Unpin and persists false for a pinned assistant', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      assistant: { id: 'assistant-1' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderChat(undefined, false, undefined, null, [], [{
+      id: 'assistant-1',
+      name: 'Helper',
+      pinned: true,
+      systemPrompt: null,
+      modelProviderId: 'provider-1',
+      model: 'model-1',
+      maxSteps: 8,
+      providerName: 'Provider',
+      deploymentIds: [],
+      threads: [],
+    }]);
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Helper' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Unpin', 'Delete']);
+    await user.click(screen.getByRole('menuitem', { name: 'Unpin' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/chat/assistants/assistant-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pinned: false }),
+    }));
   });
 
   it('moves a dragged chat to another assistant', async () => {
@@ -98,6 +179,7 @@ describe('WorkspaceAssistantChat', () => {
       {
         id: 'assistant-1',
         name: 'Helper',
+        pinned: false,
         systemPrompt: null,
         modelProviderId: 'provider-1',
         model: 'model-1',
@@ -114,6 +196,7 @@ describe('WorkspaceAssistantChat', () => {
       {
         id: 'assistant-2',
         name: 'Writer',
+        pinned: false,
         systemPrompt: null,
         modelProviderId: 'provider-1',
         model: 'model-1',
@@ -129,8 +212,8 @@ describe('WorkspaceAssistantChat', () => {
     const sourceDisclosure = screen.getByRole('button', { name: 'Helper' });
     const targetDisclosure = screen.getByRole('button', { name: 'Writer' });
     expect(sourceAssistant.firstElementChild).toHaveClass('size-6');
-    expect(sourceAssistant.parentElement?.lastElementChild).toBe(sourceDisclosure);
-    expect(targetAssistant.parentElement?.lastElementChild).toBe(targetDisclosure);
+    expect(sourceDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
+    expect(targetDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
     expect(sourceDisclosure).toHaveAttribute('aria-expanded', 'true');
     expect(targetDisclosure).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('No conversations yet.')).toBeInTheDocument();
@@ -166,9 +249,10 @@ describe('WorkspaceAssistantChat', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
 
     const name = screen.getByRole('textbox', { name: 'Name' });
-    const prompt = screen.getByRole('textbox', { name: 'System prompt' });
     await userEvent.clear(name);
     await userEvent.type(name, 'Unsaved helper');
+    await userEvent.click(screen.getByRole('button', { name: 'System prompt' }));
+    const prompt = screen.getByRole('textbox', { name: 'System prompt' });
     await userEvent.type(prompt, 'Keep this prompt');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -198,21 +282,18 @@ describe('WorkspaceAssistantChat', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(screen.getByRole('button', { name: 'MCP access' })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('spinbutton', { name: 'Maximum tool-call rounds' })).toHaveValue(100);
     expect(screen.getByRole('button', { name: 'Create assistant' })).toBeInTheDocument();
   });
 
-  it('validates the name but allows a draft without a model', async () => {
+  it('requires a name and model before advancing assistant creation', async () => {
     renderChat(undefined, true, []);
 
     const next = screen.getByRole('button', { name: 'Next' });
-    expect(next).toBeEnabled();
-    await userEvent.click(next);
-    expect(screen.getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
-
+    expect(next).toBeDisabled();
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Draft helper');
-    await userEvent.click(next);
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByRole('button', { name: 'Create assistant' })).toBeEnabled();
+    expect(next).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
   });
 
   it('prefills a selected market assistant template', async () => {

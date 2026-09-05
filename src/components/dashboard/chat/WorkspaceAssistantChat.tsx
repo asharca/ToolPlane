@@ -4,17 +4,23 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
-import { ContextMenu } from 'radix-ui';
-import { ChatShell, SearchInput } from '@toolplane/ui';
+import { ContextMenu, Popover } from 'radix-ui';
+import {
+  ChatShell,
+  SearchInput,
+  SidebarActionRail,
+} from '@asharca/ui';
 import {
   Bot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Cpu,
   GitBranch,
+  ListFilter,
   MessageSquare,
-  MoreHorizontal,
   MoveRight,
   Plus,
   Store,
@@ -39,6 +45,8 @@ import {
   DialogPortal,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
@@ -61,6 +69,7 @@ export type AssistantMarketTemplate = {
 export type ChatAssistantItem = {
   id: string;
   name: string;
+  pinned: boolean;
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
@@ -145,6 +154,7 @@ function AssistantEditor({
   ];
   const createStepIndex = createSteps.findIndex((step) => step.id === createStep);
   const lastCreateStep = createStepIndex === createSteps.length - 1;
+  const basicComplete = Boolean(name.trim() && providerId && model);
 
   async function submit(formData: FormData) {
     setSaving(true);
@@ -162,7 +172,7 @@ function AssistantEditor({
             systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
             modelProviderId: providerId || null,
             model: model || null,
-            maxSteps: Number(formData.get('maxSteps') ?? 8),
+            maxSteps: Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default),
             deploymentIds,
             ...(!assistant && marketTemplate ? { marketTemplateReleaseId: marketTemplate.releaseId } : {}),
           }),
@@ -188,23 +198,13 @@ function AssistantEditor({
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogPortal>
         <DialogOverlay className="!bg-black/40" />
-        <DialogContent className={cx(
-          '!z-[51] !flex !flex-col !gap-0 !overflow-hidden !rounded-xl !border-border !p-0',
-          creating
-            ? '!h-[min(600px,calc(100vh-2rem))] !max-w-4xl'
-            : '!h-[min(44rem,calc(100vh-2rem))] !max-w-2xl',
-        )}>
-          <header className={cx(
-            'flex shrink-0 items-start gap-3 px-5 py-4',
-            !creating && 'border-b border-border',
-          )}>
+        <DialogContent className="!z-[51] !flex !h-[min(600px,calc(100vh-2rem))] !max-w-3xl !flex-col !gap-0 !overflow-hidden !rounded-xl !border-border !p-0">
+          <header className="flex shrink-0 items-start gap-3 border-b border-border px-5 py-4">
             <div className="min-w-0 flex-1">
               <DialogTitle className="!text-base !tracking-normal">
                 {assistant ? t('editAssistant') : t('newAssistant')}
               </DialogTitle>
-              {!creating ? (
-                <DialogDescription className="mt-1 !text-xs">{t('boundaryDescription')}</DialogDescription>
-              ) : null}
+              <DialogDescription className="mt-1 !text-xs">{t('boundaryDescription')}</DialogDescription>
             </div>
             <button type="button" onClick={onClose} aria-label={common('close')} className="ui-button-ghost ui-icon-button -mr-2 -mt-2 shrink-0">
               <X className="size-4" />
@@ -217,55 +217,52 @@ function AssistantEditor({
             }}
             className="flex min-h-0 flex-1 flex-col"
           >
-            <div className={cx('flex min-h-0 flex-1', creating ? 'flex-col sm:flex-row' : 'overflow-y-auto')}>
-              {creating ? (
-                <nav
-                  aria-label={t('configurationNavigation')}
-                  className="shrink-0 border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r"
-                >
-                  <ol className="flex gap-1 overflow-x-auto p-2 sm:block sm:space-y-1 sm:p-3">
-                    {createSteps.map((step, index) => {
-                      const active = index === createStepIndex;
-                      const done = index < createStepIndex;
-                      return (
-                        <li key={step.id} className="shrink-0 sm:w-full">
-                          <button
-                            type="button"
-                            aria-label={step.label}
-                            aria-current={active ? 'step' : undefined}
-                            disabled={index > createStepIndex}
-                            onClick={() => {
-                              if (done) setCreateStep(step.id);
-                            }}
-                            className={cx(
-                              'flex h-10 min-w-max items-center gap-2 rounded-md px-3 text-sm transition-colors sm:w-full',
-                              active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-                              'disabled:cursor-default disabled:opacity-55',
-                            )}
-                          >
+            <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+              <nav
+                aria-label={t('configurationNavigation')}
+                className="shrink-0 border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r"
+              >
+                <ol className="flex gap-1 overflow-x-auto p-2 sm:block sm:space-y-1 sm:p-3">
+                  {createSteps.map((step, index) => {
+                    const active = index === createStepIndex;
+                    const done = index < createStepIndex;
+                    return (
+                      <li key={step.id} className="shrink-0 sm:w-full">
+                        <button
+                          type="button"
+                          aria-label={step.label}
+                          aria-current={active ? (creating ? 'step' : 'page') : undefined}
+                          disabled={creating && index > createStepIndex}
+                          onClick={() => {
+                            if (!creating || done) setCreateStep(step.id);
+                          }}
+                          className={cx(
+                            'flex h-10 min-w-max items-center gap-2 rounded-md px-3 text-sm transition-colors sm:w-full',
+                            active ? 'bg-background font-medium text-foreground ring-1 ring-border' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                            'disabled:cursor-default disabled:opacity-55',
+                          )}
+                        >
+                          {creating ? (
                             <span className={cx(
                               'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium',
                               active ? 'bg-foreground text-background' : 'border border-border text-muted-foreground',
                             )}>
                               {index + 1}
                             </span>
-                            <span>{step.label}</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                </nav>
-              ) : null}
+                          ) : null}
+                          <span>{step.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </nav>
 
-              <div className={cx(
-                'min-h-0 min-w-0 flex-1 overflow-y-auto',
-                !creating && 'space-y-5 px-5 py-4',
-              )}>
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
                 <section
-                  hidden={creating && createStep !== 'basic'}
+                  hidden={createStep !== 'basic'}
                   aria-labelledby={creating ? 'assistant-create-basic-title' : undefined}
-                  className={creating ? 'mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8' : 'space-y-5'}
+                  className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
                 >
                   {creating ? (
                     <>
@@ -332,7 +329,7 @@ function AssistantEditor({
                     </>
                   ) : null}
 
-                  <label className={cx('block text-xs', creating ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
+                  <label className="block text-xs font-medium text-muted-foreground">
                     {t('name')}
                     <input
                       name="name"
@@ -341,12 +338,12 @@ function AssistantEditor({
                       required
                       maxLength={100}
                       autoFocus
-                      className={cx('ui-input mt-1.5 w-full', creating ? 'h-10' : 'h-9')}
+                      className="ui-input mt-1.5 h-10 w-full"
                       placeholder={t('namePlaceholder')}
                     />
                   </label>
 
-                  <div className={cx('block text-xs', creating ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
+                  <div className="block text-xs font-medium text-muted-foreground">
                     <span>{t('model')}</span>
                     <ModelPicker
                       providers={providers}
@@ -373,32 +370,32 @@ function AssistantEditor({
                 </section>
 
                 <section
-                  hidden={creating && createStep !== 'instructions'}
+                  hidden={createStep !== 'instructions'}
                   aria-labelledby={creating ? 'assistant-create-instructions-title' : undefined}
-                  className={creating ? 'mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8' : 'space-y-5'}
+                  className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
                 >
                   {creating ? (
                     <div>
                       <h3 id="assistant-create-instructions-title" className="text-base font-semibold text-foreground">{t('systemPrompt')}</h3>
                     </div>
                   ) : null}
-                  <label className={cx('block text-xs', creating ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground')}>
+                  <label className="block text-xs font-medium text-muted-foreground">
                     {t('systemPrompt')}
                     <textarea
                       name="systemPrompt"
                       defaultValue={assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? ''}
-                      rows={creating ? 12 : 5}
+                      rows={10}
                       maxLength={20_000}
-                      className={cx('ui-input mt-1.5 w-full resize-y py-2', creating ? 'min-h-72' : '!h-28')}
+                      className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
                       placeholder={t('systemPromptPlaceholder')}
                     />
                   </label>
                 </section>
 
                 <section
-                  hidden={creating && createStep !== 'tools'}
+                  hidden={createStep !== 'tools'}
                   aria-labelledby={creating ? 'assistant-create-tools-title' : undefined}
-                  className={creating ? 'mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8' : 'space-y-5'}
+                  className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
                 >
                   {creating ? (
                     <div>
@@ -412,9 +409,9 @@ function AssistantEditor({
                     <input
                       name="maxSteps"
                       type="number"
-                      min={1}
-                      max={20}
-                      defaultValue={assistant?.maxSteps ?? marketTemplate?.maxSteps ?? 8}
+                      min={AGENT_STEP_BOUNDS.min}
+                      max={AGENT_STEP_BOUNDS.max}
+                      defaultValue={assistant?.maxSteps ?? marketTemplate?.maxSteps ?? AGENT_STEP_BOUNDS.default}
                       className="ui-input mt-1.5 h-9 w-full"
                     />
                   </label>
@@ -451,7 +448,7 @@ function AssistantEditor({
                   </fieldset>
                 </section>
 
-                {error ? <p role="alert" className={cx('text-sm text-destructive', creating && 'mx-auto max-w-2xl px-5 sm:px-8')}>{error}</p> : null}
+                {error ? <p role="alert" className="mx-auto max-w-2xl px-5 text-sm text-destructive sm:px-8">{error}</p> : null}
               </div>
             </div>
             <footer className={cx(
@@ -487,18 +484,19 @@ function AssistantEditor({
                 {creating && !lastCreateStep ? (
                   <button
                     type="button"
+                    disabled={createStep === 'basic' && !basicComplete}
                     onClick={(event) => {
                       if (!event.currentTarget.form?.reportValidity()) return;
                       setCreateStep(createSteps[createStepIndex + 1]!.id);
                     }}
-                    className="ui-button-primary h-9 gap-2 px-4 text-sm"
+                    className="ui-button-primary h-9 gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {t('next')}
                     <ChevronRight className="size-4" />
                   </button>
                 ) : null}
                 {creating && lastCreateStep ? (
-                  <button type="submit" disabled={saving || !name.trim()} className="ui-button-primary h-9 gap-2 px-4 text-sm">
+                  <button type="submit" disabled={saving || !basicComplete} className="ui-button-primary h-9 gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                     <Plus className="size-4" />
                     {saving ? t('saving') : t('createAssistant')}
                   </button>
@@ -580,6 +578,8 @@ export function WorkspaceAssistantChat({
       return assistantMatches || threads.length ? [{ ...assistant, threads: assistantMatches ? assistant.threads : threads }] : [];
     });
   }, [assistants, query, t]);
+  const allAssistantsExpanded = assistants.length > 0
+    && assistants.every((assistant) => expandedAssistants[assistant.id] ?? true);
 
   useEffect(() => {
     if (!focusBranchMessageIdRef.current || branch?.activeMessageId !== focusBranchMessageIdRef.current) return;
@@ -721,6 +721,26 @@ export function WorkspaceAssistantChat({
     window.location.assign(`/app/${encodeURIComponent(slug)}/chat`);
   }
 
+  async function toggleAssistantPin(assistant: ChatAssistantItem) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/v1/chat/assistants/${assistant.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pinned: !assistant.pinned }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || t('saveError'));
+      refreshChat();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('saveError'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function assistantSaved(assistantId: string, created: boolean) {
     setEditing(null);
     if (created) {
@@ -773,11 +793,42 @@ export function WorkspaceAssistantChat({
               className="h-7 rounded-full border-0 bg-muted/70 text-[11px] focus:ring-1 focus:ring-brand/35"
             />
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-              <div className="flex h-8 items-center justify-between px-2.5">
-                <p className="text-xs font-medium text-muted-foreground">{t('assistants')}</p>
-                <button type="button" onClick={() => { setSelectedMarketTemplate(null); setEditing('new'); }} aria-label={t('newAssistant')} title={t('newAssistant')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
-                  <Plus className="size-3.5" />
+              <div className="flex h-8 items-center gap-1 px-1">
+                <button type="button" onClick={() => { setSelectedMarketTemplate(null); setEditing('new'); }} aria-label={t('newAssistant')} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-[13px] text-foreground hover:bg-muted">
+                  <Plus className="size-3.5 shrink-0" />
+                  <span className="truncate">{t('newAssistant')}</span>
                 </button>
+                <Popover.Root>
+                  <Popover.Trigger asChild>
+                    <button type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                      <ListFilter className="size-3.5" />
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
+                      <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('listOptions')}</p>
+                      {assistants.length ? (
+                        <Popover.Close asChild>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedAssistants(Object.fromEntries(assistants.map((assistant) => [assistant.id, !allAssistantsExpanded])))}
+                            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent"
+                          >
+                            {allAssistantsExpanded ? <ChevronsDownUp className="size-4" /> : <ChevronsUpDown className="size-4" />}
+                            {t(allAssistantsExpanded ? 'collapseAll' : 'expandAll')}
+                          </button>
+                        </Popover.Close>
+                      ) : null}
+                      <div className="my-1 h-px bg-border" />
+                      <Popover.Close asChild>
+                        <Link href={`/app/${encodeURIComponent(slug)}/market/assistants`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
+                          <Store className="size-4" />
+                          {t('chooseFromMarket')}
+                        </Link>
+                      </Popover.Close>
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
               </div>
               <ul>
                 {visibleAssistants.map((assistant) => {
@@ -803,21 +854,15 @@ export function WorkspaceAssistantChat({
                           void moveThread(threadId, assistant.id);
                         }}
                         className={cx(
-                          'group flex h-8 items-center rounded-lg',
+                          'group flex h-8 items-center gap-1.5 rounded-lg px-1.5',
                           assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
                           dropAssistantId === assistant.id && 'ring-1 ring-inset ring-brand/50',
                         )}
                       >
-                        <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 text-[13px]">
+                        <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
                           <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
                           <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
                         </Link>
-                        <button type="button" onClick={() => setEditing(assistant)} aria-label={`${t('settings')} · ${assistant.name}`} title={t('settings')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
-                          <MoreHorizontal className="size-3.5" />
-                        </button>
-                        <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100">
-                          <Plus className="size-3.5" />
-                        </button>
                         <button
                           type="button"
                           aria-label={assistant.name}
@@ -825,10 +870,26 @@ export function WorkspaceAssistantChat({
                           aria-controls={`assistant-chat-threads-${assistant.id}`}
                           title={expanded ? t('hideConversations') : t('showConversations')}
                           onClick={() => setExpandedAssistants((current) => ({ ...current, [assistant.id]: !expanded }))}
-                          className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                          className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex hover:bg-background hover:text-foreground"
                         >
                           <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
                         </button>
+                        <SidebarActionRail hasLeadingSlot revealOnCellFocus>
+                          <SidebarEntityActionsMenu
+                            actionsLabel={t('assistantActions', { name: assistant.name })}
+                            deleteLabel={common('delete')}
+                            editLabel={common('edit')}
+                            onDelete={() => void deleteAssistant(assistant.id)}
+                            onEdit={() => setEditing(assistant)}
+                            onTogglePin={() => void toggleAssistantPin(assistant)}
+                            pinned={assistant.pinned}
+                            pinLabel={t('pinAssistant')}
+                            unpinLabel={t('unpinAssistant')}
+                          />
+                          <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground">
+                            <Plus className="size-3.5" />
+                          </button>
+                        </SidebarActionRail>
                       </div>
                       {expanded ? (
                         <ul id={`assistant-chat-threads-${assistant.id}`} className="ml-4 py-0.5 pl-1">
@@ -849,7 +910,7 @@ export function WorkspaceAssistantChat({
                                   setDropAssistantId(null);
                                 }}
                                 className={cx(
-                                  'group/thread relative py-0.5',
+                                  'group group/thread relative py-0.5',
                                   draggingThread?.id === thread.id && 'opacity-50',
                                 )}
                               >
@@ -860,19 +921,19 @@ export function WorkspaceAssistantChat({
                                   aria-current={thread.id === activeThread?.id ? 'page' : undefined}
                                   title={thread.lastMessageAt ?? thread.createdAt}
                                   className={cx(
-                                    'flex h-8 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px]',
+                                    'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px] transition-colors group-data-[state=open]/thread:bg-muted/60',
                                     thread.id === activeThread?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
                                   )}
                                 >
                                   <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
-                                  <span className="truncate">{thread.title || t('newChat')}</span>
+                                  <span className="min-w-0 flex-1 truncate">{thread.title || t('newChat')}</span>
                                 </Link>
                                 <button
                                   type="button"
                                   onClick={() => void deleteThread(thread.id)}
                                   aria-label={t('deleteThread')}
                                   title={t('deleteThread')}
-                                  className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-destructive group-hover/thread:opacity-100 focus:opacity-100"
+                                  className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/thread:opacity-100 focus:opacity-100"
                                 >
                                   <X className="size-3.5" />
                                 </button>

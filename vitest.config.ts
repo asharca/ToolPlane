@@ -16,7 +16,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
-      '@toolplane/ui': resolve(__dirname, 'packages/ui/src/index.ts'),
+      '@asharca/ui': resolve(__dirname, 'packages/ui/src/index.ts'),
       'server-only': resolve(__dirname, 'tests/stubs/server-only.ts'),
     },
   },

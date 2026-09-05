@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterEnv, BRIDGE_ENV_ALLOWLIST } from '../../scripts/bridge-env.mjs';
+import { buildBridgeChildEnv, filterEnv, BRIDGE_ENV_ALLOWLIST } from '../../scripts/bridge-env.mjs';
 
 describe('bridge filterEnv', () => {
   it('keeps only allowlisted vars and drops app secrets', () => {
@@ -18,5 +18,18 @@ describe('bridge filterEnv', () => {
   it('the allowlist never includes app secrets', () => {
     expect(BRIDGE_ENV_ALLOWLIST).not.toContain('DATABASE_URL');
     expect(BRIDGE_ENV_ALLOWLIST).not.toContain('AUTH_SECRET');
+  });
+
+  it('adds only deployment-scoped env and rejects Docker control overrides', () => {
+    expect(buildBridgeChildEnv({
+      PATH: '/usr/bin',
+      DATABASE_URL: 'postgresql://app-secret',
+    }, JSON.stringify({ API_TOKEN: 'mcp-secret', HOME: '/tmp' }))).toEqual({
+      PATH: '/usr/bin',
+      API_TOKEN: 'mcp-secret',
+      HOME: '/tmp',
+    });
+    expect(() => buildBridgeChildEnv({}, JSON.stringify({ DOCKER_HOST: 'tcp://attacker:2375' })))
+      .toThrow('invalid MCP_CHILD_ENV');
   });
 });

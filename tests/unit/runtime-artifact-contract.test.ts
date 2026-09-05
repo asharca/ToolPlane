@@ -34,6 +34,8 @@ describe('minimal runtime artifact contract', () => {
     expect(dockerfile.match(/\/app\/node_modules \.\/node_modules/g)).toHaveLength(1);
     expect(runtimeAssembler).toContain('writeLegacyEntrypointShims(outputRoot)');
     expect(runtimeAssembler).toContain("await copyRuntimePackage('undici');");
+    expect(runtimeAssembler).toContain("await copyRuntimePackage(\n  'shiki'");
+    expect(runtimeAssembler).toContain('requireFromRuntime.resolve(shikiRuntimeAlias)');
     expect(runtimeAssembler).toContain("await mkdir(path.join(outputRoot, 'public'), { recursive: true })");
     expect(runtimeAssembler).toContain("['public', 'public assets directory']");
     expect(ciWorkflow).toContain(

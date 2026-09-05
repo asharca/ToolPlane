@@ -194,6 +194,27 @@ describe('market install API', () => {
     expect(mocks.installMarketRelease).not.toHaveBeenCalled();
   });
 
+  it('accepts the shared assistant tool-loop ceiling and rejects values above it', async () => {
+    mocks.marketReleaseFindUnique.mockResolvedValue({ listing: { kind: 'assistant' } });
+    const accepted = await POST(new Request('http://toolplane.test/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ releaseId: 'assistant-release', maxSteps: 1_000 }),
+    }), collectionContext);
+    const rejected = await POST(new Request('http://toolplane.test/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ releaseId: 'assistant-release', maxSteps: 1_001 }),
+    }), collectionContext);
+
+    expect(accepted.status).toBe(201);
+    expect(mocks.installAssistantMarketRelease).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      maxSteps: 1_000,
+    }));
+    expect(rejected.status).toBe(400);
+    expect(mocks.installAssistantMarketRelease).toHaveBeenCalledTimes(1);
+  });
+
   it('lists unified, agent, and assistant installs with deletable typed ids', async () => {
     mocks.listWorkspaceMarketInstalls.mockResolvedValue([{
       id: 'install-1',

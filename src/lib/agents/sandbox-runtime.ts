@@ -1,6 +1,6 @@
 import 'server-only';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { db } from '@/lib/db';
@@ -21,18 +21,27 @@ export const SANDBOX_RUNTIME_PACKAGES = {
     directory: '/workspace/.toolplane/runtime-packages/pi-0.80.3',
     binary: 'pi',
     ignoreScripts: true,
+    allowBuilds: [],
   },
   'claude-code': {
     specs: ['@anthropic-ai/claude-code@2.1.245'],
     directory: '/workspace/.toolplane/runtime-packages/claude-code-2.1.245',
     binary: 'claude',
     ignoreScripts: false,
+    allowBuilds: ['@anthropic-ai/claude-code'],
   },
   dsh: {
     specs: ['@deepseek-ai/dsh@0.1.1-rc.2'],
     directory: '/workspace/.toolplane/runtime-packages/dsh-0.1.1-rc.2',
     binary: 'dsh',
     ignoreScripts: false,
+    allowBuilds: [
+      '@deepseek-ai/dsh-subprocess-local',
+      '@google/genai',
+      'koffi',
+      'node-pty',
+      'protobufjs',
+    ],
   },
 } as const;
 
@@ -261,6 +270,27 @@ export function buildSandboxSkillBundles(skills: readonly SkillForPrompt[]): San
     markdown: buildInstalledSkillMarkdown(skill),
     files: installedSkillExtraFiles(skill),
   }));
+}
+
+export function sandboxSkillBundleDigest(bundles: readonly SandboxSkillBundle[]): string {
+  return createHash('sha256').update(JSON.stringify(bundles)).digest('hex');
+}
+
+export function waitForSandboxRuntimeInstall<T>(install: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return install;
+  if (signal.aborted) return Promise.reject(new Error('Sandbox runtime aborted.'));
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(new Error('Sandbox runtime aborted.'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void install.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
+    );
+  });
 }
 
 export function dshProviderProtocol(format: string): string {
@@ -1121,6 +1151,19 @@ async function materializeSandboxSkills(
   skills: readonly SkillForPrompt[],
   signal?: AbortSignal,
 ): Promise<void> {
+  const bundles = buildSandboxSkillBundles(skills);
+  const digest = sandboxSkillBundleDigest(bundles);
+  const marker = `${skillRoot}/.toolplane-skills.sha256`;
+  const unchanged = await runTrackedDockerExec({
+    container,
+    workdir: '/workspace',
+    executable: 'sh',
+    args: ['-c', 'test -r "$1" && [ "$(cat "$1")" = "$2" ]', 'toolplane-check-skills', marker, digest],
+    signal,
+    timeoutMs: 10_000,
+  }).then(() => true, () => false);
+  if (unchanged) return;
+  if (signal?.aborted) throw new Error('Sandbox runtime aborted.');
   const reset = `
 set -eu
 root=$1
@@ -1136,7 +1179,7 @@ mkdir -p "$root"
     signal,
     timeoutMs: 30_000,
   });
-  for (const bundle of buildSandboxSkillBundles(skills)) {
+  for (const bundle of bundles) {
     const directory = `${skillRoot}/${bundle.directory}`;
     await writeSandboxFile(container, `${directory}/SKILL.md`, bundle.markdown, signal);
     for (const file of bundle.files) {
@@ -1150,6 +1193,7 @@ mkdir -p "$root"
       );
     }
   }
+  await writeSandboxFile(container, marker, digest, signal);
 }
 
 async function removeSandboxFiles(container: string, paths: string[]): Promise<void> {
@@ -1198,31 +1242,38 @@ async function ensureRuntimeInstalled(
   container: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  if (signal?.aborted) throw new Error('Sandbox runtime aborted.');
   const runtime = SANDBOX_RUNTIME_PACKAGES[runtimeKind];
   const binary = `${runtime.directory}/node_modules/.bin/${runtime.binary}`;
   const cacheKey = `${container}:${runtimeKind}`;
   const existing = installs.get(cacheKey);
-  if (existing) return existing;
+  if (existing) return waitForSandboxRuntimeInstall(existing, signal);
   const install = (async () => {
     const found = await runTrackedDockerExec({
       container,
       workdir: '/workspace',
       executable: 'test',
       args: ['-x', binary],
-      signal,
       timeoutMs: 10_000,
     }).then(() => true, () => false);
     if (!found) {
+      const installCommand = {
+        executable: 'sh',
+        args: [
+          '-c',
+          'set -eu; prefix=$1; shift; mkdir -p "$prefix"; rm -rf -- "$prefix/node_modules"; cd "$prefix"; exec "$@"',
+          'toolplane-pnpm-install', runtime.directory,
+          'pnpm', 'add', '--prod', '--ignore-workspace',
+          ...(runtime.ignoreScripts ? ['--ignore-scripts'] : []),
+          ...runtime.allowBuilds.map((name) => `--allow-build=${name}`),
+          '--store-dir', `${NPM_CACHE}/pnpm-store`,
+          ...runtime.specs,
+        ],
+      };
       await runTrackedDockerExec({
         container,
         workdir: '/workspace',
-        executable: 'npm',
-        args: [
-          'install', '--no-audit', '--no-fund', '--no-package-lock', '--no-save',
-          ...(runtime.ignoreScripts ? ['--ignore-scripts'] : []),
-          '--cache', NPM_CACHE, '--prefix', runtime.directory, ...runtime.specs,
-        ],
-        signal,
+        ...installCommand,
         timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
       }).catch((error) => {
         throw new Error(`Could not install ${runtime.specs.join(' and ')} in the assigned sandbox: ${error instanceof Error ? error.message : String(error)}`);
@@ -1233,17 +1284,16 @@ async function ensureRuntimeInstalled(
       workdir: '/workspace',
       executable: 'test',
       args: ['-x', binary],
-      signal,
       timeoutMs: 10_000,
     });
     return binary;
   })();
   installs.set(cacheKey, install);
-  try {
-    return await install;
-  } finally {
+  const cleanup = () => {
     if (installs.get(cacheKey) === install) installs.delete(cacheKey);
-  }
+  };
+  void install.then(cleanup, cleanup);
+  return waitForSandboxRuntimeInstall(install, signal);
 }
 
 async function reportContextUsage(

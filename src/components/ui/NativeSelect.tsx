@@ -1,1 +1,1 @@
-export { NativeSelect, type NativeSelectProps } from '@toolplane/ui';
+export { NativeSelect, type NativeSelectProps } from '@asharca/ui';

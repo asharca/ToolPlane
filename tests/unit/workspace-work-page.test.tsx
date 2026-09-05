@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listProviders: vi.fn(),
   listWorkSessions: vi.fn(),
   getWorkSession: vi.fn(),
+  effectiveStatus: vi.fn(),
   surface: vi.fn(),
 }));
 
@@ -26,7 +27,7 @@ vi.mock('@/lib/work/sessions', () => ({
   getWorkSession: mocks.getWorkSession,
   workSessionWorkingDirectory: () => '.',
 }));
-vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: vi.fn() }));
+vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: mocks.effectiveStatus }));
 vi.mock('@/lib/agents/model', () => ({ resolveModelContext: vi.fn() }));
 vi.mock('@/components/dashboard/DashboardHeader', () => ({ DashboardHeader: () => null }));
 vi.mock('@/components/dashboard/work/WorkspaceWork', () => ({
@@ -46,9 +47,11 @@ describe('Workspace Work page', () => {
     mocks.listProviders.mockResolvedValue([]);
     mocks.listWorkSessions.mockResolvedValue([]);
     mocks.getWorkSession.mockResolvedValue(null);
+    mocks.effectiveStatus.mockReturnValue('provisioning');
     mocks.listAgents.mockResolvedValue([
       {
         id: 'agent-hermes', name: 'Hermes researcher', runtimeKind: 'hermes',
+        pinned: true,
         providerId: null, model: null, provider: null,
         modelProviders: [{ providerId: 'provider-1', provider: { name: 'OpenAI', models: [] } }],
         sandboxes: [],
@@ -62,6 +65,7 @@ describe('Workspace Work page', () => {
       },
       {
         id: 'agent-pi', name: 'Pi worker', runtimeKind: 'pi',
+        pinned: false,
         providerId: null, model: null, provider: null, sandboxes: [], runtime: null,
       },
     ]);
@@ -70,19 +74,23 @@ describe('Workspace Work page', () => {
   it('passes every Agent to the sidebar while marking Work support', async () => {
     render(await WorkspaceWorkPage({
       params: Promise.resolve({ workspace: 'acme' }),
-      searchParams: Promise.resolve({}),
+      searchParams: Promise.resolve({ agent: 'agent-pi' }),
     }));
 
     expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      requestedAgentId: 'agent-pi',
       agents: [
         expect.objectContaining({
           id: 'agent-hermes',
+          pinned: true,
           supportsWork: true,
           ready: true,
           providerIds: ['provider-1'],
-          sandboxes: [expect.objectContaining({ id: 'sandbox-hermes', kind: 'hermes', isDefault: true })],
+          sandboxes: [expect.objectContaining({
+            id: 'sandbox-hermes', kind: 'hermes', status: 'provisioning', running: false, isDefault: true,
+          })],
         }),
-        expect.objectContaining({ id: 'agent-pi', supportsWork: true }),
+        expect.objectContaining({ id: 'agent-pi', pinned: false, supportsWork: true }),
       ],
     }));
   });

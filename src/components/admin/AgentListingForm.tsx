@@ -278,8 +278,8 @@ export function AgentListingForm({
                 <input
                   name="maxSteps"
                   type="number"
-                  min={assistantMode ? 1 : AGENT_STEP_BOUNDS.min}
-                  max={assistantMode ? 20 : AGENT_STEP_BOUNDS.max}
+                  min={AGENT_STEP_BOUNDS.min}
+                  max={AGENT_STEP_BOUNDS.max}
                   defaultValue={initial.maxSteps ?? AGENT_STEP_BOUNDS.default}
                   required
                   className="ui-input h-11"

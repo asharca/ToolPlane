@@ -4,7 +4,6 @@ import {
   createContext,
   lazy,
   Suspense,
-  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -21,7 +20,6 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useAuiState,
-  useComposerRuntime,
   useMessagePartText,
   type AssistantRuntime,
   type Attachment,
@@ -536,25 +534,6 @@ function ComposerAttachment({ attachment }: { attachment: Attachment }) {
 
 function AttachmentPicker({ disabled, enabled }: { disabled: boolean; enabled: boolean }) {
   const labels = useLabels();
-  const composer = useComposerRuntime();
-  const openPicker = useCallback(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.hidden = true;
-    const accept = composer.getState().attachmentAccept;
-    if (accept && accept !== '*') input.accept = accept;
-    const removeInput = () => input.remove();
-    input.onchange = () => {
-      for (const file of Array.from(input.files ?? [])) {
-        void composer.addAttachment(file).catch(() => undefined);
-      }
-      removeInput();
-    };
-    input.oncancel = removeInput;
-    document.body.appendChild(input);
-    input.click();
-  }, [composer]);
 
   return (
     <Popover.Root>
@@ -578,10 +557,9 @@ function AttachmentPicker({ disabled, enabled }: { disabled: boolean; enabled: b
           className="z-50 w-64 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
         >
           <Popover.Close asChild>
-            <button
-              type="button"
+            <ComposerPrimitive.AddAttachment
+              multiple
               disabled={!enabled}
-              onClick={openPicker}
               className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Paperclip className="size-4 shrink-0" />
@@ -589,7 +567,7 @@ function AttachmentPicker({ disabled, enabled }: { disabled: boolean; enabled: b
                 <span className="block">{labels.addAttachment}</span>
                 {!enabled ? <span className="mt-0.5 block text-[11px] text-muted-foreground">{labels.attachmentsUnavailable}</span> : null}
               </span>
-            </button>
+            </ComposerPrimitive.AddAttachment>
           </Popover.Close>
         </Popover.Content>
       </Popover.Portal>

@@ -1,28 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import {
-  Bot,
-  Box,
-  Brain,
-  Code2,
-  Container,
-  FileText,
-  Hammer,
-  MessageSquare,
-  Rows3,
-  Play,
-  Plug,
-  Route,
-  Settings2,
-  Terminal,
-  Users,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
 import {
@@ -33,9 +13,6 @@ import { AgentMarketSetupBanner } from '@/components/dashboard/agents/AgentMarke
 import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
 import type { AgentEndpointView } from '@/components/dashboard/agents/AgentApiPanel';
-import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
-import { startSandboxAction } from '@/lib/sandboxes/actions';
-import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
 const AgentMessagingPanel = dynamic(() =>
   import('@/components/dashboard/agents/AgentMessagingPanel').then(
@@ -152,7 +129,6 @@ export function AgentSettings({
   apiSettings,
   ready,
   agentName,
-  providerLabel,
   marketSetup = null,
   initialSettingsTab,
 }: {
@@ -163,26 +139,11 @@ export function AgentSettings({
   apiSettings?: AgentApiSettingsData;
   ready: boolean;
   agentName: string;
-  providerLabel: string;
   marketSetup?: AgentMarketSetupGuide | null;
   initialSettingsTab?: InitialSettingsTab | null;
 }) {
   const t = useTranslations('console.agents');
-  const tSandboxes = useTranslations('console.sandboxes');
   const isHermesRuntime = settings.runtimeKind === 'hermes';
-  const selectedSandboxes = settings.sandboxes.filter((sandbox) => sandbox.checked);
-  const managedSandbox = isHermesRuntime && settings.runtime
-    ? { id: settings.runtime.sandboxId, status: settings.runtime.status }
-    : selectedSandboxes[0] ?? null;
-  const canStartSandbox = managedSandbox
-    ? managedSandbox.status === 'stopped' || managedSandbox.status === 'error'
-    : false;
-  const dedicatedSandboxReady = !isDedicatedSandboxRuntimeKind(settings.runtimeKind)
-    || (
-      selectedSandboxes.length === 1
-      && selectedSandboxes[0]?.kind === 'docker'
-      && selectedSandboxes[0]?.network !== 'none'
-    );
   const supportsChannelSettings = !isHermesRuntime;
   const supportsApiSettings = isHermesRuntime && Boolean(apiSettings);
   const requestedTab = resolveSettingsTab({
@@ -208,138 +169,65 @@ export function AgentSettings({
     else if (item.bottom > bounds.bottom) navigation.scrollTop += item.bottom - bounds.bottom;
   }, [settingsTab]);
 
-  const navigationGroups: Array<{
-    label: string;
-    items: Array<{ id: SettingsTab; label: string; icon: LucideIcon }>;
-  }> = [
-    {
-      label: t('basic'),
-      items: [
-        { id: 'general', label: t('general'), icon: Bot },
-        { id: 'instructions', label: t('instructions'), icon: FileText },
-      ],
-    },
-    {
-      label: t('tools'),
-      items: [
-        { id: 'builtInTools', label: t('builtInTools'), icon: Hammer },
-        { id: 'mcp', label: t('mcp'), icon: Plug },
-        { id: 'skills', label: t('skills'), icon: Brain },
-        { id: 'toolkits', label: t('toolkits'), icon: Wrench },
-        { id: 'sandboxes', label: t('sandboxes'), icon: Box },
-        { id: 'subAgents', label: t('subAgents'), icon: Users },
-      ],
-    },
-    {
-      label: t('advanced'),
-      items: [{ id: 'advanced', label: t('advanced'), icon: Settings2 }],
-    },
-    {
-      label: isHermesRuntime ? t('runtime') : t('channels'),
-      items: supportsChannelSettings
-        ? [{ id: 'channels', label: t('channelSettingsTab'), icon: Route }]
-        : [
-            ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab'), icon: Code2 }] : []),
-            { id: 'profiles', label: t('hermesProfilesSettingsTab'), icon: Rows3 },
-            { id: 'hermes', label: t('hermesSettingsTab'), icon: Container },
-            { id: 'terminal', label: t('terminalSettingsTab'), icon: Terminal },
-          ],
-    },
+  const navigationItems: Array<{ id: SettingsTab; label: string }> = [
+    { id: 'general', label: t('general') },
+    { id: 'instructions', label: t('instructions') },
+    { id: 'builtInTools', label: t('builtInTools') },
+    { id: 'mcp', label: t('mcp') },
+    { id: 'skills', label: t('skills') },
+    { id: 'toolkits', label: t('toolkits') },
+    { id: 'sandboxes', label: t('sandboxes') },
+    { id: 'subAgents', label: t('subAgents') },
+    { id: 'advanced', label: t('advanced') },
+    ...(supportsChannelSettings
+      ? [{ id: 'channels' as const, label: t('channelSettingsTab') }]
+      : [
+          ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab') }] : []),
+          { id: 'profiles' as const, label: t('hermesProfilesSettingsTab') },
+          { id: 'hermes' as const, label: t('hermesSettingsTab') },
+          { id: 'terminal' as const, label: t('terminalSettingsTab') },
+        ]),
   ];
 
   return (
     <div className="h-full min-h-0">
-      <section className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-        <header className="shrink-0 bg-background px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
-              {isHermesRuntime ? <Container className="size-[18px]" /> : <Bot className="size-[18px]" />}
-            </span>
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-foreground">{agentName}</h2>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{providerLabel}</p>
-            </div>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
-              {canStartSandbox && managedSandbox ? (
-                <form action={startSandboxAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="sandboxId" value={managedSandbox.id} />
-                  <SubmitButton
-                    pendingLabel={tSandboxes('starting')}
-                    flash={false}
-                    className="ui-button-secondary h-8 px-2.5 text-xs"
-                  >
-                    <Play className="size-3.5" />
-                    {tSandboxes('start')}
-                  </SubmitButton>
-                </form>
-              ) : null}
-              {ready ? (
-                <Link
-                  href={`/app/${encodeURIComponent(slug)}/chat?agent=${encodeURIComponent(agentId)}`}
-                  aria-label={t('chat')}
-                  title={t('chat')}
-                  className="ui-button-secondary size-8 shrink-0 px-0"
-                >
-                  <MessageSquare className="size-4" />
-                </Link>
-              ) : null}
-              <span
-                className={cx(
-                  'inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs font-medium',
-                  ready
-                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-                )}
-              >
-                {ready ? t('ready2') : dedicatedSandboxReady ? t('needsModel') : t('needsSandbox')}
-              </span>
-            </div>
-          </div>
-        </header>
-
+      <section aria-label={agentName} className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
         {marketSetup ? <AgentMarketSetupBanner slug={slug} setup={marketSetup} /> : null}
 
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <aside className="min-h-0 shrink-0 bg-muted/10 lg:w-52">
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          <aside className="flex min-h-0 shrink-0 flex-col border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r">
             <nav
               ref={navigationRef}
               aria-label={t('configurationNavigation')}
-              className="flex w-full min-w-0 gap-4 overflow-x-auto p-2 lg:block lg:h-full lg:space-y-5 lg:overflow-y-auto lg:p-3"
+              className="flex w-full min-w-0 flex-1 gap-1 overflow-x-auto p-2 [scrollbar-width:none] sm:block sm:space-y-1 sm:overflow-y-auto sm:p-3 [&::-webkit-scrollbar]:hidden"
             >
-              {navigationGroups.map((group) => (
-                <div key={group.label} className="flex shrink-0 items-center gap-1.5 lg:block lg:space-y-1">
-                  <p className="hidden px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground lg:block">
-                    {group.label}
-                  </p>
-                  {group.items.map(({ id, label, icon: Icon }) => {
-                    const active = settingsTab === id;
-                    return (
-                      <button
-                        key={id}
-                        ref={active ? activeTabRef : undefined}
-                        type="button"
-                        aria-current={active ? 'page' : undefined}
-                        onClick={() => setSettingsTab(id)}
-                        className={cx(
-                          'inline-flex h-10 items-center gap-2 rounded-lg px-2.5 text-sm transition-colors lg:flex lg:h-9 lg:w-full',
-                          active
-                            ? 'bg-background font-medium text-foreground ring-1 ring-border'
-                            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                        )}
-                      >
-                        <Icon className="size-4 shrink-0" />
-                        <span className="whitespace-nowrap">{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
+              {navigationItems.map(({ id, label }) => {
+                const active = settingsTab === id;
+                return (
+                  <button
+                    key={id}
+                    ref={active ? activeTabRef : undefined}
+                    type="button"
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setSettingsTab(id)}
+                    className={cx(
+                      'inline-flex h-8 min-w-max items-center rounded-md px-2.5 text-sm transition-colors sm:flex sm:w-full',
+                      active
+                        ? 'bg-background font-medium text-foreground ring-1 ring-border'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                    )}
+                  >
+                    <span className="whitespace-nowrap">{label}</span>
+                  </button>
+                );
+              })}
             </nav>
           </aside>
           <div className={cx(
             'min-h-0 min-w-0 flex-1',
-            settingsTab === 'hermes' || settingsTab === 'terminal' ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain',
+            settingsTab === 'hermes' || settingsTab === 'terminal'
+              ? 'overflow-hidden'
+              : 'overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
           )}>
           {isAgentSettingsSection(settingsTab) ? (
             <AgentSettingsForm
@@ -364,7 +252,7 @@ export function AgentSettings({
               activeSection={settingsTab}
               onSectionChange={setSettingsTab}
               showNavigation={false}
-              className="mx-auto w-full max-w-3xl space-y-4 px-4 py-5 sm:px-6"
+              className="mx-auto w-full max-w-2xl space-y-4 px-5 py-6 sm:px-6"
             />
           ) : settingsTab === 'channels' && supportsChannelSettings ? (
             <div className="mx-auto w-full max-w-6xl">

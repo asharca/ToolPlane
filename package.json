@@ -2,6 +2,9 @@
   "name": "toolplane",
   "version": "0.27.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -22,11 +25,11 @@
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
-    "@toolplane/ui": "workspace:*",
-    "@ai-sdk/react": "^3.0.211",
-    "@assistant-ui/react": "0.14.26",
-    "@assistant-ui/react-ai-sdk": "1.3.40",
-    "@assistant-ui/react-streamdown": "0.3.5",
+    "@asharca/ui": "workspace:*",
+    "@ai-sdk/react": "4.0.96",
+    "@assistant-ui/react": "0.15.18",
+    "@assistant-ui/react-ai-sdk": "1.4.9",
+    "@assistant-ui/react-streamdown": "0.3.13",
     "@dagrejs/dagre": "^3.0.0",
     "@earendil-works/pi-ai": "^0.84.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -38,7 +41,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.10.0",
-    "ai": "^6.0.209",
+    "ai": "7.0.93",
     "dotenv": "^17.4.2",
     "jose": "^6.2.3",
     "lucide-react": "^1.21.0",

@@ -77,6 +77,7 @@ describe('Workspace chat page', () => {
     mocks.listAssistants.mockResolvedValue([{
       id: 'assistant-1',
       name: 'Helper',
+      pinned: true,
       systemPrompt: null,
       modelProviderId: null,
       model: null,
@@ -120,6 +121,7 @@ describe('Workspace chat page', () => {
       selectedThreadId: 'thread-old',
       initialMessages: [expect.objectContaining({ id: 'message-old' })],
       assistants: [expect.objectContaining({
+        pinned: true,
         threads: [
           expect.objectContaining({ id: 'thread-old' }),
           expect.objectContaining({ id: 'thread-recent' }),
@@ -141,6 +143,7 @@ describe('Workspace chat page', () => {
     mocks.listAssistants.mockResolvedValue([{
       id: 'assistant-1',
       name: 'Helper',
+      pinned: false,
       systemPrompt: null,
       modelProviderId: 'provider-1',
       model: 'gpt-5',

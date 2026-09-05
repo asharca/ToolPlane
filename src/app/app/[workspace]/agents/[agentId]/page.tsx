@@ -1,6 +1,5 @@
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listToolkits } from '@/lib/toolkits/queries';
@@ -56,7 +55,6 @@ export default async function AgentDetailPage({
 }) {
   const { workspace: slug, agentId } = await params;
   const { c, settings, tab } = await searchParams;
-  const t = await getTranslations('console.agents');
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -84,13 +82,6 @@ export default async function AgentDetailPage({
         && agent.model
         && (!isDedicatedSandboxRuntimeKind(agent.runtimeKind) || sandboxReady),
       );
-  const providerLabel = isHermes
-    ? agent.modelProviders.length > 0
-      ? agent.modelProviders.map((link) => link.provider.name).join(', ')
-      : t('noModelProvidersSelected')
-    : agent.provider
-      ? `${agent.provider.name} · ${agent.model ?? t('noModelSelected')}`
-      : t('noProviderSelected');
   const selectedDeps = new Set(agent.servers.map((server) => server.deploymentId));
   const selectedSkills = new Set(agent.skills.map((skill) => skill.installedSkillId));
   const [
@@ -130,7 +121,7 @@ export default async function AgentDetailPage({
   const marketSetup = await resolveAgentMarketSetupGuide(ws.id, agent.marketInstall);
 
   return (
-    <SettingsModal title={t('agentSettings')} fallbackHref={`/app/${slug}/work`}>
+    <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/chat?agent=${encodeURIComponent(agent.id)}`} compact>
       <AgentSettings
         key={settings ?? 'general'}
         slug={slug}
@@ -257,7 +248,6 @@ export default async function AgentDetailPage({
         } : undefined}
         ready={ready}
         agentName={agent.name}
-        providerLabel={providerLabel}
         marketSetup={marketSetup}
         initialSettingsTab={settings === 'channels' && !isHermes ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />

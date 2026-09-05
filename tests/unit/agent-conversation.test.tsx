@@ -18,7 +18,7 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@ai-sdk/react', () => ({
-  useChat: chatMocks.useChat,
+  useChat: (options: { id?: string }) => ({ ...chatMocks.useChat(options), id: options.id ?? 'test-chat' }),
 }));
 
 vi.mock('@assistant-ui/react-streamdown', async () => {

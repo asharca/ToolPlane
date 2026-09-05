@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   turnUpdateMany: vi.fn(),
   turnCreate: vi.fn(),
   turnFindFirst: vi.fn(),
+  assistantFindMany: vi.fn(),
   assistantFindFirst: vi.fn(),
+  assistantUpdate: vi.fn(),
   queryRaw: vi.fn(),
   messageCreate: vi.fn(),
   messageDelete: vi.fn(),
@@ -25,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 const tx = {
   $queryRaw: mocks.queryRaw,
-  chatAssistant: { findFirst: mocks.assistantFindFirst },
+  chatAssistant: { findFirst: mocks.assistantFindFirst, update: mocks.assistantUpdate },
   chatTurn: { create: mocks.turnCreate, findFirst: mocks.turnFindFirst, updateMany: mocks.turnUpdateMany },
   chatMessage: {
     create: mocks.messageCreate,
@@ -52,6 +54,10 @@ vi.mock('@/lib/db', () => ({
     $transaction: mocks.transaction,
     chatTurn: { updateMany: mocks.turnUpdateMany },
     chatMessage: { updateMany: mocks.rootMessageUpdateMany },
+    chatAssistant: {
+      findMany: mocks.assistantFindMany,
+      findFirst: mocks.assistantFindFirst,
+    },
     chatThread: { findFirst: mocks.threadFindFirst, update: mocks.threadUpdate },
   },
 }));
@@ -63,7 +69,9 @@ import {
   completeChatTurn,
   finishChatTurn,
   getChatThreadForWorkspace,
+  listChatAssistantsForWorkspace,
   reserveChatBranch,
+  updateChatAssistant,
   updateChatThread,
 } from '@/lib/chat/service';
 
@@ -76,7 +84,9 @@ describe('Chat turn admission', () => {
     mocks.turnUpdateMany.mockResolvedValue({ count: 0 });
     mocks.turnCreate.mockResolvedValue({ id: 'turn-1', threadId: 'thread-1', status: 'pending' });
     mocks.turnFindFirst.mockResolvedValue(null);
+    mocks.assistantFindMany.mockResolvedValue([]);
     mocks.assistantFindFirst.mockResolvedValue({ id: 'assistant-2' });
+    mocks.assistantUpdate.mockResolvedValue({ id: 'assistant-1', pinned: true });
     mocks.queryRaw.mockResolvedValue([]);
     mocks.messageCreate.mockImplementation(async ({ data }: { data: { role: string } }) => ({
       id: data.role === 'assistant' ? 'assistant-1' : 'user-1',
@@ -477,6 +487,32 @@ describe('Chat turn admission', () => {
       data: { activeMessageId: 'a-new-leaf' },
     });
     expect(mocks.queryRaw).toHaveBeenCalledOnce();
+  });
+
+  it('lists pinned assistants first without changing thread ordering', async () => {
+    await listChatAssistantsForWorkspace('workspace-1');
+
+    expect(mocks.assistantFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { workspaceId: 'workspace-1' },
+      orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+      include: expect.objectContaining({
+        threads: expect.objectContaining({ orderBy: { updatedAt: 'desc' } }),
+      }),
+    }));
+  });
+
+  it('updates an assistant pinned state after workspace authorization', async () => {
+    mocks.assistantFindFirst.mockResolvedValue({
+      id: 'assistant-1',
+      workspaceId: 'workspace-1',
+    });
+
+    await updateChatAssistant('user-1', 'assistant-1', { pinned: true });
+
+    expect(mocks.assistantUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'assistant-1' },
+      data: { pinned: true },
+    }));
   });
 
   it('moves a thread only to an assistant in the same workspace', async () => {

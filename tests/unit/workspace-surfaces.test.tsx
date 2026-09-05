@@ -4,9 +4,21 @@ import userEvent from '@testing-library/user-event';
 import { WorkspaceKnowledge } from '@/components/dashboard/knowledge/WorkspaceKnowledge';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
 
-const surfaceMocks = vi.hoisted(() => ({ sandboxConsole: vi.fn(), modelDialog: vi.fn() }));
+const surfaceMocks = vi.hoisted(() => ({
+  modelDialog: vi.fn(),
+  pinAgentAction: vi.fn(),
+  routerPush: vi.fn(),
+  routerRefresh: vi.fn(),
+  sandboxConsole: vi.fn(),
+}));
 
-vi.mock('@/lib/agents/actions', () => ({ deleteAgentAction: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: surfaceMocks.routerPush, refresh: surfaceMocks.routerRefresh }),
+}));
+vi.mock('@/lib/agents/actions', () => ({
+  deleteAgentAction: vi.fn(),
+  pinAgentAction: surfaceMocks.pinAgentAction,
+}));
 vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: vi.fn() }));
 
 vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
@@ -48,18 +60,65 @@ class WorkEventSource {
 
 afterEach(() => {
   WorkEventSource.latest = null;
+  vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('Chat, Work, and Knowledge surfaces', () => {
-  it('starts Work from the chat composer without a task form', () => {
+  it.each(['pi', 'hermes'] as const)(
+    'refreshes a newly created %s Agent until its runtime leaves provisioning',
+    (runtimeKind) => {
+      vi.useFakeTimers();
+      const agent = {
+        id: 'agent-1',
+        name: 'Builder',
+        pinned: false,
+        supportsWork: true,
+        ready: true,
+        runtimeKind,
+        sandboxes: [{
+          id: 'sandbox-1',
+          name: 'Workspace',
+          kind: 'docker',
+          deploymentId: 'deployment-1',
+          status: 'provisioning',
+          running: false,
+          isDefault: true,
+        }],
+      };
+      const props = {
+        slug: 'acme',
+        workspaceId: 'workspace-1',
+        sessions: [],
+        selectedWorkSessionId: null,
+      };
+      const { rerender, unmount } = render(<WorkspaceWork {...props} agents={[agent]} />);
+
+      expect(screen.getByText('Starting…')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1_500));
+      expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
+
+      rerender(<WorkspaceWork {...props} agents={[{
+        ...agent,
+        sandboxes: [{ ...agent.sandboxes[0], status: 'running', running: true }],
+      }]} />);
+      act(() => vi.advanceTimersByTime(3_000));
+      expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
+      unmount();
+    },
+  );
+
+  it('starts Work from the chat composer without a task form', async () => {
+    const user = userEvent.setup();
     const { container } = render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
       agents={[{
         id: 'agent-1',
         name: 'Builder',
+        pinned: false,
         supportsWork: true,
         ready: true,
         runtimeKind: 'pi',
@@ -67,6 +126,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       }, {
         id: 'agent-hermes',
         name: 'Hermes researcher',
+        pinned: true,
         supportsWork: true,
         ready: false,
         runtimeKind: 'hermes',
@@ -76,6 +136,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       }, {
         id: 'agent-chat',
         name: 'Chat only',
+        pinned: false,
         supportsWork: false,
         ready: false,
         runtimeKind: null,
@@ -101,11 +162,45 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       'href',
       '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork',
     );
+    fireEvent.click(screen.getByRole('button', { name: 'List options' }));
+    expect(screen.getByRole('link', { name: 'Manage agents' })).toHaveAttribute(
+      'href',
+      '/app/acme/agents?returnTo=%2Fapp%2Facme%2Fwork',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
     expect(screen.queryByRole('link', { name: 'Manage agents' })).not.toBeInTheDocument();
     const sidebar = container.querySelector('aside')!;
     const builderDisclosure = screen.getByRole('button', { name: 'Builder' });
     expect(builderDisclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(builderDisclosure.parentElement?.lastElementChild).toBe(builderDisclosure);
+    expect(screen.getByRole('button', { name: 'Hermes researcher' })).toHaveAttribute('aria-expanded', 'true');
+    expect(builderDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
+    expect(builderDisclosure.nextElementSibling).toHaveClass(
+      'grid-cols-[0fr]',
+      'group-hover:grid-cols-[1fr]',
+      'group-has-[:focus-visible]:grid-cols-[1fr]',
+    );
+    const builderActions = screen.getByRole('button', { name: 'Actions for Builder' });
+    await user.click(builderActions);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Pin', 'Delete']);
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect(surfaceMocks.routerPush).toHaveBeenCalledWith(
+      '/app/acme/agents/agent-1?settings=agent&returnTo=%2Fapp%2Facme%2Fwork',
+    );
+    await user.click(builderActions);
+    await user.click(screen.getByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(surfaceMocks.pinAgentAction).toHaveBeenCalledOnce());
+    const pinForm = surfaceMocks.pinAgentAction.mock.calls[0][0] as FormData;
+    expect(Object.fromEntries(pinForm)).toEqual({
+      agentId: 'agent-1',
+      pinned: 'true',
+      workspace: 'acme',
+    });
+    expect(surfaceMocks.routerRefresh).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole('button', { name: 'Actions for Hermes researcher' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Unpin', 'Delete']);
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(screen.getByRole('dialog', { name: 'Delete agent' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(sidebar.querySelectorAll('[aria-controls^="agent-work-sessions-"]')).toHaveLength(3);
     for (const [name, title, tone] of [
       ['Builder', 'ready', 'bg-emerald-500'],
@@ -116,9 +211,9 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       expect(dot?.parentElement).toHaveClass('relative');
       expect(dot).toHaveClass('absolute', 'right-0', 'top-0', tone);
     }
-    expect(screen.getByText('No work sessions yet.')).toBeInTheDocument();
+    expect(screen.getAllByText('No work sessions yet.')).toHaveLength(3);
     fireEvent.click(builderDisclosure);
-    expect(screen.queryByText('No work sessions yet.')).not.toBeInTheDocument();
+    expect(screen.getAllByText('No work sessions yet.')).toHaveLength(2);
     const hermesRow = screen.getByRole('button', { name: 'Hermes researcher' }).parentElement!;
     expect(screen.getByRole('button', { name: 'New work · Hermes researcher' })).toBeInTheDocument();
     fireEvent.contextMenu(hermesRow, { clientX: 80, clientY: 120 });
@@ -134,7 +229,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     );
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete agent' }));
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete agent' });
-    expect(deleteDialog).toHaveTextContent('Delete this agent and all its conversations?');
+    expect(deleteDialog).toHaveTextContent('Delete this agent, its sandboxes, and all its conversations?');
     expect(deleteDialog.querySelector('input[name="returnTo"]')).toHaveValue('/app/acme/work');
     expect(screen.queryByRole('button', { name: 'Thinking effort' })).not.toBeInTheDocument();
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
@@ -149,6 +244,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       agents={[{
         id: 'agent-hermes',
         name: 'Hermes researcher',
+        pinned: false,
         supportsWork: true,
         ready: true,
         runtimeKind: 'hermes',
@@ -176,6 +272,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       agents={[{
         id: 'agent-hermes',
         name: 'Hermes researcher',
+        pinned: false,
         supportsWork: true,
         ready: false,
         runtimeKind: 'hermes',
@@ -217,6 +314,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       agents={[{
         id: 'agent-hermes',
         name: 'Hermes researcher',
+        pinned: false,
         supportsWork: true,
         ready: true,
         runtimeKind: 'hermes',
@@ -257,7 +355,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
       sessions={[]}
       selectedWorkSessionId={null}
     />);
@@ -285,11 +383,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
       sessions={[{
         id: 'work-1', agentId: 'agent-1', title: 'Ship release', task: 'Ship release',
         acceptanceCriteria: 'Release is live', runtimeKind: 'pi', status: 'completed',
-        maxSteps: 12, stepCount: 0, waitingQuestion: null, result: null, error: null,
+        waitingQuestion: null, result: null, error: null,
         artifacts: [], approvals: [], conversationId: 'conversation-1', messages: [
           { id: 'message-user', role: 'user', createdAt: '2026-09-03T01:02:03.000Z', parts: [{ type: 'text', text: 'Ship it' }] },
           {
@@ -324,6 +422,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const agentGroup = screen.getByRole('button', { name: 'Builder' });
     expect(agentGroup).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Ship release')).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ \/ \d+ runs/)).not.toBeInTheDocument();
     fireEvent.click(agentGroup);
     expect(screen.queryByText('Ship release')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings: Builder' })).toHaveAttribute(
@@ -343,9 +442,9 @@ describe('Chat, Work, and Knowledge surfaces', () => {
 
   it('renders Work deltas before loading the final persisted reply', async () => {
     const finalSession = {
-      id: 'work-1', agentId: 'agent-1', title: 'Stream reply', task: 'Stream reply',
+      id: 'work-1', agentId: 'agent-1', title: 'Streaming response test', task: 'Stream reply',
       acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
-      maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+      waitingQuestion: null, result: null, error: null,
       artifacts: [], approvals: [], conversationId: 'conversation-1', messages: [
         { id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Reply slowly' }] },
         { id: 'message-assistant', role: 'assistant', parts: [
@@ -366,13 +465,14 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
-      sessions={[{ ...finalSession, status: 'running', messages: finalSession.messages.slice(0, 1) }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      sessions={[{ ...finalSession, title: finalSession.task, status: 'running', messages: finalSession.messages.slice(0, 1) }]}
       selectedWorkSessionId="work-1"
     />);
 
     expect(screen.queryByText('Generating')).not.toBeInTheDocument();
     expect(WorkEventSource.latest?.url).toBe('/api/v1/work-sessions/work-1/events');
+    expect(screen.getByText('Stream reply')).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
 
     act(() => WorkEventSource.latest?.emit('activity', { activities: [{
@@ -396,6 +496,8 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     act(() => WorkEventSource.latest?.emit('done', {}));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getAllByText('Hello')).toHaveLength(1));
+    expect(screen.getByText('Streaming response test')).toBeInTheDocument();
+    expect(screen.queryByText('Stream reply')).not.toBeInTheDocument();
     expect(screen.getByText('Local filesystem · read_file')).toBeInTheDocument();
     const completedProcess = document.querySelector('details[data-ui="work-process"]');
     expect(completedProcess).not.toBeNull();
@@ -409,12 +511,12 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
       sessions={[{
         id: 'work-text-only', agentId: 'agent-1', title: 'Text reply', task: 'Say hello',
         acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
         startedAt: '2026-09-03T01:00:00.000Z', completedAt: '2026-09-03T01:00:29.041Z',
-        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+        waitingQuestion: null, result: null, error: null,
         artifacts: [], approvals: [], conversationId: 'conversation-text-only', messages: [
           { id: 'message-user', role: 'user', createdAt: '2026-09-03T01:00:00.000Z', parts: [{ type: 'text', text: 'Hello' }] },
           { id: 'message-assistant', role: 'assistant', parts: [
@@ -429,7 +531,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
 
     const reply = screen.getByText('Hi').closest('[data-ui="assistant-reply"]');
     expect(reply?.querySelector('[data-ui="work-message-duration"]')).toHaveTextContent('29 s');
-    expect(screen.queryByText('Pi')).not.toBeInTheDocument();
+    expect(reply).not.toHaveTextContent('Pi');
     expect(screen.queryByText('Processed')).not.toBeInTheDocument();
     expect(document.querySelector('[data-ui="work-process"]')).toBeNull();
   });
@@ -439,11 +541,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
       sessions={[{
         id: 'work-live-order', agentId: 'agent-1', title: 'Live order', task: 'Trace order',
         acceptanceCriteria: null, runtimeKind: 'claude-code', status: 'running',
-        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+        waitingQuestion: null, result: null, error: null,
         artifacts: [], approvals: [], conversationId: 'conversation-live-order',
         messages: [{ id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Trace this' }] }],
         sandbox: { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true },
@@ -474,11 +576,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
       sessions={[{
         id: 'work-order', agentId: 'agent-1', title: 'Trace order', task: 'Trace order',
         acceptanceCriteria: null, runtimeKind: 'pi', status: 'failed',
-        maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: 'Stopped',
+        waitingQuestion: null, result: null, error: 'Stopped',
         artifacts: [], approvals: [], conversationId: 'conversation-order', messages: [
           { id: 'message-user', role: 'user', parts: [{ type: 'text', text: 'Trace this' }] },
           { id: 'message-assistant', role: 'assistant', parts: [
@@ -495,6 +597,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId="work-order"
     />);
 
+    expect(screen.getByRole('alert')).toHaveTextContent('Stopped');
     const transcript = document.querySelector('[data-ui="work.transcript"]');
     const content = transcript?.textContent ?? '';
     const positions = ['plan-before', 'first_tool', 'Claude Code', 'plan-after', 'second_tool']
@@ -507,7 +610,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const session = {
       id: 'work-scroll', agentId: 'agent-1', title: 'Scroll reply', task: 'Scroll reply',
       acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
-      maxSteps: 12, stepCount: 1, waitingQuestion: null, result: null, error: null,
+      waitingQuestion: null, result: null, error: null,
       artifacts: [], approvals: [], conversationId: 'conversation-scroll', messages: [
         { id: 'message-user', role: 'user' as const, parts: [{ type: 'text', text: 'Show the transcript' }] },
         { id: 'message-assistant', role: 'assistant' as const, parts: [{ type: 'text', text: 'First reply' }] },
@@ -517,7 +620,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const props = {
       slug: 'acme',
       workspaceId: 'workspace-1',
-      agents: [{ id: 'agent-1', name: 'Builder', supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }],
+      agents: [{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }],
       selectedWorkSessionId: session.id,
     };
     const { rerender } = render(<WorkspaceWork {...props} sessions={[session]} />);

@@ -279,7 +279,7 @@ export function AgentResourceSelect({
                   {t('showingFirstMatches', { shown: renderedOptions.length, total: filteredOptions.length })}
                 </p>
               ) : null}
-              <div className="max-h-64 overflow-y-auto">
+              <div className="max-h-64 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {renderedOptions.map((option) => {
                   const isSelected = activeSelected.has(option.id);
                   return (

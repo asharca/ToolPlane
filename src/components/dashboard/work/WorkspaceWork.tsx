@@ -1,20 +1,24 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
+import { SidebarActionRail } from '@asharca/ui';
 import {
   Activity,
+  Archive,
   ArrowDown,
   ArrowUp,
-  Archive,
   Bot,
   Boxes,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Circle,
   CircleAlert,
   CirclePause,
@@ -24,8 +28,8 @@ import {
   FileOutput,
   Folder,
   Loader2,
+  ListFilter,
   MessageSquare,
-  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -57,6 +61,7 @@ import {
   useConversationComposerExpansion,
 } from '@/components/dashboard/ConversationComposer';
 import { CopyButton } from '@/components/dashboard/CopyButton';
+import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
 import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import {
   AssistantMarkdown,
@@ -66,7 +71,7 @@ import {
 import { callSandboxTool, SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
-import { deleteAgentAction } from '@/lib/agents/actions';
+import { deleteAgentAction, pinAgentAction } from '@/lib/agents/actions';
 import { normalizeReasoningEffort, type ReasoningEffort } from '@/lib/agents/constants';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
@@ -83,6 +88,7 @@ import {
 type WorkAgent = {
   id: string;
   name: string;
+  pinned: boolean;
   supportsWork: boolean;
   ready: boolean;
   runtimeKind: string | null;
@@ -97,6 +103,7 @@ type WorkAgent = {
     name: string;
     kind: string;
     deploymentId: string;
+    status?: string;
     running: boolean;
     isDefault: boolean;
   }>;
@@ -168,8 +175,6 @@ type WorkItem = {
   status: string;
   startedAt?: string | null;
   completedAt?: string | null;
-  maxSteps: number;
-  stepCount: number;
   waitingQuestion: string | null;
   result: string | null;
   error: string | null;
@@ -180,7 +185,7 @@ type WorkItem = {
   hermesProvider?: string | null;
   hermesModel?: string | null;
   workingDirectory?: string;
-  sandbox: { id: string; name: string; kind: string; deploymentId: string; running: boolean } | null;
+  sandbox: { id: string; name: string; kind: string; deploymentId: string; status?: string; running: boolean } | null;
   messages: WorkMessage[];
   approvals: WorkApproval[];
 };
@@ -877,6 +882,8 @@ export function WorkspaceWork({
   const t = useTranslations('console.work');
   const tAgents = useTranslations('console.agents');
   const tSandboxes = useTranslations('console.sandboxes');
+  const common = useTranslations('common');
+  const router = useRouter();
   const initialSelected = selectedSession ?? sessions.find((item) => item.id === selectedWorkSessionId) ?? null;
   const workAgents = agents.filter((item) => item.supportsWork);
   const [items, setItems] = useState(sessions);
@@ -975,6 +982,14 @@ export function WorkspaceWork({
   const workReturnTo = selected ? workHref(slug, selected.id) : `/app/${encodeURIComponent(slug)}/work`;
   const pendingApprovals = selected?.approvals.filter((approval) => approval.status === 'pending') ?? [];
   const selectedStatus = selected?.status;
+  const visibleError = error ?? selected?.error;
+
+  useEffect(() => {
+    if (selected || activeSandbox?.status !== 'provisioning') return;
+    const interval = window.setInterval(() => router.refresh(), 1_500);
+    return () => window.clearInterval(interval);
+  }, [activeSandbox?.status, agent?.runtimeKind, router, selected]);
+
   const streamText = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.text : '';
   const streamActivities = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.activities : EMPTY_WORK_ACTIVITIES;
   const streamStartedAt = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.startedAt : undefined;
@@ -1037,6 +1052,10 @@ export function WorkspaceWork({
         : [];
     });
   }, [agents, items, sessionQuery]);
+  const activeAgentId = selected?.agentId ?? agentId;
+  const allAgentsExpanded = agents.length > 0 && agents.every((item) => (
+    expandedAgents[item.id] ?? item.id === activeAgentId
+  ));
 
   const refreshSelected = useCallback(async () => {
     if (!selectedWorkSessionId || creatingMode) return false;
@@ -1303,6 +1322,15 @@ export function WorkspaceWork({
     if (response.ok) window.location.assign(`/app/${encodeURIComponent(slug)}/work`);
   }
 
+  async function toggleAgentPin(item: WorkAgent) {
+    const formData = new FormData();
+    formData.set('workspace', slug);
+    formData.set('agentId', item.id);
+    formData.set('pinned', String(!item.pinned));
+    await pinAgentAction(formData);
+    router.refresh();
+  }
+
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
   const draftHermesModelReady = agent?.runtimeKind === 'hermes'
     && hermesDraftSelection?.agentId === agent.id
@@ -1354,23 +1382,60 @@ export function WorkspaceWork({
         </div>
 
         <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-          <div className="flex h-8 items-center justify-between px-2.5">
-            <p className="truncate text-xs font-medium text-muted-foreground">{tAgents('agents')}</p>
-            <Link href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`} aria-label={tAgents('addAgent')} title={tAgents('addAgent')} className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
-              <Plus className="size-3.5" />
+          <div className="flex h-8 items-center gap-1 px-1">
+            <Link href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`} aria-label={tAgents('addAgent')} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-[13px] text-foreground hover:bg-muted">
+              <Plus className="size-3.5 shrink-0" />
+              <span className="truncate">{tAgents('addAgent')}</span>
             </Link>
+            <Popover.Root>
+              <Popover.Trigger asChild>
+                <button type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <ListFilter className="size-3.5" />
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
+                  <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('listOptions')}</p>
+                  {agents.length ? (
+                    <Popover.Close asChild>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedAgents(Object.fromEntries(agents.map((item) => [item.id, !allAgentsExpanded])))}
+                        className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent"
+                      >
+                        {allAgentsExpanded ? <ChevronsDownUp className="size-4" /> : <ChevronsUpDown className="size-4" />}
+                        {t(allAgentsExpanded ? 'collapseAll' : 'expandAll')}
+                      </button>
+                    </Popover.Close>
+                  ) : null}
+                  <div className="my-1 h-px bg-border" />
+                  <Popover.Close asChild>
+                    <Link href={`/app/${encodeURIComponent(slug)}/agents?returnTo=${encodeURIComponent(workReturnTo)}`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
+                      <Settings2 className="size-4" />
+                      {tAgents('manageAgents')}
+                    </Link>
+                  </Popover.Close>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
           </div>
           <ul>
             {visibleAgents.map(({ agent: itemAgent, sessions: agentSessions }) => {
-              const activeAgentId = selected?.agentId ?? agentId;
               const expanded = Boolean(sessionQuery)
                 || (expandedAgents[itemAgent.id] ?? itemAgent.id === activeAgentId);
               const row = (
                 <div className={cx(
-                  'group flex h-8 min-w-0 items-center rounded-lg transition-colors',
+                  'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
                   itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
                 )}>
-                  <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left text-[13px]">
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={`agent-work-sessions-${itemAgent.id}`}
+                    title={expanded ? tAgents('hideConversations') : tAgents('showConversations')}
+                    onClick={() => setExpandedAgents((current) => ({ ...current, [itemAgent.id]: !expanded }))}
+                    className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-[13px] outline-none"
+                  >
                     <span className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground">
                       <Bot className="size-3.5" />
                       <span
@@ -1382,40 +1447,37 @@ export function WorkspaceWork({
                       />
                     </span>
                     <span className={cx('min-w-0 flex-1 truncate', itemAgent.id === activeAgentId && 'font-medium')}>{itemAgent.name}</span>
-                  </div>
-                  <Link
-                    href={agentSettingsHref(slug, itemAgent.id, workReturnTo)}
-                    aria-label={`${tAgents('configureAgent')} · ${itemAgent.name}`}
-                    title={tAgents('configureAgent')}
-                    className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover:opacity-100 focus:opacity-100"
-                  >
-                    <MoreHorizontal className="size-3.5" />
-                  </Link>
-                  {itemAgent.supportsWork ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedAgents((current) => ({ ...current, [itemAgent.id]: true }));
-                        startNewWork(itemAgent.id);
-                      }}
-                      aria-label={`${t('newWork')} · ${itemAgent.name}`}
-                      title={t('newWork')}
-                      className="mr-0.5 flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background group-hover:opacity-100 focus:opacity-100"
-                    >
-                      <Plus className="size-3.5" />
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    aria-label={itemAgent.name}
-                    aria-expanded={expanded}
-                    aria-controls={`agent-work-sessions-${itemAgent.id}`}
-                    title={expanded ? tAgents('hideConversations') : tAgents('showConversations')}
-                    onClick={() => setExpandedAgents((current) => ({ ...current, [itemAgent.id]: !expanded }))}
-                    className="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                  >
-                    <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                    <span aria-hidden="true" className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex">
+                      <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+                    </span>
                   </button>
+                  <SidebarActionRail hasLeadingSlot revealOnCellFocus>
+                    <SidebarEntityActionsMenu
+                      actionsLabel={tAgents('agentActions', { name: itemAgent.name })}
+                      deleteLabel={common('delete')}
+                      editLabel={common('edit')}
+                      onDelete={() => setDeleteAgentTarget(itemAgent)}
+                      onEdit={() => router.push(agentSettingsHref(slug, itemAgent.id, workReturnTo))}
+                      onTogglePin={() => void toggleAgentPin(itemAgent)}
+                      pinned={itemAgent.pinned}
+                      pinLabel={tAgents('pinAgent')}
+                      unpinLabel={tAgents('unpinAgent')}
+                    />
+                    {itemAgent.supportsWork ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedAgents((current) => ({ ...current, [itemAgent.id]: true }));
+                          startNewWork(itemAgent.id);
+                        }}
+                        aria-label={`${t('newWork')} · ${itemAgent.name}`}
+                        title={t('newWork')}
+                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                      >
+                        <Plus className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </SidebarActionRail>
                 </div>
               );
               return (
@@ -1610,7 +1672,12 @@ export function WorkspaceWork({
                 {busy === 'cancel' ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-3.5 fill-current" />}
               </button>
             ) : null}
-            {controlSandbox && !controlSandbox.running ? (
+            {controlSandbox && !controlSandbox.running && controlSandbox.status === 'provisioning' ? (
+              <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
+                <Loader2 className="size-3 animate-spin" />
+                {tSandboxes('starting')}
+              </span>
+            ) : controlSandbox && !controlSandbox.running ? (
               <form action={startSandboxAction}>
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="sandboxId" value={controlSandbox.id} />
@@ -1638,7 +1705,7 @@ export function WorkspaceWork({
           </div>
         </header>
 
-        {error ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{error}</p> : null}
+        {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{visibleError}</p> : null}
 
         <div className="relative min-h-0 flex-1">
           <div
@@ -1782,9 +1849,7 @@ export function WorkspaceWork({
                     ) : null}
                     <span className="flex min-w-0 items-center gap-1.5 truncate px-1 text-[11px] text-muted-foreground">
                       <TerminalSquare className="size-3.5 shrink-0" />
-                      {selected
-                        ? `${runtimeLabel(selected.runtimeKind)} · ${t('steps', { current: selected.stepCount, max: selected.maxSteps })}`
-                        : runtimeLabel(agent?.runtimeKind)}
+                      {runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}
                     </span>
                   </div>
 
@@ -1805,7 +1870,7 @@ export function WorkspaceWork({
             )}
             {!selected && agent && !agent.ready ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('configureAgent')}</p> : null}
             {!selected && agent?.ready && !sandboxOptions.length ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('attachSandbox')}</p> : null}
-            {!selected && activeSandbox && !activeSandbox.running && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('stopped')}</p> : null}
+            {!selected && activeSandbox && !activeSandbox.running && activeSandbox.status !== 'provisioning' && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('stopped')}</p> : null}
           </div>
         </div>
       </main>
@@ -1875,7 +1940,7 @@ export function WorkspaceWork({
           <DialogOverlay className="!bg-black/40" />
           <DialogContent className="!max-w-md">
             <DialogTitle>{tAgents('deleteAgent')}</DialogTitle>
-            <DialogDescription>{tAgents('deleteThisAgentAndAllItsConversations')}</DialogDescription>
+            <DialogDescription>{tAgents('deleteThisAgentAndItsSandboxesAndAllItsConversations')}</DialogDescription>
             <form action={deleteAgentAction} className="flex justify-end gap-2">
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={deleteAgentTarget?.id ?? ''} />

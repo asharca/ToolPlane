@@ -288,7 +288,7 @@ describe('WorkSession coordinator', () => {
     });
   });
 
-  it('queues a fresh turn from idle with a fresh budget', async () => {
+  it('queues a fresh turn from idle', async () => {
     mocks.workFindFirst.mockResolvedValueOnce({
       conversationId: 'conversation-1',
       status: 'idle',
@@ -310,8 +310,6 @@ describe('WorkSession coordinator', () => {
         waitingQuestion: null,
         completedAt: null,
         cancelRequestedAt: null,
-        stepCount: 0,
-        deadlineAt: null,
       },
     });
   });
@@ -327,7 +325,7 @@ describe('WorkSession coordinator', () => {
     )).resolves.toEqual({ ok: true, changed: true, status: 'queued' });
     expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'work-1', workspaceId: 'workspace-1', status },
-      data: expect.objectContaining({ status: 'queued', stepCount: 0, deadlineAt: null }),
+      data: expect.objectContaining({ status: 'queued' }),
     }));
   });
 
@@ -372,7 +370,7 @@ describe('WorkSession coordinator', () => {
     }));
   });
 
-  it('gives a failed task a fresh budget when it is explicitly resumed', async () => {
+  it('requeues a failed task when it is explicitly resumed', async () => {
     mocks.workUpdateMany.mockResolvedValueOnce({ count: 1 });
 
     await expect(resumeWorkSession('workspace-1', 'work-1')).resolves.toEqual({
@@ -389,8 +387,6 @@ describe('WorkSession coordinator', () => {
         waitingQuestion: null,
         completedAt: null,
         cancelRequestedAt: null,
-        stepCount: 0,
-        deadlineAt: null,
       },
     });
   });

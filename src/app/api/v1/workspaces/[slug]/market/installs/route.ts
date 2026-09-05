@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { AgentMarketError, materializeAgentRelease } from '@/lib/agents/market';
 import { syncHermesRuntime } from '@/lib/agents/hermes/runtime';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
@@ -22,7 +23,7 @@ const installBody = z.object({
   systemPrompt: z.string().trim().max(50_000).nullable().optional(),
   modelProviderId: z.string().trim().min(1).max(240).optional(),
   model: z.string().trim().max(240).nullable().optional(),
-  maxSteps: z.number().int().min(1).max(20).optional(),
+  maxSteps: z.number().int().min(AGENT_STEP_BOUNDS.min).max(AGENT_STEP_BOUNDS.max).optional(),
   deploymentIds: z.array(z.string().trim().min(1).max(240)).max(50)
     .transform((ids) => [...new Set(ids)]).optional(),
 }).strict();

@@ -12,7 +12,7 @@ import {
   Pagination,
   Panel,
   type FeedbackTone,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 
 type Icon = ComponentType<{ className?: string }>;
 

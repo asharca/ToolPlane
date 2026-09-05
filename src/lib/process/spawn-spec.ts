@@ -26,6 +26,7 @@ export type SpawnSpec =
       command: string;
       args: string[];
       env: Record<string, string>;
+      containerEnv?: Record<string, string>;
       // Kept separately from the docker argv so the supervisor can expose the
       // image lifecycle without ever recording a command line that may contain
       // `-e KEY=value` secrets.
@@ -63,6 +64,7 @@ export type DockerSpawnSpec = {
   command: string;
   args: string[];
   image: string;
+  env: Record<string, string>;
 };
 
 function splitArgs(s: string | undefined): string[] {
@@ -172,8 +174,8 @@ function readRemoteCfg(
 // Every custom MCP runs in its own hardened, throwaway container (see
 // ./sandbox.ts) — npm/GitHub wrapped in Node, PyPI in the uv image, docker as
 // its own image. `env` is the MCP's OWN env (installCfg.env) and is the only
-// environment that enters the container: it goes in as `-e` flags, never the
-// host's process.env.
+// environment that enters the container: argv holds only `-e KEY`; values are
+// supplied separately to the bridge's Docker child.
 //
 // `rebuild = true` re-fetches instead of using cache (npm revalidates the
 // registry, uv refreshes, docker re-pulls). `network` picks the sandbox network
@@ -193,18 +195,22 @@ export function buildSpawnSpec(
     case 'github': {
       const inner = rebuild ? ['npx', '-y', '--prefer-online', ref] : ['npx', '-y', ref];
       const image = source === 'github' ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
+      const containerEnv = { ...CACHE_ENV.npm, ...env };
       return {
         command: 'docker',
-        args: [...run, ...envFlags(CACHE_ENV.npm), ...envFlags(env), image, ...inner],
+        args: [...run, ...envFlags(containerEnv), image, ...inner],
         image,
+        env: containerEnv,
       };
     }
     case 'pypi': {
       const inner = rebuild ? ['uvx', '--refresh', ref] : ['uvx', ref];
+      const containerEnv = { ...CACHE_ENV.pypi, ...env };
       return {
         command: 'docker',
-        args: [...run, ...envFlags(CACHE_ENV.pypi), ...envFlags(env), WRAP_IMAGE.pypi, ...inner],
+        args: [...run, ...envFlags(containerEnv), WRAP_IMAGE.pypi, ...inner],
         image: WRAP_IMAGE.pypi,
+        env: containerEnv,
       };
     }
     case 'docker': {
@@ -213,6 +219,7 @@ export function buildSpawnSpec(
         command: 'docker',
         args: [...run, ...pull, ...envFlags(env), ref, ...splitArgs(startCommand)],
         image: ref,
+        env,
       };
     }
     default:
@@ -231,35 +238,37 @@ export function buildStdioConfigSpawnSpec(
   if (command === 'npx') {
     const refresh = rebuild ? ['--prefer-online'] : [];
     const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.npmGit : WRAP_IMAGE.npm;
+    const containerEnv = { ...CACHE_ENV.npm, ...env };
     return {
       command: 'docker',
       args: [
         ...run,
-        ...envFlags(CACHE_ENV.npm),
-        ...envFlags(env),
+        ...envFlags(containerEnv),
         image,
         'npx',
         ...refresh,
         ...commandArgs,
       ],
       image,
+      env: containerEnv,
     };
   }
   if (command === 'uvx' || command === 'uv') {
     const refresh = command === 'uvx' && rebuild ? ['--refresh'] : [];
     const image = commandArgsNeedGit(command, commandArgs) ? WRAP_IMAGE.pypiGit : WRAP_IMAGE.pypi;
+    const containerEnv = { ...CACHE_ENV.pypi, ...env };
     return {
       command: 'docker',
       args: [
         ...run,
-        ...envFlags(CACHE_ENV.pypi),
-        ...envFlags(env),
+        ...envFlags(containerEnv),
         image,
         command,
         ...refresh,
         ...commandArgs,
       ],
       image,
+      env: containerEnv,
     };
   }
   if (command === 'docker') {
@@ -275,6 +284,7 @@ export function buildStdioConfigSpawnSpec(
         ...containerArgs,
       ],
       image,
+      env,
     };
   }
   throw new Error(`Unsupported stdio MCP command: ${command || '(none)'}`);
@@ -393,6 +403,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       command: configSpec.command,
       args: configSpec.args,
       env,
+      containerEnv: configSpec.env,
       image: configSpec.image,
       // Docker JSON preserves the image's own WORKDIR. Its mounted runtime
       // files are still available at /toolplane/config via absolute paths.
@@ -413,6 +424,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
     command: packageSpec.command,
     args: packageSpec.args,
     env,
+    containerEnv: packageSpec.env,
     image: packageSpec.image,
   };
 }

@@ -12,9 +12,14 @@ describe('reconcileDeployments', () => {
       start,
     });
     expect(n).toBe(2);
-    expect(start.mock.calls[0]).toEqual(['a', { kind: 'builtin', name: 'Stripe' }]);
+    expect(start.mock.calls[0]).toEqual([
+      'a',
+      { kind: 'builtin', name: 'Stripe' },
+      { awaitReady: false },
+    ]);
     expect(start.mock.calls[1][0]).toBe('b');
     expect(start.mock.calls[1][1]).toMatchObject({ kind: 'bridge', command: 'docker' });
+    expect(start.mock.calls[1][2]).toEqual({ awaitReady: false });
   });
 
   it('keeps going when one deployment fails to start', async () => {
@@ -30,6 +35,42 @@ describe('reconcileDeployments', () => {
     });
     expect(n).toBe(1);
     expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('converges a managed Hermes runtime after startup recovery', async () => {
+    const start = vi.fn<ReconcileDeps['start']>(async () => {});
+    const ensureHermesReady = vi.fn(async () => {});
+    const n = await reconcileDeployments({
+      loadRunning: async () => [{
+        id: 'hermes-deployment',
+        serverId: null,
+        server: null,
+        name: 'Hermes',
+        source: 'sandbox',
+        sourceRef: null,
+        installCfg: { kind: 'hermes' },
+        sandbox: {
+          agentRuntime: {
+            agentId: 'agent-1',
+            kind: 'hermes',
+            workspaceId: 'workspace-1',
+            agent: { publicRuntimeAllocation: null },
+          },
+        },
+      }],
+      start,
+      ensureHermesReady,
+    });
+
+    expect(n).toBe(1);
+    const options = start.mock.calls[0]?.[2];
+    expect(options).toEqual(expect.objectContaining({
+      awaitReady: false,
+      workspaceId: 'workspace-1',
+      onReady: expect.any(Function),
+    }));
+    await options?.onReady?.();
+    expect(ensureHermesReady).toHaveBeenCalledWith('workspace-1', 'agent-1');
   });
 
   it('returns 0 when nothing is running', async () => {

@@ -29,6 +29,7 @@ import {
   DashboardSection,
 } from '@/components/dashboard/DashboardUI';
 import { NativeSelect } from '@/components/ui/NativeSelect';
+import { Tab, TabList } from '@asharca/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -276,20 +277,21 @@ export default async function McpMarketPage({
         </p>
       </div>
 
-      <nav aria-label={t('mcpTypeNavigation')} className="inline-flex w-fit rounded-lg bg-muted p-1">
+      <TabList navigation label={t('mcpTypeNavigation')} className="w-fit rounded-lg ring-0">
         {(['server', 'connector'] as const).map((item) => (
-          <Link
+          <Tab
             key={item}
-            href={marketHref(slug, { q, sort, type: item })}
-            aria-current={type === item ? 'page' : undefined}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-              type === item ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            }`}
+            asChild
+            navigation
+            current={type === item}
+            className="rounded-md ring-0"
           >
-            {t(item === 'connector' ? 'mcpConnectors' : 'mcpServers')}
-          </Link>
+            <Link href={marketHref(slug, { q, sort, type: item })}>
+              {t(item === 'connector' ? 'mcpConnectors' : 'mcpServers')}
+            </Link>
+          </Tab>
         ))}
-      </nav>
+      </TabList>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
         <input type="hidden" name="category" value={category} />

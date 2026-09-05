@@ -18,6 +18,7 @@ import {
   Layers3,
   PanelLeftClose,
   PanelLeftOpen,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { labelKey: 'chat', segment: 'chat', icon: MessageSquare },
   { labelKey: 'work', segment: 'work', icon: TerminalSquare },
   { labelKey: 'knowledge', segment: 'knowledge', icon: LibraryBig },
+  { labelKey: 'members', segment: 'members', icon: Users },
   { labelKey: 'market', segment: 'market', icon: Store },
   { labelKey: 'mcpServers', segment: 'mcp', icon: Plug },
   { labelKey: 'skills', segment: 'skills', icon: Brain },

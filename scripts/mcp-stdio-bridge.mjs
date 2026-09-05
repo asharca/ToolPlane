@@ -6,7 +6,7 @@
 // mirroring scripts/mcp-server.mjs so the supervisor/gateway are unchanged.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { filterEnv } from './bridge-env.mjs';
+import { buildBridgeChildEnv } from './bridge-env.mjs';
 
 const NAME = process.env.MCP_NAME || 'mcp';
 const COMMAND = process.env.MCP_COMMAND;
@@ -50,10 +50,15 @@ if (!COMMAND) {
   process.exitCode = 1;
 }
 
-// COMMAND is normally docker; give the CLI only the minimal allowlisted env
-// (PATH + DOCKER_* settings). The MCP's own env is inside ARGS as -e flags, so
-// the app's secrets never reach the CLI process or the container.
-const childEnv = filterEnv(process.env);
+// COMMAND is normally docker. ARGS contains only `-e KEY`; values arrive here
+// separately so they never appear in the host process argv.
+let childEnv = {};
+try {
+  childEnv = buildBridgeChildEnv(process.env, process.env.MCP_CHILD_ENV);
+} catch (error) {
+  process.stderr.write('mcp-stdio-bridge: ' + (error instanceof Error ? error.message : String(error)) + '\n');
+  process.exitCode = 1;
+}
 
 function runtimePhase(phase, details = {}) {
   const event = { type: 'phase', phase };

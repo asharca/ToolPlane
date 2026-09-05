@@ -188,5 +188,5 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
     }
   }
 
-  return text;
+  throw new Error(`Agent reached the ${maxSteps}-turn tool-call limit before completing its response.`);
 }

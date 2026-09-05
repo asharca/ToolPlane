@@ -38,7 +38,7 @@ export function DashboardChrome({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const t = useTranslations('console.sidebar');
 

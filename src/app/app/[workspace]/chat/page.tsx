@@ -327,12 +327,13 @@ export default async function WorkspaceChatPage({
               createdAt: formatDate(activeThread.createdAt, timeZone, locale),
               lastMessageAt: activeThread.messages.at(-1)?.createdAt
                 ? formatDate(activeThread.messages.at(-1)!.createdAt, timeZone, locale)
-                : null,
+              : null,
             });
           }
           return {
             id: assistant.id,
             name: assistant.name,
+            pinned: assistant.pinned,
             systemPrompt: assistant.systemPrompt,
             modelProviderId: assistant.modelProviderId,
             model: assistant.model,

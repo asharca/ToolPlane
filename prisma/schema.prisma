@@ -443,13 +443,14 @@ model Agent {
   workspaceId             String
   workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name                    String
+  pinned                  Boolean                  @default(false)
   slug                    String
   systemPrompt            String?
   providerId              String?
   provider                ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model                   String?
   runtimeKind             String
-  maxSteps                Int                      @default(8)
+  maxSteps                Int                      @default(100)
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]
@@ -872,13 +873,10 @@ model WorkSession {
   runtimeKind        String
   runtimeSnapshot    Json?
   status             String         @default("queued")
-  maxSteps           Int            @default(12)
-  stepCount          Int            @default(0)
   waitingQuestion    String?
   result             String?
   artifacts          Json?
   error              String?
-  deadlineAt         DateTime?
   startedAt          DateTime?
   completedAt        DateTime?
   cancelRequestedAt  DateTime?
@@ -1024,11 +1022,12 @@ model ChatAssistant {
   workspaceId             String
   workspace               Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name                    String
+  pinned                  Boolean                 @default(false)
   systemPrompt            String?
   modelProviderId         String?
   modelProvider           ModelProvider?          @relation(fields: [modelProviderId], references: [id], onDelete: SetNull)
   model                   String?
-  maxSteps                Int                     @default(8)
+  maxSteps                Int                     @default(100)
   marketTemplateReleaseId String?
   marketTemplateRelease   MarketRelease?          @relation("ChatAssistantMarketTemplate", fields: [marketTemplateReleaseId], references: [id], onDelete: SetNull)
   sourceMarketListing     MarketListing?          @relation("MarketListingSourceChatAssistant")
@@ -1148,7 +1147,7 @@ model AgentEndpointRevision {
   endpoint          AgentEndpoint             @relation("EndpointRevisions", fields: [endpointId], references: [id], onDelete: Cascade)
   version           Int
   systemPrompt      String
-  maxSteps          Int                       @default(8)
+  maxSteps          Int                       @default(100)
   runtimeImage      String
   providerIds       String[]                  @default([])
   deploymentIds     String[]                  @default([])

@@ -12,7 +12,17 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 
-export function SettingsModal({ title, fallbackHref, children }: { title: string; fallbackHref: string; children: ReactNode }) {
+export function SettingsModal({
+  title,
+  fallbackHref,
+  compact = false,
+  children,
+}: {
+  title: string;
+  fallbackHref: string;
+  compact?: boolean;
+  children: ReactNode;
+}) {
   const router = useRouter();
   const returnTo = useSearchParams().get('returnTo');
   const closeHref = returnTo?.startsWith('/app/') && !returnTo.includes('/settings')
@@ -26,7 +36,9 @@ export function SettingsModal({ title, fallbackHref, children }: { title: string
         <DialogOverlay className="!bg-black/40" />
         <DialogContent
           aria-describedby={undefined}
-          className="ui-panel !inset-0 !flex !h-full !w-full !max-h-none !max-w-none !translate-y-0 !flex-col !gap-0 !overflow-hidden !rounded-none !p-0 !shadow-2xl sm:!inset-auto sm:!left-1/2 sm:!top-1/2 sm:!h-[calc(100dvh-2rem)] sm:!w-[calc(100vw-2rem)] sm:!max-w-6xl sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!rounded-2xl sm:!p-0"
+          className={`ui-panel !inset-0 !flex !h-full !w-full !max-h-none !max-w-none !translate-y-0 !flex-col !gap-0 !overflow-hidden !rounded-none !p-0 !shadow-2xl sm:!inset-auto sm:!left-1/2 sm:!top-1/2 sm:!w-[calc(100vw-2rem)] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!rounded-2xl sm:!p-0 ${compact
+            ? 'sm:!h-[min(600px,76vh)] sm:!max-w-[720px]'
+            : 'sm:!h-[calc(100dvh-2rem)] sm:!max-w-6xl'}`}
         >
           <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
             <DialogTitle className="text-sm">{title}</DialogTitle>

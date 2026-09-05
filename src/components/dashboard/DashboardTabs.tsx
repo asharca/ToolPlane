@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import type { DragEvent, ReactNode, Ref } from 'react';
+import type { ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -19,20 +19,17 @@ import {
   Boxes,
   Brain,
   Cpu,
-  ExternalLink,
   MessageSquare,
   TerminalSquare,
   LibraryBig,
-  Pin,
   Plug,
-  Plus,
   Settings,
   Store,
   Users,
   Wrench,
-  X,
   type LucideIcon,
 } from 'lucide-react';
+import { WorkspaceTabBar } from '@asharca/ui';
 import { DashboardHeaderControls } from './DashboardHeaderControls';
 
 export const DASHBOARD_TAB_QUERY_PARAM = '__dashboardTab';
@@ -370,45 +367,31 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
   const { activeTabId, base, closeTab, newTab, openInNewWindow, reorderTabs, selectTab, tabs, togglePinned } = useDashboardTabs();
   const sidebarT = useTranslations('console.sidebar');
   const tabT = useTranslations('console.tabs');
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const activeRef = useRef<HTMLButtonElement>(null);
   const visibleTabs = orderedTabs(tabs);
-  useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [activeTabId, visibleTabs.length]);
 
   return (
-    <nav aria-label={tabT('navigation')} className="flex h-11 shrink-0 bg-shell px-2">
-      <ol className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1 [&::-webkit-scrollbar]:hidden">
-        {visibleTabs.map((tab) => {
-          const definition = definitionForHref(tab.href, base);
-          return <DashboardTabButton key={tab.id} tab={tab} active={tab.id === activeTabId} label={sidebarT(definition.labelKey)} Icon={definition.icon} canClose={tabs.length > 1} draggingId={draggingId} onClose={closeTab} onDragChange={setDraggingId} onNewWindow={openInNewWindow} onReorder={reorderTabs} onSelect={selectTab} onTogglePinned={togglePinned} tabT={tabT} activeButtonRef={tab.id === activeTabId ? activeRef : undefined} />;
-        })}
-        <li className="shrink-0">
-          <button type="button" aria-label={tabT('new')} title={tabT('new')} onClick={newTab} className="ui-button-ghost ui-icon-button"><Plus className="size-4" /></button>
-        </li>
-      </ol>
-      <DashboardHeaderControls canInstall={canInstall} />
-    </nav>
-  );
-}
-
-function DashboardTabButton({ tab, active, label, Icon, canClose, draggingId, onClose, onDragChange, onNewWindow, onReorder, onSelect, onTogglePinned, tabT, activeButtonRef }: {
-  tab: DashboardWorkspaceTab; active: boolean; label: string; Icon: LucideIcon; canClose: boolean; draggingId: string | null;
-  onClose: (id: string) => void; onDragChange: (id: string | null) => void; onNewWindow: (id: string) => void; onReorder: (sourceId: string, targetId: string) => void; onSelect: (id: string) => void; onTogglePinned: (id: string) => void; tabT: ReturnType<typeof useTranslations<'console.tabs'>>; activeButtonRef?: Ref<HTMLButtonElement>;
-}) {
-  const dragAllowed = Boolean(draggingId && draggingId !== tab.id);
-  const controls = active || draggingId === tab.id;
-  const stop = (event: React.MouseEvent<HTMLButtonElement>) => event.stopPropagation();
-  return (
-    <li data-tab-id={tab.id} data-active={active ? 'true' : undefined} draggable onDragEnd={() => onDragChange(null)} onDragStart={(event: DragEvent<HTMLLIElement>) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', tab.id); onDragChange(tab.id); }} onDragOver={(event) => { if (dragAllowed) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }} onDrop={(event) => { if (draggingId && draggingId !== tab.id) { event.preventDefault(); onReorder(draggingId, tab.id); onDragChange(null); } }} className={`group flex h-[30px] min-w-24 max-w-56 shrink-0 items-center rounded-[10px] transition-[background-color,color,transform] duration-150 ${active ? 'bg-background text-foreground ring-1 ring-border/70' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'} ${draggingId === tab.id ? 'scale-[0.98] opacity-50' : ''}`}>
-      <button ref={activeButtonRef} type="button" aria-current={active ? 'page' : undefined} title={label} onAuxClick={(event) => { if (event.button === 1) onClose(tab.id); }} onClick={() => onSelect(tab.id)} onDoubleClick={() => onClose(tab.id)} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-xs"><Icon className="size-3.5 shrink-0" /><span className="truncate">{label}</span></button>
-      <div className="mr-1 flex shrink-0 items-center">
-        <button type="button" aria-pressed={tab.pinned} aria-label={tab.pinned ? tabT('unpin', { label }) : tabT('pin', { label })} title={tab.pinned ? tabT('unpin', { label }) : tabT('pin', { label })} onClick={(event) => { stop(event); onTogglePinned(tab.id); }} className={`flex size-[18px] items-center justify-center rounded-sm transition-colors hover:bg-foreground/10 ${tab.pinned ? (controls ? 'bg-brand-soft text-accent-foreground' : 'bg-brand-soft/50 text-accent-foreground/60 group-hover:bg-brand-soft group-hover:text-accent-foreground group-focus-within:bg-brand-soft group-focus-within:text-accent-foreground') : (controls ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100')}`}><Pin className={`size-3 ${tab.pinned ? 'fill-current' : ''}`} /></button>
-        <div className={`flex items-center transition-opacity ${controls ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
-          <button type="button" aria-label={tabT('openInNewWindow', { label })} title={tabT('openInNewWindow', { label })} onClick={(event) => { stop(event); onNewWindow(tab.id); }} className="flex size-[18px] items-center justify-center rounded-sm hover:bg-foreground/10"><ExternalLink className="size-3" /></button>
-          {canClose ? <button type="button" aria-label={tabT('close', { label })} title={tabT('close', { label })} onClick={(event) => { stop(event); onClose(tab.id); }} className="flex size-[18px] items-center justify-center rounded-sm hover:bg-foreground/10"><X className="size-3" /></button> : null}
-        </div>
-      </div>
-    </li>
+    <WorkspaceTabBar
+      activeTabId={activeTabId}
+      tabs={visibleTabs.map((tab) => {
+        const definition = definitionForHref(tab.href, base);
+        return { ...tab, icon: definition.icon, label: sidebarT(definition.labelKey) };
+      })}
+      labels={{
+        navigation: tabT('navigation'),
+        newTab: tabT('new'),
+        pin: (label) => tabT('pin', { label }),
+        unpin: (label) => tabT('unpin', { label }),
+        openInNewWindow: (label) => tabT('openInNewWindow', { label }),
+        close: (label) => tabT('close', { label }),
+      }}
+      onClose={closeTab}
+      onNewTab={newTab}
+      onOpenInNewWindow={openInNewWindow}
+      onReorder={reorderTabs}
+      onSelect={selectTab}
+      onTogglePinned={togglePinned}
+      actions={<DashboardHeaderControls canInstall={canInstall} />}
+    />
   );
 }
 

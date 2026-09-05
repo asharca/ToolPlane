@@ -374,6 +374,35 @@ describe('Hermes sandbox lifecycle isolation', () => {
     }));
   });
 
+  it('checks gateway health after an asynchronous Hermes start', async () => {
+    const agent = deletingAgent();
+    agent.runtime.status = 'stopped';
+    agent.runtime.sandbox.deployment.status = 'stopped';
+    mocks.getAgent.mockResolvedValue(agent);
+    mocks.livePort.mockReturnValue(null);
+
+    await expect(syncHermesRuntime('workspace-1', agent.id)).resolves.toEqual({
+      status: 'provisioning',
+    });
+    const options = mocks.startProcess.mock.calls.at(-1)?.[2] as {
+      onReady?: () => Promise<void>;
+    };
+    expect(options.onReady).toEqual(expect.any(Function));
+
+    mocks.livePort.mockReturnValue(4312);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      gateway_state: 'running',
+      pid: 141,
+    }), { status: 200 })));
+    await options.onReady?.();
+
+    expect(mocks.agentRuntimeUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'runtime-1', workspaceId: 'workspace-1' },
+      data: { status: 'running', lastError: null },
+    });
+    vi.unstubAllGlobals();
+  });
+
   it('fails a rebuild without installing or restarting when Docker cannot remove the old container', async () => {
     const agent = deletingAgent();
     agent.runtime.sandbox.deployment.status = 'stopped';
@@ -659,7 +688,11 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'source-deployment',
       { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'workspace-1' },
+      expect.objectContaining({
+        awaitReady: false,
+        workspaceId: 'workspace-1',
+        onReady: expect.any(Function),
+      }),
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -737,7 +770,11 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'source-deployment',
       { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'workspace-1' },
+      expect.objectContaining({
+        awaitReady: false,
+        workspaceId: 'workspace-1',
+        onReady: expect.any(Function),
+      }),
     );
   });
 
@@ -953,7 +990,11 @@ describe('Hermes sandbox lifecycle isolation', () => {
     expect(mocks.startProcess).toHaveBeenCalledWith(
       'source-deployment',
       { kind: 'sandbox' },
-      { awaitReady: false, workspaceId: 'workspace-1' },
+      expect.objectContaining({
+        awaitReady: false,
+        workspaceId: 'workspace-1',
+        onReady: expect.any(Function),
+      }),
     );
     expect(mocks.deploymentUpdateMany).toHaveBeenCalledWith({
       where: {

@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   ADMIN_MARKET_LISTING_STATUSES,
   AdminMarketCatalogError,
@@ -49,8 +50,8 @@ function assistantTemplateInput(formData: FormData) {
   if (!name || !author || !SLUG_RE.test(slug)) return { error: 'identity' as const };
   if (
     !Number.isInteger(maxSteps)
-    || maxSteps < 1
-    || maxSteps > 20
+    || maxSteps < AGENT_STEP_BOUNDS.min
+    || maxSteps > AGENT_STEP_BOUNDS.max
     || Boolean(modelFormat) !== Boolean(model)
     || (modelFormat && !ASSISTANT_MODEL_FORMATS.has(modelFormat))
   ) return { error: 'config' as const };

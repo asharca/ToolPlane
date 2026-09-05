@@ -85,7 +85,7 @@ describe('admin marketplace catalog actions', () => {
     formData.set('status', 'published');
     formData.set('isFeatured', 'on');
     formData.set('systemPrompt', 'Cite sources.');
-    formData.set('maxSteps', '8');
+    formData.set('maxSteps', '1000');
     formData.set('modelFormat', 'openai-compatible');
     formData.set('model', 'gpt-test');
     formData.append('categoryIds', 'category-1');
@@ -105,12 +105,25 @@ describe('admin marketplace catalog actions', () => {
       status: 'published',
       isFeatured: true,
       systemPrompt: 'Cite sources.',
-      maxSteps: 8,
+      maxSteps: 1000,
       modelFormat: 'openai-compatible',
       model: 'gpt-test',
       serverIds: ['server-1'],
     }, 'admin-1');
     expect(mocks.redirect).toHaveBeenCalledWith('/admin/assistants');
+  });
+
+  it('rejects assistant templates above the shared tool-loop ceiling', async () => {
+    const formData = new FormData();
+    formData.set('directorySlug', 'research-helper');
+    formData.set('name', 'Research helper');
+    formData.set('author', 'ToolPlane');
+    formData.set('maxSteps', '1001');
+
+    await expect(createAssistantTemplateAdminAction({}, formData)).resolves.toEqual({
+      error: 'errorInvalidAssistantTemplateConfig',
+    });
+    expect(mocks.createAssistant).not.toHaveBeenCalled();
   });
 
   it('publishes a new assistant template version and deletes only by explicit action', async () => {

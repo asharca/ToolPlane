@@ -4,6 +4,7 @@ import { AdminPage, AdminPageHeader } from '@/components/admin/AdminUI';
 import { listCatalogAgentResources } from '@/lib/admin/agent-market';
 import { listCategories } from '@/lib/admin/categories';
 import { createAssistantTemplateAdminAction } from '@/lib/admin/market-catalog-actions';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { requireAdmin } from '@/lib/auth/admin';
 
 export const dynamic = 'force-dynamic';
@@ -30,7 +31,7 @@ export default async function NewAssistantTemplatePage() {
           author: 'ToolPlane',
           curated: true,
           status: 'published',
-          maxSteps: 8,
+          maxSteps: AGENT_STEP_BOUNDS.default,
         }}
         categories={categories}
         servers={resources.servers}

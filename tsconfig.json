@@ -21,7 +21,7 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@toolplane/ui": ["./packages/ui/src/index.ts"]
+      "@asharca/ui": ["./packages/ui/src/index.ts"]
     }
   },
   "include": [

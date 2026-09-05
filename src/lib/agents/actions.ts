@@ -85,6 +85,8 @@ import { implementedAgentRuntimeKind } from '@/lib/agents/runtime-kind';
 import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 import { db } from '@/lib/db';
 import { deleteManagedAgent } from '@/lib/agents/deletion';
+import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
+import { startProcess } from '@/lib/process/supervisor';
 
 async function authorizedWorkspace(slug: string) {
   const user = await getCurrentUser();
@@ -162,6 +164,13 @@ function providerFormValue(format: string, baseUrl: string) {
   return { format: selectedFormat, baseUrl };
 }
 
+function agentMaxSteps(formData: FormData): number {
+  const value = Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default);
+  return Number.isFinite(value)
+    ? Math.min(AGENT_STEP_BOUNDS.max, Math.max(AGENT_STEP_BOUNDS.min, Math.trunc(value)))
+    : AGENT_STEP_BOUNDS.default;
+}
+
 function cloneOptionsFromFormData(formData: FormData) {
   // Existing integrations can keep posting the old minimal form. Only forms
   // that opt into the scoped-clone UI override the safe historical defaults.
@@ -183,6 +192,64 @@ function modelFetchError(result: Exclude<Awaited<ReturnType<typeof fetchProvider
   if (result.reason === 'status') return `Provider returned ${result.status}.`;
   if (result.reason === 'empty') return 'No models found at that base URL.';
   return 'Could not reach the provider base URL.';
+}
+
+async function startCreatedAgentRuntime(workspaceId: string, agentId: string) {
+  let deploymentId: string | null = null;
+  try {
+    const agent = await db.agent.findFirst({
+      where: { id: agentId, workspaceId },
+      select: {
+        runtimeKind: true,
+        sandboxes: {
+          where: {
+            isDefault: true,
+            sandbox: { workspaceId, deployment: { workspaceId } },
+          },
+          take: 1,
+          select: {
+            sandbox: {
+              select: {
+                deployment: {
+                  select: {
+                    id: true,
+                    serverId: true,
+                    name: true,
+                    source: true,
+                    sourceRef: true,
+                    installCfg: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!agent) throw new Error('The created Agent could not be loaded.');
+    if (agent.runtimeKind === 'hermes') {
+      const result = await syncHermesRuntime(workspaceId, agentId);
+      if (result.error) throw new Error(result.error);
+      return;
+    }
+    const deployment = agent.sandboxes[0]?.sandbox.deployment;
+    if (!deployment) throw new Error('The Agent runtime sandbox was not created.');
+    deploymentId = deployment.id;
+    await startProcess(deployment.id, resolveSpawnSpec(deployment), {
+      awaitReady: false,
+      workspaceId,
+    });
+  } catch (error) {
+    console.error(`Failed to start runtime sandbox for Agent ${agentId}.`, error);
+    if (deploymentId) {
+      await db.deployment.updateMany({
+        where: { id: deploymentId, workspaceId },
+        data: { status: 'error' },
+      }).catch((statusError) => {
+        console.error(`Failed to record runtime startup error for Agent ${agentId}.`, statusError);
+      });
+    }
+  }
 }
 
 async function refreshProviderModels(
@@ -512,6 +579,14 @@ export async function createAgentAction(formData: FormData) {
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
+  if (runtime === 'hermes') {
+    if (providerIds.length === 0) throw new Error('Choose an available model.');
+  } else {
+    const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
+    if (!provider || !model || !provider.models.includes(model)) {
+      throw new Error('Choose an available model.');
+    }
+  }
   const agent = await createConfiguredAgent(
     ctx.ws.id,
     {
@@ -520,7 +595,7 @@ export async function createAgentAction(formData: FormData) {
       providerId,
       providerIds,
       model,
-      maxSteps: AGENT_STEP_BOUNDS.default,
+      maxSteps: agentMaxSteps(formData),
     },
     {
       deploymentIds: formData.getAll('deploymentId').map(String),
@@ -533,13 +608,10 @@ export async function createAgentAction(formData: FormData) {
       hermesImage: String(formData.get('hermesImage') ?? ''),
     },
   );
-  if (runtime === 'hermes') await syncHermesRuntime(ctx.ws.id, agent.id);
+  await startCreatedAgentRuntime(ctx.ws.id, agent.id);
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
-  const returnTo = safeRelativePath(formData.get('returnTo'));
-  const query = new URLSearchParams({ settings: 'agent' });
-  if (returnTo) query.set('returnTo', returnTo);
-  redirect(`/app/${slug}/agents/${agent.id}?${query}`);
+  redirect(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`);
 }
 
 export async function deleteAgentAction(formData: FormData) {
@@ -557,6 +629,23 @@ export async function deleteAgentAction(formData: FormData) {
   revalidatePath(`/app/${slug}/work`);
   revalidatePath(`/app/${slug}/sandboxes`);
   redirect(safeRelativePath(formData.get('returnTo')) ?? `/app/${slug}/agents`);
+}
+
+export async function pinAgentAction(formData: FormData) {
+  const slug = String(formData.get('workspace') ?? '');
+  const agentId = String(formData.get('agentId') ?? '');
+  const value = formData.get('pinned');
+  if (!agentId || (value !== 'true' && value !== 'false')) return;
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
+  const updated = await db.agent.updateMany({
+    where: { id: agentId, workspaceId: ctx.ws.id },
+    data: { pinned: value === 'true' },
+  });
+  if (updated.count !== 1) return;
+  revalidatePath(`/app/${slug}/agents`);
+  revalidatePath(`/app/${slug}/chat`);
+  revalidatePath(`/app/${slug}/work`);
 }
 
 export async function uninstallAgentMarketCopyAction(formData: FormData) {
@@ -590,12 +679,12 @@ export async function cloneAgentAction(formData: FormData) {
         redirect(`${targetPath}?settings=agent`);
       }
     }
-    await syncHermesRuntime(ctx.ws.id, cloned.id);
   }
+  await startCreatedAgentRuntime(ctx.ws.id, cloned.id);
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
   revalidatePath(targetPath);
-  redirect(`${targetPath}?settings=agent`);
+  redirect(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(cloned.id)}`);
 }
 
 function marketTags(value: FormDataEntryValue | null): string[] {
@@ -713,7 +802,7 @@ export async function installAgentFromMarketAction(formData: FormData) {
       name: String(formData.get('name') ?? '').trim().slice(0, 80) || undefined,
     });
     clonedAgentId = result.agent.id;
-    await syncHermesRuntime(ctx.ws.id, clonedAgentId);
+    await startCreatedAgentRuntime(ctx.ws.id, clonedAgentId);
   } catch (error) {
     errorCode = marketErrorCode(error);
   }
@@ -725,7 +814,7 @@ export async function installAgentFromMarketAction(formData: FormData) {
 
   revalidatePath(`/app/${workspaceSlug}/agents`);
   revalidatePath(`/app/${workspaceSlug}/market/agents`);
-  redirect(`/app/${workspaceSlug}/agents/${clonedAgentId}?settings=agent&from=market`);
+  redirect(`/app/${encodeURIComponent(workspaceSlug)}/work?agent=${encodeURIComponent(clonedAgentId)}`);
 }
 
 export async function updateAgentAction(
@@ -741,10 +830,7 @@ export async function updateAgentAction(
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
-  const maxStepsRaw = Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default);
-  const maxSteps = Number.isFinite(maxStepsRaw)
-    ? Math.min(AGENT_STEP_BOUNDS.max, Math.max(AGENT_STEP_BOUNDS.min, maxStepsRaw))
-    : AGENT_STEP_BOUNDS.default;
+  const maxSteps = agentMaxSteps(formData);
 
   try {
     await updateAgent(ctx.ws.id, agentId, {

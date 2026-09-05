@@ -42,17 +42,19 @@ describe('buildSpawnSpec — every custom source runs in a hardened container', 
   });
 
   it('npm/github wrap in node + npx, cache redirected to tmpfs', () => {
-    const { args } = buildSpawnSpec('npm', 'mcp-server-fetch');
+    const { args, env } = buildSpawnSpec('npm', 'mcp-server-fetch');
     expect(args).toContain('node:24-bookworm-slim');
     expect(args.slice(-3)).toEqual(['npx', '-y', 'mcp-server-fetch']);
-    expect(args).toContain('npm_config_cache=/tmp/.npm');
+    expect(args).toContain('npm_config_cache');
+    expect(env.npm_config_cache).toBe('/tmp/.npm');
   });
 
   it('pypi wraps in the uv image + uvx, cache redirected to tmpfs', () => {
-    const { args } = buildSpawnSpec('pypi', 'mcp-server-fetch');
+    const { args, env } = buildSpawnSpec('pypi', 'mcp-server-fetch');
     expect(args.some((a) => a.startsWith('ghcr.io/astral-sh/uv'))).toBe(true);
     expect(args.slice(-2)).toEqual(['uvx', 'mcp-server-fetch']);
-    expect(args).toContain('UV_CACHE_DIR=/tmp/.uv');
+    expect(args).toContain('UV_CACHE_DIR');
+    expect(env.UV_CACHE_DIR).toBe('/tmp/.uv');
   });
 
   it('docker source runs the image directly with its start command', () => {
@@ -60,10 +62,12 @@ describe('buildSpawnSpec — every custom source runs in a hardened container', 
     expect(args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
   });
 
-  it('passes the MCP env in as -e flags (the only env the container gets)', () => {
-    const { args } = buildSpawnSpec('npm', 'pkg', undefined, { TOKEN: 'secret', HOST: 'h' });
-    expect(args).toContain('TOKEN=secret');
-    expect(args).toContain('HOST=h');
+  it('keeps MCP env values out of Docker argv', () => {
+    const { args, env } = buildSpawnSpec('npm', 'pkg', undefined, { TOKEN: 'secret', HOST: 'h' });
+    expect(args).toContain('TOKEN');
+    expect(args).toContain('HOST');
+    expect(args.join(' ')).not.toContain('secret');
+    expect(env).toMatchObject({ TOKEN: 'secret', HOST: 'h' });
   });
 
   it('network "none" swaps the sandbox bridge for full isolation', () => {
@@ -88,7 +92,7 @@ describe('buildSpawnSpec — every custom source runs in a hardened container', 
 describe('resolveSpawnSpec', () => {
   it('runs npx JSON configs with their exact args inside the hardened Node container', () => {
     const commandArgs = ['-y', '@fangjunjie/ssh-mcp-server', '--host', '192.168.1.1'];
-    const { command, args } = buildStdioConfigSpawnSpec(
+    const { command, args, env } = buildStdioConfigSpawnSpec(
       'npx',
       commandArgs,
       { SSH_PASSWORD: 'secret' },
@@ -96,7 +100,9 @@ describe('resolveSpawnSpec', () => {
 
     expect(command).toBe('docker');
     expect(args).toContain('--cap-drop');
-    expect(args).toContain('SSH_PASSWORD=secret');
+    expect(args).toContain('SSH_PASSWORD');
+    expect(args.join(' ')).not.toContain('secret');
+    expect(env.SSH_PASSWORD).toBe('secret');
     const imageIndex = args.indexOf('node:24-bookworm-slim');
     expect(args.slice(imageIndex + 1)).toEqual(['npx', ...commandArgs]);
   });
@@ -199,7 +205,7 @@ describe('resolveSpawnSpec', () => {
       '--pull',
       'always',
       '-e',
-      'API_TOKEN=secret',
+      'API_TOKEN',
     ]));
     expect(args.filter((arg) => arg === '-i')).toHaveLength(1);
     expect(args.filter((arg) => arg === '--rm')).toHaveLength(1);
@@ -336,7 +342,9 @@ describe('resolveSpawnSpec', () => {
     if (spec.kind === 'bridge') {
       expect(spec.command).toBe('docker');
       expect(spec.args).toContain('--cap-drop');
-      expect(spec.args).toContain('TOKEN=x');
+      expect(spec.args).toContain('TOKEN');
+      expect(spec.args.join(' ')).not.toContain('TOKEN=x');
+      expect(spec.containerEnv).toMatchObject({ TOKEN: 'x' });
       expect(spec.args.slice(-3)).toEqual(['mcp/slack', 'node', 'app.js']);
     }
   });

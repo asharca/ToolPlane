@@ -2,7 +2,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterWorkArtifacts,
-  hasWorkBudget,
   requiresWorkApproval,
   scopeWorkToolArgs,
 } from '@/lib/work/coordinator';
@@ -26,13 +25,6 @@ describe('Work coordinator policy', () => {
       '/etc/passwd',
       '',
     ])).toEqual(['/workspace/report.md', '/workspace/dist/result.json']);
-  });
-
-  it('continues ordinary model turns only while the Work budget remains', () => {
-    const now = new Date('2026-08-25T00:00:00.000Z');
-    expect(hasWorkBudget(1, 2, null, now)).toBe(true);
-    expect(hasWorkBudget(2, 2, null, now)).toBe(false);
-    expect(hasWorkBudget(1, 2, new Date('2026-08-24T23:59:59.000Z'), now)).toBe(false);
   });
 
   it('resolves sandbox tool paths from the selected working directory', () => {

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   hermesAssistantSegments: vi.fn(),
   transaction: vi.fn(),
   messageCreate: vi.fn(),
+  resolveAgentTools: vi.fn(),
+  runDedicatedSandboxTurn: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
@@ -31,7 +33,7 @@ vi.mock('@/lib/agents/mutations', () => ({
   appendMessage: mocks.appendMessage,
   ensureConversationRuntimeSession: mocks.ensureConversationRuntimeSession,
 }));
-vi.mock('@/lib/agents/resolve', () => ({ resolveAgentTools: vi.fn() }));
+vi.mock('@/lib/agents/resolve', () => ({ resolveAgentTools: mocks.resolveAgentTools }));
 vi.mock('@/lib/agents/system-prompt', () => ({ assembleSystemPrompt: vi.fn() }));
 vi.mock('@/lib/agents/run', () => ({ buildAgentToolSet: vi.fn() }));
 vi.mock('@/lib/agents/native', () => ({ uiMessagesToPi: vi.fn(), runNativeAgent: vi.fn() }));
@@ -42,6 +44,9 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
 }));
 vi.mock('@/lib/agents/hermes/message-segments', () => ({
   hermesAssistantSegments: mocks.hermesAssistantSegments,
+}));
+vi.mock('@/lib/agents/sandbox-turn', () => ({
+  runDedicatedSandboxTurn: mocks.runDedicatedSandboxTurn,
 }));
 
 import { POST } from '@/app/api/v1/agents/[agentId]/chat/route';
@@ -70,6 +75,8 @@ describe('Chat and Work execution boundary', () => {
       modelProviders: [],
     });
     mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.resolveAgentTools.mockReturnValue({ skills: [], deploymentIds: [] });
+    mocks.runDedicatedSandboxTurn.mockResolvedValue('done');
   });
 
   it('persists and snapshots the selected reasoning effort for Hermes', async () => {
@@ -254,5 +261,51 @@ describe('Chat and Work execution boundary', () => {
 
     expect(response.status).toBe(400);
     expect(await response.text()).toBe('Attachments require a saved conversation.');
+  });
+
+  it('does not persist a failed sandbox turn as an empty assistant reply', async () => {
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: 'conversation-1',
+      title: null,
+      reasoningEffort: null,
+      publicApiConversation: null,
+      workSession: null,
+    });
+    mocks.runDedicatedSandboxTurn.mockRejectedValue(new Error('Runtime failed'));
+
+    const response = await POST(request({
+      conversationId: 'conversation-1',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Hello' }] }],
+    }), context);
+
+    expect(await response.text()).toContain('Runtime failed');
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists a completed sandbox turn', async () => {
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: 'conversation-1',
+      title: null,
+      reasoningEffort: null,
+      publicApiConversation: null,
+      workSession: null,
+    });
+    mocks.runDedicatedSandboxTurn.mockImplementation(async ({ onTextDelta }) => {
+      await onTextDelta?.('OK');
+      return 'OK';
+    });
+
+    const response = await POST(request({
+      conversationId: 'conversation-1',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Hello' }] }],
+    }), context);
+    await response.text();
+
+    expect(mocks.appendMessage).toHaveBeenNthCalledWith(
+      2,
+      'conversation-1',
+      'assistant',
+      [{ type: 'text', text: 'OK', state: 'done' }],
+    );
   });
 });

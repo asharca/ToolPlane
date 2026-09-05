@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { Type, type ToolCall } from '@earendil-works/pi-ai';
 import { db } from '@/lib/db';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
+import { generateWorkSessionTitle } from '@/lib/agents/conversation-naming';
 import { getAgentForRun } from '@/lib/agents/queries';
 import { ensureConversationRuntimeSession } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
@@ -208,15 +209,6 @@ export function requiresWorkApproval(toolName: string): boolean {
   const name = toolName.split('__').at(-1) ?? toolName;
   if (['knowledge_search', 'sandbox_info', 'skill_list_attached', 'skill_read_file'].includes(name)) return false;
   return !/^(?:read|get|list|search|find|stat|inspect|describe|query|lookup|fetch)(?:_|$)/i.test(name);
-}
-
-export function hasWorkBudget(
-  stepCount: number,
-  maxSteps: number,
-  deadlineAt: Date | null,
-  now = new Date(),
-) {
-  return stepCount < maxSteps && (!deadlineAt || deadlineAt > now);
 }
 
 function abortError(signal: AbortSignal) {
@@ -968,6 +960,11 @@ async function executeWork(workSessionId: string) {
     });
     await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming());
     tracePersisted = true;
+    try {
+      await generateWorkSessionTitle(work.workspaceId, work.agentId, work.conversationId);
+    } catch (error) {
+      console.warn(`[work] ${work.id} title generation failed`, error);
+    }
     if (finalOutcome.kind === 'complete') {
       await db.workSession.updateMany({
         where: { id: work.id, status: 'running' },
@@ -1054,26 +1051,13 @@ async function claimNextWork(): Promise<string | null> {
     const work = await db.workSession.findFirst({
       where: { status: 'queued' },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, stepCount: true, maxSteps: true, deadlineAt: true, startedAt: true },
+      select: { id: true, startedAt: true },
     });
     if (!work) return null;
-    if (!hasWorkBudget(work.stepCount, work.maxSteps, work.deadlineAt)) {
-      await db.workSession.updateMany({
-        where: { id: work.id, status: 'queued' },
-        data: {
-          status: 'failed',
-          error: work.stepCount >= work.maxSteps ? 'Work step budget exhausted.' : 'Work deadline exceeded.',
-          completedAt: new Date(),
-        },
-      });
-      finishWorkOutput(work.id);
-      continue;
-    }
     const claimed = await db.workSession.updateMany({
-      where: { id: work.id, status: 'queued', stepCount: work.stepCount },
+      where: { id: work.id, status: 'queued' },
       data: {
         status: 'running',
-        stepCount: { increment: 1 },
         error: null,
         waitingQuestion: null,
         ...(!work.startedAt ? { startedAt: new Date() } : {}),

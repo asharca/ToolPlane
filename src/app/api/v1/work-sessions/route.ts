@@ -32,7 +32,6 @@ export async function POST(req: Request) {
     sandboxId?: unknown;
     task?: unknown;
     acceptanceCriteria?: unknown;
-    maxSteps?: unknown;
     workingDirectory?: unknown;
     attachmentIds?: unknown;
     reasoningEffort?: unknown;
@@ -58,12 +57,6 @@ export async function POST(req: Request) {
     typeof body.acceptanceCriteria !== 'string' || body.acceptanceCriteria.length > 20_000
   )) {
     return Response.json({ error: 'Invalid acceptanceCriteria' }, { status: 400 });
-  }
-  if (body.maxSteps !== undefined && (
-    typeof body.maxSteps !== 'number' || !Number.isInteger(body.maxSteps)
-    || body.maxSteps < 1 || body.maxSteps > 100
-  )) {
-    return Response.json({ error: 'Invalid maxSteps' }, { status: 400 });
   }
   const reasoningEffort = body.reasoningEffort === undefined
     ? undefined
@@ -140,7 +133,6 @@ export async function POST(req: Request) {
       sandboxId: body.sandboxId,
       task: body.task,
       ...(body.acceptanceCriteria !== undefined ? { acceptanceCriteria: body.acceptanceCriteria } : {}),
-      ...(body.maxSteps !== undefined ? { maxSteps: body.maxSteps } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(hermesSelection ? { hermesSelection } : {}),
       workingDirectory,

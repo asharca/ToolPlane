@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { Prisma } from '@prisma/client';
+import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { db } from '@/lib/db';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
 import {
@@ -164,7 +165,11 @@ export async function createAdminAssistantTemplate(
     throw new AdminMarketCatalogError('invalid_status');
   }
   if (input.categoryIds.length === 0) throw new AdminMarketCatalogError('invalid_categories');
-  if (input.maxSteps < 1 || input.maxSteps > 20 || Boolean(input.modelFormat) !== Boolean(input.model)) {
+  if (
+    input.maxSteps < AGENT_STEP_BOUNDS.min
+    || input.maxSteps > AGENT_STEP_BOUNDS.max
+    || Boolean(input.modelFormat) !== Boolean(input.model)
+  ) {
     throw new AdminMarketCatalogError('invalid_config');
   }
   try {
@@ -298,7 +303,11 @@ export async function updateAdminAssistantTemplate(
     throw new AdminMarketCatalogError('invalid_status');
   }
   if (input.categoryIds.length === 0) throw new AdminMarketCatalogError('invalid_categories');
-  if (input.maxSteps < 1 || input.maxSteps > 20 || Boolean(input.modelFormat) !== Boolean(input.model)) {
+  if (
+    input.maxSteps < AGENT_STEP_BOUNDS.min
+    || input.maxSteps > AGENT_STEP_BOUNDS.max
+    || Boolean(input.modelFormat) !== Boolean(input.model)
+  ) {
     throw new AdminMarketCatalogError('invalid_config');
   }
   return db.$transaction(async (tx) => {

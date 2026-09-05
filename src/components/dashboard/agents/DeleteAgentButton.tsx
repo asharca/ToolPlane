@@ -31,7 +31,7 @@ export function DeleteAgentButton({
         triggerTitle={t('deleteAgent')}
         confirmLabel={t('confirmDelete')}
         cancelLabel={t('cancel')}
-        prompt={prompt ?? t('deleteThisAgentAndAllItsConversations')}
+        prompt={prompt ?? t('deleteThisAgentAndItsSandboxesAndAllItsConversations')}
         pendingLabel={t('deleting')}
         triggerClassName={compact
           ? 'inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-red-200 p-0 text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30'

@@ -53,21 +53,23 @@ describe('chat bounded-context input', () => {
     })).toBeNull();
   });
 
-  it('caps assistant tool steps at the UI limit', () => {
+  it('uses the shared assistant tool-call limit', () => {
     expect(CreateChatAssistantSchema.safeParse({
       workspaceId: 'ws-1',
       name: 'Helper',
-      maxSteps: 20,
+      maxSteps: 1000,
     }).success).toBe(true);
     expect(CreateChatAssistantSchema.safeParse({
       workspaceId: 'ws-1',
       name: 'Helper',
-      maxSteps: 21,
+      maxSteps: 1001,
     }).success).toBe(false);
   });
 
-  it('accepts moving a thread to another assistant', () => {
+  it('accepts pinning an assistant and moving a thread', () => {
+    expect(UpdateChatAssistantSchema.parse({ pinned: false })).toEqual({ pinned: false });
     expect(UpdateChatThreadSchema.parse({ assistantId: 'assistant-2' }))
       .toEqual({ assistantId: 'assistant-2' });
+    expect(UpdateChatThreadSchema.safeParse({ pinned: true }).success).toBe(false);
   });
 });

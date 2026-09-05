@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
-import { hasMermaidFence } from '@toolplane/ui';
+import { hasMermaidFence } from '@asharca/ui';
 
 const MermaidAssistantMarkdown = lazy(() => import('./MermaidAssistantMarkdown'));
 

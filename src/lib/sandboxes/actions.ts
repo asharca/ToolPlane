@@ -83,7 +83,11 @@ async function uniqueSlug(workspaceId: string, name: string): Promise<string> {
 async function sandboxInWorkspace(sandboxId: string, workspaceId: string) {
   return db.sandbox.findFirst({
     where: { id: sandboxId, workspaceId },
-    include: { deployment: true, snapshots: true },
+    include: {
+      deployment: true,
+      snapshots: true,
+      agentLinks: { select: { agentId: true } },
+    },
   });
 }
 
@@ -1072,7 +1076,7 @@ export async function deleteSandboxAction(formData: FormData) {
   try {
     deleted = Boolean(await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
       const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
-      if (!sandbox || sandbox.kind === 'hermes') return false;
+      if (!sandbox || sandbox.kind === 'hermes' || sandbox.agentLinks.length > 0) return false;
 
       if (sandbox.kind === 'connector') {
         await stopProcess(sandbox.deploymentId);

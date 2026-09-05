@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { StatusBadge as UiStatusBadge } from '@toolplane/ui';
+import { StatusBadge as UiStatusBadge } from '@asharca/ui';
 
 const STYLES: Record<string, { dot: string; labelKey: string }> = {
   running: { dot: 'bg-emerald-500', labelKey: 'statusRunning' },
