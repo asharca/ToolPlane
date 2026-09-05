@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef } from 'react';
-import { NavigationTabs, Tab as UiTab } from '@toolplane/ui';
+import { NavigationTabs, Tab as UiTab } from '@asharca/ui';
 
 export type Tab = { key: string; label: string; count?: number };
 

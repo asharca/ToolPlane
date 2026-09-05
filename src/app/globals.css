@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@toolplane/ui/styles.css";
+@import "@asharca/ui/styles.css";
 @import "@xterm/xterm/css/xterm.css";
 
 /* Let Tailwind detect the utility classes baked into Streamdown's chat markdown renderer. */

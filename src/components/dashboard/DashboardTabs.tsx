@@ -29,7 +29,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { WorkspaceTabBar } from '@toolplane/ui';
+import { WorkspaceTabBar } from '@asharca/ui';
 import { DashboardHeaderControls } from './DashboardHeaderControls';
 
 export const DASHBOARD_TAB_QUERY_PARAM = '__dashboardTab';

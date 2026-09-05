@@ -1,1 +1,1 @@
-export { ContentPage, type ContentPageProps } from '@toolplane/ui';
+export { ContentPage, type ContentPageProps } from '@asharca/ui';

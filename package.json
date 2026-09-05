@@ -22,7 +22,7 @@
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
-    "@toolplane/ui": "workspace:*",
+    "@asharca/ui": "workspace:*",
     "@ai-sdk/react": "^3.0.211",
     "@assistant-ui/react": "0.14.26",
     "@assistant-ui/react-ai-sdk": "1.3.40",

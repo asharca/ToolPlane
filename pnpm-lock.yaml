@@ -11,6 +11,9 @@ importers:
       '@ai-sdk/react':
         specifier: ^3.0.211
         version: 3.0.211(react@19.2.4)(zod@4.4.3)
+      '@asharca/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@assistant-ui/react':
         specifier: 0.14.26
         version: 0.14.26(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
@@ -44,9 +47,6 @@ importers:
       '@streamdown/mermaid':
         specifier: ^1.0.2
         version: 1.0.2(react@19.2.4)
-      '@toolplane/ui':
-        specifier: workspace:*
-        version: link:packages/ui
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0

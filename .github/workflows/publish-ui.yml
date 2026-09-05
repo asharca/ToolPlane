@@ -22,7 +22,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
@@ -33,7 +32,7 @@ jobs:
         run: |
           node --input-type=module -e "import { readFileSync } from 'node:fs'; const manifest = JSON.parse(readFileSync('packages/ui/package.json', 'utf8')); if (!manifest.license) throw new Error('packages/ui/package.json requires a license before public release'); if (process.env.TAG_NAME !== 'ui-v' + manifest.version) throw new Error('Expected ui-v' + manifest.version + ', received ' + process.env.TAG_NAME);"
 
-      - run: pnpm --filter @toolplane/ui build
+      - run: pnpm --filter @asharca/ui build
       - run: pnpm vitest run tests/unit/ui-package.test.tsx
 
       # npm publishes with GitHub Actions OIDC; pnpm remains the workspace manager.
@@ -43,4 +42,4 @@ jobs:
 
       - name: Publish to npm
         working-directory: packages/ui
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts --provenance

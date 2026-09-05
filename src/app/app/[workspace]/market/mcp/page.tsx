@@ -29,7 +29,7 @@ import {
   DashboardSection,
 } from '@/components/dashboard/DashboardUI';
 import { NativeSelect } from '@/components/ui/NativeSelect';
-import { Tab, TabList } from '@toolplane/ui';
+import { Tab, TabList } from '@asharca/ui';
 
 export const dynamic = 'force-dynamic';
 

@@ -11,7 +11,7 @@ import {
   Panel,
   Section,
   Toolbar,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 
 type Icon = ComponentType<{ className?: string }>;
 

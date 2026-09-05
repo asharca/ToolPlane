@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
-import { SidebarActionRail } from '@toolplane/ui';
+import { SidebarActionRail } from '@asharca/ui';
 import {
   Activity,
   Archive,

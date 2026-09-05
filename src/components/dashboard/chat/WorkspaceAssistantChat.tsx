@@ -9,7 +9,7 @@ import {
   ChatShell,
   SearchInput,
   SidebarActionRail,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 import {
   Bot,
   ChevronDown,

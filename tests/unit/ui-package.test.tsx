@@ -32,7 +32,7 @@ import {
   Textarea,
   WorkspaceTabBar,
   type ConversationSidebarGroup,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 
 const groups: ConversationSidebarGroup[] = [
   {
@@ -50,12 +50,13 @@ const groups: ConversationSidebarGroup[] = [
   },
 ];
 
-describe('@toolplane/ui', () => {
+describe('@asharca/ui', () => {
   it('declares standalone npm package metadata', () => {
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'packages/ui/package.json'), 'utf8'));
 
     expect(manifest).toMatchObject({
-      name: '@toolplane/ui',
+      name: '@asharca/ui',
+      license: 'MIT',
       main: './dist/index.js',
       types: './dist/index.d.ts',
       engines: { node: '>=20' },
@@ -66,7 +67,8 @@ describe('@toolplane/ui', () => {
         directory: 'packages/ui',
       },
     });
-    expect(manifest.files).toEqual(expect.arrayContaining(['dist', 'src/styles.css', 'README.md']));
+    expect(manifest.files).toEqual(expect.arrayContaining(['dist', 'src/styles.css', 'README.md', 'LICENSE']));
+    expect(readFileSync(resolve(process.cwd(), 'packages/ui/LICENSE'), 'utf8')).toContain('MIT License');
     expect(manifest.peerDependencies['@assistant-ui/react']).toBe('^0.14.26');
     expect(manifest.peerDependenciesMeta).toBeUndefined();
   });

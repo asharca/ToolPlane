@@ -1,12 +1,12 @@
-# @toolplane/ui
+# @asharca/ui
 
 Reusable React controls, chat thread, conversation sidebar, and responsive shell extracted from ToolPlane. Routing, persistence, authentication, and API handlers stay in the host application.
 
 ## Install
 
 ```bash
-pnpm add @toolplane/ui
-# or: npm install @toolplane/ui
+pnpm add @asharca/ui
+# or: npm install @asharca/ui
 ```
 
 The package uses React 19 and Tailwind CSS 4. `ChatThread` additionally accepts an assistant-ui `AssistantRuntime`, so transport and persistence stay in the host application.
@@ -15,7 +15,7 @@ Import the stylesheet once from the host application's global Tailwind styleshee
 
 ```css
 @import "tailwindcss";
-@import "@toolplane/ui/styles.css";
+@import "@asharca/ui/styles.css";
 ```
 
 The package stylesheet uses Tailwind's `@source` directive to scan the emitted `dist` files. Importing only the React components will leave their utility classes ungenerated.
@@ -27,7 +27,7 @@ Import lightweight controls without loading the chat runtime:
 ```tsx
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Button, IconButton, Input, SearchInput } from '@toolplane/ui/controls';
+import { Button, IconButton, Input, SearchInput } from '@asharca/ui/controls';
 
 export function Toolbar() {
   const [query, setQuery] = useState('');
@@ -49,13 +49,13 @@ export function Toolbar() {
 
 ## Modules
 
-- `@toolplane/ui/controls` — buttons and native form controls.
-- `@toolplane/ui/forms` — submit, confirm-submit, and copy actions.
-- `@toolplane/ui/layout` — page, header, toolbar, section, panel, card, empty state, entity, and data table.
-- `@toolplane/ui/navigation` — tabs, chips, and pagination layout.
-- `@toolplane/ui/feedback` — badges, status, alerts, and spinners.
-- `@toolplane/ui/dialog` and `@toolplane/ui/overlays` — Dialog, Popover, Tooltip, Context Menu, and Hover Card primitives.
-- `@toolplane/ui/chat-shell`, `@toolplane/ui/chat-thread`, and `@toolplane/ui/conversation-sidebar` — chat composition.
+- `@asharca/ui/controls` — buttons and native form controls.
+- `@asharca/ui/forms` — submit, confirm-submit, and copy actions.
+- `@asharca/ui/layout` — page, header, toolbar, section, panel, card, empty state, entity, and data table.
+- `@asharca/ui/navigation` — tabs, chips, and pagination layout.
+- `@asharca/ui/feedback` — badges, status, alerts, and spinners.
+- `@asharca/ui/dialog` and `@asharca/ui/overlays` — Dialog, Popover, Tooltip, Context Menu, and Hover Card primitives.
+- `@asharca/ui/chat-shell`, `@asharca/ui/chat-thread`, and `@asharca/ui/conversation-sidebar` — chat composition.
 - The root export also includes `ToolPlaneLogo`, `ContentPage`, `RotatingHeadline`, `SafeStreamdown`, `Breadcrumbs`, `NavigationTabs`, and `WorkspaceTabBar`.
 
 Next.js routing, translations, server actions, authentication, and domain data stay in the host. Pass those through children, labels, callbacks, and thin adapters.
@@ -71,7 +71,7 @@ import {
   ChatThread,
   type ChatThreadProps,
   ConversationSidebar,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 
 export function ChatPage({ runtime }: { runtime: ChatThreadProps['runtime'] }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -114,18 +114,32 @@ Theme defaults are scoped to package component roots. Override them with HSL-cha
 ## Build and pack
 
 ```bash
-pnpm --filter @toolplane/ui build
+pnpm --filter @asharca/ui build
 pnpm --dir packages/ui pack
 ```
 
 ## Release
 
-This package is versioned independently from the ToolPlane application, like
-`packages/ai` in the Pi monorepo. To release a new version, update
-`packages/ui/package.json`, merge it, and create a matching `ui-vX.Y.Z` tag.
-The `publish-ui.yml` workflow builds and publishes that exact version to npm.
+This package is versioned independently from the ToolPlane application. To
+release a new version, update `packages/ui/package.json`, commit and push the
+changes, then tag that release commit. Replace `X.Y.Z` with the package version:
 
-Before the first public release, the maintainer must verify ownership of the
-`@toolplane` npm scope, add a license chosen by the copyright holder, and
-configure npm trusted publishing for `asharca/ToolPlane` and
-`publish-ui.yml`. The workflow uses OIDC rather than a long-lived npm token.
+```bash
+git tag ui-vX.Y.Z
+git push origin ui-vX.Y.Z
+```
+
+The `publish-ui.yml` workflow builds and tests the tagged commit, then publishes
+that exact version to npm with provenance. It does not merge branches or trigger
+the ToolPlane application's separate `vX.Y.Z` release workflow. Published npm
+versions are immutable; use a new version and tag for each release.
+
+Publishing requires access to the `@asharca` npm scope. Configure npm trusted
+publishing for `asharca/ToolPlane` and `publish-ui.yml`, allowing direct
+publishing with `npm publish`. The workflow uses OIDC rather than a long-lived
+npm token. No `NPM_TOKEN` or `NODE_AUTH_TOKEN` repository secret is needed.
+
+## License
+
+MIT. See [LICENSE](./LICENSE). This license applies only to `packages/ui`, not
+to the rest of the ToolPlane repository.

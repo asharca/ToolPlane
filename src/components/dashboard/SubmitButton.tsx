@@ -1,3 +1,3 @@
 'use client';
 
-export { SubmitButton, type SubmitButtonProps } from '@toolplane/ui';
+export { SubmitButton, type SubmitButtonProps } from '@asharca/ui';

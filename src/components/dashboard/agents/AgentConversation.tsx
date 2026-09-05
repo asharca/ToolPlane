@@ -16,7 +16,7 @@ import { Bot, Globe2 } from 'lucide-react';
 import {
   ChatThread,
   type ChatThreadLabels,
-} from '@toolplane/ui';
+} from '@asharca/ui';
 import { ConversationContextUsage } from '@/components/dashboard/ConversationComposer';
 import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import { resolveContextUsage } from '@/lib/context-usage';

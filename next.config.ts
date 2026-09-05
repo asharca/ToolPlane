@@ -52,7 +52,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   output: 'standalone',
   poweredByHeader: false,
-  transpilePackages: ['@toolplane/ui'],
+  transpilePackages: ['@asharca/ui'],
   serverExternalPackages: ['@earendil-works/pi-ai'],
   async headers() {
     return [
