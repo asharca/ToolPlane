@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useChat } from '@ai-sdk/react';
 import {
-  useComposerRuntime,
+  useAui,
   type AppendMessage,
   type AssistantRuntime,
   type AttachmentAdapter,
@@ -41,7 +41,7 @@ function displayUserText(text: string) {
   return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
 }
 
-function toEditableCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
+function toChatCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
   message: AppendMessage,
 ): CreateUIMessage<UI_MESSAGE> {
   const inputParts = [
@@ -151,7 +151,7 @@ function ComposerMcpPromptPickerButton({
   disabled: boolean;
   onError: (message: string | null) => void;
 }) {
-  const composer = useComposerRuntime();
+  const composer = useAui().composer;
   return (
     <McpPromptPickerButton
       apiPath={apiPath}
@@ -538,7 +538,8 @@ export function AgentConversation({
     adapters: { attachments: attachmentAdapter },
     isSendDisabled: !ready || branchBusy || creatingConversation || uploadingAttachments,
     joinStrategy: 'none',
-    ...(allowEdit ? { toCreateMessage: toEditableCreateMessage } : {}),
+    // Preserve internal attachment URLs; the default converter treats relative paths as base64.
+    toCreateMessage: toChatCreateMessage,
   });
   useEffect(() => {
     assistantRuntimeRef.current = runtime;

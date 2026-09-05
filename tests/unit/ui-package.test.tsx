@@ -69,7 +69,8 @@ describe('@asharca/ui', () => {
     });
     expect(manifest.files).toEqual(expect.arrayContaining(['dist', 'src/styles.css', 'README.md', 'LICENSE']));
     expect(readFileSync(resolve(process.cwd(), 'packages/ui/LICENSE'), 'utf8')).toContain('MIT License');
-    expect(manifest.peerDependencies['@assistant-ui/react']).toBe('^0.14.26');
+    expect(manifest.peerDependencies['@assistant-ui/react']).toBe('0.15.18');
+    expect(manifest.dependencies['@assistant-ui/react-streamdown']).toBe('0.3.13');
     expect(manifest.peerDependenciesMeta).toBeUndefined();
   });
 
