@@ -5,11 +5,17 @@ Reusable React controls, chat thread, conversation sidebar, and responsive shell
 ## Install
 
 ```bash
-pnpm add @asharca/ui
-# or: npm install @asharca/ui
+pnpm add @asharca/ui @assistant-ui/react@0.15.18
+# or: npm install @asharca/ui @assistant-ui/react@0.15.18
 ```
 
 The package uses React 19 and Tailwind CSS 4. `ChatThread` additionally accepts an assistant-ui `AssistantRuntime`, so transport and persistence stay in the host application.
+
+The runtime peer is pinned to `@assistant-ui/react@0.15.18`, paired with
+`@assistant-ui/react-streamdown@0.3.13`. These are the latest releases verified on
+September 5, 2026. Older runtime versions are not supported. Hosts that also use
+the Streamdown adapter should use `0.3.13` so the renderer and host share the same
+assistant-ui context. No package patch or legacy runtime hook is required.
 
 Import the stylesheet once from the host application's global Tailwind stylesheet:
 

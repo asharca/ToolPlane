@@ -33,7 +33,7 @@ jobs:
           node --input-type=module -e "import { readFileSync } from 'node:fs'; const manifest = JSON.parse(readFileSync('packages/ui/package.json', 'utf8')); if (!manifest.license) throw new Error('packages/ui/package.json requires a license before public release'); if (process.env.TAG_NAME !== 'ui-v' + manifest.version) throw new Error('Expected ui-v' + manifest.version + ', received ' + process.env.TAG_NAME);"
 
       - run: pnpm --filter @asharca/ui build
-      - run: pnpm vitest run tests/unit/ui-package.test.tsx
+      - run: pnpm vitest run tests/unit/ui-package.test.tsx tests/unit/ui-chat-thread.test.tsx
 
       # npm publishes with GitHub Actions OIDC; pnpm remains the workspace manager.
       - name: Verify npm tarball
