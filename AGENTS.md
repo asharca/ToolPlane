@@ -19,6 +19,11 @@ The MCP runtime is real, not mocked: each `Deployment` = one live child process 
 
 **Use pnpm — npm crashes in this repo and only `pnpm-lock.yaml` is committed.**
 
+Shared UI is published as `@asharca/ui` from the separate `asharca/ui` repository.
+Change components and styles there; update the pinned dependency here through a
+PR. See `docs/UI_LIBRARY.md` for the release and CI flow. Do not recreate
+`packages/ui` or alias npm imports back to local UI source.
+
 ```bash
 pnpm dev                       # next dev on :3000
 pnpm build                     # next build

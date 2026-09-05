@@ -12,8 +12,8 @@ importers:
         specifier: 4.0.96
         version: 4.0.96(react@19.2.4)(zod@4.4.3)
       '@asharca/ui':
-        specifier: workspace:*
-        version: link:packages/ui
+        specifier: 0.2.0
+        version: 0.2.0(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)
       '@assistant-ui/react':
         specifier: 0.15.18
         version: 0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
@@ -184,42 +184,6 @@ importers:
         specifier: ^8.21.0
         version: 8.21.0
 
-  packages/ui:
-    dependencies:
-      '@assistant-ui/react':
-        specifier: 0.15.18
-        version: 0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
-      '@assistant-ui/react-streamdown':
-        specifier: 0.3.13
-        version: 0.3.13(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@streamdown/code@1.1.1(react@19.2.4))(@streamdown/mermaid@1.0.2(react@19.2.4))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@streamdown/code':
-        specifier: ^1.1.1
-        version: 1.1.1(react@19.2.4)
-      '@streamdown/mermaid':
-        specifier: ^1.0.2
-        version: 1.0.2(react@19.2.4)
-      lucide-react:
-        specifier: ^1.21.0
-        version: 1.21.0(react@19.2.4)
-      radix-ui:
-        specifier: 1.6.2
-        version: 1.6.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      react:
-        specifier: ^19.0.0
-        version: 19.2.4
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.4(react@19.2.4)
-      remark-breaks:
-        specifier: ^4.0.0
-        version: 4.0.0
-      streamdown:
-        specifier: ^2.5.0
-        version: 2.5.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      tailwindcss:
-        specifier: ^4.0.0
-        version: 4.3.1
-
 packages:
 
   '@adobe/css-tools@4.5.0':
@@ -283,6 +247,15 @@ packages:
 
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
+
+  '@asharca/ui@0.2.0':
+    resolution: {integrity: sha512-yeuRETsLKxNQHdYK61/FrCQb9llJ4nnIj1oWvaJdafGdWA+YwD6Voray1jUt8abatLoRb9jSGq4uTBkMk/qTBQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@assistant-ui/react': 0.15.18
+      react: ^19.0.0
+      react-dom: ^19.0.0
+      tailwindcss: ^4.0.0
 
   '@assistant-ui/ai-sdk@0.0.4':
     resolution: {integrity: sha512-qTd+RNCE0TJ8CXwkbr/Rz61Nb5XSD3OUHlAbatiHiKo6oLLOHpfuyt1COEoqN1KT5AbW3ZKdxmx/q+GWaGtojA==}
@@ -6893,6 +6866,26 @@ snapshots:
   '@asamuzakjp/generational-cache@1.0.1': {}
 
   '@asamuzakjp/nwsapi@2.3.9': {}
+
+  '@asharca/ui@0.2.0(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)':
+    dependencies:
+      '@assistant-ui/react': 0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+      '@assistant-ui/react-streamdown': 0.3.13(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@streamdown/code@1.1.1(react@19.2.4))(@streamdown/mermaid@1.0.2(react@19.2.4))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@streamdown/code': 1.1.1(react@19.2.4)
+      '@streamdown/mermaid': 1.0.2(react@19.2.4)
+      lucide-react: 1.21.0(react@19.2.4)
+      radix-ui: 1.6.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+      remark-breaks: 4.0.0
+      streamdown: 2.6.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      tailwindcss: 4.3.1
+    transitivePeerDependencies:
+      - '@streamdown/cjk'
+      - '@streamdown/math'
+      - '@types/react'
+      - '@types/react-dom'
+      - supports-color
 
   '@assistant-ui/ai-sdk@0.0.4(@types/react@19.2.17)(react@19.2.4)(zod@4.4.3)':
     dependencies:
