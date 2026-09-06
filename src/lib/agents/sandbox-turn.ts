@@ -21,6 +21,7 @@ type SandboxTurnAgent = {
   id: string;
   workspaceId: string;
   runtimeKind: string;
+  disabledBuiltinTools: string[];
   provider: (ProviderConfig & SandboxRuntimeProvider & { id: string }) | null;
   model: string | null;
 };
@@ -93,6 +94,7 @@ export async function runDedicatedSandboxTurn(input: {
     modelProxyBase: runtimeModelProxyBase(provider.id),
     runtimeAccessToken,
     systemPrompt: input.systemPrompt,
+    disabledBuiltinTools: input.agent.disabledBuiltinTools,
     messages: input.messages,
     skills: input.skills,
     mcpServers: deploymentIds.map((deploymentId) => ({

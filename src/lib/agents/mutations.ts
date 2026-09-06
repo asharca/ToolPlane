@@ -11,6 +11,7 @@ import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isDedicatedSandboxRuntimeKind,
+  normalizeDisabledBuiltinTools,
   type ImplementedAgentRuntimeKind,
 } from '@/lib/agents/runtime-kind';
 import { DEFAULT_SANDBOX_IMAGE, sandboxVolumeName } from '@/lib/sandboxes/runtime';
@@ -250,6 +251,7 @@ export async function cloneAgent(
     where: { id: sourceAgentId, workspaceId },
     select: {
       name: true,
+      description: true,
       runtimeKind: true,
       systemPrompt: true,
       providerId: true,
@@ -259,6 +261,7 @@ export async function cloneAgent(
         select: { providerId: true },
       },
       maxSteps: true,
+      disabledBuiltinTools: true,
       runtime: {
         select: {
           workspaceId: true,
@@ -377,9 +380,11 @@ export async function cloneAgent(
     await tx.agent.update({
       where: { id: cloned.id },
       data: {
+        description: source.description,
         systemPrompt: runtime.runtime === HERMES_RUNTIME_KIND ? null : source.systemPrompt,
         providerId,
         model: runtime.runtime === HERMES_RUNTIME_KIND ? null : providerId ? source.model : null,
+        disabledBuiltinTools: source.disabledBuiltinTools,
         maxSteps: source.maxSteps,
       },
     });
@@ -726,10 +731,12 @@ export async function cloneHermesVolumeData(
 
 export type AgentConfig = {
   name: string;
+  description?: string | null;
   systemPrompt: string | null;
   providerId: string | null;
   model: string | null;
   providerIds?: string[];
+  disabledBuiltinTools?: string[];
   maxSteps: number;
 };
 
@@ -945,9 +952,13 @@ export async function createConfiguredAgent(
         where: { id: agent.id },
         data: {
           name: cleanName,
+          description: cfg.description?.trim() || null,
           systemPrompt: isHermes ? null : cfg.systemPrompt,
           providerId: isHermes ? null : cfg.providerId,
           model: isHermes ? null : cfg.providerId ? cfg.model : null,
+          disabledBuiltinTools: isHermes
+            ? []
+            : normalizeDisabledBuiltinTools(options.runtime, cfg.disabledBuiltinTools),
           maxSteps: cfg.maxSteps,
         },
       });
@@ -1017,9 +1028,13 @@ export async function updateAgent(workspaceId: string, agentId: string, cfg: Age
       where: { id: agentId, workspaceId },
       data: {
         name: cfg.name,
+        ...(cfg.description === undefined ? {} : { description: cfg.description?.trim() || null }),
         ...(isHermes ? {} : { systemPrompt: cfg.systemPrompt }),
         providerId,
         model: isHermes ? null : providerId ? cfg.model : null,
+        ...(cfg.disabledBuiltinTools === undefined
+          ? {}
+          : { disabledBuiltinTools: isHermes ? [] : normalizeDisabledBuiltinTools(agent.runtimeKind, cfg.disabledBuiltinTools) }),
         maxSteps: cfg.maxSteps,
       },
     });

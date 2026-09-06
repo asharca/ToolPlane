@@ -50,6 +50,7 @@ function renderChrome(isAdmin = false) {
 
 describe('DashboardChrome sidebar', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     window.sessionStorage.clear();
     Element.prototype.scrollIntoView = vi.fn();
     setDesktopViewport(true);
@@ -91,6 +92,18 @@ describe('DashboardChrome sidebar', () => {
     expect(expandButton.className).toContain('group');
     await user.click(expandButton);
     expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+  });
+
+  it('restores the collapsed desktop sidebar after a refresh', async () => {
+    const user = userEvent.setup();
+    const firstRender = renderChrome();
+
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(window.localStorage.getItem('toolplane:dashboard-sidebar:smoke')).toBe('true');
+    firstRender.unmount();
+
+    renderChrome();
+    await waitFor(() => expect(screen.getByRole('complementary')).toHaveAttribute('data-collapsed', 'true'));
   });
 
   it('shows the admin console inside the account menu only for administrators', async () => {

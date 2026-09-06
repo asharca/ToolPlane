@@ -13,7 +13,7 @@ const actions = vi.hoisted(() => ({
   stopAgentRuntimeAction: vi.fn(),
   syncAgentRuntimeAction: vi.fn(),
   upgradeHermesRuntimeAction: vi.fn<FormActionMock>(async () => ({ savedAt: Date.now() })),
-  updateHermesRuntimeEnvAction: vi.fn<FormActionMock>(async () => ({ savedAt: Date.now() })),
+  updateAgentRuntimeEnvAction: vi.fn<FormActionMock>(async () => ({ savedAt: Date.now() })),
   updateAgentAction: vi.fn(async () => ({ savedAt: Date.now() })),
 }));
 
@@ -45,7 +45,7 @@ const baseProps = {
 };
 
 describe('AgentSettingsForm', () => {
-  it('keeps the editable identity, runtime, and model together in General', () => {
+  it('keeps the editable identity, runtime, and model together in Basic', () => {
     render(
       <AgentSettingsForm
         {...baseProps}
@@ -59,8 +59,8 @@ describe('AgentSettingsForm', () => {
     expect(screen.getByLabelText('Name')).toHaveValue('Test agent');
     expect(screen.getByLabelText('Runtime')).toHaveTextContent('Pi');
     expect(screen.getByRole('button', { name: 'Model: gpt-4.1' })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'General' })).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'General' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Basic' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Basic' })).not.toBeInTheDocument();
     expect(screen.queryByText('Identity, model, and execution defaults.')).not.toBeInTheDocument();
     expect(screen.queryByText('0 attached')).not.toBeInTheDocument();
   });
@@ -99,6 +99,25 @@ describe('AgentSettingsForm', () => {
     expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
     expect(document.querySelector('input[name="model"]')).toHaveValue('gpt-4.1-mini');
     expect(screen.getByLabelText('System prompt')).toBeInTheDocument();
+  });
+
+  it('previews a system prompt and estimates its tokens', async () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        workspaceId="workspace-1"
+        providerId="provider-1"
+        model="gpt-4.1"
+        systemPrompt="你好 hello"
+        activeSection="instructions"
+        showNavigation={false}
+      />,
+    );
+
+    expect(screen.getByText('Estimated tokens: 4')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Preview system prompt' })).toHaveTextContent('你好 hello');
+    await userEvent.click(screen.getByRole('button', { name: 'Edit system prompt' }));
+    expect(screen.getByLabelText('System prompt')).toHaveValue('你好 hello');
   });
 
   it.each(['pi', 'claude-code', 'dsh'])('keeps %s on one networked Docker sandbox', async (runtimeKind) => {
@@ -203,20 +222,35 @@ describe('AgentSettingsForm', () => {
       />,
     );
 
-    const environment = screen.getByLabelText('Hermes environment variables');
+    const environment = screen.getByLabelText('Environment variables');
     expect(environment).toHaveValue('EXISTING=value');
     await userEvent.clear(environment);
     await userEvent.type(environment, 'API_KEY=secret');
 
     await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save environment' }));
-    await waitFor(() => expect(actions.updateHermesRuntimeEnvAction).toHaveBeenCalled());
-    const formData = actions.updateHermesRuntimeEnvAction.mock.calls.at(-1)?.[1];
+    await waitFor(() => expect(actions.updateAgentRuntimeEnvAction).toHaveBeenCalled());
+    const formData = actions.updateAgentRuntimeEnvAction.mock.calls.at(-1)?.[1];
     expect(formData).toBeInstanceOf(FormData);
     if (!formData) throw new Error('Environment form was not submitted.');
     expect(formData.get('workspace')).toBe('acme');
     expect(formData.get('agentId')).toBe('agent-1');
-    expect(formData.get('hermesEnv')).toBe('API_KEY=secret');
+    expect(formData.get('runtimeEnv')).toBe('API_KEY=secret');
+  });
+
+  it('serializes disabled built-in tool groups for the runtime', async () => {
+    render(
+      <AgentSettingsForm
+        {...baseProps}
+        activeSection="builtInTools"
+        showNavigation={false}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Enable Shell tools' }));
+    const form = document.querySelector('form');
+    if (!form) throw new Error('Expected settings form.');
+    expect(new FormData(form).getAll('disabledBuiltinTool')).toEqual(['bash']);
   });
 
   it('upgrades Hermes with the selected image through its dedicated action', async () => {

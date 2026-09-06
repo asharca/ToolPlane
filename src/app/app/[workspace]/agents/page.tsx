@@ -63,6 +63,7 @@ export default async function AgentsPage({
       <div className="h-full overflow-y-auto">
         <AgentsBrowser
         slug={slug}
+        workspaceId={ws.id}
         agentControlEndpoint={agentControlEndpoint}
         agents={agents.map((a) => ({
           id: a.id,

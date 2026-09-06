@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Download, ExternalLink, RefreshCw } from 'lucide-react';
+import { MarkGithubIcon } from '@primer/octicons-react';
 import { useTranslations } from 'next-intl';
 import { Popover } from 'radix-ui';
 
@@ -308,7 +309,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
           className="ui-button-ghost ui-icon-button"
         >
           <span className="relative flex size-4">
-            {busy ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {busy ? <RefreshCw className="size-4 animate-spin" /> : <MarkGithubIcon size={16} className="size-4" />}
             {hasUpdate ? <span aria-hidden="true" className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-500" /> : null}
           </span>
         </button>

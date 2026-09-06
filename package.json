@@ -25,8 +25,8 @@
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
-    "@asharca/ui": "0.2.0",
     "@ai-sdk/react": "4.0.96",
+    "@asharca/ui": "0.2.0",
     "@assistant-ui/react": "0.15.18",
     "@assistant-ui/react-ai-sdk": "1.4.9",
     "@assistant-ui/react-streamdown": "0.3.13",
@@ -34,6 +34,7 @@
     "@earendil-works/pi-ai": "^0.84.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@novnc/novnc": "1.7.0",
+    "@primer/octicons-react": "19.33.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@streamdown/code": "^1.1.1",

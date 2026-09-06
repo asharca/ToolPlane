@@ -46,6 +46,7 @@ describe('dedicated sandbox Agent turn', () => {
         id: 'agent-1',
         workspaceId: 'workspace-1',
         runtimeKind: 'pi',
+        disabledBuiltinTools: [],
         provider: { id: 'provider-1', name: 'Provider', format: 'openai', baseUrl: '', apiKey: '' },
         model: 'model-1',
       },

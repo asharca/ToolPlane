@@ -72,7 +72,10 @@ function renderChat(
 }
 
 describe('WorkspaceAssistantChat', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it('estimates mixed CJK and Latin system prompt tokens', () => {
@@ -84,6 +87,19 @@ describe('WorkspaceAssistantChat', () => {
     renderChat();
 
     expect(screen.getByRole('button', { name: 'Hide assistants and chats' }).closest('header')).toHaveClass('h-11', 'px-2.5');
+  });
+
+  it('restores the collapsed assistant sidebar after a refresh', async () => {
+    const user = userEvent.setup();
+    const firstRender = renderChat();
+
+    await user.click(screen.getByRole('button', { name: 'Hide assistants and chats' }));
+    expect(window.localStorage.getItem('toolplane:assistant-chat-sidebar:workspace-1')).toBe('false');
+    firstRender.unmount();
+
+    renderChat();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show assistants and chats', pressed: false }))
+      .toHaveAttribute('aria-pressed', 'false'));
   });
 
   it('uses the sidebar header to add assistants and list existing conversations', async () => {

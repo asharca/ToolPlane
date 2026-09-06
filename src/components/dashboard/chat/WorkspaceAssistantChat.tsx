@@ -51,6 +51,8 @@ import {
 } from '@/components/ui/Dialog';
 import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import { estimatePromptTokens } from '@/lib/prompt-tokens';
+import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
@@ -114,13 +116,7 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
   return `/app/${encodeURIComponent(slug)}/chat?${query}`;
 }
 
-export function estimatePromptTokens(prompt: string): number {
-  const text = prompt.trim();
-  if (!text) return 0;
-  const cjkCharacters = text.match(/[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af]/g)?.length ?? 0;
-  const otherCharacters = text.replace(/[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af]/g, '');
-  return cjkCharacters + Math.ceil(otherCharacters.length / 4);
-}
+export { estimatePromptTokens } from '@/lib/prompt-tokens';
 
 function defaultCustomParameterValue(type: AssistantCustomParameter['type']): AssistantCustomParameter['value'] {
   if (type === 'number') return 0;
@@ -917,7 +913,7 @@ export function WorkspaceAssistantChat({
   const activeThread = activeAssistant?.threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const [query, setQuery] = useState('');
   const [expandedAssistants, setExpandedAssistants] = useState<Record<string, boolean>>({});
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(`toolplane:assistant-chat-sidebar:${workspaceId}`, true);
   const [branchOpen, setBranchOpen] = useState(false);
   const [branchMaximized, setBranchMaximized] = useState(false);
   const [branchMutating, setBranchMutating] = useState(false);

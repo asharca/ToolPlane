@@ -29,6 +29,14 @@ async function openBlankCreate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'New agent' }));
 }
 
+async function advanceToCreate(user: ReturnType<typeof userEvent.setup>) {
+  for (let index = 0; index < 6; index += 1) {
+    if (screen.queryByRole('button', { name: 'Create agent' })) return;
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+  }
+  throw new Error('Create step was not reached.');
+}
+
 describe('AgentsBrowser', () => {
   beforeEach(() => {
     actions.cloneAgentAction.mockReset();
@@ -165,8 +173,7 @@ describe('AgentsBrowser', () => {
 
     await user.type(screen.getByLabelText('Name'), 'Research agent');
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     expect(screen.getByRole('button', { name: 'Create agent' })).toBeEnabled();
     expect(screen.getByText(/dedicated Docker sandbox is created automatically/i)).toBeInTheDocument();
   });
@@ -211,7 +218,7 @@ describe('AgentsBrowser', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByLabelText('System prompt')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     expect(screen.getByRole('button', { name: 'Create agent' })).toBeEnabled();
   }, 15_000);
 
@@ -233,6 +240,7 @@ describe('AgentsBrowser', () => {
     await user.type(screen.getByLabelText('Name'), 'Research agent');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Router MCP' }));
 
     const form = document.querySelector<HTMLElement>('#agent-create-form');
@@ -246,6 +254,7 @@ describe('AgentsBrowser', () => {
     expect(screen.getByRole('button', { name: 'Model: gpt-4.1' })).toBeInTheDocument();
     expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
     await user.type(screen.getByLabelText('Name'), 'Second agent');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('checkbox', { name: 'Select Router MCP' })).not.toBeChecked();
@@ -293,11 +302,10 @@ describe('AgentsBrowser', () => {
 
     await openBlankCreate(userEvent.setup());
     await userEvent.type(screen.getByLabelText('Name'), 'Research agent');
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     const maxSteps = screen.getByRole('spinbutton', { name: 'Maximum tool-call rounds' });
     await userEvent.clear(maxSteps);
     await userEvent.type(maxSteps, '42');
+    await advanceToCreate(userEvent.setup());
     await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Creating...' })).toBeDisabled());
@@ -366,7 +374,7 @@ describe('AgentsBrowser', () => {
       'registry.example/hermes:v2026.8.1',
     );
     await user.type(screen.getByLabelText('Name'), 'Custom Hermes');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
     const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
@@ -386,8 +394,7 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /^Pi/ }));
     await user.type(screen.getByLabelText('Name'), 'Harness');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
@@ -411,7 +418,7 @@ describe('AgentsBrowser', () => {
     await user.type(screen.getByLabelText('Name'), 'Researcher');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.type(screen.getByLabelText('System prompt'), 'Use sources carefully.');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
@@ -441,7 +448,7 @@ describe('AgentsBrowser', () => {
       screen.getByLabelText('Hermes version'),
       'nousresearch/hermes-agent:v2026.7.20',
     );
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());

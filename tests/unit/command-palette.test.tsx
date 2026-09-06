@@ -88,6 +88,12 @@ describe('DashboardHeaderControls (command palette)', () => {
     expect(pushMock).toHaveBeenCalledWith('/app/acme/settings?returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1');
   });
 
+  it('does not render a header help link', () => {
+    render(<DashboardHeaderControls />);
+
+    expect(screen.queryByRole('link', { name: 'Get help' })).not.toBeInTheDocument();
+  });
+
   it('toggles the theme from quick navigation', async () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));

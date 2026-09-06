@@ -6,7 +6,6 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
   Search,
-  HelpCircle,
   Sun,
   Moon,
   Plug,
@@ -30,8 +29,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/Dialog';
-import { SITE, mailto } from '@/lib/site';
-import { useDashboardRuntimeConfig } from './DashboardRuntimeConfig';
+import { SITE } from '@/lib/site';
 import { SystemUpdateButton } from './SystemUpdateButton';
 
 type Command = {
@@ -55,7 +53,6 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
   const queryString = searchParams.toString();
   const returnTo = `${pathname}${queryString ? `?${queryString}` : ''}`;
   const { resolvedTheme, setTheme } = useTheme();
-  const { supportEmail } = useDashboardRuntimeConfig();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -226,15 +223,6 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
       </Dialog>
 
       <SystemUpdateButton canInstall={canInstall} />
-
-      <a
-        href={mailto(supportEmail)}
-        aria-label={t('getHelp')}
-        className="ui-button-ghost ui-icon-button"
-      >
-        <HelpCircle className="size-4" />
-      </a>
-
     </>
   );
 }
