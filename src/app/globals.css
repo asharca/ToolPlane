@@ -135,6 +135,15 @@
 }
 
 @layer components {
+/* ponytail: @asharca/ui@0.2.0 has no composer-start slot; remove this when the shared package exposes one. */
+.toolplane-unified-composer-tools [data-ui='chat.composer'] > .contents > div:last-child > div:first-child > button:first-child {
+  display: none;
+}
+
+.toolplane-unified-composer-tools [data-ui='chat.composer'] > .contents > div:last-child {
+  position: static !important;
+}
+
 .sandbox-terminal .xterm {
   height: 100%;
   padding: 0.875rem;

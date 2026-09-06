@@ -16,9 +16,11 @@ const mocks = vi.hoisted(() => ({
   agentSurface: vi.fn(),
   getAssistantMarketTemplate: vi.fn(),
   listAssistantMarketTemplates: vi.fn(),
+  cookies: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
 vi.mock('next-intl/server', () => ({
   getLocale: vi.fn().mockResolvedValue('en'),
   getTranslations: vi.fn().mockResolvedValue((key: string) => key),
@@ -75,6 +77,7 @@ describe('Workspace chat page', () => {
     mocks.getConversation.mockResolvedValue(null);
     mocks.getAssistantMarketTemplate.mockResolvedValue(null);
     mocks.listAssistantMarketTemplates.mockResolvedValue([]);
+    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue(undefined) });
     mocks.listAssistants.mockResolvedValue([{
       id: 'assistant-1',
       name: 'Helper',
@@ -160,6 +163,17 @@ describe('Workspace chat page', () => {
     }));
 
     expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ reasoningAvailable: true }));
+  });
+
+  it('seeds the assistant sidebar from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue({ value: 'false' }) });
+
+    render(await WorkspaceChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ initialSidebarOpen: false }));
   });
 
   it('opens the assistant creator from a direct market handoff', async () => {

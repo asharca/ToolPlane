@@ -557,7 +557,7 @@ export function AgentsBrowser({
                         <label
                           key={option.value}
                           className={cx(
-                            'flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40',
+                            'relative flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40',
                             selected ? 'border-foreground/20 bg-muted/60' : 'border-border',
                           )}
                         >

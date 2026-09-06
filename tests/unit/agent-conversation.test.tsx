@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
@@ -64,6 +64,7 @@ function renderConversation(overrides: Partial<ConversationProps> = {}) {
 describe('AgentConversation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     vi.stubGlobal('ResizeObserver', class ResizeObserver {
       observe() {}
       unobserve() {}
@@ -105,6 +106,7 @@ describe('AgentConversation', () => {
     expect(input).toHaveAttribute('rows', '2');
     expect(input).toHaveClass('min-h-[46px]', 'max-h-[max(220px,40vh)]', 'pl-[15px]', 'pr-11', 'pb-0');
     expect(input.closest('form')).toHaveClass('group/composer', 'rounded-[20px]', 'border-[0.5px]', 'border-border', 'transition-all', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
+    expect(screen.getAllByRole('button', { name: 'Open tools' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Open tools' }).querySelector('svg')).toHaveClass('lucide-plus');
     expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('size-[30px]', 'text-brand');
     const expand = screen.getByRole('button', { name: 'Expand composer' });
@@ -317,16 +319,16 @@ describe('AgentConversation', () => {
     const toolsButton = screen.getByRole('button', { name: 'Open tools' });
     expect(toolsButton).toBeEnabled();
     await userEvent.click(toolsButton);
-    expect(screen.getByRole('button', { name: /Add attachment/ })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /Add attachment/ })).toBeDisabled();
     expect(screen.getByText('Attachments are not available for this runtime or sandbox.')).toBeInTheDocument();
 
     rerender(<AgentConversation {...props} attachmentUploadUrl="/api/v1/workspaces/workspace-1/attachments" />);
 
-    expect(screen.getByRole('button', { name: /Add attachment/ })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: /Add attachment/ })).toBeEnabled();
 
     rerender(<AgentConversation {...props} runtimeKind="hermes" />);
 
-    expect(screen.getByRole('button', { name: /Add attachment/ })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: /Add attachment/ })).toBeEnabled();
   });
 
   it('uploads a native attachment as an internal file part', async () => {
@@ -346,7 +348,7 @@ describe('AgentConversation', () => {
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Open tools' }));
-    await userEvent.click(screen.getByRole('button', { name: /Add attachment/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Add attachment/ }));
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
     expect(fileInput).not.toBeNull();
     await userEvent.upload(fileInput!, new File(['notes'], 'notes.txt', { type: 'text/plain' }));
@@ -382,7 +384,7 @@ describe('AgentConversation', () => {
     renderConversation({ runtimeKind: 'hermes' });
 
     await userEvent.click(screen.getByRole('button', { name: 'Open tools' }));
-    await userEvent.click(screen.getByRole('button', { name: /Add attachment/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Add attachment/ }));
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
     expect(fileInput).not.toBeNull();
     await userEvent.upload(fileInput!, new File(['one'], 'one.txt', { type: 'text/plain' }));
@@ -508,12 +510,15 @@ describe('AgentConversation', () => {
   });
 
   it('sends the Cherry-style web search toggle with the turn', async () => {
+    const user = userEvent.setup();
     renderConversation({ webSearchAvailable: true });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Enable web search' }));
-    expect(screen.getByRole('button', { name: 'Disable web search' })).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Find current sources');
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    const input = screen.getByPlaceholderText('Message this agent');
+    await user.type(input, '/');
+    const menu = await screen.findByRole('listbox', { name: 'Tools' });
+    await user.click(within(menu).getByRole('option', { name: 'Enable web search' }));
+    await user.type(input, 'Find current sources');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ role: 'user' }),
@@ -521,6 +526,98 @@ describe('AgentConversation', () => {
         body: expect.objectContaining({ webSearchEnabled: true }),
       }),
     ));
+  });
+
+  it('reuses assistant chat tools for + and /, including attachments', async () => {
+    const user = userEvent.setup();
+    const onNewConversation = vi.fn();
+    renderConversation({
+      attachmentUploadUrl: '/attachments',
+      mcpPromptApiPath: '/prompts',
+      mcpResourceApiPath: '/composer',
+      onNewConversation,
+      webSearchAvailable: true,
+    });
+
+    const tools = screen.getByRole('button', { name: 'Open tools' });
+    await user.click(tools);
+    const plusMenu = await screen.findByRole('menu', { name: 'Tools' });
+    expect(within(plusMenu).getByRole('menuitem', { name: /Add attachment/ })).toBeInTheDocument();
+    expect(within(plusMenu).getByRole('menuitem', { name: 'MCP' })).toBeInTheDocument();
+    expect(within(plusMenu).getByRole('menuitem', { name: 'MCP resources' })).toBeInTheDocument();
+    expect(within(plusMenu).getByRole('menuitem', { name: 'MCP prompts' })).toBeInTheDocument();
+    expect(within(plusMenu).getByRole('menuitem', { name: /Clear context/ })).toBeInTheDocument();
+    expect(within(plusMenu).getByRole('menuitem', { name: 'Enable web search' })).toBeInTheDocument();
+    await user.click(tools);
+
+    await user.type(screen.getByPlaceholderText('Message this agent'), '/');
+    const menu = await screen.findByRole('listbox', { name: 'Tools' });
+    expect(within(menu).getByRole('option', { name: 'Add attachment' })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: 'MCP' })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: 'MCP resources' })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: 'MCP prompts' })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: /Clear context/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: 'Enable web search' })).toBeInTheDocument();
+
+    await user.click(within(menu).getByRole('option', { name: /Clear context/ }));
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins MCP resources in the toolbar and inserts the selected resource', async () => {
+    const user = userEvent.setup();
+    apiMocks.fetch.mockImplementation(async (input, init) => {
+      if (String(input) === '/composer?section=resources') {
+        return Response.json({ items: [{
+          kind: 'resource',
+          id: 'docs://plan',
+          deploymentId: 'dep-1',
+          label: 'Project plan',
+          description: 'Workspace docs',
+        }] });
+      }
+      if (String(input) === '/composer' && init?.method === 'POST') {
+        return Response.json({ text: 'Reference material (resource): Project plan\ndocs://plan\nShip it.' });
+      }
+      return Response.json({ conversationId: 'conv-new' });
+    });
+    renderConversation({ mcpResourceApiPath: '/composer' });
+
+    await user.type(screen.getByPlaceholderText('Message this agent'), '/');
+    const menu = await screen.findByRole('listbox', { name: 'Tools' });
+    await user.click(within(menu).getByRole('option', { name: 'Customize toolbar' }));
+    const customizer = await screen.findByRole('dialog', { name: 'Customize toolbar' });
+    expect(within(customizer).getByRole('checkbox', { name: 'Add attachment' })).toBeInTheDocument();
+    await user.click(within(customizer).getByRole('checkbox', { name: 'MCP resources' }));
+    await user.click(within(customizer).getByRole('button', { name: 'Close' }));
+
+    await user.click(screen.getByRole('button', { name: 'MCP resources' }));
+    const picker = await screen.findByRole('dialog', { name: 'MCP resources' });
+    await user.click(within(picker).getByRole('button', { name: /Project plan/ }));
+    expect((screen.getByPlaceholderText('Message this agent') as HTMLTextAreaElement).value).toContain('docs://plan');
+  });
+
+  it('offers runtime slash commands and sends them through the command endpoint', async () => {
+    const user = userEvent.setup();
+    const onConversationChanged = vi.fn();
+    renderConversation({ runtimeKind: 'dsh', onConversationChanged });
+
+    const input = screen.getByPlaceholderText('Message this agent');
+    await user.type(input, '/');
+    const menu = await screen.findByRole('listbox', { name: 'Tools' });
+    expect(within(menu).getByRole('option', { name: /\/compact/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: /\/goal/ })).toBeInTheDocument();
+    await user.click(within(menu).getByRole('option', { name: /\/compact/ }));
+    expect(input).toHaveValue('/compact ');
+
+    await user.type(input, 'preserve paths');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
+      '/api/v1/agents/agent-1/conversations/conv-new/commands',
+      expect.objectContaining({ body: '{"line":"/compact preserve paths"}' }),
+    ));
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    expect(onConversationChanged).toHaveBeenCalledTimes(1);
   });
 
   it('shows supported thinking efforts and snapshots the selection for send and regenerate', async () => {
@@ -531,6 +628,9 @@ describe('AgentConversation', () => {
     });
 
     const effort = screen.getByRole('button', { name: 'Thinking effort' });
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(effort.parentElement).toBe(send.parentElement);
+    expect(effort.nextElementSibling).toBe(send);
     expect(effort).toHaveTextContent('Medium');
     await userEvent.click(effort);
     const slider = screen.getByRole('slider', { name: 'Thinking effort' });

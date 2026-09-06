@@ -53,6 +53,7 @@ import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityAc
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { estimatePromptTokens } from '@/lib/prompt-tokens';
 import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
+import { assistantChatSidebarCookieName } from '@/lib/chat/sidebar-preferences';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
@@ -890,6 +891,7 @@ export function WorkspaceAssistantChat({
   selectedThreadId,
   slug,
   startCreating = false,
+  initialSidebarOpen = true,
   workspaceId,
 }: {
   assistants: ChatAssistantItem[];
@@ -904,6 +906,7 @@ export function WorkspaceAssistantChat({
   selectedThreadId: string | null;
   slug: string;
   startCreating?: boolean;
+  initialSidebarOpen?: boolean;
   workspaceId: string;
 }) {
   const t = useTranslations('console.chatAssistants');
@@ -913,7 +916,10 @@ export function WorkspaceAssistantChat({
   const activeThread = activeAssistant?.threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const [query, setQuery] = useState('');
   const [expandedAssistants, setExpandedAssistants] = useState<Record<string, boolean>>({});
-  const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(`toolplane:assistant-chat-sidebar:${workspaceId}`, true);
+  const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
+    `toolplane:assistant-chat-sidebar:${workspaceId}`,
+    initialSidebarOpen,
+  );
   const [branchOpen, setBranchOpen] = useState(false);
   const [branchMaximized, setBranchMaximized] = useState(false);
   const [branchMutating, setBranchMutating] = useState(false);
@@ -948,6 +954,10 @@ export function WorkspaceAssistantChat({
     document.querySelector<HTMLTextAreaElement>('[data-ui="chat.composer"] textarea')?.focus();
     focusBranchMessageIdRef.current = null;
   }, [branch?.activeMessageId]);
+
+  useEffect(() => {
+    document.cookie = `${assistantChatSidebarCookieName(workspaceId)}=${sidebarOpen}; Path=/; Max-Age=31536000; SameSite=Lax`;
+  }, [sidebarOpen, workspaceId]);
 
   async function switchBranch(messageId: string) {
     if (!activeThread || branchBusy) return;
@@ -1441,6 +1451,7 @@ export function WorkspaceAssistantChat({
                 initialMessages={initialMessages}
                 initialReasoningEffort="default"
                 mcpPromptApiPath={`/api/v1/chat/threads/${activeThread.id}/prompts`}
+                mcpResourceApiPath={`/api/v1/chat/threads/${activeThread.id}/composer`}
                 modelName={activeAssistant.model}
                 ready={Boolean(activeAssistant.modelProviderId && activeAssistant.model)}
                 reasoningAvailable={reasoningAvailable}
@@ -1451,6 +1462,7 @@ export function WorkspaceAssistantChat({
                 branchNavigation={branch?.navigation ?? []}
                 onBranchChange={(messageId) => void switchBranch(messageId)}
                 onConversationChanged={refreshChat}
+                onNewConversation={() => createThread(activeAssistant.id)}
                 onStartBranch={(messageId) => void startBranch(messageId)}
               />
             ) : (
