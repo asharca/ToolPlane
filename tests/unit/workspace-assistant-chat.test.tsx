@@ -267,6 +267,64 @@ describe('WorkspaceAssistantChat', () => {
     expect(prompt).toHaveValue('Keep this prompt');
   });
 
+  it('generates a prompt and saves description and model parameters', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        prompt: 'Find primary sources, cite them, and state uncertainty.',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Keep page mounted' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderChat();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
+    const description = screen.getByRole('textbox', { name: 'Description' });
+    await userEvent.type(description, 'Finds primary sources.');
+    await userEvent.click(screen.getByRole('button', { name: 'System prompt' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Generate prompt' }));
+
+    expect(await screen.findByRole('textbox', { name: 'System prompt' }))
+      .toHaveValue('Find primary sources, cite them, and state uncertainty.');
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/chat/assistants/generate-prompt', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: 'workspace-1',
+        name: 'Helper',
+        description: 'Finds primary sources.',
+        systemPrompt: null,
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+      }),
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Model parameters' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom temperature' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Temperature' }), { target: { value: '0.4' } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom Top P' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Top P' }), { target: { value: '0.8' } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom maximum output tokens' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Max output tokens' }), { target: { value: '2048' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/chat/assistants/assistant-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Helper',
+        description: 'Finds primary sources.',
+        systemPrompt: 'Find primary sources, cite them, and state uncertainty.',
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+        modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2048 },
+        maxSteps: 8,
+        deploymentIds: [],
+      }),
+    }));
+  });
+
   it('steps through assistant creation without losing entered values', async () => {
     renderChat(undefined, true);
 
@@ -285,6 +343,9 @@ describe('WorkspaceAssistantChat', () => {
     expect(name).toHaveValue('Research helper');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(prompt).toHaveValue('Use primary sources.');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(screen.getByRole('button', { name: 'Model parameters' })).toHaveAttribute('aria-current', 'step');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(screen.getByRole('button', { name: 'MCP access' })).toHaveAttribute('aria-current', 'step');
@@ -336,6 +397,7 @@ describe('WorkspaceAssistantChat', () => {
       missingMcpNames: ['Search MCP'],
     });
 
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 

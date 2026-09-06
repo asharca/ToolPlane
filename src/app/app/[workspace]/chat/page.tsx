@@ -17,6 +17,7 @@ import {
   getChatThreadForWorkspace,
   listChatAssistantsForWorkspace,
 } from '@/lib/chat/service';
+import { parseChatAssistantModelParameters } from '@/lib/chat/schemas';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
@@ -333,10 +334,12 @@ export default async function WorkspaceChatPage({
           return {
             id: assistant.id,
             name: assistant.name,
+            description: assistant.description,
             pinned: assistant.pinned,
             systemPrompt: assistant.systemPrompt,
             modelProviderId: assistant.modelProviderId,
             model: assistant.model,
+            modelParameters: parseChatAssistantModelParameters(assistant.modelParameters) ?? null,
             maxSteps: assistant.maxSteps,
             providerName: assistant.modelProvider?.name ?? null,
             contextWindow: modelContext?.maxTokens ?? null,

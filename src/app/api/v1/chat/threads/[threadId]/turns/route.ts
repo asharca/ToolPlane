@@ -11,7 +11,7 @@ import {
   AttachmentMessageError,
   hydrateWorkspaceAttachmentMessages,
 } from '@/lib/attachments/messages';
-import { parseChatTurn } from '@/lib/chat/schemas';
+import { parseChatAssistantModelParameters, parseChatTurn } from '@/lib/chat/schemas';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import {
@@ -142,6 +142,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
           messages: uiMessagesToPi(hydratedHistory),
           tools,
           maxSteps: assistant.maxSteps,
+          modelParameters: parseChatAssistantModelParameters(assistant.modelParameters),
           reasoningEffort: input.reasoningEffort,
           signal: req.signal,
           onEvent: uiStream.onEvent,

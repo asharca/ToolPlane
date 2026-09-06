@@ -7,7 +7,12 @@ import {
   type ToolCall,
 } from '@earendil-works/pi-ai';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
-import { buildModel, providerModelIds, type ProviderConfig } from './model';
+import {
+  buildModel,
+  providerModelIds,
+  type ModelParameters,
+  type ProviderConfig,
+} from './model';
 import { resolveMaxSteps, type ReasoningEffort } from './constants';
 import type { AgentToolSet } from './agent-tool';
 
@@ -112,6 +117,7 @@ export type NativeRunOptions = {
   messages: Message[];
   tools: AgentToolSet;
   maxSteps: number;
+  modelParameters?: ModelParameters;
   reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   onEvent?: (event: AssistantMessageEvent) => void | Promise<void>;
@@ -125,6 +131,11 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
     ? options.reasoningEffort
     : undefined;
   const runtimeModel = reasoning ? { ...model, reasoning: true } : model;
+  const modelParameters = options.modelParameters;
+  const maxTokens = modelParameters?.maxOutputTokens === undefined
+    ? undefined
+    : Math.min(modelParameters.maxOutputTokens, model.maxTokens);
+  const topP = !reasoning ? modelParameters?.topP : undefined;
   const contextWindowEstimated = providerModelIds(options.provider)?.includes(options.modelId) !== true;
   const tools = Object.values(options.tools);
   const maxSteps = resolveMaxSteps(options.maxSteps);
@@ -140,6 +151,17 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
       signal: options.signal,
       maxRetries: 0,
       ...(reasoning ? { reasoning } : {}),
+      ...(maxTokens ? { maxTokens } : {}),
+      ...(!reasoning && modelParameters?.temperature !== undefined
+        ? { temperature: modelParameters.temperature }
+        : {}),
+      ...(topP !== undefined ? {
+        onPayload: (payload) => (
+          payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? { ...(payload as Record<string, unknown>), top_p: topP }
+            : payload
+        ),
+      } : {}),
     });
     for await (const event of stream) await options.onEvent?.(event);
     const message = await stream.result();

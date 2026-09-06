@@ -113,6 +113,27 @@ describe('runNativeAgent', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('passes configured sampling and output parameters to the model', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(sse([
+      { id: 'chatcmpl-1', model: 'gpt-x', choices: [{ index: 0, delta: { content: 'done' }, finish_reason: 'stop' }] },
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(runNativeAgent({
+      provider: { name: 'P', format: 'openai', baseUrl: 'https://example.test/v1', apiKey: 'secret' },
+      modelId: 'gpt-x',
+      systemPrompt: '',
+      messages: [{ role: 'user', content: 'hello', timestamp: Date.now() }],
+      tools: {},
+      maxSteps: 1,
+      modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 512 },
+    })).resolves.toBe('done');
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).toMatchObject({ temperature: 0.4, top_p: 0.8 });
+    expect(body.max_completion_tokens ?? body.max_tokens).toBe(512);
+  });
+
   it('keeps persisted Work tool results in recovery context', () => {
     const [message] = uiMessagesToPi([{
       role: 'assistant',

@@ -22,6 +22,12 @@ export type ProviderConfig = {
   apiKey: string;
 };
 
+export type ModelParameters = {
+  temperature?: number;
+  topP?: number;
+  maxOutputTokens?: number;
+};
+
 export type PiModel = Model<Api>;
 export type PiModelRuntime = { models: MutableModels; model: PiModel };
 export type ModelContext = { maxTokens: number; modelName: string; estimated: boolean };

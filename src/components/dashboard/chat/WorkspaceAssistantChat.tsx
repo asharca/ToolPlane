@@ -16,11 +16,14 @@ import {
   Cpu,
   GitBranch,
   ListFilter,
+  Loader2,
   MessageSquare,
   MoveRight,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  RotateCcw,
+  Sparkles,
   Store,
   Trash2,
   X,
@@ -49,7 +52,12 @@ import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = { id: string; name: string; status: string; keywords?: string[] };
-type AssistantCreateStep = 'basic' | 'instructions' | 'tools';
+type AssistantCreateStep = 'basic' | 'instructions' | 'modelParameters' | 'tools';
+type AssistantModelParameters = {
+  temperature?: number;
+  topP?: number;
+  maxOutputTokens?: number;
+};
 
 export type AssistantMarketTemplate = {
   releaseId: string;
@@ -67,10 +75,12 @@ export type AssistantMarketTemplate = {
 export type ChatAssistantItem = {
   id: string;
   name: string;
+  description?: string | null;
   pinned: boolean;
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
+  modelParameters?: AssistantModelParameters | null;
   maxSteps: number;
   providerName: string | null;
   contextWindow?: number | null;
@@ -127,6 +137,7 @@ function AssistantEditor({
   const creating = !assistant;
   const [createStep, setCreateStep] = useState<AssistantCreateStep>('basic');
   const [name, setName] = useState(assistant?.name ?? marketTemplate?.name ?? '');
+  const [description, setDescription] = useState(assistant?.description ?? '');
   const templateProvider = marketTemplate?.providerFormat
     ? providers.find((provider) => (
       provider.format === marketTemplate.providerFormat
@@ -142,23 +153,68 @@ function AssistantEditor({
     ?? selectedProvider?.models[0]
     ?? '',
   );
+  const initialModelParameters = assistant?.modelParameters ?? {};
+  const [temperatureEnabled, setTemperatureEnabled] = useState(initialModelParameters.temperature !== undefined);
+  const [temperature, setTemperature] = useState(initialModelParameters.temperature ?? 1);
+  const [topPEnabled, setTopPEnabled] = useState(initialModelParameters.topP !== undefined);
+  const [topP, setTopP] = useState(initialModelParameters.topP ?? 1);
+  const [maxOutputTokensEnabled, setMaxOutputTokensEnabled] = useState(initialModelParameters.maxOutputTokens !== undefined);
+  const [maxOutputTokens, setMaxOutputTokens] = useState(initialModelParameters.maxOutputTokens ?? 4096);
+  const [systemPrompt, setSystemPrompt] = useState(assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? '');
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+  const [promptRestore, setPromptRestore] = useState<{ previous: string; generated: string } | null>(null);
   const [showMarketTemplates, setShowMarketTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const createSteps: Array<{ id: AssistantCreateStep; label: string }> = [
     { id: 'basic', label: t('basic') },
     { id: 'instructions', label: t('systemPrompt') },
+    { id: 'modelParameters', label: t('modelParameters') },
     { id: 'tools', label: t('mcpAccess') },
   ];
   const createStepIndex = createSteps.findIndex((step) => step.id === createStep);
   const lastCreateStep = createStepIndex === createSteps.length - 1;
   const basicComplete = Boolean(name.trim() && providerId && model);
 
+  async function generateSystemPrompt() {
+    if (!basicComplete || generatingPrompt) return;
+    setGeneratingPrompt(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/v1/chat/assistants/generate-prompt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          workspaceId,
+          name: name.trim(),
+          description: description.trim() || null,
+          systemPrompt: systemPrompt.trim() || null,
+          modelProviderId: providerId,
+          model,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { prompt?: string; error?: string };
+      if (!response.ok || !body.prompt?.trim()) throw new Error(body.error || t('promptGenerationError'));
+      const generated = body.prompt.trim();
+      setPromptRestore({ previous: systemPrompt, generated });
+      setSystemPrompt(generated);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('promptGenerationError'));
+    } finally {
+      setGeneratingPrompt(false);
+    }
+  }
+
   async function submit(formData: FormData) {
     setSaving(true);
     setError(null);
     try {
       const deploymentIds = formData.getAll('deploymentIds').map(String);
+      const modelParameters: AssistantModelParameters = {
+        ...(temperatureEnabled ? { temperature } : {}),
+        ...(topPEnabled ? { topP } : {}),
+        ...(maxOutputTokensEnabled ? { maxOutputTokens } : {}),
+      };
       const response = await fetch(
         assistant ? `/api/v1/chat/assistants/${assistant.id}` : '/api/v1/chat/assistants',
         {
@@ -167,9 +223,11 @@ function AssistantEditor({
           body: JSON.stringify({
             ...(!assistant ? { workspaceId } : {}),
             name: String(formData.get('name') ?? '').trim(),
-            systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+            description: description.trim() || null,
+            systemPrompt: systemPrompt.trim() || null,
             modelProviderId: providerId || null,
             model: model || null,
+            modelParameters: Object.keys(modelParameters).length ? modelParameters : null,
             maxSteps: Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default),
             deploymentIds,
             ...(!assistant && marketTemplate ? { marketTemplateReleaseId: marketTemplate.releaseId } : {}),
@@ -341,6 +399,19 @@ function AssistantEditor({
                     />
                   </label>
 
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    {t('description')}
+                    <textarea
+                      name="description"
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      rows={2}
+                      maxLength={500}
+                      className="ui-input mt-1.5 min-h-20 w-full resize-y py-2"
+                      placeholder={t('descriptionPlaceholder')}
+                    />
+                  </label>
+
                   <div className="block text-xs font-medium text-muted-foreground">
                     <span>{t('model')}</span>
                     <ModelPicker
@@ -377,17 +448,142 @@ function AssistantEditor({
                       <h3 id="assistant-create-instructions-title" className="text-base font-semibold text-foreground">{t('systemPrompt')}</h3>
                     </div>
                   ) : null}
-                  <label className="block text-xs font-medium text-muted-foreground">
-                    {t('systemPrompt')}
+                  <div className="block text-xs font-medium text-muted-foreground">
+                    <div className="flex items-center justify-between gap-3">
+                      <span>{t('systemPrompt')}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {promptRestore?.generated === systemPrompt ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSystemPrompt(promptRestore.previous);
+                              setPromptRestore(null);
+                            }}
+                            aria-label={common('undo')}
+                            title={common('undo')}
+                            className="ui-button-ghost ui-icon-button size-7"
+                          >
+                            <RotateCcw className="size-3.5" />
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={!basicComplete || generatingPrompt}
+                          onClick={() => void generateSystemPrompt()}
+                          className="ui-button-secondary h-7 gap-1.5 px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {generatingPrompt ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                          {systemPrompt.trim() ? t('improvePrompt') : t('generatePrompt')}
+                        </button>
+                      </div>
+                    </div>
                     <textarea
                       name="systemPrompt"
-                      defaultValue={assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? ''}
+                      value={systemPrompt}
+                      aria-label={t('systemPrompt')}
+                      onChange={(event) => {
+                        setSystemPrompt(event.target.value);
+                        setPromptRestore(null);
+                      }}
                       rows={10}
                       maxLength={20_000}
                       className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
                       placeholder={t('systemPromptPlaceholder')}
                     />
-                  </label>
+                  </div>
+                </section>
+
+                <section
+                  hidden={createStep !== 'modelParameters'}
+                  aria-labelledby={creating ? 'assistant-create-model-parameters-title' : undefined}
+                  className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                >
+                  {creating ? (
+                    <h3 id="assistant-create-model-parameters-title" className="text-base font-semibold text-foreground">{t('modelParameters')}</h3>
+                  ) : null}
+                  <div className="divide-y divide-border border-y border-border">
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={temperatureEnabled}
+                          onChange={(event) => setTemperatureEnabled(event.target.checked)}
+                          aria-label={t('useCustomTemperature')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('temperature')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={temperature}
+                        disabled={!temperatureEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setTemperature(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('temperature')}
+                        className="ui-input h-8 w-24 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={topPEnabled}
+                          onChange={(event) => setTopPEnabled(event.target.checked)}
+                          aria-label={t('useCustomTopP')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('topP')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={topP}
+                        disabled={!topPEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setTopP(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('topP')}
+                        className="ui-input h-8 w-24 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={maxOutputTokensEnabled}
+                          onChange={(event) => setMaxOutputTokensEnabled(event.target.checked)}
+                          aria-label={t('useCustomMaxOutputTokens')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('maxOutputTokens')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1_000_000}
+                        step={1}
+                        value={maxOutputTokens}
+                        disabled={!maxOutputTokensEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setMaxOutputTokens(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('maxOutputTokens')}
+                        className="ui-input h-8 w-28 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
                 </section>
 
                 <section
