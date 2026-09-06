@@ -16,7 +16,11 @@ concurrency:
 
 jobs:
   connector-cross-platform:
-    if: github.event_name != 'pull_request_target'
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      !(github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
     name: connector (${{ matrix.os }})
     env:
       DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
@@ -59,7 +63,11 @@ jobs:
         run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts tests/integration/deployment-config-volume.live.test.ts
 
   validate:
-    if: github.event_name != 'pull_request_target'
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      !(github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
     runs-on: ubuntu-latest
     services:
       postgres:
