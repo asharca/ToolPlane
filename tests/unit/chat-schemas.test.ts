@@ -14,7 +14,15 @@ describe('chat bounded-context input', () => {
       modelProviderId: 'provider-1',
       model: 'gpt-5',
       description: 'Finds primary sources.',
-      modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 },
+      modelParameters: {
+        temperature: 0.4,
+        topP: 0.8,
+        maxOutputTokens: 2_000,
+        customParameters: [
+          { name: 'top_k', type: 'number', value: 40 },
+          { name: 'response_format', type: 'json', value: '{"type":"json_object"}' },
+        ],
+      },
       deploymentIds: ['mcp-1', 'mcp-1'],
       marketTemplateReleaseId: 'release-1',
       skillIds: ['skill-1'],
@@ -25,7 +33,15 @@ describe('chat bounded-context input', () => {
     expect(result.deploymentIds).toEqual(['mcp-1']);
     expect(result.marketTemplateReleaseId).toBe('release-1');
     expect(result.description).toBe('Finds primary sources.');
-    expect(result.modelParameters).toEqual({ temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 });
+    expect(result.modelParameters).toEqual({
+      temperature: 0.4,
+      topP: 0.8,
+      maxOutputTokens: 2_000,
+      customParameters: [
+        { name: 'top_k', type: 'number', value: 40 },
+        { name: 'response_format', type: 'json', value: '{"type":"json_object"}' },
+      ],
+    });
     expect(result).not.toHaveProperty('skillIds');
     expect(result).not.toHaveProperty('sandboxId');
     expect(result).not.toHaveProperty('runtime');
@@ -75,6 +91,17 @@ describe('chat bounded-context input', () => {
     expect(UpdateChatAssistantSchema.safeParse({ modelParameters: { temperature: 2.1 } }).success).toBe(false);
     expect(UpdateChatAssistantSchema.safeParse({ modelParameters: { topP: -0.1 } }).success).toBe(false);
     expect(UpdateChatAssistantSchema.safeParse({ modelParameters: { maxOutputTokens: 0 } }).success).toBe(false);
+    expect(UpdateChatAssistantSchema.safeParse({
+      modelParameters: { customParameters: [{ name: 'response_format', type: 'json', value: '{not-json}' }] },
+    }).success).toBe(false);
+    expect(UpdateChatAssistantSchema.safeParse({
+      modelParameters: {
+        customParameters: [
+          { name: 'top_k', type: 'number', value: 40 },
+          { name: 'top_k', type: 'number', value: 20 },
+        ],
+      },
+    }).success).toBe(false);
   });
 
   it('accepts pinning an assistant and moving a thread', () => {

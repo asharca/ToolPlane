@@ -9,11 +9,54 @@ import type { ModelParameters } from '@/lib/agents/model';
 
 const nullableTrimmedString = (max: number) => z.string().trim().max(max).nullable();
 
+const CustomModelParameterSchema = z.discriminatedUnion('type', [
+  z.object({
+    name: z.string().trim().min(1).max(120),
+    type: z.literal('string'),
+    value: z.string().max(10_000),
+  }).strict(),
+  z.object({
+    name: z.string().trim().min(1).max(120),
+    type: z.literal('number'),
+    value: z.number().finite(),
+  }).strict(),
+  z.object({
+    name: z.string().trim().min(1).max(120),
+    type: z.literal('boolean'),
+    value: z.boolean(),
+  }).strict(),
+  z.object({
+    name: z.string().trim().min(1).max(120),
+    type: z.literal('json'),
+    value: z.string().min(1).max(10_000).refine((value) => {
+      try {
+        JSON.parse(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'Invalid JSON'),
+  }).strict(),
+]);
+
 export const ChatAssistantModelParametersSchema: z.ZodType<ModelParameters> = z.object({
   temperature: z.number().finite().min(0).max(2).optional(),
   topP: z.number().finite().min(0).max(1).optional(),
   maxOutputTokens: z.number().int().min(1).max(1_000_000).optional(),
-}).strict();
+  customParameters: z.array(CustomModelParameterSchema).max(20).optional(),
+}).strict().superRefine((parameters, context) => {
+  const names = new Set<string>();
+  parameters.customParameters?.forEach((parameter, index) => {
+    if (names.has(parameter.name)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Custom parameter names must be unique',
+        path: ['customParameters', index, 'name'],
+      });
+    }
+    names.add(parameter.name);
+  });
+});
 
 const assistantFields = {
   name: z.string().trim().min(1).max(120),

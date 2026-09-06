@@ -110,6 +110,22 @@ function toolResultText(value: unknown): string {
   }
 }
 
+function customModelParameterPayload(parameters: ModelParameters['customParameters']): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const parameter of parameters ?? []) {
+    if (parameter.type === 'json') {
+      try {
+        payload[parameter.name] = JSON.parse(String(parameter.value));
+      } catch {
+        throw new Error(`Invalid JSON for custom model parameter "${parameter.name}".`);
+      }
+    } else {
+      payload[parameter.name] = parameter.value;
+    }
+  }
+  return payload;
+}
+
 export type NativeRunOptions = {
   provider: ProviderConfig;
   modelId: string;
@@ -136,6 +152,10 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
     ? undefined
     : Math.min(modelParameters.maxOutputTokens, model.maxTokens);
   const topP = !reasoning ? modelParameters?.topP : undefined;
+  const payloadParameters = {
+    ...(topP !== undefined ? { top_p: topP } : {}),
+    ...customModelParameterPayload(modelParameters?.customParameters),
+  };
   const contextWindowEstimated = providerModelIds(options.provider)?.includes(options.modelId) !== true;
   const tools = Object.values(options.tools);
   const maxSteps = resolveMaxSteps(options.maxSteps);
@@ -155,10 +175,10 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
       ...(!reasoning && modelParameters?.temperature !== undefined
         ? { temperature: modelParameters.temperature }
         : {}),
-      ...(topP !== undefined ? {
+      ...(Object.keys(payloadParameters).length ? {
         onPayload: (payload) => (
           payload && typeof payload === 'object' && !Array.isArray(payload)
-            ? { ...(payload as Record<string, unknown>), top_p: topP }
+            ? { ...(payload as Record<string, unknown>), ...payloadParameters }
             : payload
         ),
       } : {}),

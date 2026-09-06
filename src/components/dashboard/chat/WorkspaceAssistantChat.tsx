@@ -14,6 +14,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Cpu,
+  Eye,
   GitBranch,
   ListFilter,
   Loader2,
@@ -21,6 +22,7 @@ import {
   MoveRight,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   RotateCcw,
   Sparkles,
@@ -29,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
+import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import {
   ChatBranchPanel,
   type ChatBranchState,
@@ -57,6 +60,12 @@ type AssistantModelParameters = {
   temperature?: number;
   topP?: number;
   maxOutputTokens?: number;
+  customParameters?: AssistantCustomParameter[];
+};
+type AssistantCustomParameter = {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'json';
+  value: string | number | boolean;
 };
 
 export type AssistantMarketTemplate = {
@@ -103,6 +112,29 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
   const query = new URLSearchParams({ assistant: assistantId });
   if (threadId) query.set('thread', threadId);
   return `/app/${encodeURIComponent(slug)}/chat?${query}`;
+}
+
+export function estimatePromptTokens(prompt: string): number {
+  const text = prompt.trim();
+  if (!text) return 0;
+  const cjkCharacters = text.match(/[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af]/g)?.length ?? 0;
+  const otherCharacters = text.replace(/[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af]/g, '');
+  return cjkCharacters + Math.ceil(otherCharacters.length / 4);
+}
+
+function defaultCustomParameterValue(type: AssistantCustomParameter['type']): AssistantCustomParameter['value'] {
+  if (type === 'number') return 0;
+  if (type === 'boolean') return false;
+  return '';
+}
+
+function hasValidJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function AssistantEditor({
@@ -160,7 +192,10 @@ function AssistantEditor({
   const [topP, setTopP] = useState(initialModelParameters.topP ?? 1);
   const [maxOutputTokensEnabled, setMaxOutputTokensEnabled] = useState(initialModelParameters.maxOutputTokens !== undefined);
   const [maxOutputTokens, setMaxOutputTokens] = useState(initialModelParameters.maxOutputTokens ?? 4096);
-  const [systemPrompt, setSystemPrompt] = useState(assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? '');
+  const [customParameters, setCustomParameters] = useState<AssistantCustomParameter[]>(initialModelParameters.customParameters ?? []);
+  const initialSystemPrompt = assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? '';
+  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [showPromptPreview, setShowPromptPreview] = useState(Boolean(initialSystemPrompt.trim()));
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
   const [promptRestore, setPromptRestore] = useState<{ previous: string; generated: string } | null>(null);
   const [showMarketTemplates, setShowMarketTemplates] = useState(false);
@@ -198,6 +233,7 @@ function AssistantEditor({
       const generated = body.prompt.trim();
       setPromptRestore({ previous: systemPrompt, generated });
       setSystemPrompt(generated);
+      setShowPromptPreview(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('promptGenerationError'));
     } finally {
@@ -210,10 +246,19 @@ function AssistantEditor({
     setError(null);
     try {
       const deploymentIds = formData.getAll('deploymentIds').map(String);
+      const selectedCustomParameters = customParameters
+        .filter((parameter) => parameter.name.trim())
+        .map((parameter) => ({ ...parameter, name: parameter.name.trim() }));
+      if (selectedCustomParameters.some((parameter) => (
+        parameter.type === 'json' && !hasValidJson(String(parameter.value))
+      ))) {
+        throw new Error(t('invalidCustomParameter'));
+      }
       const modelParameters: AssistantModelParameters = {
         ...(temperatureEnabled ? { temperature } : {}),
         ...(topPEnabled ? { topP } : {}),
         ...(maxOutputTokensEnabled ? { maxOutputTokens } : {}),
+        ...(selectedCustomParameters.length ? { customParameters: selectedCustomParameters } : {}),
       };
       const response = await fetch(
         assistant ? `/api/v1/chat/assistants/${assistant.id}` : '/api/v1/chat/assistants',
@@ -452,6 +497,15 @@ function AssistantEditor({
                     <div className="flex items-center justify-between gap-3">
                       <span>{t('systemPrompt')}</span>
                       <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowPromptPreview((current) => !current)}
+                          aria-label={showPromptPreview ? t('editSystemPrompt') : t('previewSystemPrompt')}
+                          title={showPromptPreview ? t('editSystemPrompt') : t('previewSystemPrompt')}
+                          className="ui-button-ghost ui-icon-button size-7"
+                        >
+                          {showPromptPreview ? <Pencil className="size-3.5" /> : <Eye className="size-3.5" />}
+                        </button>
                         {promptRestore?.generated === systemPrompt ? (
                           <button
                             type="button"
@@ -477,19 +531,28 @@ function AssistantEditor({
                         </button>
                       </div>
                     </div>
-                    <textarea
-                      name="systemPrompt"
-                      value={systemPrompt}
-                      aria-label={t('systemPrompt')}
-                      onChange={(event) => {
-                        setSystemPrompt(event.target.value);
-                        setPromptRestore(null);
-                      }}
-                      rows={10}
-                      maxLength={20_000}
-                      className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
-                      placeholder={t('systemPromptPlaceholder')}
-                    />
+                    {showPromptPreview ? (
+                      <div className="mt-1.5 min-h-64 overflow-auto rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground">
+                        {systemPrompt.trim() ? <AssistantMarkdown text={systemPrompt} /> : <p className="text-muted-foreground">{t('systemPromptPlaceholder')}</p>}
+                      </div>
+                    ) : (
+                      <textarea
+                        name="systemPrompt"
+                        value={systemPrompt}
+                        aria-label={t('systemPrompt')}
+                        onChange={(event) => {
+                          setSystemPrompt(event.target.value);
+                          setPromptRestore(null);
+                        }}
+                        rows={10}
+                        maxLength={20_000}
+                        className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
+                        placeholder={t('systemPromptPlaceholder')}
+                      />
+                    )}
+                    <p aria-live="polite" className="mt-1.5 text-right text-xs font-normal text-muted-foreground">
+                      {t('estimatedTokens', { count: estimatePromptTokens(systemPrompt) })}
+                    </p>
                   </div>
                 </section>
 
@@ -583,6 +646,115 @@ function AssistantEditor({
                         className="ui-input h-8 w-28 text-right disabled:cursor-not-allowed disabled:opacity-50"
                       />
                     </div>
+                  </div>
+                  <div className="border-b border-border pb-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-foreground">{t('customParameters')}</h4>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('customParametersHint')}</p>
+                      </div>
+                      <button type="button" onClick={() => setCustomParameters((current) => [
+                        ...current,
+                        { name: '', type: 'string', value: '' },
+                      ])} className="ui-button-secondary h-8 shrink-0 gap-1.5 px-2.5 text-xs">
+                        <Plus className="size-3.5" />
+                        {t('addCustomParameter')}
+                      </button>
+                    </div>
+                    {customParameters.length ? (
+                      <div className="mt-3 space-y-3">
+                        {customParameters.map((parameter, index) => {
+                          const valueLabel = t('customParameterValue', {
+                            name: parameter.name.trim() || String(index + 1),
+                          });
+                          const updateParameter = (patch: Partial<AssistantCustomParameter>) => {
+                            setCustomParameters((current) => current.map((currentParameter, currentIndex) => {
+                              if (currentIndex !== index) return currentParameter;
+                              if (patch.type && patch.type !== currentParameter.type) {
+                                return {
+                                  ...currentParameter,
+                                  ...patch,
+                                  value: defaultCustomParameterValue(patch.type),
+                                };
+                              }
+                              return { ...currentParameter, ...patch };
+                            }));
+                          };
+                          return (
+                            <div key={index} className="border-t border-border pt-3">
+                              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_2rem]">
+                                <input
+                                  value={parameter.name}
+                                  onChange={(event) => updateParameter({ name: event.target.value })}
+                                  aria-label={t('customParameterName')}
+                                  className="ui-input h-8 w-full"
+                                  placeholder="top_k"
+                                />
+                                <select
+                                  value={parameter.type}
+                                  onChange={(event) => updateParameter({ type: event.target.value as AssistantCustomParameter['type'] })}
+                                  aria-label={t('customParameterType')}
+                                  className="ui-input h-8 w-full"
+                                >
+                                  <option value="string">string</option>
+                                  <option value="number">number</option>
+                                  <option value="boolean">boolean</option>
+                                  <option value="json">json</option>
+                                </select>
+                                {parameter.type === 'number' ? (
+                                  <input
+                                    type="number"
+                                    value={typeof parameter.value === 'number' ? parameter.value : 0}
+                                    onChange={(event) => updateParameter({ value: Number.isFinite(event.currentTarget.valueAsNumber) ? event.currentTarget.valueAsNumber : 0 })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  />
+                                ) : parameter.type === 'boolean' ? (
+                                  <select
+                                    value={String(parameter.value)}
+                                    onChange={(event) => updateParameter({ value: event.target.value === 'true' })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  >
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                  </select>
+                                ) : parameter.type === 'json' ? (
+                                  <span className="hidden sm:block" />
+                                ) : (
+                                  <input
+                                    value={String(parameter.value)}
+                                    onChange={(event) => updateParameter({ value: event.target.value })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setCustomParameters((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                                  aria-label={common('delete')}
+                                  title={common('delete')}
+                                  className="ui-button-ghost ui-icon-button size-8"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </div>
+                              {parameter.type === 'json' ? (
+                                <textarea
+                                  value={String(parameter.value)}
+                                  onChange={(event) => updateParameter({ value: event.target.value })}
+                                  aria-label={valueLabel}
+                                  rows={3}
+                                  spellCheck={false}
+                                  className="ui-input mt-2 w-full resize-y py-2 font-mono text-xs"
+                                  placeholder={t('customParameterJsonPlaceholder')}
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                 </section>
 

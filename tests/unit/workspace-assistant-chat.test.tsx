@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
+import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
 const mocks = vi.hoisted(() => ({ conversation: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
 
@@ -74,6 +74,11 @@ function renderChat(
 describe('WorkspaceAssistantChat', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllGlobals());
+
+  it('estimates mixed CJK and Latin system prompt tokens', () => {
+    expect(estimatePromptTokens('你好 hello')).toBe(4);
+    expect(estimatePromptTokens('   ')).toBe(0);
+  });
 
   it('uses the agent chat header spacing', () => {
     renderChat();
@@ -300,6 +305,10 @@ describe('WorkspaceAssistantChat', () => {
       }),
     });
 
+    await userEvent.click(screen.getByRole('button', { name: 'Preview system prompt' }));
+    expect(screen.getByText('Find primary sources, cite them, and state uncertainty.')).toBeInTheDocument();
+    expect(screen.getByText(`Estimated tokens: ${estimatePromptTokens('Find primary sources, cite them, and state uncertainty.')}`)).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('button', { name: 'Model parameters' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom temperature' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Temperature' }), { target: { value: '0.4' } });
@@ -307,6 +316,10 @@ describe('WorkspaceAssistantChat', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Top P' }), { target: { value: '0.8' } });
     await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom maximum output tokens' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Max output tokens' }), { target: { value: '2048' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Custom parameter name' }), 'top_k');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Custom parameter type' }), 'number');
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Value: top_k' }), { target: { value: '40' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/chat/assistants/assistant-1', {
@@ -318,7 +331,12 @@ describe('WorkspaceAssistantChat', () => {
         systemPrompt: 'Find primary sources, cite them, and state uncertainty.',
         modelProviderId: 'provider-1',
         model: 'model-1',
-        modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2048 },
+        modelParameters: {
+          temperature: 0.4,
+          topP: 0.8,
+          maxOutputTokens: 2048,
+          customParameters: [{ name: 'top_k', type: 'number', value: 40 }],
+        },
         maxSteps: 8,
         deploymentIds: [],
       }),
@@ -380,6 +398,8 @@ describe('WorkspaceAssistantChat', () => {
     expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Market template selected' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: 'Edit system prompt' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit system prompt' }));
     expect(screen.getByRole('textbox', { name: 'System prompt' })).toHaveValue('Use primary sources.');
   });
 

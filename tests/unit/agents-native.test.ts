@@ -126,11 +126,26 @@ describe('runNativeAgent', () => {
       messages: [{ role: 'user', content: 'hello', timestamp: Date.now() }],
       tools: {},
       maxSteps: 1,
-      modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 512 },
+      modelParameters: {
+        temperature: 0.4,
+        topP: 0.8,
+        maxOutputTokens: 512,
+        customParameters: [
+          { name: 'top_k', type: 'number', value: 40 },
+          { name: 'repetition_penalty', type: 'number', value: 1.1 },
+          { name: 'response_format', type: 'json', value: '{"type":"json_object"}' },
+        ],
+      },
     })).resolves.toBe('done');
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body).toMatchObject({ temperature: 0.4, top_p: 0.8 });
+    expect(body).toMatchObject({
+      temperature: 0.4,
+      top_p: 0.8,
+      top_k: 40,
+      repetition_penalty: 1.1,
+      response_format: { type: 'json_object' },
+    });
     expect(body.max_completion_tokens ?? body.max_tokens).toBe(512);
   });
 
