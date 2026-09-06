@@ -29,7 +29,7 @@ async function jsonFetch(url: string, init?: RequestInit) {
     signal: AbortSignal.timeout(15000),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+  if (!res.ok) throw new Error(`Pairing provider returned HTTP ${res.status}.`);
   const parsed = JSON.parse(text) as unknown;
   if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON response.');
   return parsed as Record<string, unknown>;
@@ -429,6 +429,64 @@ function unsupportedPairing(platform: string): AgentChannelPairingState {
   };
 }
 
+async function feishuRegistration(domain: string, params: Record<string, string>) {
+  const origin = domain === 'lark' ? 'https://accounts.larksuite.com' : 'https://accounts.feishu.cn';
+  return jsonFetch(`${origin}/oauth/v1/app/registration`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString(),
+  });
+}
+
+async function requestFeishuPairing(row: ChannelRow) {
+  const domain = decryptSecretRecord(row.credentials).FEISHU_DOMAIN === 'lark' ? 'lark' : 'feishu';
+  await feishuRegistration(domain, { action: 'init' });
+  const raw = await feishuRegistration(domain, {
+    action: 'begin', archetype: 'PersonalAgent', auth_method: 'client_secret', request_user_info: 'open_id',
+  });
+  const deviceCode = text(raw.device_code);
+  const scanUrl = text(raw.verification_uri_complete);
+  if (!deviceCode || !scanUrl) throw new Error('Feishu registration returned an incomplete response.');
+  return {
+    pairing: {
+      provider: 'feishu_device_qr', status: 'waiting', qrPayload: scanUrl, scanUrl,
+      requestedAt: new Date().toISOString(), expiresAt: expiresIn(numberValue(raw.expires_in, 600)),
+      extra: { domain, interval: String(numberValue(raw.interval, 5)) },
+    } satisfies AgentChannelPairingState,
+    secrets: { deviceCode },
+  };
+}
+
+async function checkFeishuPairing(row: ChannelRow, pairing: AgentChannelPairingState) {
+  const deviceCode = pairingSecrets(row).deviceCode;
+  if (!deviceCode) throw new Error('Request a new Feishu QR code.');
+  const raw = await feishuRegistration(pairing.extra?.domain ?? 'feishu', { action: 'poll', device_code: deviceCode });
+  const appId = text(raw.client_id);
+  const appSecret = text(raw.client_secret);
+  if (appId && appSecret) {
+    const updated = await updateAgentChannelConnectionCredentials({
+      workspaceId: row.workspaceId, connectionId: row.id,
+      credentials: { FEISHU_APP_ID: appId, FEISHU_APP_SECRET: appSecret, FEISHU_DOMAIN: pairing.extra?.domain ?? 'feishu' },
+    });
+    if (updated.error) throw new Error(updated.error);
+    const latest = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: row.id } });
+    await updatePairing(latest, {
+      ...pairing, status: 'ready', qrPayload: undefined, scanUrl: undefined,
+      lastCheckedAt: new Date().toISOString(), error: undefined,
+    }, {});
+    return;
+  }
+  const error = text(raw.error);
+  if (error && !['authorization_pending', 'slow_down', 'expired_token'].includes(error)) {
+    throw new Error(error === 'access_denied' ? 'Feishu authorization was denied.' : 'Feishu authorization failed.');
+  }
+  await updatePairing(row, {
+    ...pairing, status: error === 'expired_token' ? 'expired' : 'waiting',
+    lastCheckedAt: new Date().toISOString(),
+    extra: { ...pairing.extra, interval: String(numberValue(pairing.extra?.interval, 5) + (error === 'slow_down' ? 5 : 0)) },
+  });
+}
+
 type AgentChannelPairingResult = {
   error?: string;
   pairing?: AgentChannelPairingState;
@@ -445,7 +503,9 @@ export async function requestAgentChannelPairing(
 
   try {
     const requested =
-      platform.pairing.provider === 'telegram_managed_bot'
+      platform.pairing.provider === 'feishu_device_qr'
+        ? await requestFeishuPairing(row)
+        : platform.pairing.provider === 'telegram_managed_bot'
         ? await requestTelegramPairing()
         : platform.pairing.provider === 'wecom_admin_qr'
           ? { pairing: await requestWeComPairing(), secrets: undefined }
@@ -481,9 +541,16 @@ export async function checkAgentChannelPairing(
   if (!platform?.pairing) return { error: 'This platform does not use QR pairing.' };
   const pairing = pairingFromConfig(row.config);
   if (!pairing) return { error: 'Request a QR code first.' };
+  if (['ready', 'expired', 'error'].includes(pairing.status)) return {};
+  if (pairing.expiresAt && Date.parse(pairing.expiresAt) <= Date.now()) {
+    await updatePairing(row, { ...pairing, status: 'expired', qrPayload: undefined, scanUrl: undefined }, {});
+    return {};
+  }
 
   try {
-    if (pairing.provider === 'telegram_managed_bot') {
+    if (pairing.provider === 'feishu_device_qr') {
+      await checkFeishuPairing(row, pairing);
+    } else if (pairing.provider === 'telegram_managed_bot') {
       await checkTelegramPairing(row, pairing);
     } else if (pairing.provider === 'wecom_admin_qr') {
       await checkWeComPairing(row, pairing);
@@ -539,7 +606,8 @@ export async function applyAgentChannelPairing(
     connectionId: row.id,
     credentials: {
       TELEGRAM_BOT_TOKEN: botToken,
-      ...(allowedUserIds.length ? { TELEGRAM_ALLOWED_USERS: allowedUserIds.join(',') } : {}),
+      TELEGRAM_ALLOWED_USERS: allowedUserIds.join(','),
+      TELEGRAM_ALLOW_ALL_USERS: String(allowedUserIds.length === 0),
     },
   });
   if (updated.error) return updated;

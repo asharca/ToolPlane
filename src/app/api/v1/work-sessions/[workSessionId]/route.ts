@@ -6,6 +6,7 @@ import {
 } from '@/lib/work/sessions';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
+import { isWorkSessionTitlePending } from '@/lib/work/coordinator';
 
 type Params = { params: Promise<{ workSessionId: string }> };
 
@@ -13,11 +14,13 @@ export async function GET(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { workSessionId } = await params;
+  const titlePending = isWorkSessionTitlePending(workSessionId);
   const work = await getWorkSessionForUser(user.id, workSessionId);
   if (!work) return Response.json({ error: 'Not found' }, { status: 404 });
   const { conversation, sandbox, ...view } = work;
   return Response.json({
     ...view,
+    titlePending,
     reasoningEffort: normalizeReasoningEffort(conversation.reasoningEffort) ?? null,
     hermesProfile: conversation.hermesProfile,
     hermesProvider: conversation.hermesProvider,

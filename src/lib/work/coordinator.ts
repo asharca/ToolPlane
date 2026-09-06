@@ -5,6 +5,7 @@ import { Type, type ToolCall } from '@earendil-works/pi-ai';
 import { db } from '@/lib/db';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import { generateWorkSessionTitle } from '@/lib/agents/conversation-naming';
+import { activeConversationMessages, CLEAR_CONTEXT_PART, compactedConversationSeed } from '@/lib/agents/conversation-context';
 import { getAgentForRun } from '@/lib/agents/queries';
 import { ensureConversationRuntimeSession } from '@/lib/agents/mutations';
 import { resolveAgentTools } from '@/lib/agents/resolve';
@@ -16,6 +17,7 @@ import { runNativeAgent, uiMessagesToPi } from '@/lib/agents/native';
 import { isDedicatedSandboxRuntimeKind, isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
 import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import type { SandboxRuntimeActivity } from '@/lib/agents/sandbox-runtime';
+import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands, type RuntimeCommand, type RuntimeUsage } from '@/lib/agents/runtime-commands';
 import {
   runHermesWork,
   stopHermesWorkRun,
@@ -121,6 +123,7 @@ function hermesMcpToolOrigin(toolName: string, deploymentIds: readonly string[])
 type CoordinatorState = {
   draining: boolean;
   active: Set<string>;
+  titleGenerations?: Set<string>;
   timer?: ReturnType<typeof setInterval>;
   reconciled: boolean;
 };
@@ -132,6 +135,11 @@ const state = coordinatorGlobal.__workCoordinator ?? {
   reconciled: false,
 };
 coordinatorGlobal.__workCoordinator = state;
+const pendingTitles = state.titleGenerations ??= new Set<string>();
+
+export function isWorkSessionTitlePending(workSessionId: string) {
+  return pendingTitles.has(workSessionId);
+}
 
 function snapshot(value: Prisma.JsonValue | null): RuntimeSnapshot {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -438,10 +446,14 @@ async function appendAssistantResult(
   trace: WorkTracePart[],
   contextUsage?: ContextUsageSnapshot,
   timing?: WorkTurnTiming,
+  metadata: Prisma.InputJsonValue[] = [],
+  command?: string,
 ) {
   const parts: Prisma.InputJsonValue[] = [
+    ...metadata,
     ...trace as unknown as Prisma.InputJsonValue[],
     ...(text ? [{ type: 'text', text, state: 'done' } as Prisma.InputJsonValue] : []),
+    ...(command ? [{ type: COMMAND_RESULT_PART, data: { command, text } }, ...(command === 'clear' ? [{ type: CLEAR_CONTEXT_PART, data: { completedAt: new Date().toISOString() } }] : [])] : []),
     ...(contextUsage ? [{ type: 'data-context-usage', data: contextUsage } as Prisma.InputJsonValue] : []),
     ...(timing ? [{ type: 'data-work-timing', data: timing } as Prisma.InputJsonValue] : []),
   ];
@@ -456,7 +468,7 @@ async function executeWork(workSessionId: string) {
     where: { id: workSessionId },
     include: {
       sandbox: { include: { deployment: true } },
-      conversation: { include: { messages: { orderBy: { createdAt: 'asc' } } } },
+      conversation: { include: { messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } } },
     },
   });
   if (!work) {
@@ -502,6 +514,13 @@ async function executeWork(workSessionId: string) {
   let runtimeStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
   let tracePersisted = false;
   let contextUsage: ContextUsageSnapshot | undefined;
+  let commands: RuntimeCommand[] | undefined;
+  let usage: RuntimeUsage | undefined;
+  let executedCommand: ReturnType<typeof parseRuntimeCommand> = null;
+  const runtimeMetadata = (): Prisma.InputJsonValue[] => [
+    ...(commands ? [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: work.runtimeKind, commands } } as Prisma.InputJsonValue] : []),
+    ...(usage ? [{ type: RUNTIME_USAGE_PART, data: usage } as Prisma.InputJsonValue] : []),
+  ];
   let approvalWaitMs = 0;
   let deploymentNames = new Map<string, string>();
   let resolvedDeploymentIds: string[] = [];
@@ -727,7 +746,7 @@ async function executeWork(workSessionId: string) {
     }
 
     const outcome: { current: WorkOutcome } = { current: { kind: 'running' } };
-    const runtimeMessages: RuntimeMessage[] = work.conversation.messages.map((message) => ({
+    const runtimeMessages: RuntimeMessage[] = activeConversationMessages(work.conversation.messages).map((message) => ({
       id: message.id,
       role: message.role,
       parts: message.parts as RuntimeMessage['parts'],
@@ -749,7 +768,8 @@ async function executeWork(workSessionId: string) {
         const result = await runHermesWork({
           agent,
           task: latestWorkTask(runtimeMessages, work.task),
-          instructions: workSystemPrompt(workingDirectory, true, '/opt/data/workspace'),
+          instructions: [workSystemPrompt(workingDirectory, true, '/opt/data/workspace'), compactedConversationSeed(work.conversation.messages)]
+            .filter(Boolean).join('\n\n'),
           workingDirectory,
           sessionId: runtimeSession.runtimeSessionId,
           sessionKey: runtimeSession.runtimeSessionKey,
@@ -852,6 +872,11 @@ async function executeWork(workSessionId: string) {
         writeLease.release();
       }
     } else if (isDedicatedSandboxRuntimeKind(work.runtimeKind)) {
+      const last = runtimeMessages.at(-1);
+      const commandText = last?.role === 'user' ? last.parts.filter((part) => part.type === 'text' && !('reference' in part)).map((part) => part.text ?? '').join('\n') : '';
+      const command = parseRuntimeCommand(commandText);
+      executedCommand = command;
+      if (command && !sessionRuntimeCommands(work.runtimeKind, work.conversation.messages).some((item) => item.name === command.name)) throw new Error('This command is not available for the current runtime.');
       const system = [
         saved.systemPrompt ?? agent.systemPrompt,
         workSystemPrompt(workingDirectory, true),
@@ -860,7 +885,9 @@ async function executeWork(workSessionId: string) {
         agent,
         sandboxId: work.sandbox.id,
         systemPrompt: system,
-        messages: runtimeMessages,
+        messages: command ? runtimeMessages.slice(0, -1) : runtimeMessages,
+        ...(command ? { command: commandText } : {}),
+        runtimeSessionId: work.conversationId,
         skills: resolved.skills,
         deploymentIds: resolved.deploymentIds.filter((id) => !resolved.sandboxDeploymentIds.includes(id)),
         workingDirectory,
@@ -871,6 +898,8 @@ async function executeWork(workSessionId: string) {
         },
         onActivity,
         onContextUsage: (usage) => { contextUsage = usage; },
+        onCommands: (next) => { commands = next; },
+        onUsage: (next) => { usage = next; },
       });
     } else {
       if (!provider || !model) throw new Error('Work Agent has no configured model.');
@@ -958,12 +987,14 @@ async function executeWork(workSessionId: string) {
       status: 'completed',
       runtimeKind: work.runtimeKind,
     });
-    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming());
+    const controlCommand = executedCommand && (['compact', 'context', 'usage', 'clear'].includes(executedCommand.name) || (executedCommand.name === 'goal' && ['', 'pause', 'clear'].includes(executedCommand.args.toLowerCase()))) ? executedCommand.name : undefined;
+    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming(), runtimeMetadata(), controlCommand);
     tracePersisted = true;
-    try {
-      await generateWorkSessionTitle(work.workspaceId, work.agentId, work.conversationId);
-    } catch (error) {
-      console.warn(`[work] ${work.id} title generation failed`, error);
+    if (!executedCommand && !pendingTitles.has(work.id)) {
+      pendingTitles.add(work.id);
+      void generateWorkSessionTitle(work.workspaceId, work.agentId, work.conversationId)
+        .catch((error) => console.warn(`[work] ${work.id} title generation failed`, error))
+        .finally(() => pendingTitles.delete(work.id));
     }
     if (finalOutcome.kind === 'complete') {
       await db.workSession.updateMany({
@@ -1006,7 +1037,7 @@ async function executeWork(workSessionId: string) {
     });
     if (!tracePersisted) {
       try {
-        await appendAssistantResult(work.conversationId, '', traceParts(), contextUsage, turnTiming());
+        await appendAssistantResult(work.conversationId, '', traceParts(), contextUsage, turnTiming(), runtimeMetadata());
         tracePersisted = true;
       } catch (traceError) {
         console.error(`[work] ${work.id} activity persistence failed`, traceError);

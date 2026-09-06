@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentChannelToken, hashAgentChannelToken, AGENT_CHANNEL_TOKEN_PREFIX } from '@/lib/agents/channel-token';
-import { runnerStderrToLastError, runnerStdoutIndicatesConnected } from '@/lib/agents/channel-runtime-logs';
+import { appendAgentChannelLog, getAgentChannelLogs } from '@/lib/agents/channel-runtime-logs';
+import { channelSenderAllowed } from '@/lib/agents/channel-access';
 import { hostedRunnerSpec } from '@/lib/agents/platform-runner';
 import { decryptSecretRecord, encryptSecretRecord } from '@/lib/security/secrets';
 
@@ -18,10 +19,12 @@ describe('agent channel platform primitives', () => {
     expect(decryptSecretRecord(encrypted)).toEqual({ TELEGRAM_BOT_TOKEN: '123:abc' });
   });
 
-  it('marks long-lived platforms as hosted Hermes runners', () => {
+  it('uses Cherry native Node adapters without Hermes imports or process configuration', () => {
+    expect(hostedRunnerSpec('feishu')?.className).toBe('FeishuAdapter');
+    expect(hostedRunnerSpec('qqbot')?.className).toBe('QqAdapter');
     expect(hostedRunnerSpec('telegram')).toMatchObject({
       className: 'TelegramAdapter',
-      tokenEnv: 'TELEGRAM_BOT_TOKEN',
+      runtime: 'node',
       requiredEnv: ['TELEGRAM_BOT_TOKEN'],
     });
     expect(hostedRunnerSpec('slack')?.requiredEnv).toEqual(expect.arrayContaining([
@@ -29,19 +32,29 @@ describe('agent channel platform primitives', () => {
       'SLACK_APP_TOKEN',
     ]));
     expect(hostedRunnerSpec('weixin')).toMatchObject({
-      importPath: 'gateway.platforms.weixin',
-      className: 'WeixinAdapter',
-      tokenEnv: 'WEIXIN_TOKEN',
-      requiredEnv: ['WEIXIN_TOKEN', 'WEIXIN_ACCOUNT_ID'],
+      runtime: 'node',
+      className: 'WeChatAdapter',
+      requiredEnv: expect.arrayContaining(['WEIXIN_TOKEN', 'WEIXIN_ACCOUNT_ID']),
     });
     expect(hostedRunnerSpec('whatsapp_cloud')).toBeNull();
   });
 
-  it('does not treat runner progress logs as channel errors', () => {
-    expect(runnerStderrToLastError('[Telegram] Connecting to Telegram (attempt 1/8)...')).toBeNull();
-    expect(runnerStderrToLastError('[Telegram] Discovering Telegram API fallback IPs')).toBeNull();
-    expect(runnerStderrToLastError("Failed to load plugin demo: No module named 'optional_dep'")).toBeNull();
-    expect(runnerStderrToLastError('Traceback: bot token is invalid')).toBe('Traceback: bot token is invalid');
-    expect(runnerStdoutIndicatesConnected('[agent-channel-runner] connected telegram channel abc')).toBe(true);
+  it('bounds logs and enforces user and chat allowlists independently', () => {
+    for (let i = 0; i < 205; i += 1) appendAgentChannelLog('bounded', 'info', `log ${i}`);
+    expect(getAgentChannelLogs('bounded')).toHaveLength(200);
+    const credentials = { SLACK_ALLOWED_USERS: 'U1,U2', SLACK_ALLOWED_CHANNELS: 'C1' };
+    expect(channelSenderAllowed('slack', credentials, { userId: 'U1', chatId: 'C1' })).toBe(true);
+    expect(channelSenderAllowed('slack', credentials, { userId: 'U3', chatId: 'C1' })).toBe(false);
+    expect(channelSenderAllowed('slack', credentials, { userId: 'U1', chatId: 'C2' })).toBe(false);
+    expect(channelSenderAllowed('slack', credentials, {})).toBe(false);
+    expect(channelSenderAllowed('telegram', { TELEGRAM_ALLOW_ALL_USERS: 'false' }, {})).toBe(false);
+    expect(channelSenderAllowed('discord', { DISCORD_ALLOWED_CHANNELS: '123' }, { chatId: 'channel:123' })).toBe(true);
+    expect(channelSenderAllowed('qqbot', { QQBOT_ALLOWED_CHATS: 'group:123' }, { chatId: 'group:123' })).toBe(true);
+    expect(channelSenderAllowed('discord', { DISCORD_ALLOWED_CHANNELS: '123' }, { chatId: 'channel:456' })).toBe(false);
+    expect(channelSenderAllowed('discord', { DISCORD_ALLOWED_ROLES: 'moderator' }, { userId: '123' })).toBe(false);
+    expect(channelSenderAllowed('discord', { DISCORD_ALLOWED_ROLES: 'moderator' }, { userId: '123' }, ['moderator'])).toBe(true);
+    expect(channelSenderAllowed('weixin', { WEIXIN_DM_POLICY: 'disabled' }, { userId: 'friend' })).toBe(false);
+    expect(channelSenderAllowed('weixin', { WEIXIN_DM_POLICY: 'allowlist' }, { userId: 'friend' })).toBe(false);
   });
+
 });

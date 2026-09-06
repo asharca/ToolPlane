@@ -8,6 +8,7 @@ import { ContextMenu } from 'radix-ui';
 import { SidebarActionRail } from '@asharca/ui';
 import {
   AlertCircle,
+  ArrowLeft,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -72,7 +73,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
 function chatHref(slug: string, agentId: string, conversationId?: string) {
   const query = new URLSearchParams({ agent: agentId });
   if (conversationId) query.set('c', conversationId);
-  return `/app/${encodeURIComponent(slug)}/chat?${query}`;
+  return `/app/${encodeURIComponent(slug)}/work?${query}`;
 }
 
 function conversationLabel(item: ChatConversation, fallback: string) {
@@ -113,6 +114,7 @@ export function WorkspaceChat({
   startInChat?: boolean;
 }) {
   const t = useTranslations('console.agents');
+  const work = useTranslations('console.work');
   const common = useTranslations('common');
   const router = useRouter();
   const activeAgent = agents.find((agent) => agent.id === agentId) ?? agents[0];
@@ -157,6 +159,7 @@ export function WorkspaceChat({
     ? createdConversation.id
     : null;
   const activeConversationId = createdConversationId ?? conversationId;
+  const channelConversation = Boolean(conversations.find((item) => item.id === activeConversationId)?.source);
   const visibleConversations = useMemo(() => {
     const query = conversationQuery.trim().toLocaleLowerCase();
     return conversations.filter((item) => !query || [
@@ -170,6 +173,14 @@ export function WorkspaceChat({
     selectedConversationIdRef.current = conversationId;
     activeConversationIdRef.current = conversationId;
   }, [agentId, conversationId]);
+
+  useEffect(() => {
+    if (!channelConversation || conversationBusy) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') router.refresh();
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [channelConversation, conversationBusy, router]);
 
   const clearDeleteConfirmation = useCallback(() => {
     if (deleteConfirmTimeoutRef.current !== null) {
@@ -528,6 +539,9 @@ export function WorkspaceChat({
         <section className={`${mobilePane === 'sidebar' ? 'hidden lg:flex' : 'flex'} min-h-0 min-w-0 flex-col overflow-hidden bg-background`}>
           <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-background px-2.5">
               <div className="flex min-w-0 items-center gap-1.5">
+                <Link href={`/app/${encodeURIComponent(slug)}/work`} aria-label={work('title')} title={work('title')} className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <ArrowLeft className="size-[18px]" />
+                </Link>
                 <button
                   type="button"
                   aria-label={t('showConversations')}

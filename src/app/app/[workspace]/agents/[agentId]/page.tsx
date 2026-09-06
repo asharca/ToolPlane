@@ -68,7 +68,7 @@ export default async function AgentDetailPage({
   if (c || tab === 'chat') {
     const query = new URLSearchParams({ agent: agentId });
     if (c) query.set('c', c);
-    redirect(`/app/${slug}/chat?${query}`);
+    redirect(`/app/${slug}/work?${query}`);
   }
 
   const isHermes = agent.runtimeKind === 'hermes';
@@ -96,9 +96,7 @@ export default async function AgentDetailPage({
     managerMembership,
     requestHeaders,
   ] = await Promise.all([
-    isHermes
-      ? Promise.resolve([])
-      : listAgentChannelConnections(ws.id, agentId),
+    listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id, selectedDeps),
     listAgentSkillOptions(ws.id, selectedSkills),
@@ -124,7 +122,7 @@ export default async function AgentDetailPage({
     : agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandbox;
 
   return (
-    <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/chat?agent=${encodeURIComponent(agent.id)}`} compact>
+    <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/work?agent=${encodeURIComponent(agent.id)}`} compact>
       <AgentSettings
         key={settings ?? 'general'}
         slug={slug}
@@ -259,7 +257,7 @@ export default async function AgentDetailPage({
         ready={ready}
         agentName={agent.name}
         marketSetup={marketSetup}
-        initialSettingsTab={settings === 'channels' && !isHermes ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
+        initialSettingsTab={settings === 'channels' ? 'channels' : settings === 'api' && isHermes ? 'api' : settings === 'profiles' && isHermes ? 'profiles' : settings === 'hermes' ? 'hermes' : settings === 'terminal' ? 'terminal' : settings === 'agent' ? 'agent' : null}
       />
     </SettingsModal>
   );

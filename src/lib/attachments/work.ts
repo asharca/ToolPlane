@@ -1,5 +1,6 @@
 import 'server-only';
 import type { Prisma } from '@prisma/client';
+import type { ComposerReference } from '@/lib/work/composer-types';
 import { db } from '@/lib/db';
 import { sandboxVolumeName } from '@/lib/sandboxes/runtime';
 import {
@@ -151,9 +152,10 @@ export async function claimWorkAttachments(
   }
 }
 
-export function workMessageParts(text: string, attachments: PreparedWorkAttachment[]) {
+export function workMessageParts(text: string, attachments: PreparedWorkAttachment[], references: ComposerReference[] = []) {
   return [
     { type: 'text', text },
+    ...references.map(({ text, ...reference }) => ({ type: 'text', text, reference })),
     ...attachments.map((attachment) => ({
       type: 'file',
       mediaType: attachment.mimeType,

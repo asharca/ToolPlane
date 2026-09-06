@@ -217,7 +217,7 @@ export function AgentModelDialog({
     onOpenChange(false);
     if (hermesState.conversationId !== hermesConversation?.id) {
       const query = new URLSearchParams({ agent: agent.id, c: hermesState.conversationId });
-      router.push(`/app/${encodeURIComponent(slug)}/chat?${query}`);
+      router.push(`/app/${encodeURIComponent(slug)}/work?${query}`);
     } else {
       void onHermesSelectionSaved?.();
       router.refresh();

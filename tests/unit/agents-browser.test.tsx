@@ -517,7 +517,7 @@ describe('AgentsBrowser', () => {
     expect(within(row!).getByText(/2 selected: OpenAI, Anthropic/)).toBeInTheDocument();
     expect(within(row!).getByRole('link', { name: 'Chat' })).toHaveAttribute(
       'href',
-      '/app/acme/chat?agent=agent-hermes',
+      '/app/acme/work?agent=agent-hermes',
     );
   });
 

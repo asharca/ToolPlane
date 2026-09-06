@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronLeft, Loader2, ScrollText } from 'lucide-react';
 import {
@@ -30,51 +30,73 @@ export function McpPromptPickerButton({
   disabled,
   onError,
   onInsert,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
 }: {
   apiPath?: string;
   disabled: boolean;
   onError: (message: string | null) => void;
   onInsert: (text: string) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
   const [loading, setLoading] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [prompts, setPrompts] = useState<McpPromptOption[]>([]);
   const [selected, setSelected] = useState<McpPromptOption | null>(null);
   const [argumentsValue, setArgumentsValue] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
   const loadPrompts = useCallback(async () => {
     if (!apiPath) return;
+    const controller = new AbortController();
+    requestRef.current?.abort();
+    requestRef.current = controller;
     setLoading(true);
+    setResolving(false);
     setError(null);
     onError(null);
     try {
-      const response = await fetch(apiPath, { cache: 'no-store' });
+      const response = await fetch(apiPath, { cache: 'no-store', signal: controller.signal });
       const body = await response.json().catch(() => ({})) as { prompts?: McpPromptOption[]; error?: string };
+      if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(body.error || t('loadMcpPromptsFailed'));
       setPrompts(Array.isArray(body.prompts) ? body.prompts : []);
     } catch (cause) {
+      if (controller.signal.aborted) return;
       const message = cause instanceof Error ? cause.message : t('loadMcpPromptsFailed');
       setError(message);
       onError(message);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [apiPath, onError, t]);
 
   const setDialogOpen = useCallback((next: boolean) => {
     setOpen(next);
+    onOpenChange?.(next);
     if (!next) {
+      requestRef.current?.abort();
       setSelected(null);
       setArgumentsValue({});
       setError(null);
       return;
     }
-    void loadPrompts();
-  }, [loadPrompts]);
+  }, [onOpenChange]);
+
+  const loadOpenedPrompts = useEffectEvent(() => { void loadPrompts(); });
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => loadOpenedPrompts(), 0);
+    return () => { window.clearTimeout(timer); requestRef.current?.abort(); };
+  }, [open, apiPath]);
 
   const choosePrompt = useCallback((prompt: McpPromptOption) => {
     setSelected(prompt);
@@ -84,11 +106,15 @@ export function McpPromptPickerButton({
 
   const insertPrompt = useCallback(async () => {
     if (!apiPath || !selected) return;
+    const controller = new AbortController();
+    requestRef.current?.abort();
+    requestRef.current = controller;
     setResolving(true);
     setError(null);
     try {
       const response = await fetch(apiPath, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           deploymentId: selected.deploymentId,
@@ -97,17 +123,19 @@ export function McpPromptPickerButton({
         }),
       });
       const body = await response.json().catch(() => ({})) as { text?: string; error?: string };
+      if (controller.signal.aborted) return;
       if (!response.ok || typeof body.text !== 'string') {
         throw new Error(body.error || t('resolveMcpPromptFailed'));
       }
       onInsert(body.text);
       setDialogOpen(false);
     } catch (cause) {
+      if (controller.signal.aborted) return;
       const message = cause instanceof Error ? cause.message : t('resolveMcpPromptFailed');
       setError(message);
       onError(message);
     } finally {
-      setResolving(false);
+      if (!controller.signal.aborted) setResolving(false);
     }
   }, [apiPath, argumentsValue, onError, onInsert, selected, setDialogOpen, t]);
 
@@ -116,7 +144,7 @@ export function McpPromptPickerButton({
 
   return (
     <>
-      <button
+      {!hideTrigger && <button
         type="button"
         disabled={disabled}
         aria-label={t('openMcpPrompts')}
@@ -125,7 +153,7 @@ export function McpPromptPickerButton({
         className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
       >
         <ScrollText className="size-[17px]" />
-      </button>
+      </button>}
       <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogPortal>
           <DialogOverlay className="!bg-black/40" />

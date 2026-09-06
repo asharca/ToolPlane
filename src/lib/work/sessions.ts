@@ -8,6 +8,7 @@ import {
 } from '@/lib/agents/mutations';
 import type { ReasoningEffort } from '@/lib/agents/constants';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
+import type { ComposerReference } from './composer-types';
 import {
   claimWorkAttachments,
   workMessageParts,
@@ -27,6 +28,7 @@ type CreateWorkSessionInput = {
   acceptanceCriteria?: string;
   workingDirectory?: string;
   attachments?: PreparedWorkAttachment[];
+  references?: ComposerReference[];
   reasoningEffort?: ReasoningEffort;
   hermesSelection?: HermesConversationSelection;
 };
@@ -48,9 +50,9 @@ const workSessionClientInclude = {
       deployment: { select: { status: true } },
     },
   },
-  conversation: { include: { messages: { orderBy: { createdAt: 'asc' as const } } } },
+  conversation: { include: { messages: { orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }] } } },
   approvals: { orderBy: { requestedAt: 'desc' as const } },
-} as const;
+} satisfies Prisma.WorkSessionInclude;
 
 const workSessionSummaryInclude = {
   agent: { select: { id: true, name: true } },
@@ -191,8 +193,8 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       data: {
         conversationId: conversation.id,
         role: 'user',
-        parts: workMessageParts(task, attachments),
-        textCharacters: task.length,
+        parts: workMessageParts(task, attachments, input.references),
+        textCharacters: task.length + (input.references ?? []).reduce((total, item) => total + item.text.length, 0),
       },
     });
     return tx.workSession.create({
@@ -361,6 +363,7 @@ export async function appendWorkSessionInput(
   options: {
     uploadedById?: string;
     attachments?: PreparedWorkAttachment[];
+    references?: ComposerReference[];
     reasoningEffort?: ReasoningEffort;
   } = {},
 ): Promise<WorkSessionTransitionResult> {
@@ -416,8 +419,8 @@ export async function appendWorkSessionInput(
       data: {
         conversationId: work.conversationId,
         role: 'user',
-        parts: workMessageParts(text, attachments),
-        textCharacters: text.length,
+        parts: workMessageParts(text, attachments, options.references),
+        textCharacters: text.length + (options.references ?? []).reduce((total, item) => total + item.text.length, 0),
       },
     });
     return { ok: true, changed: true, status: 'queued' } as const;

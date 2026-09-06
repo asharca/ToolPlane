@@ -1,7 +1,7 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { Bot, Boxes, Container, Cpu, HardDrive, Laptop, Terminal } from 'lucide-react';
+import { Bot, Boxes, Container, Cpu, HardDrive, Laptop, Radio, Terminal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { listManagedAgentRuntimes, listSandboxes } from '@/lib/sandboxes/queries';
@@ -369,6 +369,10 @@ export default async function SandboxesPage({
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-3">
                           <HermesRuntimeDialogLauncher compact runtime={managedRuntimeDialogData(runtime, status)} />
+                          <Link href={`/app/${slug}/agents/${runtime.agent.id}?settings=channels`} title={t('channels')} aria-label={t('channels')}
+                            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                            <Radio className="size-4" />
+                          </Link>
                           {!lifecycleBlocked ? running ? (
                             <form action={stopSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />

@@ -149,7 +149,7 @@ export function AgentSettings({
 }) {
   const t = useTranslations('console.agents');
   const isHermesRuntime = settings.runtimeKind === 'hermes';
-  const supportsChannelSettings = !isHermesRuntime;
+  const supportsChannelSettings = true;
   const supportsApiSettings = isHermesRuntime && Boolean(apiSettings);
   const requestedTab = resolveSettingsTab({
     initialSettingsTab,
@@ -184,14 +184,14 @@ export function AgentSettings({
     { id: 'sandboxes', label: t('sandboxes') },
     { id: 'subAgents', label: t('subAgents') },
     { id: 'advanced', label: t('advanced') },
-    ...(supportsChannelSettings
-      ? [{ id: 'channels' as const, label: t('channelSettingsTab') }]
-      : [
+    { id: 'channels' as const, label: t('channelSettingsTab') },
+    ...(isHermesRuntime
+      ? [
           ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab') }] : []),
           { id: 'profiles' as const, label: t('hermesProfilesSettingsTab') },
           { id: 'hermes' as const, label: t('hermesSettingsTab') },
           { id: 'terminal' as const, label: t('terminalSettingsTab') },
-        ]),
+        ] : []),
   ];
 
   return (
@@ -265,10 +265,11 @@ export function AgentSettings({
               className="mx-auto w-full max-w-2xl space-y-4 px-5 py-6 sm:px-6"
             />
           ) : settingsTab === 'channels' && supportsChannelSettings ? (
-            <div className="mx-auto w-full max-w-6xl">
+            <div className="mx-auto h-full w-full max-w-6xl">
               <AgentMessagingPanel
                 slug={slug}
                 agentId={agentId}
+                sandboxId={settings.runtime?.sandboxId ?? settings.defaultSandboxId ?? undefined}
                 connections={channelSettings.connections}
                 ready={ready}
               />

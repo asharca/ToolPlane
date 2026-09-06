@@ -626,7 +626,7 @@ describe('pinAgentAction', () => {
       data: { pinned: true },
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/agents');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 
@@ -658,7 +658,7 @@ describe('model configuration action', () => {
 
     expect(mocks.updateAgentModelSelection).toHaveBeenCalledWith('workspace-1', 'agent-1', ['provider-1'], 'gpt-5');
     expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 
   it('reports a saved model selection as a warning when Hermes projection fails', async () => {
@@ -738,7 +738,7 @@ describe('Hermes profile and provider actions', () => {
       'conversation-1',
       { profile: 'default', provider: null, model: null },
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 
@@ -922,7 +922,7 @@ describe('conversation management actions', () => {
       'conversation-1',
       'Project brief',
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 
   it('generates a title through the workspace-scoped conversation helper', async () => {
@@ -938,7 +938,7 @@ describe('conversation management actions', () => {
       'conversation-1',
       true,
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 
   it('returns to the agent chat root after deleting a conversation', async () => {
@@ -946,10 +946,10 @@ describe('conversation management actions', () => {
     form.set('conversationId', 'conversation-1');
     mocks.redirect.mockImplementation((path: string) => { throw new Error(`redirect:${path}`); });
 
-    await expect(deleteConversationAction(form)).rejects.toThrow('redirect:/app/acme/chat?agent=agent-1');
+    await expect(deleteConversationAction(form)).rejects.toThrow('redirect:/app/acme/work?agent=agent-1');
 
     expect(mocks.deleteConsoleConversation).toHaveBeenCalledWith('workspace-1', 'agent-1', 'conversation-1');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 });
 
@@ -967,10 +967,10 @@ describe('createConversationAction', () => {
     });
 
     await expect(createConversationAction(form)).rejects.toThrow(
-      'redirect:/app/acme/chat?agent=agent-1&c=conversation-1',
+      'redirect:/app/acme/work?agent=agent-1&c=conversation-1',
     );
 
     expect(mocks.createConversation).toHaveBeenCalledWith('workspace-1', 'agent-1');
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/chat');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
   });
 });

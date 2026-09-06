@@ -1,13 +1,112 @@
 # Agent Messaging Platforms
 
-ToolPlane follows the Hermes gateway idea, but the important detail is that
-platform onboarding is not one universal URL. Each ecosystem has its own setup
+## Channel Management
+
+The workspace Settings > Channels page (`/app/[workspace]/settings/channels`)
+and each Agent's Channels tab use the same platform sidebar, instance rows,
+credential editor, connection switch, delete confirmation, and live log dialog.
+The interaction reference is Cherry Studio's `ChannelsSettings` feature.
+Feishu, Telegram, QQ, WeChat, Discord, and Slack are shown in the same order.
+
+Channels can be created as unbound drafts. Binding an Agent is required before
+starting the runner. Deleting an Agent leaves its channel available for rebinding;
+deleting a channel stops the runner but preserves conversation history.
+Server startup restores bound channels previously marked running or starting;
+stopped channels and incomplete drafts remain stopped.
+ToolPlane keeps its workspace authorization and Agent sandbox execution model;
+it does not embed Cherry Studio's Electron IPC or host-directory access.
+
+Management uses `GET/POST /api/v1/workspaces/[slug]/agent-channels`, with account
+Bearer tokens or session cookies. POST actions are `create`, `update`, `delete`,
+`start`, `stop`, `pair`, `check`, `apply`, and `move`. `GET ?logs=[connectionId]` returns
+the last 200 in-memory log lines after workspace authorization. Known secrets
+are redacted, and no management response includes runner or inbound tokens.
+Non-secret configuration values can be read and cleared. Empty secret fields
+preserve the encrypted stored value. Editing a running connection restarts it.
+
+Channel sessions are keyed by connection ID as well as the upstream chat, so
+two bots bound to the same Agent cannot share history accidentally. `/whoami`
+returns upstream IDs and `/new` starts a new conversation. User/chat allowlists
+are checked before Agent execution, including at the HTTP handoff boundary.
+
+Channel conversations appear under their Agent in the Work sidebar's Channels
+group. They remain ordinary `Conversation`/`Message` history, not Work sessions.
+Selecting a conversation uses `/app/[workspace]/work?agent=[agentId]&c=[conversationId]`
+inside the existing Work surface, preserving its sidebar, search, and sandbox tools.
+`/app/[workspace]/chat` is reserved for assistants; legacy Agent chat routes redirect
+to Work. Channel history remains read-only in the console and refreshes every five
+seconds. Migration leaves earlier history with its original Agent.
+
+Feishu/Lark registration uses the QR device flow and automatically saves the
+returned App ID and App Secret. WeChat uses the existing iLink pairing flow.
+Polling stops on completion, expiration, failure, or closing the editor.
+Primary credential fields follow the reference; additional ToolPlane policies
+and manual WeChat credentials remain under Advanced.
+
+Platform onboarding is not one universal URL. Each ecosystem has its own setup
 surface: a bot token form, a Socket Mode app, a QR scan, a local daemon, an
 email inbox, or a public webhook callback.
 
 The ToolPlane platform owns native channel work and agent execution. A channel
 connection belongs to one agent and represents one configured external
 ecosystem entry point.
+
+## Conversation Operations
+
+Channels support `/new`, `/help`, `/whoami`, and their Agent runtime's commands. Commands are
+ordered with incoming messages for the same chat. `/new` switches subsequent
+messages to a new conversation without deleting the previous history; `/help`
+and `/whoami` do not add model context.
+The channel configuration dialog lists these commands. `/new` is channel-only;
+the Work composer uses the **New task** action instead.
+
+The existing Agent Work header also provides Compact context and New channel
+conversation controls. Normal Work chats retain their own New work control.
+Operations never send console text as a channel message or move the user into
+the assistant interface.
+
+The Work composer shares one six-item menu between `+` and `/`: attachments,
+saved prompt management, MCP prompts, MCP resources, user-invocable attached
+skills, and New task. Its placeholder explains `/` and `@`. `@` searches files
+and conversations in the current sandbox, including its channel histories;
+the current conversation is excluded. Reference reads verify workspace, Agent,
+and sandbox ownership. Selected references are removable chips, are persisted
+as text parts with reference metadata, and are included in runtime context.
+Prompt templates are stored per Agent, not in browser storage.
+The menu's **Customize toolbar** entry pins/unpins actions, supports drag or
+button reordering, and restores defaults. Pinned actions leave the root menu;
+toolbar preferences persist in this browser across Work sessions.
+
+Following Cherry, `/` also lists runtime commands (not extra `+` tools): Pi
+provides `/compact [focus]`; Claude Code provides `/clear`, `/compact [focus]`,
+`/context`, `/usage`; DSH provides `/compact` and `/goal` with its native
+objective/edit/pause/resume/clear arguments. The live Claude/DSH command registry
+can add third-party commands for that session. Selection inserts the command;
+submission executes it. Unsupported commands never become ordinary model prompts.
+
+Commands run through the native runtime, not host-side imitations. Work commands
+use the same coordinator and runtime configuration as normal turns. Claude Code
+and Pi retain their CLI session between turns over a sandbox-local Unix socket;
+idle processes stop after two minutes and subsequent turns resume native session
+files. DSH resumes its native persisted session and command registry. Each
+ToolPlane conversation has a separate native session. Compaction changes that
+native session's active context, and `/new` starts a separate session. Existing
+platform history is imported only on first use, not replayed over native
+compaction. Claude `/usage` returns native output appropriate to its authentication
+mode, never a platform-estimated statistics panel. Command output is stored and
+rendered as an ordinary assistant reply with copy support, including legacy
+command records; control readouts are excluded from model context.
+
+For Hermes, compaction keeps recent
+exchanges verbatim and saves a system message containing a
+`data-conversation-compaction` part. Original messages and attachments remain
+unchanged. Work, console chat, and channel turns project the latest summary plus
+messages after its boundary into the runtime; full history is still displayed.
+Hermes receives a fresh runtime session alias and the retained context seed.
+Failed, cancelled, busy, or non-shrinking compactions leave the history unchanged.
+The displayed token reduction is an estimate. Compaction and new-session actions
+use the same workspace/Agent authorization and per-conversation admission gate
+as incoming turns. No Hermes platform adapter is involved.
 
 ## Responsibilities
 
@@ -28,74 +127,58 @@ The agent runtime owns:
 - Stable `sessionKey` derivation from source metadata
 - Intentional silence handling
 
-## Hosted Hermes Reuse
+## Native Transports
 
-ToolPlane reuses Hermes platform adapters without copying the whole Hermes
-gateway into application code. The Docker image bundles a pinned Hermes checkout
-at `/opt/hermes-agent` and a Python virtual environment at
-`/opt/toolplane-hermes-venv`; Compose sets the runtime environment so hosted
-channel runners can import the selected Hermes adapter and install a message
-handler with `adapter.set_message_handler(...)`.
+Channel adapters are adapted from Cherry Studio's Node channel implementations
+at revision c03519c028cfe25e32060ad7dcdeea531f22fd46. See
+`src/lib/agents/channels/NOTICE` and the retained AGPL license. Electron IPC,
+host-directory credential storage, and Cherry's Agent executor are not included.
 
-Runtime flow:
-
-```text
-Native platform
-  -> Hermes adapter
-  -> MessageEvent
-  -> ToolPlane hosted channel runner
-  -> POST /api/v1/agent-channels/:connectionId/events
-  -> ToolPlane agent runtime
-  -> JSON response { delivery, message }
-  -> Hermes adapter send(...)
-  -> Native platform
-```
-
-This keeps native platform behavior in Hermes:
-
-- Telegram polling/webhook handling, Bot API sending, topics, media batching
-- Slack Socket Mode, event dedupe, thread routing, file handling
-- Discord Gateway connection, privileged intents, threads, reactions, typing
-- WeCom AI Bot WebSocket setup, pairing credentials, heartbeat, reply routing
-
-The platform owns the channel lifecycle, credentials, callback token, runner
-process, and agent execution boundary.
-
-Hermes source: [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)
-under the MIT license. If Hermes code is copied instead of dynamically reused,
-retain the upstream copyright and license notice.
-
-Current hosted runner starters:
-
-| Platform | Hermes adapter | Required environment |
+| Platform | Native transport | Credentials |
 | --- | --- | --- |
-| Telegram | `plugins.platforms.telegram.adapter.TelegramAdapter` | `TOOLPLANE_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` |
-| Slack | `plugins.platforms.slack.adapter.SlackAdapter` | `TOOLPLANE_API_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_ALLOWED_USERS` |
-| Discord | `plugins.platforms.discord.adapter.DiscordAdapter` | `TOOLPLANE_API_TOKEN`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` |
-| WeCom | `plugins.platforms.wecom.adapter.WeComAdapter` | `TOOLPLANE_API_TOKEN`, `WECOM_BOT_ID`, `WECOM_SECRET` |
+| Telegram | grammY Bot API polling | Bot token |
+| Feishu / Lark | Official Lark Node SDK WebSocket | App ID and secret |
+| QQ | Official bot REST API and WebSocket gateway | App ID and secret |
+| WeChat | Tencent iLink polling and encrypted media | QR-issued token and account ID |
+| Discord | REST API and Gateway WebSocket | Bot token |
+| Slack | REST API and Socket Mode | Bot and app tokens |
 
-The published ToolPlane image already contains the pinned Hermes checkout, so
-Compose deployments do not need host-specific Hermes paths. The image build
-accepts `HERMES_REPO`, `HERMES_REF`, and `HERMES_ARCHIVE_URL` when the bundled
-Hermes version needs to be upgraded deliberately. It downloads the pinned source
-archive during build instead of installing `git`. The default image installs
-the `messaging`, `wecom`, and `dingtalk` extras, which cover the currently
-exposed hosted channels: Telegram, Discord, WeCom, Weixin, and DingTalk.
-Credentials are entered in the ToolPlane UI and stored encrypted.
+`channel-runtime.ts` manages these adapters in the long-lived Node server.
+Inbound messages call `runAgentChannelMessage` directly, then replies use the
+same adapter. There is no Python process, Hermes platform import, or Hermes
+checkout path. DSH, Pi, Claude Code, and Hermes Agent runtimes keep their own
+execution paths; channel transport never chooses an Agent runtime.
 
-For local `pnpm dev` outside Docker, set:
+WeCom and DingTalk's legacy records are retained, but their old Hermes-based
+hosted starters are not available. They are not offered as new native channels.
+Callback integrations remain separate and must authenticate their handoff.
 
-```env
-TOOLPLANE_HERMES_ROOT="/absolute/path/to/hermes-agent"
-TOOLPLANE_PYTHON="/absolute/path/to/python-or-venv/bin/python"
-```
+## Sandbox Ownership And Migration
 
-Compose deployments do not need those host-specific paths.
+Each sandbox has a Channels tab. `AgentChannelConnection.sandboxId` scopes its
+configuration; the bound Agent is resolved from that sandbox's assignment.
+Existing Agent channels are backfilled to the Agent's runtime/default sandbox.
+Unassigned sandboxes accept draft configurations but cannot start replies until
+an Agent is assigned. Managed public-endpoint sandboxes are excluded.
 
-Callback-first platforms such as WhatsApp Cloud, LINE, WeCom Callback, Teams,
-and Microsoft Graph do not need a hosted runner. They require
-public callback routes, signature verification, and challenge/verify handling
-before calling the same ToolPlane handoff endpoint.
+The workspace list remains available for managing all channels, including
+unassigned drafts. `GET ?sandboxId=...` returns only that sandbox's channels.
+`POST { action: "move", connectionId, sandboxId }` moves a channel to another
+sandbox in the same workspace. It stops the old adapter and aborts in-flight
+turns before rebinding. Credentials, pairing state, connection ID, and inbound
+token stay unchanged, so migration does not require another QR scan. An active
+channel restarts against the target Agent. A target without an Agent receives
+a stopped draft. A failed restart rolls back the original binding.
+
+History remains with its original Agent; the target Agent starts its own
+conversation. A caller cannot reuse the original Agent's conversation ID.
+Queued old messages and late adapter events cannot reply after a move.
+Runtime turns explicitly receive the channel's sandbox ID, including DSH.
+
+Server recovery and adapter state are single-process. Queue depth is limited to
+20 pending messages per channel; logs retain the last 200 lines in memory.
+Use a durable queue and distributed ownership before running multiple app
+replicas against the same bot credentials.
 
 ## Setup Flow Types
 
@@ -184,8 +267,7 @@ agent runtime. For example:
   Telegram updates and calls ToolPlane.
 - Slack setup starts with Socket Mode tokens; Slack events arrive over a
   platform-owned WebSocket.
-- WeCom setup starts with a QR scan or Bot ID + Secret; the hosted runner uses the
-  WeCom AI Bot WebSocket gateway.
+- WeChat setup starts with a QR scan; the native transport long-polls iLink.
 - WhatsApp Cloud setup really does need a public HTTPS callback because Meta
   delivers messages by webhook.
 

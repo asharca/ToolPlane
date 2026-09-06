@@ -20,13 +20,15 @@ vi.mock('next-intl', async (importOriginal) => {
   return {
     ...actual,
     useLocale: () => 'en',
-    useTranslations: (namespace?: string) => (key: string, values?: Record<string, unknown>) => {
+    useTranslations: (namespace?: string) => Object.assign((key: string, values?: Record<string, unknown>) => {
       const path = namespace ? `${namespace}.${key}` : key;
       const resolved = lookupMessage(path);
       if (typeof resolved === 'string') {
         return formatMessage(resolved, values);
       }
       return key;
-    },
+    }, {
+      has: (key: string) => lookupMessage(namespace ? `${namespace}.${key}` : key) !== undefined,
+    }),
   };
 });

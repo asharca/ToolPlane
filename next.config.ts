@@ -52,7 +52,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   output: 'standalone',
   poweredByHeader: false,
-  serverExternalPackages: ['@earendil-works/pi-ai'],
+  serverExternalPackages: ['@earendil-works/pi-ai', '@larksuiteoapi/node-sdk'],
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders() },

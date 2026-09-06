@@ -12,10 +12,13 @@ import {
   type MessagingPlatformSlug,
 } from '@/lib/agents/platforms';
 import { hostedRunnerSpec } from '@/lib/agents/platform-runner';
+import { ORDINARY_AGENT_FILTER } from '@/lib/agents/queries';
+import { agentChannelSandboxId, getChannelSandbox } from './channel-sandboxes';
 
 export type AgentChannelConnectionView = {
   id: string;
-  agentId: string;
+  agentId: string | null;
+  sandboxId: string | null;
   workspaceId: string;
   platform: MessagingPlatformSlug;
   platformLabel: string;
@@ -26,6 +29,7 @@ export type AgentChannelConnectionView = {
   connectionMode: string;
   runnerSupported: boolean;
   credentialNames: string[];
+  credentialValues: Record<string, string>;
   missingStartCredentialNames: string[];
   pairing: AgentChannelPairingState | null;
   inboundToken: string;
@@ -53,6 +57,19 @@ function cleanCredentials(credentials: Record<string, string>) {
   );
 }
 
+function platformCredentials(platform: MessagingPlatform, credentials: Record<string, string>) {
+  return Object.fromEntries(platform.credentials
+    .filter((field) => typeof credentials[field.name] === 'string')
+    .map((field) => [field.name, credentials[field.name].trim()]));
+}
+
+async function hasChannelAgent(workspaceId: string, agentId: string) {
+  return Boolean(await db.agent.findFirst({
+    where: { id: agentId, workspaceId, ...ORDINARY_AGENT_FILTER },
+    select: { id: true },
+  }));
+}
+
 function statusForCredentials(platform: MessagingPlatform, credentials: Record<string, string>) {
   if (missingStartCredentialNames(platform, credentials).length) return 'setup_required';
   if (platform.publicEndpointRequired) return 'waiting_callback';
@@ -67,6 +84,7 @@ function toView(row: ChannelRow): AgentChannelConnectionView | null {
     id: row.id,
     workspaceId: row.workspaceId,
     agentId: row.agentId,
+    sandboxId: row.sandboxId,
     platform: platform.slug,
     platformLabel: platform.label,
     name: row.name,
@@ -76,6 +94,9 @@ function toView(row: ChannelRow): AgentChannelConnectionView | null {
     connectionMode: platform.connectionMode,
     runnerSupported: Boolean(hostedRunnerSpec(platform.slug)),
     credentialNames: asCredentialNames(row.credentials),
+    credentialValues: Object.fromEntries(platform.credentials
+      .filter((field) => !field.secret && credentials[field.name] !== undefined)
+      .map((field) => [field.name, credentials[field.name]])),
     missingStartCredentialNames: missingStartCredentialNames(platform, credentials),
     pairing: pairingFromConfig(row.config),
     inboundToken: decryptSecretText(row.inboundTokenSecret),
@@ -89,9 +110,9 @@ function toView(row: ChannelRow): AgentChannelConnectionView | null {
   };
 }
 
-export async function listAgentChannelConnections(workspaceId: string, agentId: string) {
+export async function listAgentChannelConnections(workspaceId: string, agentId?: string, sandboxId?: string) {
   const rows = await db.agentChannelConnection.findMany({
-    where: { workspaceId, agentId },
+    where: { workspaceId, agentId, sandboxId },
     orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
   });
   return rows.map(toView).filter((row): row is AgentChannelConnectionView => Boolean(row));
@@ -108,22 +129,26 @@ export async function getAgentChannelConnectionRaw(connectionId: string) {
 
 export async function createAgentChannelConnection(params: {
   workspaceId: string;
-  agentId: string;
+  agentId?: string | null;
+  sandboxId?: string | null;
   platform: string;
   name?: string;
   credentials: Record<string, string>;
+  draft?: boolean;
 }) {
   const platform = getMessagingPlatform(params.platform);
   if (!platform) return { error: `Unsupported platform: ${params.platform}` };
-  const agent = await db.agent.findFirst({
-    where: { id: params.agentId, workspaceId: params.workspaceId },
-    select: { id: true },
-  });
-  if (!agent) return { error: 'Agent not found.' };
+  if (params.agentId && !await hasChannelAgent(params.workspaceId, params.agentId)) {
+    return { error: 'Agent not found.' };
+  }
+  const sandboxId = params.sandboxId ?? (params.agentId ? await agentChannelSandboxId(params.workspaceId, params.agentId) : null);
+  const sandbox = sandboxId ? await getChannelSandbox(params.workspaceId, sandboxId) : null;
+  if (sandboxId && !sandbox) return { error: 'Sandbox not found.' };
+  if (sandbox && params.agentId && params.agentId !== sandbox.agentId) return { error: 'Agent is not assigned to this sandbox.' };
 
-  const cleaned = cleanCredentials(params.credentials);
+  const cleaned = cleanCredentials(platformCredentials(platform, params.credentials));
   const missing = missingCreateCredentialNames(platform, cleaned);
-  if (missing.length) return { error: `Missing required credentials: ${missing.join(', ')}` };
+  if (!params.draft && missing.length) return { error: `Missing required credentials: ${missing.join(', ')}` };
 
   const token = createAgentChannelToken();
   const name = params.name?.trim() || platform.label;
@@ -131,7 +156,8 @@ export async function createAgentChannelConnection(params: {
     const row = await db.agentChannelConnection.create({
       data: {
         workspaceId: params.workspaceId,
-        agentId: params.agentId,
+        agentId: sandbox ? sandbox.agentId : params.agentId,
+        sandboxId,
         platform: platform.slug,
         name,
         status: statusForCredentials(platform, cleaned),
@@ -149,7 +175,7 @@ export async function createAgentChannelConnection(params: {
     });
     return { connection: toView(row) };
   } catch {
-    return { error: 'A channel with that platform and name already exists for this agent.' };
+    return { error: 'A channel with that platform and name already exists in this sandbox.' };
   }
 }
 
@@ -157,29 +183,91 @@ export async function updateAgentChannelConnectionCredentials(params: {
   workspaceId: string;
   connectionId: string;
   credentials: Record<string, string>;
-}) {
+  name?: string;
+  agentId?: string | null;
+}): Promise<{ error?: string; connection?: AgentChannelConnectionView | null }> {
   const row = await db.agentChannelConnection.findFirst({
     where: { id: params.connectionId, workspaceId: params.workspaceId },
   });
   if (!row) return { error: 'Channel connection not found.' };
   const platform = getMessagingPlatform(row.platform);
   if (!platform) return { error: `Unsupported platform: ${row.platform}` };
+  if (params.agentId && !await hasChannelAgent(params.workspaceId, params.agentId)) {
+    return { error: 'Agent not found.' };
+  }
+  const sandbox = row.sandboxId ? await getChannelSandbox(params.workspaceId, row.sandboxId) : null;
+  if (row.sandboxId && (!sandbox || (params.agentId !== undefined && params.agentId !== sandbox.agentId))) {
+    return { error: 'Use channel migration to change its sandbox and Agent.' };
+  }
+  const sandboxId = row.sandboxId ?? (params.agentId ? await agentChannelSandboxId(params.workspaceId, params.agentId) : null);
+  if (params.name !== undefined && !params.name.trim()) return { error: 'Channel name is required.' };
 
   const current = decryptChannelCredentials(row.credentials);
-  const next = { ...current, ...cleanCredentials(params.credentials) };
-  const missing = missingCreateCredentialNames(platform, next);
-  if (missing.length) return { error: `Missing required credentials: ${missing.join(', ')}` };
+  const changes = platformCredentials(platform, params.credentials);
+  // Empty password inputs preserve secrets; empty non-secret fields clear allowlists/settings.
+  for (const field of platform.credentials) {
+    if (field.secret && !changes[field.name]) delete changes[field.name];
+  }
+  const next = cleanCredentials({ ...current, ...changes });
 
-  const nextStatus = row.status === 'running' ? row.status : statusForCredentials(platform, next);
-  const updated = await db.agentChannelConnection.update({
-    where: { id: row.id },
-    data: {
-      status: nextStatus,
-      lastError: null,
-      credentials: encryptSecretRecord(next) as Prisma.InputJsonValue,
-    },
-  });
-  return { connection: toView(updated) };
+  const { liveAgentChannelStatus, stopAgentChannelRunner, startAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
+  const restart = liveAgentChannelStatus(row.id) !== 'stopped';
+  if (restart) await stopAgentChannelRunner(params.workspaceId, row.id);
+  try {
+    const updated = await db.agentChannelConnection.update({
+      where: { id: row.id },
+      data: {
+        name: params.name?.trim(),
+        agentId: params.agentId,
+        sandboxId,
+        status: statusForCredentials(platform, next),
+        lastError: null,
+        credentials: encryptSecretRecord(next) as Prisma.InputJsonValue,
+      },
+    });
+    if (restart && updated.agentId && !missingStartCredentialNames(platform, next).length) {
+      const result = await startAgentChannelRunner(params.workspaceId, row.id);
+      if (result.error) return result;
+    }
+    return { connection: await getAgentChannelConnection(params.workspaceId, updated.id) };
+  } catch (error) {
+    if (restart) await startAgentChannelRunner(params.workspaceId, row.id);
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+      return { error: 'A channel with that platform and name already exists in this sandbox.' };
+    }
+    throw error;
+  }
+}
+
+export async function moveAgentChannelConnection(workspaceId: string, connectionId: string, sandboxId: string) {
+  const row = await db.agentChannelConnection.findFirst({ where: { id: connectionId, workspaceId } });
+  if (!row) return { error: 'Channel connection not found.' };
+  const target = await getChannelSandbox(workspaceId, sandboxId);
+  if (!target) return { error: 'Target sandbox not found.' };
+  if (row.sandboxId === target.id && row.agentId === target.agentId) return {};
+  const { liveAgentChannelStatus, startAgentChannelRunner, stopAgentChannelRunner } = await import('./channel-runtime');
+  const restart = liveAgentChannelStatus(connectionId) !== 'stopped';
+  await stopAgentChannelRunner(workspaceId, connectionId);
+  let moved = false;
+  try {
+    await db.agentChannelConnection.update({ where: { id: connectionId }, data: {
+      sandboxId: target.id, agentId: target.agentId, status: 'stopped', runnerPid: null, lastError: null,
+    } });
+    moved = true;
+    if (restart && target.agentId) {
+      const result = await startAgentChannelRunner(workspaceId, connectionId);
+      if (result.error) throw new Error(result.error);
+    }
+    return {};
+  } catch (error) {
+    if (moved) {
+      await stopAgentChannelRunner(workspaceId, connectionId);
+      await db.agentChannelConnection.update({ where: { id: connectionId }, data: { sandboxId: row.sandboxId, agentId: row.agentId, status: 'stopped' } });
+    }
+    if (restart) await startAgentChannelRunner(workspaceId, connectionId);
+    return { error: error && typeof error === 'object' && 'code' in error && error.code === 'P2002'
+      ? 'The target sandbox already has a channel with this platform and name.' : 'Channel migration failed; its original binding was retained.' };
+  }
 }
 
 export async function deleteAgentChannelConnection(workspaceId: string, connectionId: string) {

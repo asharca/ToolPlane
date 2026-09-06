@@ -16,6 +16,7 @@ import type { SkillForPrompt } from './resolve';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 import { resolveModelContext, type ProviderConfig } from './model';
 import { liveStatus } from '@/lib/process/supervisor';
+import type { RuntimeCommand, RuntimeUsage } from './runtime-commands';
 
 type SandboxTurnAgent = {
   id: string;
@@ -34,10 +35,14 @@ export async function runDedicatedSandboxTurn(input: {
   skills?: readonly SkillForPrompt[];
   deploymentIds?: readonly string[];
   workingDirectory?: string | null;
+  runtimeSessionId?: string;
+  command?: string;
   signal?: AbortSignal;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
+  onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
+  onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
 }): Promise<string> {
   const runtimeKind = input.agent.runtimeKind;
   if (runtimeKind !== 'pi' && runtimeKind !== 'claude-code' && runtimeKind !== 'dsh') {
@@ -102,9 +107,13 @@ export async function runDedicatedSandboxTurn(input: {
       url: runtimeMcpProxyUrl(deploymentId),
     })),
     workingDirectory: input.workingDirectory,
+    runtimeSessionId: input.runtimeSessionId,
+    command: input.command,
     signal: input.signal,
     onTextDelta: input.onTextDelta,
     onActivity: input.onActivity,
     onContextUsage: input.onContextUsage,
+    onCommands: input.onCommands,
+    onUsage: input.onUsage,
   });
 }

@@ -49,8 +49,8 @@ ToolPlane 会先拉取目标镜像；拉取失败时不会停止当前运行时�
 意外回到旧镜像。`TOOLPLANE_HERMES_IMAGE` 可设置未显式选择版本时的实例默认镜像；使用
 Docker Compose 时将它写入同目录 `.env` 后重新创建 `app` 容器即可生效。
 
-这里的运行时镜像与 Dockerfile 中的 `HERMES_REF` 不同：后者只决定 ToolPlane 自己打包的 Python
-消息频道适配器，升级 Agent 的 Hermes 镜像不会更新该内置适配器。
+消息频道采用 Cherry Studio 的原生 Node 适配器，与 Agent 的运行时镜像独立。
+ToolPlane 不再打包 Hermes Python 消息频道适配器。
 
 ### 导入已有 `.hermes` 主目录
 
@@ -291,21 +291,21 @@ ToolPlane 将 Hermes OpenAI SSE 转换为现有 AI SDK UI stream，前端协议�
 
 ### Channels
 
-频道继续使用 ToolPlane 已有的 Hermes platform adapters：
+频道使用 Cherry Studio 的原生 Node 适配器，按沙箱独立配置并支持迁移：
 
 ```text
 Platform
-  -> Hermes adapter runner
-  -> ToolPlane channel endpoint
+  -> Native Node channel adapter
   -> runAgentChannelMessage
   -> Hermes Agent runtime
   -> ToolPlane response contract
-  -> Hermes adapter send
+  -> Native adapter send
 ```
 
 频道的稳定 messaging session key 直接传给 `X-Hermes-Session-Key`，所以同一 DM、群、thread 可以获得稳定的长期记忆作用域。
 
-频道凭据不会再复制到 Agent 容器；否则同一个 bot 会同时被 ToolPlane runner 和容器内 gateway polling，产生重复消费。增加新的 Hermes channel 时，只需扩展 ToolPlane platform catalog/runner，不改 Agent runtime。
+频道凭据不复制到 Agent 容器，避免重复消费。频道可迁移到同工作区的其他沙箱，
+保留凭据并使用目标 Agent 的 runtime；DSH、Pi、Claude Code 不需要 Hermes 平台适配器。
 
 ### Attachments
 

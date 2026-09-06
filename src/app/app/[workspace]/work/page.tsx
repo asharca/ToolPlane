@@ -1,8 +1,9 @@
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { listAgents, listProviders } from '@/lib/agents/queries';
+import { getConversation, listAgents, listConversations, listProviders } from '@/lib/agents/queries';
+import { parseMessagingSessionTitle } from '@/lib/agents/messaging';
 import {
   getWorkSession,
   listWorkSessions,
@@ -14,11 +15,33 @@ import { effectiveStatus } from '@/lib/process/supervisor';
 import { resolveModelContext } from '@/lib/agents/model';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
+import { isWorkSessionTitlePending } from '@/lib/work/coordinator';
 
 export const dynamic = 'force-dynamic';
 
 type WorkSummary = Awaited<ReturnType<typeof listWorkSessions>>[number];
 type WorkDetail = NonNullable<Awaited<ReturnType<typeof getWorkSession>>>;
+
+function serializeMessages(messages: NonNullable<Awaited<ReturnType<typeof getConversation>>>['messages']) {
+  return messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    createdAt: message.createdAt.toISOString(),
+    parts: message.parts as Array<{
+      type: string;
+      text?: string;
+      filename?: string;
+      mediaType?: string;
+      url?: string;
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+      output?: unknown;
+      isError?: boolean;
+      data?: unknown;
+    }>,
+  }));
+}
 
 function serializeWorkSession(session: WorkSummary | WorkDetail) {
   const detail = 'conversation' in session ? session : null;
@@ -51,24 +74,7 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
       deploymentId: session.sandbox.deploymentId,
       running: effectiveStatus(session.sandbox.deploymentId, session.sandbox.deployment.status) === 'running',
     } : null,
-    messages: detail?.conversation.messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      createdAt: message.createdAt.toISOString(),
-      parts: message.parts as Array<{
-        type: string;
-        text?: string;
-        filename?: string;
-        mediaType?: string;
-        url?: string;
-        toolCallId?: string;
-        toolName?: string;
-        input?: unknown;
-        output?: unknown;
-        isError?: boolean;
-        data?: unknown;
-      }>,
-    })) ?? [],
+    messages: serializeMessages(detail?.conversation.messages ?? []),
     approvals: detail?.approvals.map((approval) => ({
       id: approval.id,
       toolCallId: approval.toolCallId,
@@ -84,19 +90,26 @@ export default async function WorkspaceWorkPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ w?: string; agent?: string }>;
+  searchParams: Promise<{ w?: string; agent?: string; c?: string }>;
 }) {
-  const [{ workspace: slug }, { w, agent: requestedAgentId }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
+  const [{ workspace: slug }, { w, c, agent: requestedAgentId }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
   if (!user) redirect('/app/login');
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
-  const [agents, providers, sessions, selectedSession] = await Promise.all([
+  const titlePending = Boolean(w && !c && isWorkSessionTitlePending(w));
+  const [agents, providers, sessions, selectedSession, conversation] = await Promise.all([
     listAgents(workspace.id),
     listProviders(workspace.id),
     listWorkSessions(workspace.id),
-    w ? getWorkSession(workspace.id, w) : Promise.resolve(null),
+    w && !c ? getWorkSession(workspace.id, w) : Promise.resolve(null),
+    c ? getConversation(c, workspace.id) : Promise.resolve(null),
   ]);
+  if (c && (!conversation || !agents.some((agent) => agent.id === conversation.agentId)
+    || (requestedAgentId && requestedAgentId !== conversation.agentId))) return notFound();
+  if (conversation?.workSession) return redirect(`/app/${encodeURIComponent(slug)}/work?w=${encodeURIComponent(conversation.workSession.id)}`);
+  const source = parseMessagingSessionTitle(conversation?.title);
   const providersById = new Map(providers.map((provider) => [provider.id, provider]));
+  const conversations = await listConversations(workspace.id, agents.map((agent) => agent.id));
 
   return (
     <>
@@ -104,9 +117,26 @@ export default async function WorkspaceWorkPage({
       <WorkspaceWork
         slug={slug}
         workspaceId={workspace.id}
-        selectedWorkSessionId={w ?? null}
-        selectedSession={selectedSession ? serializeWorkSession(selectedSession) : null}
+        selectedWorkSessionId={c ? null : w ?? null}
+        selectedSession={selectedSession ? { ...serializeWorkSession(selectedSession), titlePending } : null}
+        selectedConversation={conversation ? {
+          id: conversation.id,
+          agentId: conversation.agentId,
+          title: conversation.title,
+          source,
+          readOnly: Boolean(source || conversation.publicApiConversation),
+          reasoningEffort: normalizeReasoningEffort(conversation.reasoningEffort),
+          hermesProfile: conversation.hermesProfile,
+          hermesProvider: conversation.hermesProvider,
+          hermesModel: conversation.hermesModel,
+          messages: serializeMessages(conversation.messages),
+        } : null}
         requestedAgentId={requestedAgentId}
+        hasChannels={agents.some((agent) => Boolean(agent._count?.channels))}
+        conversations={conversations.map((conversation) => ({
+          id: conversation.id, agentId: conversation.agentId, title: conversation.title,
+          source: parseMessagingSessionTitle(conversation.title),
+        }))}
         providers={providers.map((provider) => ({
           id: provider.id,
           name: provider.name,

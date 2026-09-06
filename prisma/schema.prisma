@@ -276,6 +276,7 @@ model Sandbox {
   snapshots          SandboxSnapshot[]
   workSessions       WorkSession[]
   knowledgeDocuments KnowledgeDocument[]
+  channelConnections AgentChannelConnection[]
 
   @@unique([workspaceId, slug])
 }
@@ -462,6 +463,7 @@ model Agent {
   subAgents               AgentSubAgent[]          @relation("AgentParent")
   parentLinks             AgentSubAgent[]          @relation("AgentChild")
   conversations           Conversation[]
+  composerPrompts          AgentComposerPrompt[]
   workSessions            WorkSession[]
   knowledgeBases          AgentKnowledgeBase[]
   channels                AgentChannelConnection[]
@@ -476,6 +478,18 @@ model Agent {
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
 
   @@unique([workspaceId, slug])
+}
+
+model AgentComposerPrompt {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentId, updatedAt])
 }
 
 model AgentModelProvider {
@@ -787,8 +801,10 @@ model AgentChannelConnection {
   id                 String    @id @default(cuid())
   workspaceId        String
   workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  agentId            String
-  agent              Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId            String?
+  agent              Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  sandboxId          String?
+  sandbox            Sandbox?  @relation(fields: [sandboxId], references: [id], onDelete: SetNull)
   platform           String
   name               String
   status             String    @default("stopped")
@@ -804,8 +820,9 @@ model AgentChannelConnection {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  @@unique([agentId, platform, name])
+  @@unique([sandboxId, platform, name])
   @@index([workspaceId, agentId])
+  @@index([workspaceId, sandboxId])
   @@index([platform, status])
 }
 

@@ -1,0 +1,10 @@
+Channel protocol code is adapted from Cherry Studio:
+https://github.com/CherryHQ/cherry-studio
+Reference checkout: c03519c028cfe25e32060ad7dcdeea531f22fd46
+
+Upstream license: AGPL-3.0. The full upstream license is retained at
+public/images/channels/LICENSE.cherry-studio.
+
+ToolPlane adaptations replace Electron IPC/networking and local credential
+files with Node networking, encrypted database credentials, and the existing
+workspace/Agent execution boundary. No Hermes platform adapter is used.

@@ -647,7 +647,7 @@ export async function pinAgentAction(formData: FormData) {
   });
   if (updated.count !== 1) return;
   revalidatePath(`/app/${slug}/agents`);
-  revalidatePath(`/app/${slug}/chat`);
+  revalidatePath(`/app/${slug}/work`);
   revalidatePath(`/app/${slug}/work`);
 }
 
@@ -893,7 +893,7 @@ export async function updateAgentModelAction(
     ? await syncHermesRuntime(ctx.ws.id, agentId)
     : null;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  revalidatePath(`/app/${slug}/chat`);
+  revalidatePath(`/app/${slug}/work`);
   revalidatePath(`/app/${slug}/work`);
   if (runtimeResult?.error) {
     return { warning: `Saved, but Hermes sync failed: ${runtimeResult.error}`, savedAt: Date.now() };
@@ -949,7 +949,7 @@ export async function updateHermesConversationSelectionAction(
     if (update.status === 'error') return { error: update.error };
     const result = update.data;
     if (!result) return { error: 'Conversation not found or cannot be changed.' };
-    revalidatePath(`/app/${slug}/chat`);
+    revalidatePath(`/app/${slug}/work`);
     revalidatePath(`/app/${slug}/work`);
     return { savedAt: Date.now(), ...result };
   } catch (error) {
@@ -984,7 +984,7 @@ export async function updateHermesProfileDefaultModelAction(
     if (!projectedProvider) return { error: 'Choose a valid Hermes profile and model.' };
     await setHermesProfileDefaultModel(agent, profile, projectedProvider, model);
     revalidatePath(`/app/${slug}/agents/${agentId}`);
-    revalidatePath(`/app/${slug}/chat`);
+    revalidatePath(`/app/${slug}/work`);
     return { savedAt: Date.now() };
   } catch (error) {
     if (error instanceof HermesProfileError || error instanceof AgentConfigurationError) {
@@ -1137,8 +1137,8 @@ export async function createConversationAction(formData: FormData) {
   const conv = await createConversation(ctx.ws.id, agentId);
   if (!conv) return;
   revalidatePath(`/app/${slug}/agents/${agentId}`);
-  revalidatePath(`/app/${slug}/chat`);
-  redirect(`/app/${slug}/chat?agent=${agentId}&c=${conv.id}`);
+  revalidatePath(`/app/${slug}/work`);
+  redirect(`/app/${slug}/work?agent=${agentId}&c=${conv.id}`);
 }
 
 export async function renameConversationAction(formData: FormData) {
@@ -1150,7 +1150,7 @@ export async function renameConversationAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
   if (await renameConsoleConversation(ctx.ws.id, agentId, conversationId, title)) {
-    revalidatePath(`/app/${slug}/chat`);
+    revalidatePath(`/app/${slug}/work`);
   }
 }
 
@@ -1165,7 +1165,7 @@ export async function generateConversationTitleAction(formData: FormData): Promi
   try {
     const title = await generateConsoleConversationTitle(ctx.ws.id, agentId, conversationId, force);
     if (force && !title) return { error: 'Could not generate a title for this conversation.' };
-    revalidatePath(`/app/${slug}/chat`);
+    revalidatePath(`/app/${slug}/work`);
     return { savedAt: Date.now() };
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Could not generate a conversation title.' };
@@ -1180,8 +1180,8 @@ export async function deleteConversationAction(formData: FormData) {
   const ctx = await authorizedWorkspace(slug);
   if (!ctx || !await isManageableAgent(ctx.ws.id, agentId)) return;
   if (!await deleteConsoleConversation(ctx.ws.id, agentId, conversationId)) return;
-  revalidatePath(`/app/${slug}/chat`);
-  redirect(`/app/${slug}/chat?agent=${agentId}`);
+  revalidatePath(`/app/${slug}/work`);
+  redirect(`/app/${slug}/work?agent=${agentId}`);
 }
 
 export async function createAgentChannelConnectionAction(formData: FormData) {

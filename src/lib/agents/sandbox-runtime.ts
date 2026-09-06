@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { readFile } from 'node:fs/promises';
 import { db } from '@/lib/db';
 import { estimateContextTokens, type ContextUsageSnapshot } from '@/lib/context-usage';
 import { effectiveStatus } from '@/lib/process/supervisor';
@@ -12,6 +13,7 @@ import { safeSkillFilePath, type SkillBundleFile } from '@/lib/skills/bundle';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { normalizeDisabledBuiltinTools } from './runtime-kind';
 import type { SkillForPrompt } from './resolve';
+import { RuntimeCommandsSchema, parseRuntimeUsage, type RuntimeCommand, type RuntimeUsage } from './runtime-commands';
 
 export const SANDBOX_RUNTIME_PACKAGES = {
   pi: {
@@ -101,11 +103,15 @@ export type RunSandboxAgentTurnOptions = {
   skills?: readonly SkillForPrompt[];
   mcpServers?: readonly SandboxRuntimeMcpServer[];
   workingDirectory?: string | null;
+  runtimeSessionId?: string;
+  command?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
+  onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
+  onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
 };
 
 export type SandboxRuntimeActivity = {
@@ -379,6 +385,7 @@ export function buildDshPatch(options: {
   mcpServers?: readonly SandboxRuntimeMcpServer[];
   disabledBuiltinTools?: readonly string[];
   eventPluginPath?: string;
+  driverPluginPath?: string;
 }): string {
   const protocol = dshProviderProtocol(options.provider.format);
   const proxy = httpUrl(options.modelProxyBase, 'model proxy URL');
@@ -441,8 +448,10 @@ export function buildDshPatch(options: {
     rows.push(`- id: ${yamlString(row)}`, '  disabled: true');
   }
   const servers = options.mcpServers ?? [];
-  if (options.eventPluginPath || servers.length) {
+  if (options.driverPluginPath) rows.push('- id: headless-runner', '  disabled: true');
+  if (options.eventPluginPath || options.driverPluginPath || servers.length) {
     rows.push('- insert:');
+    if (options.driverPluginPath) rows.push('    - id: toolplane-driver', `      name: ${yamlString(`file://${options.driverPluginPath}`)}`);
     if (options.eventPluginPath) {
       rows.push(
         '    - id: toolplane-events',
@@ -851,6 +860,9 @@ export function parseClaudeStreamLine(line: string): ClaudeStreamLine | null {
   }
   if (!value || typeof value !== 'object') return null;
   const payload = value as Record<string, unknown>;
+  if (payload.type === 'system' && payload.subtype === 'status' && (payload.compact_result === 'failed' || typeof payload.compact_error === 'string')) {
+    return { result: typeof payload.compact_error === 'string' ? payload.compact_error : 'Compaction failed.', isError: true };
+  }
   if (payload.type === 'stream_event' && payload.event && typeof payload.event === 'object') {
     const event = payload.event as Record<string, unknown>;
     if (event.type === 'content_block_start' && event.content_block && typeof event.content_block === 'object') {
@@ -882,7 +894,7 @@ export function parseClaudeStreamLine(line: string): ClaudeStreamLine | null {
   if (payload.type === 'result') {
     const contextTokens = claudeContextTokens(payload.usage);
     return {
-      ...(typeof payload.result === 'string' ? { result: payload.result } : {}),
+      ...(typeof payload.result === 'string' ? { result: payload.result } : Array.isArray(payload.errors) ? { result: payload.errors.filter((error) => typeof error === 'string').join('\n') } : {}),
       ...(contextTokens !== null ? { contextTokens } : {}),
       ...(payload.is_error === true ? { isError: true } : {}),
     };
@@ -1376,6 +1388,51 @@ async function reportActivities(
   }
 }
 
+export function parseClaudeRuntimeMetadata(line: string): { commands?: RuntimeCommand[]; usage?: RuntimeUsage } {
+  let event;
+  try { event = JSON.parse(line); } catch { return {}; }
+  if (event?.type === 'system' && (event.subtype === 'init' || event.subtype === 'commands_changed')) {
+    const catalog = event.subtype === 'init' ? event.slash_commands : event.commands;
+    const commands = RuntimeCommandsSchema.safeParse(Array.isArray(catalog) ? catalog.slice(0, 200).map((item) => event.subtype === 'init' ? { name: item } : { name: item?.name, ...(item?.description ? { description: item.description } : {}) }) : undefined);
+    if (commands.success) return { commands: commands.data };
+  }
+  if (event?.type === 'result' && event.usage) {
+    const usage = parseRuntimeUsage({ inputTokens: event.usage.input_tokens, outputTokens: event.usage.output_tokens,
+      cacheReadTokens: event.usage.cache_read_input_tokens ?? 0, cacheWriteTokens: event.usage.cache_creation_input_tokens ?? 0,
+      ...(typeof event.total_cost_usd === 'number' && Number.isFinite(event.total_cost_usd) && event.total_cost_usd >= 0 ? { costUsd: event.total_cost_usd } : {}) });
+    if (usage) return { usage };
+  }
+  return {};
+}
+
+function nativeCommandResult(line: string): { text: string; isError?: boolean } | null {
+  try {
+    const event = JSON.parse(line);
+    return event.type === 'toolplane_command_result' && typeof event.text === 'string' ? event : null;
+  } catch { return null; }
+}
+
+async function runNativeSessionExec(options: RunSandboxAgentTurnOptions, exec: Parameters<typeof runTrackedDockerExec>[0]) {
+  if (!options.runtimeSessionId) return runTrackedDockerExec(exec);
+  const id = randomUUID();
+  const driverPath = `${RUNTIME_TEMP_ROOT}/${id}-session.mjs`;
+  const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-session.json`;
+  const history = options.command ? options.messages : options.messages.slice(0, -1);
+  await writeSandboxFile(exec.container, driverPath, await readFile(`${process.cwd()}/scripts/native-runtime-session.mjs`, 'utf8'), options.signal);
+  await writeSandboxFile(exec.container, inputPath, JSON.stringify({
+    kind: options.runtimeKind, binary: exec.executable, args: exec.args,
+    model: options.modelId, api: options.provider.format === 'anthropic' ? 'anthropic-messages' : options.provider.format === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+    packageRoot: SANDBOX_RUNTIME_PACKAGES[options.runtimeKind].directory,
+    statePath: `${sandboxRuntimeStateRoot(options.runtimeKind, options.agentId)}/sessions/${options.runtimeSessionId}.json`,
+    signature: createHash('sha256').update(JSON.stringify({ args: exec.args, workdir: exec.workdir, model: options.modelId, provider: options.provider, system: options.systemPrompt, mcp: options.mcpServers, skills: options.skills })).digest('hex'),
+    command: options.command, prompt: buildSandboxTranscript(options.messages), message: buildSandboxTranscript(options.messages.slice(-1)),
+    history: history.filter((message) => message.role === 'user' || message.role === 'assistant').map((message) => ({ role: message.role, text: buildSandboxTranscript([message]) })),
+  }), options.signal);
+  if (exec.user) await runTrackedDockerExec({ container: exec.container, workdir: '/workspace', executable: 'chown', args: [exec.user, driverPath, inputPath], signal: options.signal, timeoutMs: 10_000 });
+  try { return await runTrackedDockerExec({ ...exec, executable: 'node', args: [driverPath, inputPath], stdin: undefined }); }
+  finally { await removeSandboxFiles(exec.container, [driverPath, inputPath]); }
+}
+
 async function runPi(
   options: RunSandboxAgentTurnOptions,
   container: string,
@@ -1388,7 +1445,7 @@ async function runPi(
   disabledBuiltinTools: readonly string[],
 ): Promise<string> {
   const stateRoot = sandboxRuntimeStateRoot('pi', options.agentId);
-  const runId = randomUUID();
+  const runId = options.runtimeSessionId ?? randomUUID();
   const modelsPath = `${stateRoot}/models.json`;
   const extensionPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-mcp.js`;
   const mcpConfigPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-mcp.json`;
@@ -1401,7 +1458,7 @@ async function runPi(
   }), options.signal);
 
   const args = [
-    '--mode', 'json', '--no-session', '--no-approve', '--offline',
+    '--mode', options.runtimeSessionId ? 'rpc' : 'json', ...(options.runtimeSessionId ? [] : ['--no-session']), '--no-approve', '--offline',
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
     '--skill', skillRoot,
     '--provider', 'toolplane', '--model', options.modelId,
@@ -1413,6 +1470,9 @@ async function runPi(
   let runtimeError = '';
   let exactUsage = false;
   const consumeLine = async (line: string) => {
+    const command = nativeCommandResult(line);
+    if (command?.isError) runtimeError = redact(command.text, [options.runtimeAccessToken]);
+    else if (command) assistantFallback = redact(command.text, [options.runtimeAccessToken]);
     const parsed = parsePiStreamLine(line);
     if (!parsed) return;
     if (parsed.delta) {
@@ -1441,7 +1501,7 @@ async function runPi(
       await writeSandboxFile(container, mcpConfigPath, buildPiMcpConfig(mcpServers), options.signal);
       args.push('--extension', extensionPath);
     }
-    await runTrackedDockerExec({
+    await runNativeSessionExec(options, {
       container,
       workdir,
       executable: binary,
@@ -1474,10 +1534,10 @@ async function runPi(
     const text = streamed || assistantFallback;
     if (!text) throw new Error('Pi returned no assistant text.');
     if (!streamed) await options.onTextDelta?.(text);
-    if (!exactUsage) await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
+    if (!exactUsage && !options.command) await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
     return text;
   } finally {
-    await removeSandboxFiles(container, tempPaths);
+    if (!options.runtimeSessionId) await removeSandboxFiles(container, tempPaths);
   }
 }
 
@@ -1493,10 +1553,10 @@ async function runClaudeCode(
 ): Promise<string> {
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
   const stateRoot = sandboxRuntimeStateRoot('claude-code', options.agentId);
-  const tempPath = `${RUNTIME_TEMP_ROOT}/${randomUUID()}-claude-mcp.json`;
+  const tempPath = `${RUNTIME_TEMP_ROOT}/${options.runtimeSessionId ?? randomUUID()}-claude-mcp.json`;
   const args = [
     '--bare', '--print', '--verbose', '--output-format', 'stream-json',
-    '--include-partial-messages', '--no-session-persistence',
+    '--include-partial-messages', ...(options.runtimeSessionId ? ['--input-format', 'stream-json'] : ['--no-session-persistence']),
     '--setting-sources', 'user',
     '--dangerously-skip-permissions', '--model', options.modelId,
     ...(disabledBuiltinTools.length ? ['--disallowedTools', ...disabledBuiltinTools] : []),
@@ -1527,6 +1587,12 @@ async function runClaudeCode(
   let runtimeError = '';
   let exactUsage = false;
   const consumeLine = async (line: string) => {
+    const command = nativeCommandResult(line);
+    if (command?.isError) runtimeError = redact(command.text, [options.runtimeAccessToken]);
+    else if (command) finalResult = redact(command.text, [options.runtimeAccessToken]);
+    const metadata = parseClaudeRuntimeMetadata(line);
+    if (metadata.commands) await options.onCommands?.(metadata.commands);
+    if (metadata.usage) await options.onUsage?.(metadata.usage);
     const parsed = parseClaudeStreamLine(line);
     if (!parsed) return;
     if (parsed.delta) {
@@ -1544,13 +1610,13 @@ async function runClaudeCode(
     if (parsed.isError) runtimeError = finalResult || 'Claude Code failed.';
   };
   try {
-    await runTrackedDockerExec({
+    await runNativeSessionExec(options, {
       container,
       workdir,
       executable: binary,
       user: CLAUDE_RUNTIME_USER,
       args,
-      stdin: prompt,
+      stdin: options.command ?? prompt,
       env: {
         ANTHROPIC_API_KEY: options.runtimeAccessToken,
         ANTHROPIC_AUTH_TOKEN: options.runtimeAccessToken,
@@ -1579,13 +1645,13 @@ async function runClaudeCode(
     });
     if (lineBuffer.trim()) await consumeLine(lineBuffer.trim());
     if (runtimeError) throw new Error(runtimeError);
-    const text = streamed || finalResult || assistantFallback;
+    const text = streamed || finalResult || assistantFallback || (options.command ? 'Command completed.' : '');
     if (!text) throw new Error('Claude Code returned no assistant text.');
     if (!streamed && options.onTextDelta) await options.onTextDelta(text);
-    if (!exactUsage) await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
+    if (!exactUsage && !options.command) await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
     return text;
   } finally {
-    await removeSandboxFiles(container, mcpServers.length ? [tempPath] : []);
+    if (!options.runtimeSessionId) await removeSandboxFiles(container, mcpServers.length ? [tempPath] : []);
   }
 }
 
@@ -1606,6 +1672,7 @@ async function runDsh(
   const patchPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh.patch.yml`;
   const promptPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh.prompt.txt`;
   const eventPluginPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh-events.mjs`;
+  const driverPluginPath = options.runtimeSessionId ? `${RUNTIME_TEMP_ROOT}/${runId}-dsh-driver.mjs` : undefined;
   const eventPrefix = `__TOOLPLANE_DSH_EVENT_${runId}__`;
   const patch = buildDshPatch({
     provider: options.provider,
@@ -1616,14 +1683,34 @@ async function runDsh(
     mcpServers,
     disabledBuiltinTools,
     eventPluginPath,
+    driverPluginPath,
   });
   await writeSandboxFile(container, eventPluginPath, dshEventTapSource(eventPrefix), options.signal);
+  if (driverPluginPath) await writeSandboxFile(container, driverPluginPath, await readFile(`${process.cwd()}/scripts/dsh-runtime-driver.mjs`, 'utf8'), options.signal);
   await writeSandboxFile(container, patchPath, patch, options.signal);
-  await writeSandboxFile(container, promptPath, prompt, options.signal);
+  await writeSandboxFile(container, promptPath, driverPluginPath ? JSON.stringify({
+    packageRoot: SANDBOX_RUNTIME_PACKAGES.dsh.directory, prefix: eventPrefix,
+    sessionId: `toolplane-${safeSegment(options.runtimeSessionId!, 'session')}`,
+    history: options.command ? prompt : buildSandboxTranscript(options.messages.slice(0, -1)),
+    message: buildSandboxTranscript(options.messages.slice(-1)), command: options.command,
+  }) : prompt, options.signal);
   const promptWrapper = 'set -eu; prompt_file=$1; shift; prompt=$(cat "$prompt_file"); exec "$@" "$prompt"';
   let lineBuffer = '';
   let streamed = '';
+  let commandResult = '';
+  let commandError = '';
   const consumeLine = async (line: string) => {
+    try {
+      const event = JSON.parse(line.slice(eventPrefix.length));
+      if (event.type === 'commands') {
+        const commands = RuntimeCommandsSchema.safeParse(event.commands);
+        if (commands.success) await options.onCommands?.(commands.data);
+      }
+      if (event.type === 'command' && typeof event.text === 'string') {
+        commandResult = redact(event.text, [options.runtimeAccessToken]);
+        if (event.isError) commandError = commandResult;
+      }
+    } catch { /* Non-metadata event lines use the existing stream parser. */ }
     const parsed = parseDshEventLine(line, eventPrefix);
     if (!parsed) return;
     if (parsed.delta) {
@@ -1649,6 +1736,7 @@ async function runDsh(
         DSH_PERMISSION_MODE: 'danger-full-access',
         DSH_TELEMETRY_DISABLED: '1',
         DSH_TOOLS_MODE: 'native',
+        ...(driverPluginPath ? { TOOLPLANE_DSH_INPUT: promptPath } : {}),
         NO_COLOR: '1',
       },
       signal: options.signal,
@@ -1666,14 +1754,16 @@ async function runDsh(
       },
     });
     if (lineBuffer.startsWith(eventPrefix)) await consumeLine(lineBuffer);
+    if (commandError) throw new Error(commandError);
     const fallback = output.split(/\r?\n/).filter((line) => !line.startsWith(eventPrefix)).join('\n').trim();
-    const text = streamed || redact(fallback, [options.runtimeAccessToken]);
+    const text = [streamed || (commandResult ? '' : redact(fallback, [options.runtimeAccessToken])), commandResult].filter(Boolean).join('\n\n');
     if (!text) throw new Error('DeepSeek Harness returned no assistant text.');
     if (!streamed) await options.onTextDelta?.(text);
+    else if (commandResult) await options.onTextDelta?.(`\n\n${commandResult}`);
     await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
     return text;
   } finally {
-    await removeSandboxFiles(container, [patchPath, promptPath, eventPluginPath]);
+    await removeSandboxFiles(container, [patchPath, promptPath, eventPluginPath, ...(driverPluginPath ? [driverPluginPath] : [])]);
   }
 }
 
@@ -1687,11 +1777,12 @@ export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): 
   if (!Number.isFinite(options.contextWindow) || options.contextWindow <= 0) {
     throw new Error('Invalid sandbox runtime context window.');
   }
+  if (options.runtimeSessionId && !/^[a-zA-Z0-9_-]{1,200}$/.test(options.runtimeSessionId)) throw new Error('Invalid runtime session.');
   const sandboxDeploymentId = await assertAssignedDockerSandbox(options);
   const container = sandboxContainerName(options.sandboxId);
   const workdir = normalizeSandboxWorkingDirectory(options.workingDirectory);
   const prompt = buildSandboxTranscript(options.messages);
-  if (!prompt) throw new Error('The sandbox runtime turn has no user-visible message.');
+  if (!prompt && !options.command) throw new Error('The sandbox runtime turn has no user-visible message.');
   const systemPrompt = options.systemPrompt?.trim() ?? '';
   const disabledBuiltinTools = normalizeDisabledBuiltinTools(
     options.runtimeKind,

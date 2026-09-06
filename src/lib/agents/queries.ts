@@ -114,7 +114,7 @@ const TOOL_INCLUDE = {
 // The relation is the primary visibility boundary. The durable sandbox marker
 // keeps the Agent hidden (and fail-closed in the runtime MCP route) if an
 // Endpoint/allocation is deleted before its runtime resources are collected.
-const ORDINARY_AGENT_FILTER = {
+export const ORDINARY_AGENT_FILTER = {
   publicRuntimeAllocation: { is: null },
   NOT: {
     runtime: {
@@ -392,6 +392,7 @@ export async function listAgents(workspaceId: string) {
           toolkits: true,
           sandboxes: true,
           subAgents: true,
+          channels: true,
         },
       },
     },
@@ -501,7 +502,7 @@ export async function getConversation(conversationId: string, workspaceId: strin
   return db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
     include: {
-      messages: { orderBy: { createdAt: 'asc' } },
+      messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
       publicApiConversation: { select: { id: true } },
       workSession: { select: { id: true } },
     },
