@@ -13,6 +13,7 @@ import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardLogo } from './DashboardLogo';
 import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
 import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
+import { dashboardSidebarCookieName } from '@/lib/sidebar-preferences';
 import {
   DashboardTabBar,
   DashboardTabContent,
@@ -23,23 +24,31 @@ type Workspace = { id: string; slug: string; name: string };
 
 export function DashboardChrome({
   slug,
+  workspaceId,
   workspaceName,
   userLabel,
   workspaces,
   supportEmail,
   isAdmin = false,
+  initialSidebarCollapsed = false,
   children,
 }: {
   slug: string;
+  workspaceId: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
   supportEmail: string;
   isAdmin?: boolean;
+  initialSidebarCollapsed?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [collapsed, setCollapsed] = usePersistentBoolean(`toolplane:dashboard-sidebar:${slug}`, false);
+  const [collapsed, setCollapsed] = usePersistentBoolean(
+    `toolplane:dashboard-sidebar:${slug}`,
+    initialSidebarCollapsed,
+    dashboardSidebarCookieName(workspaceId),
+  );
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const t = useTranslations('console.sidebar');
 

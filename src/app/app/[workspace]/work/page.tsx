@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -16,6 +17,13 @@ import { resolveModelContext } from '@/lib/agents/model';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
 import { normalizeReasoningEffort } from '@/lib/agents/constants';
 import { isWorkSessionTitlePending } from '@/lib/work/coordinator';
+import {
+  parseBooleanRecordCookie,
+  workAgentGroupsCookieName,
+  workAgentGroupPreferencesCookieName,
+  workSidebarCookieName,
+} from '@/lib/sidebar-preferences';
+import { parseSidebarGroupPreferencesCookie } from '@/lib/sidebar-groups';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,13 +105,21 @@ export default async function WorkspaceWorkPage({
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
   const titlePending = Boolean(w && !c && isWorkSessionTitlePending(w));
-  const [agents, providers, sessions, selectedSession, conversation] = await Promise.all([
+  const [agents, providers, sessions, selectedSession, conversation, cookieStore] = await Promise.all([
     listAgents(workspace.id),
     listProviders(workspace.id),
     listWorkSessions(workspace.id),
     w && !c ? getWorkSession(workspace.id, w) : Promise.resolve(null),
     c ? getConversation(c, workspace.id) : Promise.resolve(null),
+    cookies(),
   ]);
+  const initialSidebarOpen = cookieStore.get(workSidebarCookieName(workspace.id))?.value !== 'false';
+  const initialExpandedAgents = parseBooleanRecordCookie(
+    cookieStore.get(workAgentGroupsCookieName(workspace.id))?.value,
+  );
+  const initialGroupPreferences = parseSidebarGroupPreferencesCookie(
+    cookieStore.get(workAgentGroupPreferencesCookieName(workspace.id))?.value,
+  );
   if (c && (!conversation || !agents.some((agent) => agent.id === conversation.agentId)
     || (requestedAgentId && requestedAgentId !== conversation.agentId))) return notFound();
   if (conversation?.workSession) return redirect(`/app/${encodeURIComponent(slug)}/work?w=${encodeURIComponent(conversation.workSession.id)}`);
@@ -117,6 +133,9 @@ export default async function WorkspaceWorkPage({
       <WorkspaceWork
         slug={slug}
         workspaceId={workspace.id}
+        initialExpandedAgents={initialExpandedAgents}
+        initialGroupPreferences={initialGroupPreferences}
+        initialSidebarOpen={initialSidebarOpen}
         selectedWorkSessionId={c ? null : w ?? null}
         selectedSession={selectedSession ? { ...serializeWorkSession(selectedSession), titlePending } : null}
         selectedConversation={conversation ? {

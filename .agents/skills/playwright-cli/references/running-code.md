@@ -2,6 +2,11 @@
 
 Use `run-code` to execute arbitrary Playwright code for advanced scenarios not covered by CLI commands.
 
+Apply the named-session and artifact rules in `SKILL.md` to these examples.
+Grant browser permissions, read the clipboard, or reuse authentication only when
+the requested task authorizes those operations. Verify optional APIs against the
+installed version before using them.
+
 ## Syntax
 
 ```bash
@@ -89,12 +94,10 @@ playwright-cli run-code "async page => {
 
 ## Wait Strategies
 
-```bash
-# Wait for network idle
-playwright-cli run-code "async page => {
-  await page.waitForLoadState('networkidle');
-}"
+Wait for the state that establishes readiness; avoid arbitrary sleeps and
+`networkidle` as a UI assertion, especially for streaming agent pages.
 
+```bash
 # Wait for specific element
 playwright-cli run-code "async page => {
   await page.locator('.loading').waitFor({ state: 'hidden' });
@@ -224,7 +227,7 @@ playwright-cli run-code "async page => {
   await page.getByRole('textbox', { name: 'Password' }).fill('secret');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.waitForURL('**/dashboard');
-  await page.context().storageState({ path: 'auth.json' });
+  await page.context().storageState({ path: '.playwright-cli/tp-check.auth-state.json' });
   return 'Login successful';
 }"
 

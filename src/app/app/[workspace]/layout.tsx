@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import {
   getWorkspaceForUser,
@@ -9,6 +10,7 @@ import { UserTimeZoneProvider } from '@/components/timezone/UserTimeZoneProvider
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import { runtimeSupportEmail } from '@/lib/site-runtime';
+import { dashboardSidebarCookieName } from '@/lib/sidebar-preferences';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +28,12 @@ export default async function WorkspaceLayout({
   if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
-  const workspaces = await listWorkspacesForUser(user.id);
-  const messages = await getMessages();
+  const [workspaces, messages, cookieStore] = await Promise.all([
+    listWorkspacesForUser(user.id),
+    getMessages(),
+    cookies(),
+  ]);
+  const initialSidebarCollapsed = cookieStore.get(dashboardSidebarCookieName(ws.id))?.value === 'true';
 
   return (
     <NextIntlClientProvider
@@ -44,11 +50,13 @@ export default async function WorkspaceLayout({
       >
         <DashboardChrome
           slug={ws.slug}
+          workspaceId={ws.id}
           workspaceName={ws.name}
           userLabel={user.name ?? user.email}
           workspaces={workspaces}
           supportEmail={runtimeSupportEmail()}
           isAdmin={user.role === 'admin'}
+          initialSidebarCollapsed={initialSidebarCollapsed}
         >
           {children}
           {modal}

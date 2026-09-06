@@ -2,6 +2,11 @@
 
 Manage cookies, localStorage, sessionStorage, and browser storage state.
 
+Use only authorized test state in the task's named session (add `-s` to the
+examples below). Save sensitive state under the ignored `.playwright-cli/`
+directory; do not print real cookie or token values. Storage mutation examples
+apply to disposable test data, not the user's personal browser.
+
 ## Storage State
 
 Save and restore complete browser state including cookies and storage.
@@ -9,21 +14,18 @@ Save and restore complete browser state including cookies and storage.
 ### Save Storage State
 
 ```bash
-# Save to auto-generated filename (storage-state-{timestamp}.json)
-playwright-cli state-save
-
-# Save to specific filename
-playwright-cli state-save my-auth-state.json
+# Save to an ignored, task-specific filename
+playwright-cli state-save .playwright-cli/tp-check.auth-state.json
 ```
 
 ### Restore Storage State
 
 ```bash
 # Load storage state from file
-playwright-cli state-load my-auth-state.json
+playwright-cli state-load .playwright-cli/tp-check.auth-state.json
 
 # Reload page to apply cookies
-playwright-cli open https://example.com
+playwright-cli goto https://example.com
 ```
 
 ### Storage State File Format
@@ -131,7 +133,7 @@ playwright-cli localstorage-list
 ### Get Single Value
 
 ```bash
-playwright-cli localstorage-get token
+playwright-cli localstorage-get theme
 ```
 
 ### Set Value
@@ -240,12 +242,12 @@ playwright-cli fill e2 "password123"
 playwright-cli click e3
 
 # Save the authenticated state
-playwright-cli state-save auth.json
+playwright-cli state-save .playwright-cli/tp-check.auth-state.json
 
 # Step 2: Later, restore state and skip login
-playwright-cli state-load auth.json
-playwright-cli open https://app.example.com/dashboard
-# Already logged in!
+playwright-cli state-load .playwright-cli/tp-check.auth-state.json
+playwright-cli goto https://app.example.com/dashboard
+# Verify the authenticated state in the page.
 ```
 
 ### Save and Restore Roundtrip
@@ -256,20 +258,20 @@ playwright-cli open https://example.com
 playwright-cli eval "() => { document.cookie = 'session=abc123'; localStorage.setItem('user', 'john'); }"
 
 # Save state to file
-playwright-cli state-save my-session.json
+playwright-cli state-save .playwright-cli/tp-check.auth-state.json
 
 # ... later, in a new session ...
 
 # Restore state
-playwright-cli state-load my-session.json
-playwright-cli open https://example.com
+playwright-cli state-load .playwright-cli/tp-check.auth-state.json
+playwright-cli goto https://example.com
 # Cookies and localStorage are restored!
 ```
 
 ## Security Notes
 
 - Never commit storage state files containing auth tokens
-- Add `*.auth-state.json` to `.gitignore`
-- Delete state files after automation completes
+- Use `.playwright-cli/`, which is already gitignored in this repository
+- Delete only disposable state created for this task when it is no longer needed
 - Use environment variables for sensitive data
 - By default, sessions run in-memory mode which is safer for sensitive operations

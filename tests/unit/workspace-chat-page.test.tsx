@@ -176,6 +176,44 @@ describe('Workspace chat page', () => {
     expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ initialSidebarOpen: false }));
   });
 
+  it('seeds assistant disclosures from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) => name === 'toolplane_assistant_chat_expanded_workspace-1'
+        ? { value: '%7B%22assistant-1%22%3Afalse%7D' }
+        : undefined),
+    });
+
+    render(await WorkspaceChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      initialExpandedAssistants: { 'assistant-1': false },
+    }));
+  });
+
+  it('seeds assistant groups from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) => name === 'toolplane_assistant_chat_group_preferences_workspace-1'
+        ? { value: '%7B%22groups%22%3A%5B%7B%22id%22%3A%22group-1%22%2C%22name%22%3A%22Research%22%7D%5D%2C%22assignments%22%3A%7B%22assistant-1%22%3A%22group-1%22%7D%2C%22collapsed%22%3A%7B%22group-1%22%3Atrue%7D%7D' }
+        : undefined),
+    });
+
+    render(await WorkspaceChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ assistant: 'assistant-1' }),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      initialGroupPreferences: {
+        groups: [{ id: 'group-1', name: 'Research' }],
+        assignments: { 'assistant-1': 'group-1' },
+        collapsed: { 'group-1': true },
+      },
+    }));
+  });
+
   it('opens the assistant creator from a direct market handoff', async () => {
     render(await WorkspaceChatPage({
       params: Promise.resolve({ workspace: 'acme' }),
