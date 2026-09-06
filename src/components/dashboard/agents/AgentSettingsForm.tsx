@@ -26,7 +26,7 @@ import {
   stopAgentRuntimeAction,
   syncAgentRuntimeAction,
   upgradeHermesRuntimeAction,
-  updateHermesRuntimeEnvAction,
+  updateAgentRuntimeEnvAction,
   updateAgentAction,
   type ActionState,
 } from '@/lib/agents/actions';
@@ -36,7 +36,6 @@ import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isDedicatedSandboxRuntimeKind,
-  type AgentRuntimeBuiltinToolCategory,
 } from '@/lib/agents/runtime-kind';
 import { formatInTimeZone } from '@/lib/timezone';
 import {
@@ -50,6 +49,8 @@ import {
 } from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
 import { NativeSelect } from '@/components/ui/NativeSelect';
+import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
+import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSystemPromptEditor';
 
 type Provider = ModelProviderOption & { format: string };
 type SaveStatus = 'idle' | 'dirty';
@@ -61,10 +62,13 @@ function checkedIds(options: AgentResourceOption[]) {
 
 export function AgentSettingsForm({
   slug,
+  workspaceId = '',
   agentId,
   runtimeKind,
   name,
+  description = '',
   systemPrompt,
+  disabledBuiltinTools = [],
   providerId,
   providerIds = [],
   model,
@@ -74,6 +78,8 @@ export function AgentSettingsForm({
   skills,
   toolkits,
   defaultSandboxId = null,
+  runtimeSandboxId = null,
+  runtimeEnvironment,
   sandboxes,
   subAgents,
   runtime = null,
@@ -84,10 +90,13 @@ export function AgentSettingsForm({
   showNavigation = true,
 }: {
   slug: string;
+  workspaceId?: string;
   agentId: string;
   runtimeKind: string;
   name: string;
+  description?: string;
   systemPrompt: string;
+  disabledBuiltinTools?: string[];
   providerId: string | null;
   providerIds?: string[];
   model: string | null;
@@ -97,6 +106,8 @@ export function AgentSettingsForm({
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
   defaultSandboxId?: string | null;
+  runtimeSandboxId?: string | null;
+  runtimeEnvironment?: string;
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
   runtime?: {
@@ -134,12 +145,14 @@ export function AgentSettingsForm({
     {},
   );
   const [envState, envFormAction, isEnvPending] = useActionState<ActionState, FormData>(
-    updateHermesRuntimeEnvAction,
+    updateAgentRuntimeEnvAction,
     {},
   );
   const singleSandboxRuntime = isDedicatedSandboxRuntimeKind(runtimeKind);
   const [nameValue, setNameValue] = useState(name);
+  const [descriptionValue, setDescriptionValue] = useState(description);
   const [systemPromptValue, setSystemPromptValue] = useState(systemPrompt);
+  const [disabledBuiltinToolSet, setDisabledBuiltinToolSet] = useState(() => new Set(disabledBuiltinTools));
   const [selectedProvider, setSelectedProvider] = useState(() => {
     const provider = providers.find((entry) => entry.id === providerId);
     return provider && agentRuntimeSupportsProviderFormat(runtimeKind, provider.format) ? provider.id : '';
@@ -191,18 +204,10 @@ export function AgentSettingsForm({
     [sandboxes, singleSandboxRuntime],
   );
   const isHermes = runtimeKind === 'hermes';
+  const environmentSandboxId = runtimeSandboxId ?? runtime?.sandboxId ?? null;
   const runtimeLabel = agentRuntimeDisplayName(runtimeKind);
-  const builtInToolGroups = agentRuntimeBuiltinToolGroups(runtimeKind);
-  const builtInToolCount = builtInToolGroups.reduce((count, group) => count + group.tools.length, 0);
-  const builtInToolCategoryLabels: Record<AgentRuntimeBuiltinToolCategory, string> = {
-    file: t('toolCategoryFile'),
-    shell: t('toolCategoryShell'),
-    search: t('toolCategorySearch'),
-    context: t('toolCategoryContext'),
-    orchestration: t('toolCategoryOrchestration'),
-    browser: t('toolCategoryBrowser'),
-    media: t('toolCategoryMedia'),
-  };
+  const builtInToolCount = agentRuntimeBuiltinToolGroups(runtimeKind)
+    .reduce((count, group) => count + group.tools.length, 0);
   const navigationGroups: Array<{
     label: string;
     items: Array<{ id: AgentSettingsSection; label: string; count?: number; icon: typeof Bot }>;
@@ -210,7 +215,7 @@ export function AgentSettingsForm({
     {
       label: t('basic'),
       items: [
-        { id: 'general', label: t('general'), icon: Bot },
+        { id: 'general', label: t('basic'), icon: Bot },
         { id: 'instructions', label: t('instructions'), icon: FileText },
       ],
     },
@@ -378,7 +383,7 @@ export function AgentSettingsForm({
               {state.error}
             </p>
           ) : null}
-      <section hidden={activeSection !== 'general'} aria-label={t('general')}>
+      <section hidden={activeSection !== 'general'} aria-label={t('basic')}>
         <div className="space-y-5">
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
@@ -388,6 +393,18 @@ export function AgentSettingsForm({
               onChange={(event) => setNameValue(event.target.value)}
               required
               className="ui-input h-10 w-full"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
+            <textarea
+              name="description"
+              value={descriptionValue}
+              onChange={(event) => setDescriptionValue(event.target.value)}
+              maxLength={500}
+              rows={3}
+              placeholder={t('agentDescriptionPlaceholder')}
+              className="ui-input min-h-24 w-full resize-y py-2.5"
             />
           </label>
           <div>
@@ -408,33 +425,77 @@ export function AgentSettingsForm({
             {t('hermesPromptManaged')}
           </p>
         ) : (
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('systemPrompt')}</span>
-            <textarea
-              name="systemPrompt"
-              value={systemPromptValue}
-              onChange={(event) => setSystemPromptValue(event.target.value)}
-              rows={9}
-              placeholder={t('youAreAHelpfulAssistant')}
-              className="ui-input min-h-52 w-full resize-y py-3"
-            />
-          </label>
+          <AgentSystemPromptEditor
+            workspaceId={workspaceId}
+            name={nameValue}
+            description={descriptionValue}
+            providerId={selectedProvider}
+            model={selectedModel}
+            value={systemPromptValue}
+            onChange={(value) => {
+              setSystemPromptValue(value);
+              scheduleAutoSave();
+            }}
+          />
         )}
       </section>
 
       <section hidden={activeSection !== 'advanced'} aria-label={t('advanced')}>
-        <label className="block max-w-xs">
-          <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('maxToolSteps')}</span>
-          <input
-            name="maxSteps"
-            type="number"
-            min={AGENT_STEP_BOUNDS.min}
-            max={AGENT_STEP_BOUNDS.max}
-            value={maxStepsValue}
-            onChange={(event) => setMaxStepsValue(event.target.value)}
-            className="ui-input h-10 w-full"
-          />
-        </label>
+        <div className="space-y-6">
+          <label className="block max-w-xs">
+            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('maxToolSteps')}</span>
+            <input
+              name="maxSteps"
+              type="number"
+              min={AGENT_STEP_BOUNDS.min}
+              max={AGENT_STEP_BOUNDS.max}
+              value={maxStepsValue}
+              onChange={(event) => setMaxStepsValue(event.target.value)}
+              className="ui-input h-10 w-full"
+            />
+          </label>
+          {environmentSandboxId ? (
+            <div className="space-y-3 border-t border-border pt-5">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">{t('environmentVariables')}</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {isHermes ? t('hermesEnvironmentHelp') : t('runtimeEnvironmentHelp')}
+                </p>
+              </div>
+              <textarea
+                name="runtimeEnv"
+                defaultValue={runtimeEnvironment ?? runtime?.environment ?? ''}
+                onChange={(event) => event.stopPropagation()}
+                rows={6}
+                spellCheck={false}
+                placeholder={t('environmentPlaceholder')}
+                className="ui-input min-h-32 w-full resize-y font-mono text-xs leading-5"
+                aria-label={t('environmentVariables')}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p
+                  role={envState.error ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className={envState.error ? 'text-xs text-red-600' : 'text-xs text-muted-foreground'}
+                >
+                  {envMessage}
+                </p>
+                <button
+                  type="submit"
+                  formAction={envFormAction}
+                  formNoValidate
+                  disabled={runtimeControlsDisabled}
+                  aria-busy={isEnvPending}
+                  onClick={clearAutoSaveTimer}
+                  className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
+                >
+                  {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  {isEnvPending ? t('savingEnvironment') : t('saveEnvironment')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       {isHermes && runtime ? (
@@ -565,65 +626,18 @@ export function AgentSettingsForm({
               </button>
             </div>
           </div>
-          <div className="space-y-3 border-t border-border px-4 py-4">
-            <div>
-              <h4 className="text-sm font-semibold text-foreground">{t('hermesEnvironmentVariables')}</h4>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t('hermesEnvironmentHelp')}</p>
-            </div>
-            <textarea
-              name="hermesEnv"
-              defaultValue={runtime.environment ?? ''}
-              onChange={(event) => event.stopPropagation()}
-              rows={6}
-              spellCheck={false}
-              placeholder={t('hermesEnvPlaceholder')}
-              className="ui-input min-h-32 w-full resize-y font-mono text-xs leading-5"
-              aria-label={t('hermesEnvironmentVariables')}
-            />
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p
-                role={envState.error ? 'alert' : 'status'}
-                aria-live="polite"
-                className={envState.error ? 'text-xs text-red-600' : 'text-xs text-muted-foreground'}
-              >
-                {envMessage}
-              </p>
-              <button
-                type="submit"
-                formAction={envFormAction}
-                formNoValidate
-                disabled={runtimeControlsDisabled}
-                aria-busy={isEnvPending}
-                onClick={clearAutoSaveTimer}
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
-              >
-                {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                {isEnvPending ? t('savingAndSyncingEnvironment') : t('saveEnvironment')}
-              </button>
-            </div>
-          </div>
         </section>
       ) : null}
 
       <section hidden={activeSection !== 'builtInTools'} aria-label={t('builtInTools')}>
-        <div
-          role="list"
-          aria-label={t('builtInTools')}
-          className="grid gap-x-8 gap-y-5 sm:grid-cols-2"
-        >
-          {builtInToolGroups.map((group) => (
-            <div key={group.category} role="listitem" className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {builtInToolCategoryLabels[group.category]}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-                {group.tools.map((tool) => (
-                  <code key={tool} className="text-xs text-foreground">{tool}</code>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <AgentBuiltInTools
+          runtimeKind={runtimeKind}
+          disabledTools={disabledBuiltinToolSet}
+          onDisabledToolsChange={(next) => {
+            setDisabledBuiltinToolSet(next);
+            scheduleAutoSave();
+          }}
+        />
       </section>
 
       <section hidden={activeSection !== 'mcp'} aria-label={t('mcp')}>

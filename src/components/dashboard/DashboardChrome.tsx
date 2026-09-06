@@ -12,6 +12,7 @@ import { useTranslations } from 'next-intl';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardLogo } from './DashboardLogo';
 import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
+import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
 import {
   DashboardTabBar,
   DashboardTabContent,
@@ -38,7 +39,7 @@ export function DashboardChrome({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = usePersistentBoolean(`toolplane:dashboard-sidebar:${slug}`, false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const t = useTranslations('console.sidebar');
 

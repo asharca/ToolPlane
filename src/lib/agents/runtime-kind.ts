@@ -23,6 +23,7 @@ export type AgentRuntimeBuiltinToolGroup = {
 const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<AgentRuntimeKind, readonly AgentRuntimeBuiltinToolGroup[]> = {
   pi: [
     { category: 'file', tools: ['read', 'edit', 'write'] },
+    { category: 'search', tools: ['grep', 'find', 'ls'] },
     { category: 'shell', tools: ['bash'] },
   ],
   'claude-code': [
@@ -123,6 +124,15 @@ export function implementedAgentRuntimeKind(value: unknown): ImplementedAgentRun
 export function agentRuntimeBuiltinToolGroups(value: unknown): readonly AgentRuntimeBuiltinToolGroup[] {
   const kind = implementedAgentRuntimeKind(value);
   return kind ? AGENT_RUNTIME_BUILTIN_TOOL_GROUPS[kind] : [];
+}
+
+export function normalizeDisabledBuiltinTools(value: unknown, tools: readonly string[] | undefined): string[] {
+  const available = new Set(agentRuntimeBuiltinToolGroups(value).flatMap((group) => group.tools));
+  return [...new Set((tools ?? []).filter((tool) => available.has(tool)))];
+}
+
+export function agentRuntimeSupportsBuiltinToolSelection(value: unknown): boolean {
+  return isDedicatedSandboxRuntimeKind(value);
 }
 
 export function isSandboxHarnessRuntimeKind(value: unknown): value is SandboxHarnessRuntimeKind {

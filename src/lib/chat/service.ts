@@ -15,6 +15,7 @@ import {
 import type {
   CreateChatAssistantInput,
   CreateChatThreadInput,
+  GenerateChatAssistantPromptInput,
   UpdateChatAssistantInput,
   UpdateChatThreadInput,
 } from './schemas';
@@ -243,9 +244,13 @@ export async function createChatAssistant(userId: string, input: CreateChatAssis
   const data = {
     workspaceId: input.workspaceId,
     name: input.name,
+    description: input.description ?? null,
     systemPrompt: input.systemPrompt ?? null,
     modelProviderId: input.modelProviderId ?? null,
     model: input.model ?? null,
+    modelParameters: input.modelParameters
+      ? input.modelParameters as Prisma.InputJsonValue
+      : Prisma.DbNull,
     maxSteps: input.maxSteps ?? AGENT_STEP_BOUNDS.default,
     marketTemplateReleaseId: input.marketTemplateReleaseId ?? null,
     mcpGrants: {
@@ -387,16 +392,34 @@ export async function updateChatAssistant(
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
         ...(input.modelProviderId !== undefined
           ? { modelProviderId: input.modelProviderId, ...(input.modelProviderId === null && input.model === undefined ? { model: null } : {}) }
           : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.modelParameters !== undefined ? {
+          modelParameters: input.modelParameters
+            ? input.modelParameters as Prisma.InputJsonValue
+            : Prisma.DbNull,
+        } : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
       },
       include: { modelProvider: providerForClient, mcpGrants: grantForClient },
     });
   });
+}
+
+export async function getChatPromptGenerationModel(
+  userId: string,
+  input: Pick<GenerateChatAssistantPromptInput, 'workspaceId' | 'modelProviderId'>,
+) {
+  await requireWorkspace(userId, input.workspaceId);
+  const provider = await db.modelProvider.findFirst({
+    where: { id: input.modelProviderId, workspaceId: input.workspaceId },
+  });
+  if (!provider) throw new ChatServiceError(400, 'Model provider not found');
+  return provider;
 }
 
 export async function deleteChatAssistant(userId: string, assistantId: string) {

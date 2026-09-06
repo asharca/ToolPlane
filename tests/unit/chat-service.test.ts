@@ -501,17 +501,25 @@ describe('Chat turn admission', () => {
     }));
   });
 
-  it('updates an assistant pinned state after workspace authorization', async () => {
+  it('updates assistant configuration after workspace authorization', async () => {
     mocks.assistantFindFirst.mockResolvedValue({
       id: 'assistant-1',
       workspaceId: 'workspace-1',
     });
 
-    await updateChatAssistant('user-1', 'assistant-1', { pinned: true });
+    await updateChatAssistant('user-1', 'assistant-1', {
+      pinned: true,
+      description: 'Finds primary sources.',
+      modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 },
+    });
 
     expect(mocks.assistantUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'assistant-1' },
-      data: { pinned: true },
+      data: {
+        pinned: true,
+        description: 'Finds primary sources.',
+        modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 },
+      },
     }));
   });
 

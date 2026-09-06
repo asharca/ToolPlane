@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   deploymentUpdateMany: vi.fn(),
   resolveSpawnSpec: vi.fn(),
   startProcess: vi.fn(),
+  updateSandboxEnvAction: vi.fn(),
   materializeAgentRelease: vi.fn(),
   deleteManagedAgent: vi.fn(),
   redirect: vi.fn(),
@@ -63,6 +64,7 @@ vi.mock('@/lib/db', () => ({
 }));
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('@/lib/process/supervisor', () => ({ startProcess: mocks.startProcess }));
+vi.mock('@/lib/sandboxes/actions', () => ({ updateSandboxEnvAction: mocks.updateSandboxEnvAction }));
 vi.mock('@/lib/agents/mutations', () => ({
   cloneAgent: mocks.cloneAgent,
   cloneHermesVolumeData: mocks.cloneHermesVolumeData,
@@ -141,6 +143,7 @@ import {
   updateHermesConversationSelectionAction,
   updateProviderAction,
   updateWorkspaceModelPreferenceAction,
+  updateAgentRuntimeEnvAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
   createConversationAction,
@@ -169,7 +172,9 @@ function mockAuthorizedAgent() {
   mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
   mocks.agentFindFirst.mockResolvedValue({
     publicRuntimeAllocation: null,
-    runtime: { sandbox: { config: { managedBy: 'agent-runtime' } } },
+    runtimeKind: 'hermes',
+    sandboxes: [],
+    runtime: { sandboxId: 'sandbox-1', sandbox: { config: { managedBy: 'agent-runtime' } } },
   });
 }
 
@@ -308,6 +313,29 @@ describe('Hermes runtime control actions', () => {
     expect(mocks.ensureHermesRuntimeReady).toHaveBeenCalledWith('workspace-1', 'agent-1');
   });
 
+  it('delegates a dedicated runtime environment change to its assigned sandbox', async () => {
+    mocks.agentFindFirst
+      .mockResolvedValueOnce({
+        publicRuntimeAllocation: null,
+        runtime: { sandbox: { config: { managedBy: 'agent-runtime' } } },
+      })
+      .mockResolvedValueOnce({
+        runtimeKind: 'pi',
+        sandboxes: [{ sandboxId: 'sandbox-1' }],
+        runtime: null,
+      });
+    const envForm = runtimeForm();
+    envForm.set('runtimeEnv', 'CUSTOM_SETTING=value');
+
+    await expect(updateAgentRuntimeEnvAction({}, envForm)).resolves.toEqual({
+      savedAt: expect.any(Number),
+    });
+    const sandboxForm = mocks.updateSandboxEnvAction.mock.calls.at(-1)?.[0] as FormData;
+    expect(sandboxForm.get('workspace')).toBe('acme');
+    expect(sandboxForm.get('sandboxId')).toBe('sandbox-1');
+    expect(sandboxForm.get('env')).toBe('CUSTOM_SETTING=value');
+  });
+
   it('returns the strict stop failure to the caller', async () => {
     mocks.stopHermesRuntime.mockRejectedValueOnce(
       new Error('Could not stop the Hermes runtime: Docker daemon unavailable'),
@@ -350,10 +378,12 @@ describe('createAgentAction', () => {
         'workspace-1',
         {
           name: 'Harness',
+          description: null,
           systemPrompt: null,
           providerId: 'provider-1',
           providerIds: ['provider-1'],
           model: 'model-1',
+          disabledBuiltinTools: [],
           maxSteps: 100,
         },
         {

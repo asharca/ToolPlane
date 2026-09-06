@@ -119,6 +119,9 @@ export default async function AgentDetailPage({
   const selectedSandboxes = new Set(agent.sandboxes.map((sandbox) => sandbox.sandboxId));
   const selectedSubAgents = new Set(agent.subAgents.map((subAgent) => subAgent.childId));
   const marketSetup = await resolveAgentMarketSetupGuide(ws.id, agent.marketInstall);
+  const runtimeSandbox = isHermes
+    ? agent.runtime?.sandbox
+    : agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandbox;
 
   return (
     <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/chat?agent=${encodeURIComponent(agent.id)}`} compact>
@@ -127,9 +130,12 @@ export default async function AgentDetailPage({
         slug={slug}
         agentId={agentId}
         settings={{
+          workspaceId: ws.id,
           name: agent.name,
+          description: agent.description ?? '',
           runtimeKind: agent.runtimeKind,
           systemPrompt: isHermes ? '' : agent.systemPrompt ?? '',
+          disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,
           providerIds: agent.modelProviders.map((link) => link.providerId),
           model: agent.model,
@@ -155,6 +161,10 @@ export default async function AgentDetailPage({
             status: t.enabled ? 'enabled' : 'disabled',
           })),
           defaultSandboxId: agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandboxId ?? null,
+          runtimeSandboxId: runtimeSandbox?.id ?? null,
+          runtimeEnvironment: runtimeSandbox
+            ? sandboxEnvToText(readSandboxEnv(runtimeSandbox.config))
+            : undefined,
           sandboxes: sandboxes
             .filter((s) => {
               if (s.id === agent.runtime?.sandboxId) return false;

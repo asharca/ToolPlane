@@ -15,7 +15,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  FileText,
   MessageSquare,
   PackageCheck,
   Plus,
@@ -54,6 +53,8 @@ import {
   isDedicatedSandboxRuntimeKind,
   type AgentRuntimeKind,
 } from '@/lib/agents/runtime-kind';
+import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
+import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSystemPromptEditor';
 
 export type AgentRow = {
   id: string;
@@ -91,7 +92,7 @@ export type AgentMarketOption = {
   installCount: number;
 };
 
-type CreateStep = 'basic' | 'instructions' | 'tools';
+type CreateStep = 'basic' | 'instructions' | 'builtInTools' | 'mcp' | 'skills' | 'toolkits';
 type CreateSource = 'blank' | 'market';
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -126,6 +127,7 @@ function CountPill({
 
 export function AgentsBrowser({
   slug,
+  workspaceId = '',
   agentControlEndpoint,
   agents,
   createOptions,
@@ -133,6 +135,7 @@ export function AgentsBrowser({
   marketAgents = [],
 }: {
   slug: string;
+  workspaceId?: string;
   agentControlEndpoint?: string;
   agents: AgentRow[];
   createOptions: CreateOptions;
@@ -161,6 +164,8 @@ export function AgentsBrowser({
   );
   const [createStep, setCreateStep] = useState<CreateStep>('basic');
   const [agentName, setAgentName] = useState('');
+  const [agentDescription, setAgentDescription] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
   const [runtime, setRuntime] = useState<AgentRuntimeKind>('claude-code');
   const [providerId, setProviderId] = useState(defaultNativeModel?.providerId ?? '');
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? '');
@@ -170,6 +175,7 @@ export function AgentsBrowser({
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
+  const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
   const compatibleProviders = createOptions.providers.filter((provider) => (
@@ -194,7 +200,10 @@ export function AgentsBrowser({
       label: t('instructions'),
       description: t('instructionsSettingsDescription'),
     }]),
-    { id: 'tools', label: t('tools'), description: t('resourceSettingsDescription') },
+    { id: 'builtInTools', label: t('builtInTools'), description: t('builtInToolsDescription', { runtime: agentRuntimeDisplayName(runtime) }) },
+    { id: 'mcp', label: t('mcp'), description: t('mcpSettingsDescription') },
+    { id: 'skills', label: t('skills'), description: t('skillsSettingsDescription') },
+    { id: 'toolkits', label: t('toolkits'), description: t('toolkitsSettingsDescription') },
   ];
   const createStepIndex = Math.max(0, createSteps.findIndex((step) => step.id === createStep));
   const activeCreateStep = createSteps[createStepIndex]?.id ?? 'basic';
@@ -224,6 +233,8 @@ export function AgentsBrowser({
     setCreateSource('blank');
     setCreateStep('basic');
     setAgentName('');
+    setAgentDescription('');
+    setSystemPrompt('');
     setRuntime('claude-code');
     setProviderId(defaultNativeModel?.providerId ?? '');
     setModelId(defaultNativeModel?.model ?? '');
@@ -231,6 +242,7 @@ export function AgentsBrowser({
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
+    setDisabledBuiltinTools(new Set());
   }
 
   return (
@@ -497,6 +509,18 @@ export function AgentsBrowser({
                     className="ui-input h-10 w-full"
                   />
                 </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
+                  <textarea
+                    name="description"
+                    value={agentDescription}
+                    onChange={(event) => setAgentDescription(event.target.value)}
+                    maxLength={500}
+                    rows={3}
+                    placeholder={t('agentDescriptionPlaceholder')}
+                    className="ui-input min-h-24 w-full resize-y py-2.5"
+                  />
+                </label>
 
                 <fieldset>
                   <legend className="mb-1.5 text-xs font-semibold text-foreground">{t('runtime')}</legend>
@@ -611,39 +635,6 @@ export function AgentsBrowser({
                     <p>{t('automaticSandboxHelp')}</p>
                   </div>
                 ) : null}
-              </section>
-
-              <section
-                hidden={activeCreateStep !== 'instructions'}
-                aria-labelledby="agent-create-instructions-title"
-                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
-              >
-                <div>
-                  <h3 id="agent-create-instructions-title" className="text-base font-semibold text-foreground">{t('instructions')}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{t('instructionsSettingsDescription')}</p>
-                </div>
-                <label className="block">
-                  <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
-                    <FileText className="size-4 text-muted-foreground" /> {t('systemPrompt')}
-                  </span>
-                  <textarea
-                    name="systemPrompt"
-                    rows={12}
-                    placeholder={t('youAreAHelpfulAssistant')}
-                    className="ui-input min-h-72 w-full resize-y py-3"
-                  />
-                </label>
-              </section>
-
-              <section
-                hidden={activeCreateStep !== 'tools'}
-                aria-labelledby="agent-create-tools-title"
-                className="mx-auto max-w-4xl space-y-6 px-5 py-6 sm:px-8"
-              >
-                <div>
-                  <h3 id="agent-create-tools-title" className="text-base font-semibold text-foreground">{t('tools')}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{t('resourceSettingsDescription')}</p>
-                </div>
                 <label className="block max-w-48 text-xs font-medium text-muted-foreground">
                   {t('maxToolSteps')}
                   <input
@@ -655,32 +646,101 @@ export function AgentsBrowser({
                     className="ui-input mt-1.5 h-9 w-full"
                   />
                 </label>
-                <div className="grid items-start gap-4 lg:grid-cols-2">
-                  <AgentResourceSelect
-                    icon={Server}
-                    label={t('mcp')}
-                    name="deploymentId"
-                    options={createOptions.deployments}
-                    selectedIds={selectedDeploymentIds}
-                    onSelectionChange={setSelectedDeploymentIds}
-                  />
-                  <AgentResourceSelect
-                    icon={PackageCheck}
-                    label={t('skills')}
-                    name="installedSkillId"
-                    options={createOptions.skills}
-                    selectedIds={selectedSkillIds}
-                    onSelectionChange={setSelectedSkillIds}
-                  />
-                  <AgentResourceSelect
-                    icon={Blocks}
-                    label={t('toolkits')}
-                    name="toolkitId"
-                    options={createOptions.toolkits}
-                    selectedIds={selectedToolkitIds}
-                    onSelectionChange={setSelectedToolkitIds}
-                  />
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'instructions'}
+                aria-labelledby="agent-create-instructions-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-instructions-title" className="text-base font-semibold text-foreground">{t('instructions')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('instructionsSettingsDescription')}</p>
                 </div>
+                <AgentSystemPromptEditor
+                  workspaceId={workspaceId}
+                  name={agentName}
+                  description={agentDescription}
+                  providerId={providerId}
+                  model={modelId}
+                  value={systemPrompt}
+                  onChange={setSystemPrompt}
+                />
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'builtInTools'}
+                aria-labelledby="agent-create-built-in-tools-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-built-in-tools-title" className="text-base font-semibold text-foreground">{t('builtInTools')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t('builtInToolsDescription', { runtime: agentRuntimeDisplayName(runtime) })}
+                  </p>
+                </div>
+                <AgentBuiltInTools
+                  runtimeKind={runtime}
+                  disabledTools={disabledBuiltinTools}
+                  onDisabledToolsChange={setDisabledBuiltinTools}
+                />
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'mcp'}
+                aria-labelledby="agent-create-mcp-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-mcp-title" className="text-base font-semibold text-foreground">{t('mcp')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('mcpSettingsDescription')}</p>
+                </div>
+                <AgentResourceSelect
+                  icon={Server}
+                  label={t('mcp')}
+                  name="deploymentId"
+                  options={createOptions.deployments}
+                  selectedIds={selectedDeploymentIds}
+                  onSelectionChange={setSelectedDeploymentIds}
+                />
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'skills'}
+                aria-labelledby="agent-create-skills-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-skills-title" className="text-base font-semibold text-foreground">{t('skills')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('skillsSettingsDescription')}</p>
+                </div>
+                <AgentResourceSelect
+                  icon={PackageCheck}
+                  label={t('skills')}
+                  name="installedSkillId"
+                  options={createOptions.skills}
+                  selectedIds={selectedSkillIds}
+                  onSelectionChange={setSelectedSkillIds}
+                />
+              </section>
+
+              <section
+                hidden={activeCreateStep !== 'toolkits'}
+                aria-labelledby="agent-create-toolkits-title"
+                className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8"
+              >
+                <div>
+                  <h3 id="agent-create-toolkits-title" className="text-base font-semibold text-foreground">{t('toolkits')}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{t('toolkitsSettingsDescription')}</p>
+                </div>
+                <AgentResourceSelect
+                  icon={Blocks}
+                  label={t('toolkits')}
+                  name="toolkitId"
+                  options={createOptions.toolkits}
+                  selectedIds={selectedToolkitIds}
+                  onSelectionChange={setSelectedToolkitIds}
+                />
               </section>
             </div>
           </div>

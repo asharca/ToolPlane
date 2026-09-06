@@ -39,9 +39,12 @@ const HermesProfilesPanel = dynamic(() =>
 );
 
 type SettingsData = {
+  workspaceId?: string;
   name: string;
+  description?: string;
   runtimeKind: string;
   systemPrompt: string;
+  disabledBuiltinTools?: string[];
   providerId: string | null;
   providerIds: string[];
   model: string | null;
@@ -51,6 +54,8 @@ type SettingsData = {
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
   defaultSandboxId?: string | null;
+  runtimeSandboxId?: string | null;
+  runtimeEnvironment?: string;
   sandboxes: AgentResourceOption[];
   subAgents: AgentResourceOption[];
   hermesImages?: string[];
@@ -170,7 +175,7 @@ export function AgentSettings({
   }, [settingsTab]);
 
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
-    { id: 'general', label: t('general') },
+    { id: 'general', label: t('basic') },
     { id: 'instructions', label: t('instructions') },
     { id: 'builtInTools', label: t('builtInTools') },
     { id: 'mcp', label: t('mcp') },
@@ -232,9 +237,12 @@ export function AgentSettings({
           {isAgentSettingsSection(settingsTab) ? (
             <AgentSettingsForm
               slug={slug}
+              workspaceId={settings.workspaceId}
               agentId={agentId}
               name={settings.name}
+              description={settings.description}
               systemPrompt={settings.systemPrompt}
+              disabledBuiltinTools={settings.disabledBuiltinTools}
               providerId={settings.providerId}
               providerIds={settings.providerIds}
               model={settings.model}
@@ -244,6 +252,8 @@ export function AgentSettings({
               skills={settings.skills}
               toolkits={settings.toolkits}
               defaultSandboxId={settings.defaultSandboxId}
+              runtimeSandboxId={settings.runtimeSandboxId}
+              runtimeEnvironment={settings.runtimeEnvironment}
               sandboxes={settings.sandboxes}
               subAgents={settings.subAgents}
               hermesImages={settings.hermesImages}

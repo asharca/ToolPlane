@@ -33,6 +33,7 @@ export type RunAgent = LoadedAgentTools & {
   workspaceId?: string;
   name: string;
   runtimeKind: string;
+  disabledBuiltinTools?: string[];
   systemPrompt: string | null;
   model: string | null;
   maxSteps: number;
@@ -169,6 +170,7 @@ export async function runAgentTurn(
           ...agent,
           id: agentId,
           workspaceId: ctx.workspaceId,
+          disabledBuiltinTools: agent.disabledBuiltinTools ?? [],
           provider: { ...agent.provider, id: agent.provider.id },
         },
         systemPrompt: agent.systemPrompt,

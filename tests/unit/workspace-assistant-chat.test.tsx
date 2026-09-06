@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
+import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
 const mocks = vi.hoisted(() => ({ conversation: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
 
@@ -72,8 +72,35 @@ function renderChat(
 }
 
 describe('WorkspaceAssistantChat', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('estimates mixed CJK and Latin system prompt tokens', () => {
+    expect(estimatePromptTokens('你好 hello')).toBe(4);
+    expect(estimatePromptTokens('   ')).toBe(0);
+  });
+
+  it('uses the agent chat header spacing', () => {
+    renderChat();
+
+    expect(screen.getByRole('button', { name: 'Hide assistants and chats' }).closest('header')).toHaveClass('h-11', 'px-2.5');
+  });
+
+  it('restores the collapsed assistant sidebar after a refresh', async () => {
+    const user = userEvent.setup();
+    const firstRender = renderChat();
+
+    await user.click(screen.getByRole('button', { name: 'Hide assistants and chats' }));
+    expect(window.localStorage.getItem('toolplane:assistant-chat-sidebar:workspace-1')).toBe('false');
+    firstRender.unmount();
+
+    renderChat();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show assistants and chats', pressed: false }))
+      .toHaveAttribute('aria-pressed', 'false'));
+  });
 
   it('uses the sidebar header to add assistants and list existing conversations', async () => {
     const user = userEvent.setup();
@@ -261,6 +288,77 @@ describe('WorkspaceAssistantChat', () => {
     expect(prompt).toHaveValue('Keep this prompt');
   });
 
+  it('generates a prompt and saves description and model parameters', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        prompt: 'Find primary sources, cite them, and state uncertainty.',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Keep page mounted' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderChat();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
+    const description = screen.getByRole('textbox', { name: 'Description' });
+    await userEvent.type(description, 'Finds primary sources.');
+    await userEvent.click(screen.getByRole('button', { name: 'System prompt' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Generate prompt' }));
+
+    expect(await screen.findByRole('textbox', { name: 'System prompt' }))
+      .toHaveValue('Find primary sources, cite them, and state uncertainty.');
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/chat/assistants/generate-prompt', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: 'workspace-1',
+        name: 'Helper',
+        description: 'Finds primary sources.',
+        systemPrompt: null,
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+      }),
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Preview system prompt' }));
+    expect(screen.getByText('Find primary sources, cite them, and state uncertainty.')).toBeInTheDocument();
+    expect(screen.getByText(`Estimated tokens: ${estimatePromptTokens('Find primary sources, cite them, and state uncertainty.')}`)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Model parameters' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom temperature' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Temperature' }), { target: { value: '0.4' } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom Top P' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Top P' }), { target: { value: '0.8' } });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use custom maximum output tokens' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Max output tokens' }), { target: { value: '2048' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Custom parameter name' }), 'top_k');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Custom parameter type' }), 'number');
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Value: top_k' }), { target: { value: '40' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/chat/assistants/assistant-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Helper',
+        description: 'Finds primary sources.',
+        systemPrompt: 'Find primary sources, cite them, and state uncertainty.',
+        modelProviderId: 'provider-1',
+        model: 'model-1',
+        modelParameters: {
+          temperature: 0.4,
+          topP: 0.8,
+          maxOutputTokens: 2048,
+          customParameters: [{ name: 'top_k', type: 'number', value: 40 }],
+        },
+        maxSteps: 8,
+        deploymentIds: [],
+      }),
+    }));
+  });
+
   it('steps through assistant creation without losing entered values', async () => {
     renderChat(undefined, true);
 
@@ -279,6 +377,9 @@ describe('WorkspaceAssistantChat', () => {
     expect(name).toHaveValue('Research helper');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(prompt).toHaveValue('Use primary sources.');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(screen.getByRole('button', { name: 'Model parameters' })).toHaveAttribute('aria-current', 'step');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(screen.getByRole('button', { name: 'MCP access' })).toHaveAttribute('aria-current', 'step');
@@ -313,6 +414,8 @@ describe('WorkspaceAssistantChat', () => {
     expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Market template selected' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('button', { name: 'Edit system prompt' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit system prompt' }));
     expect(screen.getByRole('textbox', { name: 'System prompt' })).toHaveValue('Use primary sources.');
   });
 
@@ -330,6 +433,7 @@ describe('WorkspaceAssistantChat', () => {
       missingMcpNames: ['Search MCP'],
     });
 
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 

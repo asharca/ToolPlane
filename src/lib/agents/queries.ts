@@ -246,7 +246,9 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       name: true,
       slug: true,
       runtimeKind: true,
+      description: true,
       systemPrompt: true,
+      disabledBuiltinTools: true,
       providerId: true,
       model: true,
       maxSteps: true,
@@ -265,7 +267,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
         select: {
           sandboxId: true,
           isDefault: true,
-          sandbox: { select: { kind: true, network: true } },
+          sandbox: { select: { id: true, kind: true, network: true, config: true } },
         },
       },
       subAgents: { select: { childId: true } },
@@ -287,6 +289,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
           sandboxId: true,
           sandbox: {
             select: {
+              id: true,
               config: true,
               deploymentId: true,
               deployment: { select: { status: true } },

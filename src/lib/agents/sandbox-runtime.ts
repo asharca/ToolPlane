@@ -10,6 +10,7 @@ import { sandboxContainerName } from '@/lib/sandboxes/runtime';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { safeSkillFilePath, type SkillBundleFile } from '@/lib/skills/bundle';
 import { skillLabel } from '@/lib/workspace/skill-label';
+import { normalizeDisabledBuiltinTools } from './runtime-kind';
 import type { SkillForPrompt } from './resolve';
 
 export const SANDBOX_RUNTIME_PACKAGES = {
@@ -95,6 +96,7 @@ export type RunSandboxAgentTurnOptions = {
   modelProxyBase: string;
   runtimeAccessToken: string;
   systemPrompt?: string | null;
+  disabledBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
   mcpServers?: readonly SandboxRuntimeMcpServer[];
@@ -375,6 +377,7 @@ export function buildDshPatch(options: {
   systemPrompt: string;
   skillRoot: string;
   mcpServers?: readonly SandboxRuntimeMcpServer[];
+  disabledBuiltinTools?: readonly string[];
   eventPluginPath?: string;
 }): string {
   const protocol = dshProviderProtocol(options.provider.format);
@@ -405,6 +408,38 @@ export function buildDshPatch(options: {
     '  config:',
     `    persona: ${yamlString(options.systemPrompt)}`,
   ];
+  const dshRowsByTool: Record<string, string[]> = {
+    read: ['tool-fs'],
+    read_image: ['tool-fs'],
+    edit: ['tool-fs'],
+    write: ['tool-fs'],
+    str_replace_editor: ['tool-fs'],
+    glob: ['tool-fs-search'],
+    grep: ['tool-fs-search'],
+    web_search: ['tool-web'],
+    bash: ['tool-bash'],
+    job_output: ['tool-jobs'],
+    job_list: ['tool-jobs'],
+    job_kill: ['tool-jobs'],
+    todo_write: ['tool-todo'],
+    skill: ['tool-skill'],
+    get_goal: ['tool-goal'],
+    create_goal: ['tool-goal'],
+    update_goal: ['tool-goal'],
+    exit_plan_mode: ['plan-mode'],
+    subagent: ['tool-subagent'],
+    subagent_fork: ['tool-subagent-fork'],
+    send_message: ['tool-subagent-control'],
+    interrupt_agent: ['tool-subagent-control'],
+    list_agents: ['tool-subagent-list-agents'],
+    workflow: ['tool-workflow'],
+    ralph: ['tool-ralph'],
+  };
+  const disabledRows = new Set((options.disabledBuiltinTools ?? [])
+    .flatMap((tool) => dshRowsByTool[tool] ?? []));
+  for (const row of disabledRows) {
+    rows.push(`- id: ${yamlString(row)}`, '  disabled: true');
+  }
   const servers = options.mcpServers ?? [];
   if (options.eventPluginPath || servers.length) {
     rows.push('- insert:');
@@ -1350,6 +1385,7 @@ async function runPi(
   prompt: string,
   skillRoot: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
+  disabledBuiltinTools: readonly string[],
 ): Promise<string> {
   const stateRoot = sandboxRuntimeStateRoot('pi', options.agentId);
   const runId = randomUUID();
@@ -1369,6 +1405,7 @@ async function runPi(
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
     '--skill', skillRoot,
     '--provider', 'toolplane', '--model', options.modelId,
+    ...(disabledBuiltinTools.length ? ['--exclude-tools', disabledBuiltinTools.join(',')] : []),
   ];
   let lineBuffer = '';
   let streamed = '';
@@ -1452,6 +1489,7 @@ async function runClaudeCode(
   systemPrompt: string,
   prompt: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
+  disabledBuiltinTools: readonly string[],
 ): Promise<string> {
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
   const stateRoot = sandboxRuntimeStateRoot('claude-code', options.agentId);
@@ -1461,6 +1499,7 @@ async function runClaudeCode(
     '--include-partial-messages', '--no-session-persistence',
     '--setting-sources', 'user',
     '--dangerously-skip-permissions', '--model', options.modelId,
+    ...(disabledBuiltinTools.length ? ['--disallowedTools', ...disabledBuiltinTools] : []),
     ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
   ];
   if (mcpServers.length) {
@@ -1559,6 +1598,7 @@ async function runDsh(
   prompt: string,
   skillRoot: string,
   mcpServers: readonly SandboxRuntimeMcpServer[],
+  disabledBuiltinTools: readonly string[],
 ): Promise<string> {
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
   const stateRoot = sandboxRuntimeStateRoot('dsh', options.agentId);
@@ -1574,6 +1614,7 @@ async function runDsh(
     systemPrompt,
     skillRoot,
     mcpServers,
+    disabledBuiltinTools,
     eventPluginPath,
   });
   await writeSandboxFile(container, eventPluginPath, dshEventTapSource(eventPrefix), options.signal);
@@ -1652,15 +1693,19 @@ export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): 
   const prompt = buildSandboxTranscript(options.messages);
   if (!prompt) throw new Error('The sandbox runtime turn has no user-visible message.');
   const systemPrompt = options.systemPrompt?.trim() ?? '';
+  const disabledBuiltinTools = normalizeDisabledBuiltinTools(
+    options.runtimeKind,
+    options.disabledBuiltinTools,
+  );
   const mcpServers = (options.mcpServers ?? []).filter((server) => server.deploymentId !== sandboxDeploymentId);
   const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
   const skillRoot = sandboxRuntimeSkillRoot(options.runtimeKind, options.agentId);
   await materializeSandboxSkills(container, skillRoot, options.skills ?? [], options.signal);
   if (options.runtimeKind === 'pi') {
-    return runPi(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers);
+    return runPi(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers, disabledBuiltinTools);
   }
   if (options.runtimeKind === 'claude-code') {
-    return runClaudeCode(options, container, binary, workdir, systemPrompt, prompt, mcpServers);
+    return runClaudeCode(options, container, binary, workdir, systemPrompt, prompt, mcpServers, disabledBuiltinTools);
   }
-  return runDsh(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers);
+  return runDsh(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers, disabledBuiltinTools);
 }

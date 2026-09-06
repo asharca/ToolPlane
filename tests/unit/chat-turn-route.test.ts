@@ -72,6 +72,7 @@ describe('chat turn stream contract', () => {
         model: 'current-model',
         mcpGrants: [],
         systemPrompt: null,
+        modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 },
         maxSteps: 5,
       },
     });
@@ -112,6 +113,7 @@ describe('chat turn stream contract', () => {
     );
     expect(mocks.runNative).toHaveBeenCalledWith(expect.objectContaining({
       modelId: 'historic-model',
+      modelParameters: { temperature: 0.4, topP: 0.8, maxOutputTokens: 2_000 },
       reasoningEffort: 'high',
     }));
   });

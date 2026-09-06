@@ -72,7 +72,8 @@ import {
   syncHermesRuntime,
   upgradeHermesRuntime,
 } from '@/lib/agents/hermes/runtime';
-import { parseSandboxEnvText } from '@/lib/sandboxes/env';
+import { parseSandboxEnvText, sandboxEnvToText } from '@/lib/sandboxes/env';
+import { updateSandboxEnvAction } from '@/lib/sandboxes/actions';
 import {
   AgentMarketError,
   materializeAgentRelease,
@@ -591,10 +592,12 @@ export async function createAgentAction(formData: FormData) {
     ctx.ws.id,
     {
       name,
-      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+      description: String(formData.get('description') ?? '').trim().slice(0, 500) || null,
+      systemPrompt: String(formData.get('systemPrompt') ?? '').trim().slice(0, 100_000) || null,
       providerId,
       providerIds,
       model,
+      disabledBuiltinTools: formData.getAll('disabledBuiltinTool').map(String),
       maxSteps: agentMaxSteps(formData),
     },
     {
@@ -835,10 +838,12 @@ export async function updateAgentAction(
   try {
     await updateAgent(ctx.ws.id, agentId, {
       name: String(formData.get('name') ?? '').trim() || 'New agent',
-      systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+      description: String(formData.get('description') ?? '').trim().slice(0, 500) || null,
+      systemPrompt: String(formData.get('systemPrompt') ?? '').trim().slice(0, 100_000) || null,
       providerId,
       providerIds,
       model,
+      disabledBuiltinTools: formData.getAll('disabledBuiltinTool').map(String),
       maxSteps,
     });
     await setAgentTools(ctx.ws.id, agentId, {
@@ -1035,7 +1040,7 @@ export async function upgradeHermesRuntimeAction(
   }
 }
 
-export async function updateHermesRuntimeEnvAction(
+export async function updateAgentRuntimeEnvAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
@@ -1045,11 +1050,41 @@ export async function updateHermesRuntimeEnvAction(
   if (!ctx) return { error: 'Not authorized.' };
   if (!await isManageableAgent(ctx.ws.id, agentId)) return { error: 'Agent not found.' };
 
+  const agent = await db.agent.findFirst({
+    where: { id: agentId, workspaceId: ctx.ws.id },
+    select: {
+      runtimeKind: true,
+      runtime: { select: { sandboxId: true } },
+      sandboxes: {
+        where: { isDefault: true },
+        take: 1,
+        select: { sandboxId: true },
+      },
+    },
+  });
+  if (!agent) return { error: 'Agent not found.' };
+
   let env: ReturnType<typeof parseSandboxEnvText>;
   try {
-    env = parseSandboxEnvText(formData.get('hermesEnv'));
+    env = parseSandboxEnvText(formData.get('runtimeEnv') ?? formData.get('hermesEnv'));
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Invalid environment variables.' };
+  }
+
+  if (agent.runtimeKind !== 'hermes') {
+    const sandboxId = agent.sandboxes[0]?.sandboxId;
+    if (!sandboxId) return { error: 'Agent runtime sandbox not found.' };
+    const sandboxForm = new FormData();
+    sandboxForm.set('workspace', slug);
+    sandboxForm.set('sandboxId', sandboxId);
+    sandboxForm.set('env', sandboxEnvToText(env));
+    try {
+      await updateSandboxEnvAction(sandboxForm);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Could not save environment variables.' };
+    }
+    revalidatePath(`/app/${slug}/agents/${agentId}`);
+    return { savedAt: Date.now() };
   }
 
   if (!await setHermesRuntimeEnv(ctx.ws.id, agentId, env)) {
@@ -1063,6 +1098,14 @@ export async function updateHermesRuntimeEnvAction(
     if (ready.error) return { error: `Saved, but Hermes sync failed: ${ready.error}` };
   }
   return { savedAt: Date.now() };
+}
+
+// Kept for existing callers; the shared action now handles every runtime.
+export async function updateHermesRuntimeEnvAction(
+  prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  return updateAgentRuntimeEnvAction(prev, formData);
 }
 
 export async function stopAgentRuntimeAction(

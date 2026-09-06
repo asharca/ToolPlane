@@ -5,11 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
-import {
-  ChatShell,
-  SearchInput,
-  SidebarActionRail,
-} from '@asharca/ui';
+import { SearchInput, SidebarActionRail } from '@asharca/ui';
 import {
   Bot,
   ChevronDown,
@@ -18,16 +14,24 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Cpu,
+  Eye,
   GitBranch,
   ListFilter,
+  Loader2,
   MessageSquare,
   MoveRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
   Plus,
+  RotateCcw,
+  Sparkles,
   Store,
   Trash2,
   X,
 } from 'lucide-react';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
+import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import {
   ChatBranchPanel,
   type ChatBranchState,
@@ -47,11 +51,24 @@ import {
 } from '@/components/ui/Dialog';
 import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
+import { estimatePromptTokens } from '@/lib/prompt-tokens';
+import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = { id: string; name: string; status: string; keywords?: string[] };
-type AssistantCreateStep = 'basic' | 'instructions' | 'tools';
+type AssistantCreateStep = 'basic' | 'instructions' | 'modelParameters' | 'tools';
+type AssistantModelParameters = {
+  temperature?: number;
+  topP?: number;
+  maxOutputTokens?: number;
+  customParameters?: AssistantCustomParameter[];
+};
+type AssistantCustomParameter = {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'json';
+  value: string | number | boolean;
+};
 
 export type AssistantMarketTemplate = {
   releaseId: string;
@@ -69,10 +86,12 @@ export type AssistantMarketTemplate = {
 export type ChatAssistantItem = {
   id: string;
   name: string;
+  description?: string | null;
   pinned: boolean;
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
+  modelParameters?: AssistantModelParameters | null;
   maxSteps: number;
   providerName: string | null;
   contextWindow?: number | null;
@@ -95,6 +114,23 @@ function chatHref(slug: string, assistantId: string, threadId?: string) {
   const query = new URLSearchParams({ assistant: assistantId });
   if (threadId) query.set('thread', threadId);
   return `/app/${encodeURIComponent(slug)}/chat?${query}`;
+}
+
+export { estimatePromptTokens } from '@/lib/prompt-tokens';
+
+function defaultCustomParameterValue(type: AssistantCustomParameter['type']): AssistantCustomParameter['value'] {
+  if (type === 'number') return 0;
+  if (type === 'boolean') return false;
+  return '';
+}
+
+function hasValidJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function AssistantEditor({
@@ -129,6 +165,7 @@ function AssistantEditor({
   const creating = !assistant;
   const [createStep, setCreateStep] = useState<AssistantCreateStep>('basic');
   const [name, setName] = useState(assistant?.name ?? marketTemplate?.name ?? '');
+  const [description, setDescription] = useState(assistant?.description ?? '');
   const templateProvider = marketTemplate?.providerFormat
     ? providers.find((provider) => (
       provider.format === marketTemplate.providerFormat
@@ -144,23 +181,81 @@ function AssistantEditor({
     ?? selectedProvider?.models[0]
     ?? '',
   );
+  const initialModelParameters = assistant?.modelParameters ?? {};
+  const [temperatureEnabled, setTemperatureEnabled] = useState(initialModelParameters.temperature !== undefined);
+  const [temperature, setTemperature] = useState(initialModelParameters.temperature ?? 1);
+  const [topPEnabled, setTopPEnabled] = useState(initialModelParameters.topP !== undefined);
+  const [topP, setTopP] = useState(initialModelParameters.topP ?? 1);
+  const [maxOutputTokensEnabled, setMaxOutputTokensEnabled] = useState(initialModelParameters.maxOutputTokens !== undefined);
+  const [maxOutputTokens, setMaxOutputTokens] = useState(initialModelParameters.maxOutputTokens ?? 4096);
+  const [customParameters, setCustomParameters] = useState<AssistantCustomParameter[]>(initialModelParameters.customParameters ?? []);
+  const initialSystemPrompt = assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? '';
+  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [showPromptPreview, setShowPromptPreview] = useState(Boolean(initialSystemPrompt.trim()));
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+  const [promptRestore, setPromptRestore] = useState<{ previous: string; generated: string } | null>(null);
   const [showMarketTemplates, setShowMarketTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const createSteps: Array<{ id: AssistantCreateStep; label: string }> = [
     { id: 'basic', label: t('basic') },
     { id: 'instructions', label: t('systemPrompt') },
+    { id: 'modelParameters', label: t('modelParameters') },
     { id: 'tools', label: t('mcpAccess') },
   ];
   const createStepIndex = createSteps.findIndex((step) => step.id === createStep);
   const lastCreateStep = createStepIndex === createSteps.length - 1;
   const basicComplete = Boolean(name.trim() && providerId && model);
 
+  async function generateSystemPrompt() {
+    if (!basicComplete || generatingPrompt) return;
+    setGeneratingPrompt(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/v1/chat/assistants/generate-prompt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          workspaceId,
+          name: name.trim(),
+          description: description.trim() || null,
+          systemPrompt: systemPrompt.trim() || null,
+          modelProviderId: providerId,
+          model,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { prompt?: string; error?: string };
+      if (!response.ok || !body.prompt?.trim()) throw new Error(body.error || t('promptGenerationError'));
+      const generated = body.prompt.trim();
+      setPromptRestore({ previous: systemPrompt, generated });
+      setSystemPrompt(generated);
+      setShowPromptPreview(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('promptGenerationError'));
+    } finally {
+      setGeneratingPrompt(false);
+    }
+  }
+
   async function submit(formData: FormData) {
     setSaving(true);
     setError(null);
     try {
       const deploymentIds = formData.getAll('deploymentIds').map(String);
+      const selectedCustomParameters = customParameters
+        .filter((parameter) => parameter.name.trim())
+        .map((parameter) => ({ ...parameter, name: parameter.name.trim() }));
+      if (selectedCustomParameters.some((parameter) => (
+        parameter.type === 'json' && !hasValidJson(String(parameter.value))
+      ))) {
+        throw new Error(t('invalidCustomParameter'));
+      }
+      const modelParameters: AssistantModelParameters = {
+        ...(temperatureEnabled ? { temperature } : {}),
+        ...(topPEnabled ? { topP } : {}),
+        ...(maxOutputTokensEnabled ? { maxOutputTokens } : {}),
+        ...(selectedCustomParameters.length ? { customParameters: selectedCustomParameters } : {}),
+      };
       const response = await fetch(
         assistant ? `/api/v1/chat/assistants/${assistant.id}` : '/api/v1/chat/assistants',
         {
@@ -169,9 +264,11 @@ function AssistantEditor({
           body: JSON.stringify({
             ...(!assistant ? { workspaceId } : {}),
             name: String(formData.get('name') ?? '').trim(),
-            systemPrompt: String(formData.get('systemPrompt') ?? '').trim() || null,
+            description: description.trim() || null,
+            systemPrompt: systemPrompt.trim() || null,
             modelProviderId: providerId || null,
             model: model || null,
+            modelParameters: Object.keys(modelParameters).length ? modelParameters : null,
             maxSteps: Number(formData.get('maxSteps') ?? AGENT_STEP_BOUNDS.default),
             deploymentIds,
             ...(!assistant && marketTemplate ? { marketTemplateReleaseId: marketTemplate.releaseId } : {}),
@@ -343,6 +440,19 @@ function AssistantEditor({
                     />
                   </label>
 
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    {t('description')}
+                    <textarea
+                      name="description"
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      rows={2}
+                      maxLength={500}
+                      className="ui-input mt-1.5 min-h-20 w-full resize-y py-2"
+                      placeholder={t('descriptionPlaceholder')}
+                    />
+                  </label>
+
                   <div className="block text-xs font-medium text-muted-foreground">
                     <span>{t('model')}</span>
                     <ModelPicker
@@ -379,17 +489,269 @@ function AssistantEditor({
                       <h3 id="assistant-create-instructions-title" className="text-base font-semibold text-foreground">{t('systemPrompt')}</h3>
                     </div>
                   ) : null}
-                  <label className="block text-xs font-medium text-muted-foreground">
-                    {t('systemPrompt')}
-                    <textarea
-                      name="systemPrompt"
-                      defaultValue={assistant?.systemPrompt ?? marketTemplate?.systemPrompt ?? ''}
-                      rows={10}
-                      maxLength={20_000}
-                      className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
-                      placeholder={t('systemPromptPlaceholder')}
-                    />
-                  </label>
+                  <div className="block text-xs font-medium text-muted-foreground">
+                    <div className="flex items-center justify-between gap-3">
+                      <span>{t('systemPrompt')}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowPromptPreview((current) => !current)}
+                          aria-label={showPromptPreview ? t('editSystemPrompt') : t('previewSystemPrompt')}
+                          title={showPromptPreview ? t('editSystemPrompt') : t('previewSystemPrompt')}
+                          className="ui-button-ghost ui-icon-button size-7"
+                        >
+                          {showPromptPreview ? <Pencil className="size-3.5" /> : <Eye className="size-3.5" />}
+                        </button>
+                        {promptRestore?.generated === systemPrompt ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSystemPrompt(promptRestore.previous);
+                              setPromptRestore(null);
+                            }}
+                            aria-label={common('undo')}
+                            title={common('undo')}
+                            className="ui-button-ghost ui-icon-button size-7"
+                          >
+                            <RotateCcw className="size-3.5" />
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={!basicComplete || generatingPrompt}
+                          onClick={() => void generateSystemPrompt()}
+                          className="ui-button-secondary h-7 gap-1.5 px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {generatingPrompt ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                          {systemPrompt.trim() ? t('improvePrompt') : t('generatePrompt')}
+                        </button>
+                      </div>
+                    </div>
+                    {showPromptPreview ? (
+                      <div className="mt-1.5 min-h-64 overflow-auto rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground">
+                        {systemPrompt.trim() ? <AssistantMarkdown text={systemPrompt} /> : <p className="text-muted-foreground">{t('systemPromptPlaceholder')}</p>}
+                      </div>
+                    ) : (
+                      <textarea
+                        name="systemPrompt"
+                        value={systemPrompt}
+                        aria-label={t('systemPrompt')}
+                        onChange={(event) => {
+                          setSystemPrompt(event.target.value);
+                          setPromptRestore(null);
+                        }}
+                        rows={10}
+                        maxLength={20_000}
+                        className="ui-input mt-1.5 min-h-64 w-full resize-y py-2"
+                        placeholder={t('systemPromptPlaceholder')}
+                      />
+                    )}
+                    <p aria-live="polite" className="mt-1.5 text-right text-xs font-normal text-muted-foreground">
+                      {t('estimatedTokens', { count: estimatePromptTokens(systemPrompt) })}
+                    </p>
+                  </div>
+                </section>
+
+                <section
+                  hidden={createStep !== 'modelParameters'}
+                  aria-labelledby={creating ? 'assistant-create-model-parameters-title' : undefined}
+                  className="mx-auto max-w-2xl space-y-5 px-5 py-6 sm:px-8"
+                >
+                  {creating ? (
+                    <h3 id="assistant-create-model-parameters-title" className="text-base font-semibold text-foreground">{t('modelParameters')}</h3>
+                  ) : null}
+                  <div className="divide-y divide-border border-y border-border">
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={temperatureEnabled}
+                          onChange={(event) => setTemperatureEnabled(event.target.checked)}
+                          aria-label={t('useCustomTemperature')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('temperature')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={temperature}
+                        disabled={!temperatureEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setTemperature(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('temperature')}
+                        className="ui-input h-8 w-24 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={topPEnabled}
+                          onChange={(event) => setTopPEnabled(event.target.checked)}
+                          aria-label={t('useCustomTopP')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('topP')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={topP}
+                        disabled={!topPEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setTopP(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('topP')}
+                        className="ui-input h-8 w-24 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                    <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
+                      <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={maxOutputTokensEnabled}
+                          onChange={(event) => setMaxOutputTokensEnabled(event.target.checked)}
+                          aria-label={t('useCustomMaxOutputTokens')}
+                          className="size-4 accent-[var(--brand)]"
+                        />
+                        <span>{t('maxOutputTokens')}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1_000_000}
+                        step={1}
+                        value={maxOutputTokens}
+                        disabled={!maxOutputTokensEnabled}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            setMaxOutputTokens(event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                        aria-label={t('maxOutputTokens')}
+                        className="ui-input h-8 w-28 text-right disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                  <div className="border-b border-border pb-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-foreground">{t('customParameters')}</h4>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('customParametersHint')}</p>
+                      </div>
+                      <button type="button" onClick={() => setCustomParameters((current) => [
+                        ...current,
+                        { name: '', type: 'string', value: '' },
+                      ])} className="ui-button-secondary h-8 shrink-0 gap-1.5 px-2.5 text-xs">
+                        <Plus className="size-3.5" />
+                        {t('addCustomParameter')}
+                      </button>
+                    </div>
+                    {customParameters.length ? (
+                      <div className="mt-3 space-y-3">
+                        {customParameters.map((parameter, index) => {
+                          const valueLabel = t('customParameterValue', {
+                            name: parameter.name.trim() || String(index + 1),
+                          });
+                          const updateParameter = (patch: Partial<AssistantCustomParameter>) => {
+                            setCustomParameters((current) => current.map((currentParameter, currentIndex) => {
+                              if (currentIndex !== index) return currentParameter;
+                              if (patch.type && patch.type !== currentParameter.type) {
+                                return {
+                                  ...currentParameter,
+                                  ...patch,
+                                  value: defaultCustomParameterValue(patch.type),
+                                };
+                              }
+                              return { ...currentParameter, ...patch };
+                            }));
+                          };
+                          return (
+                            <div key={index} className="border-t border-border pt-3">
+                              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_2rem]">
+                                <input
+                                  value={parameter.name}
+                                  onChange={(event) => updateParameter({ name: event.target.value })}
+                                  aria-label={t('customParameterName')}
+                                  className="ui-input h-8 w-full"
+                                  placeholder="top_k"
+                                />
+                                <select
+                                  value={parameter.type}
+                                  onChange={(event) => updateParameter({ type: event.target.value as AssistantCustomParameter['type'] })}
+                                  aria-label={t('customParameterType')}
+                                  className="ui-input h-8 w-full"
+                                >
+                                  <option value="string">string</option>
+                                  <option value="number">number</option>
+                                  <option value="boolean">boolean</option>
+                                  <option value="json">json</option>
+                                </select>
+                                {parameter.type === 'number' ? (
+                                  <input
+                                    type="number"
+                                    value={typeof parameter.value === 'number' ? parameter.value : 0}
+                                    onChange={(event) => updateParameter({ value: Number.isFinite(event.currentTarget.valueAsNumber) ? event.currentTarget.valueAsNumber : 0 })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  />
+                                ) : parameter.type === 'boolean' ? (
+                                  <select
+                                    value={String(parameter.value)}
+                                    onChange={(event) => updateParameter({ value: event.target.value === 'true' })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  >
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                  </select>
+                                ) : parameter.type === 'json' ? (
+                                  <span className="hidden sm:block" />
+                                ) : (
+                                  <input
+                                    value={String(parameter.value)}
+                                    onChange={(event) => updateParameter({ value: event.target.value })}
+                                    aria-label={valueLabel}
+                                    className="ui-input h-8 w-full"
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setCustomParameters((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                                  aria-label={common('delete')}
+                                  title={common('delete')}
+                                  className="ui-button-ghost ui-icon-button size-8"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </div>
+                              {parameter.type === 'json' ? (
+                                <textarea
+                                  value={String(parameter.value)}
+                                  onChange={(event) => updateParameter({ value: event.target.value })}
+                                  aria-label={valueLabel}
+                                  rows={3}
+                                  spellCheck={false}
+                                  className="ui-input mt-2 w-full resize-y py-2 font-mono text-xs"
+                                  placeholder={t('customParameterJsonPlaceholder')}
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                 </section>
 
                 <section
@@ -551,7 +913,7 @@ export function WorkspaceAssistantChat({
   const activeThread = activeAssistant?.threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const [query, setQuery] = useState('');
   const [expandedAssistants, setExpandedAssistants] = useState<Record<string, boolean>>({});
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(`toolplane:assistant-chat-sidebar:${workspaceId}`, true);
   const [branchOpen, setBranchOpen] = useState(false);
   const [branchMaximized, setBranchMaximized] = useState(false);
   const [branchMutating, setBranchMutating] = useState(false);
@@ -771,16 +1133,21 @@ export function WorkspaceAssistantChat({
 
   return (
     <>
-      <ChatShell
-        className="relative"
-        sidebarOpen={sidebarOpen}
-        onSidebarOpenChange={setSidebarOpen}
-        mobilePane={mobilePane}
-        onMobilePaneChange={setMobilePane}
-        labels={{ showSidebar: t('showSidebar'), hideSidebar: t('hideSidebar') }}
-        sidebarLabel={t('assistants')}
-        sidebar={(
-          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background p-1.5">
+      <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
+        <div className={cx(
+          'grid min-h-0 flex-1 grid-cols-1',
+          sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)] min-[1024px]:max-[1080px]:grid-cols-[13.125rem_minmax(0,1fr)]!',
+          branchOpen && !branchMaximized && (sidebarOpen
+            ? 'xl:grid-cols-[15rem_minmax(0,1fr)_20rem]'
+            : 'xl:grid-cols-[minmax(0,1fr)_20rem]'),
+        )}>
+          <aside
+            aria-label={t('assistants')}
+            className={cx(
+              'min-h-0 flex-col overflow-hidden bg-background p-1.5',
+              mobilePane === 'chat' ? (sidebarOpen ? 'hidden lg:flex' : 'hidden') : (sidebarOpen ? 'flex' : 'flex lg:hidden'),
+            )}
+          >
             <SearchInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -979,11 +1346,33 @@ export function WorkspaceAssistantChat({
               </ul>
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
-          </div>
-        )}
-        header={(
-          <>
+          </aside>
+
+          <section className={cx(
+            'min-h-0 min-w-0 flex-col overflow-hidden bg-background',
+            mobilePane === 'sidebar' ? 'hidden lg:flex' : 'flex',
+          )}>
+            <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-background px-2.5">
               <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-label={t('showSidebar')}
+                  title={t('showSidebar')}
+                  onClick={() => setMobilePane('sidebar')}
+                  className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                >
+                  <PanelLeftOpen className="size-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
+                  title={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
+                  aria-pressed={sidebarOpen}
+                  onClick={() => setSidebarOpen((open) => !open)}
+                  className="hidden size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:flex"
+                >
+                  {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
+                </button>
                 {activeAssistant ? (
                   <>
                     <button type="button" onClick={() => setEditing(activeAssistant)} aria-label={`${t('settings')}: ${activeAssistant.name}`} title={t('settings')} className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium hover:bg-muted">
@@ -1031,22 +1420,7 @@ export function WorkspaceAssistantChat({
                   <GitBranch className="size-[17px]" />
                 </button>
               ) : null}
-          </>
-        )}
-        rightPanelOpen={branchOpen && !branchMaximized && Boolean(activeThread && branch)}
-        rightPanel={activeThread && branch ? (
-          <ChatBranchPanel
-            branch={branch}
-            busy={branchBusy}
-            canMaximize
-            onClose={() => setBranchOpen(false)}
-            onDelete={(messageId) => void deleteBranch(messageId)}
-            onMaximize={() => setBranchMaximized(true)}
-            onSelect={(messageId) => void switchBranch(messageId)}
-            onStart={(messageId) => void startBranch(messageId)}
-          />
-        ) : undefined}
-      >
+            </header>
             {error ? <p role="alert" className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
             {activeAssistant && activeThread ? (
               <AgentConversation
@@ -1090,7 +1464,24 @@ export function WorkspaceAssistantChat({
                 </button>
               </div>
             )}
-      </ChatShell>
+          </section>
+
+          {branchOpen && !branchMaximized && activeThread && branch ? (
+            <aside className="hidden min-h-0 flex-col overflow-hidden border-l border-border bg-background xl:flex">
+              <ChatBranchPanel
+                branch={branch}
+                busy={branchBusy}
+                canMaximize
+                onClose={() => setBranchOpen(false)}
+                onDelete={(messageId) => void deleteBranch(messageId)}
+                onMaximize={() => setBranchMaximized(true)}
+                onSelect={(messageId) => void switchBranch(messageId)}
+                onStart={(messageId) => void startBranch(messageId)}
+              />
+            </aside>
+          ) : null}
+        </div>
+      </div>
 
       {branchOpen && !branchMaximized && activeThread && branch ? (
         <div className="fixed inset-0 z-50 flex justify-end xl:hidden">
