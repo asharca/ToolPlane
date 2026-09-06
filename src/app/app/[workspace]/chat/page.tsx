@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -20,6 +21,7 @@ import {
   getAssistantMarketTemplate,
   listAssistantMarketTemplates,
 } from '@/lib/market/skills';
+import { assistantChatSidebarCookieName } from '@/lib/chat/sidebar-preferences';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,6 +53,8 @@ export default async function WorkspaceChatPage({
   if (!user) redirect('/app/login');
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
+  const cookieStore = await cookies();
+  const initialSidebarOpen = cookieStore.get(assistantChatSidebarCookieName(workspace.id))?.value !== 'false';
 
   if (query.agent || query.c) {
     const destination = new URLSearchParams();
@@ -136,6 +140,7 @@ export default async function WorkspaceChatPage({
       <WorkspaceAssistantChat
         slug={slug}
         workspaceId={workspace.id}
+        initialSidebarOpen={initialSidebarOpen}
         startCreating={query.newAssistant === '1'}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}

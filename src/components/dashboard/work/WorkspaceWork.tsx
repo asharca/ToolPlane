@@ -979,7 +979,6 @@ export function WorkspaceWork({
   const commandsT = useTranslations('console.runtimeCommands');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [operationNotice, setOperationNotice] = useState<{ id: string; text: string } | null>(null);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
   const transcriptViewportRef = useRef<HTMLDivElement>(null);
@@ -1361,35 +1360,6 @@ export function WorkspaceWork({
       setBusy(null);
     }
     return false;
-  }
-
-  async function operateSelectedConversation(action: 'compact' | 'new', instructions?: string) {
-    const id = conversation?.id ?? selected?.conversationId;
-    const targetAgentId = conversation?.agentId ?? selected?.agentId;
-    if (!id || !targetAgentId || busy || conversationBusy) return false;
-    setBusy(action === 'compact' ? 'compact' : 'new-channel');
-    setError(null);
-    setOperationNotice(null);
-    try {
-      const nativeCompact = action === 'compact' && ['pi', 'claude-code', 'dsh'].includes(controlAgent?.runtimeKind ?? '');
-      const response = await fetch(`/api/v1/agents/${encodeURIComponent(targetAgentId)}/conversations/${encodeURIComponent(id)}/${nativeCompact ? 'commands' : 'operations'}`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(nativeCompact ? { line: `/compact${instructions ? ` ${instructions}` : ''}` } : { action, instructions }),
-      });
-      const result = await response.json() as { conversationId?: string; compacted?: boolean; error?: string; kind?: string };
-      if (!response.ok) throw new Error(result.error && operationsT.has(result.error) ? operationsT(result.error) : result.error || operationsT('failed'));
-      if (action === 'new' && result.conversationId) {
-        router.push(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(targetAgentId)}&c=${encodeURIComponent(result.conversationId)}`);
-        router.refresh();
-      } else {
-        if (!nativeCompact && result.kind !== 'queued') setOperationNotice({ id, text: operationsT(result.compacted ? 'compacted' : 'alreadySmall') });
-        if (selected) await refreshSelected();
-        else router.refresh();
-      }
-      return true;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : operationsT('failed'));
-      return false;
-    } finally { setBusy(null); }
   }
 
   async function sendMessage(event?: FormEvent) {
@@ -1813,22 +1783,7 @@ export function WorkspaceWork({
             />
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {selected || (conversation && (!conversation.readOnly || conversation.source)) ? <>
-              <button type="button" disabled={Boolean(busy) || selectedActive || conversationBusy}
-                onClick={() => void operateSelectedConversation('compact')}
-                aria-label={operationsT('compact')} title={operationsT('compact')}
-                className="ui-button-ghost ui-icon-button text-muted-foreground disabled:opacity-50">
-                {busy === 'compact' ? <Loader2 className="size-4 animate-spin" /> : <Minimize2 className="size-4" />}
-              </button>
-              <button type="button" disabled={Boolean(busy) || conversationBusy}
-                onClick={() => conversation?.source ? void operateSelectedConversation('new') : startNewWork(controlAgent?.id)}
-                aria-label={conversation?.source ? operationsT('newChannel') : t('newWork')}
-                title={conversation?.source ? operationsT('newChannel') : t('newWork')}
-                className="ui-button-ghost ui-icon-button text-muted-foreground disabled:opacity-50">
-                {busy === 'new-channel' ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              </button>
-            </> : null}
-            {selected ? (
+            {selected && selected.status !== 'idle' ? (
               <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
                 <Circle className={cx('size-2 fill-current', statusDotClass(selected.status))} />
                 {statusLabels[selected.status] ?? selected.status}
@@ -1873,8 +1828,6 @@ export function WorkspaceWork({
         </header>
 
         {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{visibleError}</p> : null}
-        {operationNotice && operationNotice.id === (conversation?.id ?? selected?.conversationId) ? <p role="status" className="shrink-0 px-4 py-2 text-xs text-muted-foreground">{operationNotice.text}</p> : null}
-
         {conversation && !conversation.readOnly && controlAgent ? (
           <AgentConversation
             key={conversation.id}
@@ -1890,6 +1843,7 @@ export function WorkspaceWork({
             ensureConversation={async () => conversation.id}
             attachmentUploadUrl={controlAgent.runtimeKind === 'hermes' ? undefined : `/api/v1/workspaces/${workspaceId}/attachments`}
             mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
+            mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
             onBusyChange={setConversationBusy}
             onConversationChanged={() => router.refresh()}
           />

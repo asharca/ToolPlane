@@ -52,7 +52,8 @@ function renderChat(
       createdAt: '2026-08-25T00:00:00.000Z',
       lastMessageAt: null,
     }],
-  }],
+    }],
+  initialSidebarOpen = true,
 ) {
   return render(<WorkspaceAssistantChat
     assistants={assistants}
@@ -62,6 +63,7 @@ function renderChat(
     reasoningAvailable
     selectedAssistantId="assistant-1"
     selectedThreadId="thread-1"
+    initialSidebarOpen={initialSidebarOpen}
     slug="acme"
     startCreating={startCreating}
     marketTemplate={marketTemplate}
@@ -102,6 +104,14 @@ describe('WorkspaceAssistantChat', () => {
       .toHaveAttribute('aria-pressed', 'false'));
   });
 
+  it('uses the server-seeded collapsed state before hydrating browser preferences', async () => {
+    renderChat(undefined, false, undefined, null, [], undefined, false);
+
+    expect(screen.getByRole('button', { name: 'Show assistants and chats', pressed: false }))
+      .toHaveAttribute('aria-pressed', 'false');
+    await waitFor(() => expect(document.cookie).toContain('toolplane_assistant_chat_sidebar_workspace-1=false'));
+  });
+
   it('uses the sidebar header to add assistants and list existing conversations', async () => {
     const user = userEvent.setup();
     renderChat();
@@ -127,6 +137,8 @@ describe('WorkspaceAssistantChat', () => {
       attachmentUploadUrl: '/api/v1/workspaces/workspace-1/attachments',
       supportsAttachments: true,
       initialReasoningEffort: 'default',
+      mcpResourceApiPath: '/api/v1/chat/threads/thread-1/composer',
+      onNewConversation: expect.any(Function),
       reasoningAvailable: true,
     }));
 

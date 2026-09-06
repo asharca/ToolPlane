@@ -132,6 +132,7 @@ describe('Agent composer scope and references', () => {
   it('enforces Agent and workspace access for all catalogs and reads', async () => {
     expect((await list({ sandboxId: otherSandboxId })).status).toBe(404);
     expect((await list({}, foreignAgentId)).status).toBe(404);
+    expect((await list({ section: 'mcp' }, foreignAgentId)).status).toBe(404);
     expect((await list({ workSessionId: 'missing-work' })).status).toBe(404);
     expect((await resolve({ kind: 'file', id: 'src/guide.md' }, otherAgentId)).status).toBe(404);
     expect((await resolve({ kind: 'resource', id: 'test://plan', deploymentId: sandboxDeploymentId })).status).toBe(404);
@@ -145,6 +146,8 @@ describe('Agent composer scope and references', () => {
     const resources = (await (await list({ section: 'resources' })).json()).items;
     expect(resources).toMatchObject([{ id: 'test://plan', deploymentId: resourceDeploymentId }]);
     expect((await (await resolve({ kind: 'resource', id: 'test://plan', deploymentId: resourceDeploymentId })).json()).text).toContain('Resource release checklist');
+    const mcp = (await (await list({ section: 'mcp' })).json()).items;
+    expect(mcp).toEqual([{ id: resourceDeploymentId, label: 'Resources', status: 'running' }]);
   });
 
   it('persists prompt CRUD per Agent and rejects cross-Agent edits and invalid values', async () => {

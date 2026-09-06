@@ -199,26 +199,24 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('offers compaction and a separate new-channel conversation operation without changing the Work surface', async () => {
-    let complete!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => { complete = resolve; });
-    const fetchMock = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(Response.json({ conversationId: 'new-channel', compacted: false }));
-    vi.stubGlobal('fetch', fetchMock);
-    render(<WorkspaceWork slug="acme" workspaceId="workspace-1" selectedWorkSessionId={null} sessions={[]}
-      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] }]}
-      selectedConversation={{ id: 'channel-chat', agentId: 'agent-1', source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' }, readOnly: true,
-        messages: [{ id: 'message', role: 'assistant', parts: [{ type: 'text', text: 'Preserved reply' }] }] }}
+  it('keeps compact, new-conversation, and idle controls out of the Work header', () => {
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
+    const session = {
+      id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
+      runtimeKind: 'dsh', status: 'idle', waitingQuestion: null, result: null, error: null,
+      artifacts: [], conversationId: 'conversation-1', sandbox: null, messages: [], approvals: [],
+    };
+    const { rerender } = render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[session]} selectedWorkSessionId={session.id} />);
+
+    expect(screen.queryByRole('button', { name: 'Compact context' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New work' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Idle')).not.toBeInTheDocument();
+
+    rerender(<WorkspaceWork slug="acme" workspaceId="workspace-1" selectedWorkSessionId={null} sessions={[]}
+      agents={[agent]}
+      selectedConversation={{ id: 'channel-chat', agentId: agent.id, source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' }, readOnly: true, messages: [] }}
     />);
-    fireEvent.click(screen.getByRole('button', { name: 'Compact context' }));
-    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'New channel conversation' })).toBeDisabled();
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/agents/agent-1/conversations/channel-chat/commands', expect.objectContaining({ body: '{"line":"/compact"}' }));
-    await act(async () => { complete(Response.json({ kind: 'output', text: 'No compactable history yet.' })); });
-    expect(screen.queryByText('Context compacted')).not.toBeInTheDocument();
-    expect(screen.getByText('Preserved reply')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'New channel conversation' }));
-    await waitFor(() => expect(surfaceMocks.routerPush).toHaveBeenCalledWith('/app/acme/work?agent=agent-1&c=new-channel'));
-    expect(document.querySelector('[data-ui="chat.composer"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New channel conversation' })).not.toBeInTheDocument();
   });
 
   it('shows and searches channel conversations under their Agent and refreshes before the first message', () => {

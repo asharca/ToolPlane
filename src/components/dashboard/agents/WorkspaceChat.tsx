@@ -267,6 +267,19 @@ export function WorkspaceChat({
     }
   }, [agentId]);
 
+  const clearConversationContext = useCallback(async () => {
+    if (conversationBusy || creatingConversation) return;
+    setCreatingConversation(true);
+    try {
+      const response = await fetch(`/api/v1/agents/${agentId}/conversations`, { method: 'POST' });
+      const body = await response.json().catch(() => ({})) as { conversationId?: string; error?: string };
+      if (!response.ok || !body.conversationId) throw new Error(body.error || t('couldNotCreateConversation'));
+      router.push(chatHref(slug, agentId, body.conversationId));
+    } finally {
+      setCreatingConversation(false);
+    }
+  }, [agentId, conversationBusy, creatingConversation, router, slug, t]);
+
   if (!activeAgent) return null;
 
   return (
@@ -626,7 +639,9 @@ export function WorkspaceChat({
             initialMessages={initialMessages}
             initialReasoningEffort={initialReasoningEffort}
             mcpPromptApiPath={`/api/v1/agents/${activeAgent.id}/prompts`}
+            mcpResourceApiPath={`/api/v1/agents/${activeAgent.id}/composer`}
             onBusyChange={setConversationBusy}
+            onNewConversation={clearConversationContext}
             ready={activeAgent.ready}
             reasoningAvailable={reasoningAvailable}
             runtimeKind={activeAgent.runtimeKind}
