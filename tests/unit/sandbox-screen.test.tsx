@@ -53,7 +53,7 @@ describe('sandbox screen workspace', () => {
       <SandboxWorkspace workspace="acme" sandboxId="box-1" displays={[]} {...consoleProps} />,
     );
 
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Terminal', 'Files']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Terminal', 'Files', 'Channels']);
     expect(screen.queryByRole('tab', { name: 'Screen' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'Files' }));
     expect(screen.getByText('files panel')).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('sandbox screen workspace', () => {
         {...consoleProps}
       />,
     );
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Terminal', 'Files', 'Screen']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Terminal', 'Files', 'Screen', 'Channels']);
   });
 
   it('pauses frame polling while the page is hidden', () => {

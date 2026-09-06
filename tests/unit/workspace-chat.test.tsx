@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { WorkspaceChat } from '@/components/dashboard/agents/WorkspaceChat';
@@ -50,6 +50,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   window.history.replaceState({}, '', '/');
@@ -82,12 +83,29 @@ function renderChat(
 }
 
 describe('WorkspaceChat', () => {
+  it('refreshes incoming channel messages without interrupting a console turn', () => {
+    vi.useFakeTimers();
+    const { unmount } = renderChat([{
+      id: 'conversation-1', agentId: 'agent-1', title: 'msg:weixin:dm:contact',
+      createdAt: 'Sep 5', lastMessageAt: null, editable: false,
+      source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' },
+    }]);
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(navigation.refresh).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Set chat busy' }));
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(navigation.refresh).toHaveBeenCalledTimes(1);
+    unmount();
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(navigation.refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('renders a Cherry-style agent rail with a create action and selected agent', () => {
     renderChat();
 
     expect(screen.getByRole('link', { name: 'Add agent' })).toHaveAttribute(
       'href',
-      '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fchat%3Fagent%3Dagent-1%26c%3Dconversation-1',
+      '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork%3Fagent%3Dagent-1%26c%3Dconversation-1',
     );
     const rail = screen.getByRole('complementary', { name: 'Agents' });
     const researchDisclosure = within(rail).getByRole('button', { name: 'Research agent' });
@@ -122,7 +140,7 @@ describe('WorkspaceChat', () => {
     expect(screen.queryByRole('link', { name: 'Support queue' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Support agent' }));
     expect(screen.getByRole('button', { name: 'Support agent' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('link', { name: 'Support queue' })).toHaveAttribute('href', '/app/acme/chat?agent=agent-2&c=support-chat');
+    expect(screen.getByRole('link', { name: 'Support queue' })).toHaveAttribute('href', '/app/acme/work?agent=agent-2&c=support-chat');
     expect(screen.getByText('agent-1:conversation-1')).toBeInTheDocument();
   });
 

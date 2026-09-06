@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
+import { redirect } from 'next/navigation';
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -31,7 +32,6 @@ vi.mock('@/lib/agents/queries', () => ({
   listConversations: mocks.listConversations,
   getConversation: mocks.getConversation,
 }));
-vi.mock('@/lib/agents/messaging', () => ({ parseMessagingSessionTitle: () => null }));
 vi.mock('@/lib/chat/service', () => ({
   listChatAssistantsForWorkspace: mocks.listAssistants,
   getChatThreadForWorkspace: mocks.getThread,
@@ -61,6 +61,7 @@ vi.mock('@/components/dashboard/agents/WorkspaceChat', () => ({
 }));
 
 import WorkspaceChatPage from '@/app/app/[workspace]/chat/page';
+import WorkspaceAgentChatPage from '@/app/app/[workspace]/work/chat/page';
 
 describe('Workspace chat page', () => {
   beforeEach(() => {
@@ -228,62 +229,23 @@ describe('Workspace chat page', () => {
     }));
   });
 
-  it('routes a Hermes agent query to the existing agent chat surface', async () => {
-    mocks.listProviders.mockResolvedValue([{
-      id: 'provider-1',
-      name: 'OpenAI',
-      format: 'openai',
-      models: ['gpt-5'],
-    }]);
-    mocks.listAgents.mockResolvedValue([{
-      id: 'agent-hermes',
-      name: 'Hermes researcher',
-      runtimeKind: 'hermes',
-      providerId: null,
-      model: null,
-      provider: null,
-      modelProviders: [{
-        providerId: 'provider-1',
-        provider: { name: 'OpenAI', models: ['gpt-5'] },
-      }],
-      sandboxes: [],
-    }]);
-    mocks.listConversations.mockResolvedValue([{
-      id: 'conversation-1',
-      agentId: 'agent-hermes',
-      title: 'Hermes chat',
-      createdAt: new Date('2026-08-26T00:00:00.000Z'),
-      messages: [{ createdAt: new Date('2026-08-26T00:01:00.000Z') }],
-      publicApiConversation: null,
-    }]);
-    mocks.getConversation.mockResolvedValue({
-      id: 'conversation-1',
-      agentId: 'agent-hermes',
-      workSession: null,
-      messages: [{
-        id: 'message-1',
-        role: 'assistant',
-        parts: [{ type: 'text', text: 'Ready' }],
-      }],
-    });
-
-    render(await WorkspaceChatPage({
+  it('redirects legacy Agent links out of the assistant route without loading assistant data', async () => {
+    await WorkspaceChatPage({
       params: Promise.resolve({ workspace: 'acme' }),
       searchParams: Promise.resolve({ agent: 'agent-hermes', c: 'conversation-1' }),
-    }));
-
+    });
+    expect(redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-hermes&c=conversation-1');
     expect(mocks.listAssistants).not.toHaveBeenCalled();
-    expect(mocks.agentSurface).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: 'workspace-1',
-      agentId: 'agent-hermes',
-      conversationId: 'conversation-1',
-      initialMessages: [expect.objectContaining({ id: 'message-1' })],
-      agents: [expect.objectContaining({
-        id: 'agent-hermes',
-        runtimeKind: 'hermes',
-        ready: true,
-        providerIds: ['provider-1'],
-      })],
-    }));
+    expect(mocks.surface).not.toHaveBeenCalled();
+  });
+
+  it('redirects the retired Agent chat page to the main Work surface', async () => {
+    await WorkspaceAgentChatPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({ agent: 'agent-hermes', c: 'conversation-1' }),
+    });
+    expect(redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-hermes&c=conversation-1');
+    expect(mocks.listAssistants).not.toHaveBeenCalled();
+    expect(mocks.agentSurface).not.toHaveBeenCalled();
   });
 });

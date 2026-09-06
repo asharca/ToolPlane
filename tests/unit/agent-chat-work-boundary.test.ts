@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   hermesAssistantSegments: vi.fn(),
   transaction: vi.fn(),
   messageCreate: vi.fn(),
+  messageFindMany: vi.fn(),
   resolveAgentTools: vi.fn(),
   runDedicatedSandboxTurn: vi.fn(),
 }));
@@ -25,7 +26,7 @@ vi.mock('@/lib/db', () => ({
       findFirst: mocks.conversationFindFirst,
       updateMany: mocks.conversationUpdateMany,
     },
-    message: { create: mocks.messageCreate },
+    message: { create: mocks.messageCreate, findMany: mocks.messageFindMany },
     $transaction: mocks.transaction,
   },
 }));
@@ -75,6 +76,7 @@ describe('Chat and Work execution boundary', () => {
       modelProviders: [],
     });
     mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.messageFindMany.mockResolvedValue([]);
     mocks.resolveAgentTools.mockReturnValue({ skills: [], deploymentIds: [] });
     mocks.runDedicatedSandboxTurn.mockResolvedValue('done');
   });
@@ -307,5 +309,24 @@ describe('Chat and Work execution boundary', () => {
       'assistant',
       [{ type: 'text', text: 'OK', state: 'done' }],
     );
+  });
+
+  it('uses the saved compaction instead of replaying full client history into DSH', async () => {
+    mocks.getAgentForRequest.mockResolvedValue({ id: 'agent-1', workspaceId: 'workspace-1', runtimeKind: 'dsh', provider: { id: 'provider-1' }, model: 'model-1', modelProviders: [] });
+    mocks.conversationFindFirst.mockResolvedValue({ id: 'conversation-1', title: null, workSession: null, publicApiConversation: null });
+    const old = { id: 'old-user', role: 'user', parts: [{ type: 'text', text: 'Old detailed history' }] };
+    mocks.messageFindMany.mockResolvedValue([old,
+      { id: 'old-assistant', role: 'assistant', parts: [{ type: 'text', text: 'Old answer' }] },
+      { id: 'marker', role: 'system', parts: [{ type: 'data-conversation-compaction', data: {
+        boundaryId: 'old-assistant', summary: 'Saved concise context', beforeTokens: 4000, afterTokens: 200, completedAt: '2026-09-06T00:00:00Z',
+      } }] },
+    ]);
+    const next = { id: 'new-user', role: 'user', parts: [{ type: 'text', text: 'Continue' }] };
+    const response = await POST(request({ conversationId: 'conversation-1', messages: [old, next] }), context);
+    await response.text();
+    const sent = mocks.runDedicatedSandboxTurn.mock.calls.at(-1)![0].messages;
+    expect(JSON.stringify(sent)).toContain('Saved concise context');
+    expect(JSON.stringify(sent)).not.toContain('Old detailed history');
+    expect(sent.at(-1)).toEqual(next);
   });
 });

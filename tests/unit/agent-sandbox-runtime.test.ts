@@ -12,6 +12,7 @@ import {
   dshEventTapSource,
   normalizeSandboxWorkingDirectory,
   parseClaudeStreamLine,
+  parseClaudeRuntimeMetadata,
   parseDshEventLine,
   parsePiStreamLine,
   piMcpExtensionSource,
@@ -25,8 +26,34 @@ import {
 } from '@/lib/agents/sandbox-runtime';
 import type { SkillForPrompt } from '@/lib/agents/resolve';
 import { agentRuntimeSupportsProviderFormat } from '@/lib/agents/runtime-kind';
+import { parseRuntimeCommand, runtimeCommands, sessionRuntimeCommands, RUNTIME_COMMANDS_PART } from '@/lib/agents/runtime-commands';
 
 describe('sandbox Agent runtime helpers', () => {
+  it('scopes Cherry command catalogs to the runtime and the latest valid session metadata', () => {
+    expect(runtimeCommands('pi').map((item) => item.name)).toEqual(['compact']);
+    expect(runtimeCommands('claude-code').map((item) => item.name)).toEqual(['clear', 'compact', 'context', 'usage']);
+    expect(runtimeCommands('dsh').map((item) => item.name)).toEqual(['compact', 'goal']);
+    const history = [{ parts: [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: 'claude-code', commands: [{ name: 'plugin:review' }, { name: 'new' }] } }] }];
+    expect(sessionRuntimeCommands('claude-code', history).map((item) => item.name)).toEqual(['clear', 'compact', 'context', 'usage', 'plugin:review']);
+    expect(sessionRuntimeCommands('dsh', history)).toEqual(runtimeCommands('dsh'));
+    expect(runtimeCommands('pi', [{ name: 'goal' }])).toEqual(runtimeCommands('pi'));
+    expect(sessionRuntimeCommands('claude-code', [...history, { parts: [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: 'claude-code', commands: [] } }] }])).toEqual(runtimeCommands('claude-code'));
+    expect(parseRuntimeCommand(' /goal edit Preserve plan.md ')).toEqual({ name: 'goal', args: 'edit Preserve plan.md' });
+    expect(parseRuntimeCommand('/plugin:review src')).toEqual({ name: 'plugin:review', args: 'src' });
+    for (const text of ['/workspace/file', 'review /usage', 'https://example.test', '/file.md']) expect(parseRuntimeCommand(text)).toBeNull();
+  });
+
+  it('reads actual Claude commands and usage without inventing missing cost or malformed token counts', () => {
+    expect(parseClaudeRuntimeMetadata(JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['compact', 'plugin:review'] }))).toEqual({ commands: [{ name: 'compact' }, { name: 'plugin:review' }] });
+    const event = { type: 'result', usage: { input_tokens: 12, output_tokens: 9, cache_read_input_tokens: 4, cache_creation_input_tokens: 3 } };
+    expect(parseClaudeRuntimeMetadata(JSON.stringify(event))).toEqual({ usage: { inputTokens: 12, outputTokens: 9, cacheReadTokens: 4, cacheWriteTokens: 3 } });
+    expect(parseClaudeRuntimeMetadata(JSON.stringify({ ...event, total_cost_usd: 0.02 })).usage?.costUsd).toBe(0.02);
+    expect(parseClaudeRuntimeMetadata(JSON.stringify({ type: 'result', usage: { input_tokens: -1 } }))).toEqual({});
+    expect(parseClaudeRuntimeMetadata('not json')).toEqual({});
+    expect(parseClaudeRuntimeMetadata(JSON.stringify({ type: 'system', subtype: 'init', slash_commands: {} }))).toEqual({});
+    expect(parseClaudeRuntimeMetadata(JSON.stringify({ type: 'system', subtype: 'commands_changed', commands: [null] }))).toEqual({});
+  });
+
   it('routes all dedicated runtimes through the three generic provider protocols', () => {
     expect(CLAUDE_RUNTIME_USER).toBe('1000:1000');
     for (const runtime of ['pi', 'claude-code', 'dsh']) {
@@ -81,6 +108,8 @@ describe('sandbox Agent runtime helpers', () => {
       type: 'tool', status: 'completed', toolCallId: 'call-1', output: 'contents', isError: false,
     }] });
     expect(parseClaudeStreamLine('not json')).toBeNull();
+    expect(parseClaudeStreamLine(JSON.stringify({ type: 'system', subtype: 'status', compact_result: 'failed', compact_error: 'context too large' }))).toEqual({ result: 'context too large', isError: true });
+    expect(parseClaudeStreamLine(JSON.stringify({ type: 'result', is_error: true, errors: ['Native error'] }))).toEqual({ result: 'Native error', isError: true });
   });
 
   it('pins Pi and parses its JSONL text and failures', () => {

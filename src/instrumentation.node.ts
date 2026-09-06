@@ -1,5 +1,5 @@
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
-// processes and sandbox data operations that were interrupted by a restart.
+// processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
   if (process.env.NEXT_PHASE === 'phase-production-build') return;
 
@@ -59,6 +59,14 @@ export async function registerNode() {
         retry.unref?.();
       }
     }
+  }
+
+  try {
+    const { reconcileAgentChannelRunners } = await import('@/lib/agents/channel-runtime');
+    const restored = await reconcileAgentChannelRunners();
+    if (restored > 0) console.log(`[agent-channels] restored ${restored} channel(s) on startup`);
+  } catch (error) {
+    console.error('[agent-channels] startup reconcile failed', error);
   }
 
   try {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
 import { SidebarActionRail } from '@asharca/ui';
@@ -23,6 +23,7 @@ import {
   CircleAlert,
   CirclePause,
   Clock3,
+  Minimize2,
   Cpu,
   FileText,
   FileOutput,
@@ -34,6 +35,7 @@ import {
   PanelLeftOpen,
   Play,
   Plus,
+  Radio,
   Search,
   Send,
   Settings2,
@@ -47,22 +49,15 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
+import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
+import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 import { ReasoningEffortControl } from '@/components/dashboard/agents/ReasoningEffortControl';
 import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
-import {
-  ConversationAttachmentChip,
-  ConversationAttachmentPicker,
-  ConversationAttachmentRemoveButton,
-  ConversationContextUsage,
-  ConversationComposerExpand,
-  conversationComposerClassName,
-  conversationComposerInputClassName,
-  conversationComposerToolbarClassName,
-  useConversationComposerExpansion,
-} from '@/components/dashboard/ConversationComposer';
+import { ConversationContextUsage } from '@/components/dashboard/ConversationComposer';
+import { WorkComposer } from './WorkComposer';
+import type { ComposerReference } from '@/lib/work/composer-types';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
-import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import {
   AssistantMarkdown,
   AssistantReply,
@@ -73,6 +68,10 @@ import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxe
 import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
 import { deleteAgentAction, pinAgentAction } from '@/lib/agents/actions';
 import { normalizeReasoningEffort, type ReasoningEffort } from '@/lib/agents/constants';
+import { displayMessagingUserText, type ParsedMessagingSession } from '@/lib/agents/messaging';
+import { activeConversationMessages, isConversationControl, messageCompaction } from '@/lib/agents/conversation-context';
+import { COMMAND_RESULT_PART, parseRuntimeCommand, sessionRuntimeCommands } from '@/lib/agents/runtime-commands';
+import type { executeRuntimeCommand } from '@/lib/agents/runtime-command-service';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import {
@@ -126,6 +125,7 @@ type WorkPart = {
   status?: 'running' | 'completed' | 'failed' | 'cancelled';
   runtimeKind?: string;
   data?: unknown;
+  reference?: Omit<ComposerReference, 'text'>;
 };
 
 type WorkActivity = {
@@ -145,6 +145,15 @@ type WorkActivity = {
 };
 
 type WorkMessage = { id: string; role: string; createdAt?: string; parts: WorkPart[] };
+type ConversationSummary = { id: string; agentId: string; title?: string | null; source: ParsedMessagingSession | null };
+type ConversationDetail = ConversationSummary & {
+  readOnly: boolean;
+  messages: WorkMessage[];
+  reasoningEffort?: ReasoningEffort | null;
+  hermesProfile?: string | null;
+  hermesProvider?: string | null;
+  hermesModel?: string | null;
+};
 
 type WorkTiming = {
   startedAt: number;
@@ -169,6 +178,7 @@ type WorkItem = {
   id: string;
   agentId: string;
   title: string | null;
+  titlePending?: boolean;
   task: string | null;
   acceptanceCriteria: string | null;
   runtimeKind: string;
@@ -518,6 +528,20 @@ function WorkDirectoryControl({
   );
 }
 
+function CompactionNote({ message }: { message: WorkMessage }) {
+  const t = useTranslations('console.conversationOperations');
+  const data = messageCompaction(message);
+  if (!data) return null;
+  return <details data-message-id={message.id} data-ui="conversation.compaction" className="my-3 min-w-0 border-y border-border py-2 text-xs text-muted-foreground">
+    <summary className="flex cursor-pointer flex-wrap items-center gap-2">
+      <Minimize2 className="size-3.5 shrink-0" />
+      <span>{t('compacted')}</span>
+      <span>{t('tokens', { before: data.beforeTokens, after: data.afterTokens })}</span>
+    </summary>
+    <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words">{data.summary}</pre>
+  </details>;
+}
+
 function WorkTranscript({
   agentName,
   modelName: fallbackModelName,
@@ -547,7 +571,10 @@ function WorkTranscript({
   const agentsT = useTranslations('console.agents');
   const common = useTranslations('common');
   const copyButtonClassName = `${assistantMessageActionClassName} opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/message:opacity-100 group-hover/message:opacity-100`;
-  const transcript = streaming
+  const streamPersisted = streamStartedAt !== undefined && messages.some((message) => (
+    (message.role === 'assistant' || isConversationControl(message)) && messageWorkTiming(message)?.startedAt === streamStartedAt
+  ));
+  const transcript = streaming && !streamPersisted
       ? [...messages, {
         id: 'work-stream',
         role: 'assistant',
@@ -602,6 +629,7 @@ function WorkTranscript({
   return (
     <div className="mx-auto w-full max-w-[53rem] px-6 py-1.5">
       {transcript.map((message) => {
+        if (messageCompaction(message)) return <CompactionNote key={message.id} message={message} />;
         const isStreamingMessage = message.id === 'work-stream';
         const messageTime = formatWorkMessageTime(message.createdAt);
         const persistedTiming = messageWorkTiming(message);
@@ -618,11 +646,12 @@ function WorkTranscript({
           : null;
         const messageTiming = persistedTiming ?? fallbackTiming;
         const messageModelName = messageTiming?.modelName ?? resolveContextUsage([message])?.modelName ?? fallbackModelName;
+        const commandResult = message.parts.find((part) => part.type === COMMAND_RESULT_PART)?.data as { text?: string } | undefined;
         const rawText = message.parts
-          .filter((part) => part.type === 'text' && typeof part.text === 'string')
+          .filter((part) => part.type === 'text' && typeof part.text === 'string' && !part.reference)
           .map((part) => part.text)
-          .join('\n');
-        const text = isStreamingMessage ? rawText : rawText.trim();
+          .join('\n') || (typeof commandResult?.text === 'string' ? commandResult.text : '');
+        const text = message.role === 'user' ? displayMessagingUserText(rawText) : isStreamingMessage ? rawText : rawText.trim();
         const processParts = message.parts.filter((part) => (
           part.type === 'reasoning'
           || part.type === 'work-tool'
@@ -635,9 +664,8 @@ function WorkTranscript({
         const processCancelled = visibleProcessParts.some((part) => part.status === 'cancelled');
         const fileParts = message.parts.filter((part) => (
           part.type === 'file'
-          && typeof part.filename === 'string'
           && typeof part.url === 'string'
-          && part.url.startsWith('/api/v1/attachments/')
+          && (part.url.startsWith('/api/v1/attachments/') || /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(part.url))
         ));
         const attachmentLinks = fileParts.length ? (
           <div className="flex max-w-full flex-wrap gap-1.5">
@@ -645,11 +673,14 @@ function WorkTranscript({
               <a
                 key={`${part.url}-${index}`}
                 href={part.url}
-                download={part.filename}
-                className="inline-flex h-7 max-w-56 items-center gap-1.5 rounded-md bg-muted/70 px-2 text-xs text-foreground hover:bg-muted"
+                download={part.filename ?? agentsT('attachment')}
+                className="inline-flex max-w-56 flex-wrap items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted"
               >
-                <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{part.filename}</span>
+                {part.mediaType?.startsWith('image/') ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={part.url} alt={part.filename ?? agentsT('attachment')} className="max-h-48 w-full object-contain" />
+                ) : <FileText className="size-3.5 shrink-0 text-muted-foreground" />}
+                <span className="truncate">{part.filename ?? agentsT('attachment')}</span>
               </a>
             ))}
           </div>
@@ -714,10 +745,14 @@ function WorkTranscript({
 
         if (message.role === 'user') {
           return (
-            <article key={message.id} className="group/message flex flex-col items-end rounded-[10px] pt-2.5">
+            <article key={message.id} data-message-id={message.id} className="group/message flex flex-col items-end rounded-[10px] pt-2.5">
               <div className="flex max-w-full items-start justify-end gap-2.5">
                 <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
                   {attachmentLinks}
+                  {message.parts.filter((part) => part.reference).map((part, index) => <details key={index} className="my-1 max-w-full text-xs">
+                    <summary className="cursor-pointer break-words text-muted-foreground">@{part.reference!.label}</summary>
+                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{part.text}</pre>
+                  </details>)}
                   {text ? <span className="block whitespace-pre-wrap">{text}</span> : null}
                 </div>
                 <div aria-label={agentsT('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -746,6 +781,7 @@ function WorkTranscript({
         return (
           <AssistantReply
             key={message.id}
+            data-message-id={message.id}
             agentName={agentName}
             headerMeta={(
               <>
@@ -869,6 +905,9 @@ export function WorkspaceWork({
   selectedWorkSessionId,
   selectedSession,
   requestedAgentId,
+  conversations = [],
+  selectedConversation = null,
+  hasChannels = false,
 }: {
   slug: string;
   workspaceId: string;
@@ -878,9 +917,14 @@ export function WorkspaceWork({
   selectedWorkSessionId: string | null;
   selectedSession?: WorkItem | null;
   requestedAgentId?: string;
+  conversations?: ConversationSummary[];
+  selectedConversation?: ConversationDetail | null;
+  hasChannels?: boolean;
 }) {
   const t = useTranslations('console.work');
   const tAgents = useTranslations('console.agents');
+  const tChannels = useTranslations('console.agentMessaging');
+  const operationsT = useTranslations('console.conversationOperations');
   const tSandboxes = useTranslations('console.sandboxes');
   const common = useTranslations('common');
   const router = useRouter();
@@ -888,18 +932,23 @@ export function WorkspaceWork({
   const workAgents = agents.filter((item) => item.supportsWork);
   const [items, setItems] = useState(sessions);
   const [liveSelected, setLiveSelected] = useState<WorkItem | null>(null);
-  const [creatingMode, setCreatingMode] = useState(!initialSelected);
+  const selectionKey = selectedConversation?.id ?? selectedWorkSessionId;
+  const [draftSelectionKey, setDraftSelectionKey] = useState<string | null>(null);
+  if (draftSelectionKey && draftSelectionKey !== selectionKey) setDraftSelectionKey(null);
+  const creatingMode = !selectionKey || draftSelectionKey === selectionKey;
+  const conversation = creatingMode ? null : selectedConversation;
+  const [conversationBusy, setConversationBusy] = useState(false);
   const [mobilePane, setMobilePane] = useState<'sessions' | 'work'>('work');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessionQuery, setSessionQuery] = useState('');
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
-  const selected = creatingMode ? null : liveSelected?.id === selectedWorkSessionId ? liveSelected : initialSelected;
-  const initialAgentId = initialSelected?.agentId
+  const selected = creatingMode || conversation ? null : liveSelected?.id === selectedWorkSessionId ? liveSelected : initialSelected;
+  const initialAgentId = selectedConversation?.agentId ?? initialSelected?.agentId
     ?? workAgents.find((item) => item.id === requestedAgentId)?.id
     ?? workAgents[0]?.id
     ?? '';
   const [agentId, setAgentId] = useState(initialAgentId);
-  const reasoningScope = selected?.id ?? `agent:${agentId}`;
+  const reasoningScope = conversation?.id ?? selected?.id ?? `agent:${agentId}`;
   const [reasoningSelection, setReasoningSelection] = useState<{
     scope: string;
     value: ReasoningEffort;
@@ -909,7 +958,7 @@ export function WorkspaceWork({
   });
   const reasoningEffort = reasoningSelection.scope === reasoningScope
     ? reasoningSelection.value
-    : normalizeReasoningEffort(selected?.reasoningEffort) ?? 'default';
+    : normalizeReasoningEffort(conversation?.reasoningEffort ?? selected?.reasoningEffort) ?? 'default';
   const setReasoningEffort = (value: ReasoningEffort) => {
     setReasoningSelection({ scope: reasoningScope, value });
   };
@@ -925,14 +974,12 @@ export function WorkspaceWork({
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(null);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
-  const {
-    expanded: composerExpanded,
-    inputRef: composerInputRef,
-    minRows: composerMinRows,
-    toggle: toggleComposer,
-  } = useConversationComposerExpansion();
+  const [referenceSelection, setReferenceSelection] = useState<{ scope: string; items: ComposerReference[] }>({ scope: '', items: [] });
+  const [composerPending, setComposerPending] = useState(false);
+  const commandsT = useTranslations('console.runtimeCommands');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [operationNotice, setOperationNotice] = useState<{ id: string; text: string } | null>(null);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
   const transcriptViewportRef = useRef<HTMLDivElement>(null);
@@ -947,16 +994,20 @@ export function WorkspaceWork({
     modelName?: string;
   }>({ workSessionId: '', text: '', activities: [] });
   const agent = useMemo(() => agents.find((item) => item.id === agentId) ?? null, [agents, agentId]);
-  const selectedAgent = selected ? agents.find((item) => item.id === selected.agentId) ?? null : null;
+  const selectedAgent = selected || conversation ? agents.find((item) => item.id === (conversation?.agentId ?? selected?.agentId)) ?? null : null;
   const sandboxOptions = agent?.sandboxes ?? [];
   const activeSandboxId = sandboxId || sandboxOptions.find((item) => item.isDefault)?.id || sandboxOptions[0]?.id || '';
   const activeSandbox = sandboxOptions.find((item) => item.id === activeSandboxId) ?? null;
   const controlAgent = selectedAgent ?? agent;
-  const controlSandbox = selected?.sandbox
+  const controlSandbox = conversation
+    ? selectedAgent?.sandboxes.find((sandbox) => sandbox.isDefault) ?? selectedAgent?.sandboxes[0] ?? null
+    : selected?.sandbox
     ? { ...selected.sandbox, isDefault: false }
     : activeSandbox;
   const controlHermesSelection = controlAgent?.runtimeKind === 'hermes'
-    ? selected
+    ? conversation
+      ? { profile: conversation.hermesProfile ?? 'default', provider: conversation.hermesProvider ?? null, model: conversation.hermesModel ?? null }
+      : selected
       ? {
           profile: selected.hermesProfile ?? 'default',
           provider: selected.hermesProvider ?? null,
@@ -967,6 +1018,9 @@ export function WorkspaceWork({
         : { agentId: controlAgent.id, profile: 'default', provider: null, model: null }
     : null;
   const controlWorkspaceRoot = controlSandbox?.kind === 'hermes' ? '/opt/data/workspace' : '/workspace';
+  const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? 'new'}`;
+  const references = referenceSelection.scope === composerScope ? referenceSelection.items : [];
+  const commands = sessionRuntimeCommands(selected?.runtimeKind ?? controlAgent?.runtimeKind ?? '', selected?.messages ?? []);
   const workspaceRpcApiBase = selected
     ? `/api/v1/work-sessions/${selected.id}/sandbox/rpc`
     : controlSandbox ? `/api/v1/mcp/${controlSandbox.deploymentId}/rpc` : undefined;
@@ -978,30 +1032,40 @@ export function WorkspaceWork({
   const controlModelLabel = controlHermesSelection
     ? `${controlHermesSelection.profile} · ${controlHermesSelection.model ?? tAgents('profileDefault')}`
     : controlAgent?.model || t('selectModel');
-  const activeWorkingDirectory = selected?.workingDirectory ?? workingDirectory;
-  const workReturnTo = selected ? workHref(slug, selected.id) : `/app/${encodeURIComponent(slug)}/work`;
+  const activeWorkingDirectory = conversation ? '.' : selected?.workingDirectory ?? workingDirectory;
+  const workReturnTo = conversation
+    ? `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversation.agentId)}&c=${encodeURIComponent(conversation.id)}`
+    : selected ? workHref(slug, selected.id) : `/app/${encodeURIComponent(slug)}/work`;
   const pendingApprovals = selected?.approvals.filter((approval) => approval.status === 'pending') ?? [];
   const selectedStatus = selected?.status;
   const visibleError = error ?? selected?.error;
 
   useEffect(() => {
-    if (selected || activeSandbox?.status !== 'provisioning') return;
+    if (selected || conversation || activeSandbox?.status !== 'provisioning') return;
     const interval = window.setInterval(() => router.refresh(), 1_500);
     return () => window.clearInterval(interval);
-  }, [activeSandbox?.status, agent?.runtimeKind, router, selected]);
+  }, [activeSandbox?.status, agent?.runtimeKind, router, selected, conversation]);
+
+  useEffect(() => {
+    if ((!hasChannels && !conversation?.readOnly) || conversationBusy) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') router.refresh();
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [hasChannels, conversation?.readOnly, conversationBusy, router]);
 
   const streamText = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.text : '';
   const streamActivities = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.activities : EMPTY_WORK_ACTIVITIES;
   const streamStartedAt = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.startedAt : undefined;
   const streamRuntimeKind = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.runtimeKind : undefined;
   const streamModelName = streamOutput.workSessionId === selectedWorkSessionId ? streamOutput.modelName : undefined;
-  const contextUsage = useMemo(() => resolveContextUsage(selected?.messages ?? [], {
+  const contextUsage = useMemo(() => resolveContextUsage(activeConversationMessages(conversation?.messages ?? selected?.messages ?? []).map((message) => ({ parts: Array.isArray(message.parts) ? message.parts : [] })), {
     maxTokens: controlAgent?.contextWindow,
     modelName: controlAgent?.model,
     context: streamText,
     estimated: controlAgent?.contextWindowEstimated,
-  }), [controlAgent?.contextWindow, controlAgent?.contextWindowEstimated, controlAgent?.model, selected?.messages, streamText]);
-  const workspacePanelOpen = Boolean(desktopPanel && (desktopPanel === 'context' ? selected : controlSandbox));
+  }), [controlAgent?.contextWindow, controlAgent?.contextWindowEstimated, controlAgent?.model, selected?.messages, conversation?.messages, streamText]);
+  const workspacePanelOpen = Boolean(desktopPanel && (desktopPanel === 'context' ? selected || conversation : controlSandbox));
 
   const scrollTranscriptToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const viewport = transcriptViewportRef.current;
@@ -1040,21 +1104,30 @@ export function WorkspaceWork({
     const query = sessionQuery.trim().toLocaleLowerCase();
     return agents.flatMap((item) => {
       const agentSessions = items.filter((session) => session.agentId === item.id);
-      if (!query) return [{ agent: item, sessions: agentSessions }];
+      const agentChannels = conversations.filter((conversation) => conversation.agentId === item.id).map((conversation) => {
+        if (!conversation.source) return { ...conversation, label: conversation.title || tAgents('newChat') };
+        const { platform, chatId } = conversation.source;
+        const platformLabel = tChannels.has(`platforms.${platform}`) ? tChannels(`platforms.${platform}`) : platform;
+        return { ...conversation, label: `${platformLabel} · ${chatId}` };
+      });
+      if (!query) return [{ agent: item, sessions: agentSessions, channels: agentChannels }];
       const agentMatches = item.name.toLocaleLowerCase().includes(query);
       const matchingSessions = agentSessions.filter((session) => [
         session.title,
         session.task,
         session.sandbox?.name,
       ].filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
-      return agentMatches || matchingSessions.length
-        ? [{ agent: item, sessions: agentMatches ? agentSessions : matchingSessions }]
+      const matchingChannels = agentChannels.filter((conversation) => [
+        conversation.label, conversation.source?.platform, conversation.source?.contextId,
+      ].filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
+      return agentMatches || matchingSessions.length || matchingChannels.length
+        ? [{ agent: item, sessions: agentMatches ? agentSessions : matchingSessions, channels: agentMatches ? agentChannels : matchingChannels }]
         : [];
     });
-  }, [agents, items, sessionQuery]);
-  const activeAgentId = selected?.agentId ?? agentId;
+  }, [agents, items, conversations, sessionQuery, tChannels, tAgents]);
+  const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
   const allAgentsExpanded = agents.length > 0 && agents.every((item) => (
-    expandedAgents[item.id] ?? item.id === activeAgentId
+    expandedAgents[item.id] ?? (item.id === activeAgentId || conversations.some((conversation) => conversation.agentId === item.id))
   ));
 
   const refreshSelected = useCallback(async () => {
@@ -1077,14 +1150,22 @@ export function WorkspaceWork({
   const selectedActive = Boolean(selectedStatus && ACTIVE_STATUSES.has(selectedStatus));
 
   useEffect(() => {
-    if (!selected?.id) return;
-    scrollTranscriptToBottom();
-  }, [scrollTranscriptToBottom, selected?.id]);
+    if (!selected?.titlePending) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshSelected();
+    }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [refreshSelected, selected?.titlePending]);
 
   useEffect(() => {
-    if (!selected?.id || !followingTranscriptRef.current) return;
+    if (!selected?.id && !conversation?.id) return;
     scrollTranscriptToBottom();
-  }, [scrollTranscriptToBottom, selected?.artifacts, selected?.id, selected?.messages, selectedActive, streamActivities, streamText]);
+  }, [scrollTranscriptToBottom, selected?.id, conversation?.id]);
+
+  useEffect(() => {
+    if ((!selected?.id && !conversation?.id) || !followingTranscriptRef.current) return;
+    scrollTranscriptToBottom();
+  }, [scrollTranscriptToBottom, selected?.artifacts, selected?.id, selected?.messages, conversation?.id, conversation?.messages, selectedActive, streamActivities, streamText]);
 
   useEffect(() => {
     if (!selectedWorkSessionId || creatingMode || !selectedActive || typeof EventSource === 'undefined') return undefined;
@@ -1184,10 +1265,11 @@ export function WorkspaceWork({
   function startNewWork(nextAgentId = agentId) {
     setAgentId(nextAgentId);
     setSandboxId('');
-    setCreatingMode(true);
+    setDraftSelectionKey(selectionKey);
     setMobilePane('work');
     setDraft('');
     setAttachments([]);
+    setReferenceSelection({ scope: '', items: [] });
     setReasoningSelection({ scope: `agent:${nextAgentId}`, value: 'default' });
     setHermesDraftSelection(null);
     setWorkingDirectory('.');
@@ -1234,6 +1316,7 @@ export function WorkspaceWork({
           agentId,
           sandboxId: activeSandboxId,
           task: draft.trim(),
+          ...(references.length ? { references } : {}),
           workingDirectory,
           attachmentIds,
           ...(agent?.runtimeKind === 'hermes' ? {
@@ -1280,10 +1363,66 @@ export function WorkspaceWork({
     return false;
   }
 
+  async function operateSelectedConversation(action: 'compact' | 'new', instructions?: string) {
+    const id = conversation?.id ?? selected?.conversationId;
+    const targetAgentId = conversation?.agentId ?? selected?.agentId;
+    if (!id || !targetAgentId || busy || conversationBusy) return false;
+    setBusy(action === 'compact' ? 'compact' : 'new-channel');
+    setError(null);
+    setOperationNotice(null);
+    try {
+      const nativeCompact = action === 'compact' && ['pi', 'claude-code', 'dsh'].includes(controlAgent?.runtimeKind ?? '');
+      const response = await fetch(`/api/v1/agents/${encodeURIComponent(targetAgentId)}/conversations/${encodeURIComponent(id)}/${nativeCompact ? 'commands' : 'operations'}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(nativeCompact ? { line: `/compact${instructions ? ` ${instructions}` : ''}` } : { action, instructions }),
+      });
+      const result = await response.json() as { conversationId?: string; compacted?: boolean; error?: string; kind?: string };
+      if (!response.ok) throw new Error(result.error && operationsT.has(result.error) ? operationsT(result.error) : result.error || operationsT('failed'));
+      if (action === 'new' && result.conversationId) {
+        router.push(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(targetAgentId)}&c=${encodeURIComponent(result.conversationId)}`);
+        router.refresh();
+      } else {
+        if (!nativeCompact && result.kind !== 'queued') setOperationNotice({ id, text: operationsT(result.compacted ? 'compacted' : 'alreadySmall') });
+        if (selected) await refreshSelected();
+        else router.refresh();
+      }
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : operationsT('failed'));
+      return false;
+    } finally { setBusy(null); }
+  }
+
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
+    if (conversation || busy || running || composerPending) return;
     const input = draft.trim();
     if (!input) return;
+    const command = parseRuntimeCommand(input);
+    if (command && command.name !== 'new') {
+      if (!commands.some((item) => item.name === command.name)) { setError(commandsT('unsupportedCommand')); return; }
+      if (attachments.length || references.length) { setError(commandsT('noAttachments')); return; }
+      if (input.length > 2000) { setError(commandsT('invalidCommand')); return; }
+      {
+        if (!selected) {
+          if (canSend) return createWork();
+          setError(commandsT('needsConversation')); return;
+        }
+        setBusy('command'); setError(null);
+        try {
+          const response = await fetch(`/api/v1/agents/${encodeURIComponent(selected.agentId)}/conversations/${encodeURIComponent(selected.conversationId)}/commands`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ line: input }),
+          });
+          const result = await response.json() as Awaited<ReturnType<typeof executeRuntimeCommand>> & { error?: string };
+          if (!response.ok) throw new Error(result.error && commandsT.has(result.error) ? commandsT(result.error) : result.error || commandsT('failed'));
+          setDraft('');
+          await refreshSelected();
+        } catch (cause) { setError(cause instanceof Error ? cause.message : commandsT('failed')); }
+        finally { setBusy(null); }
+        return;
+      }
+    }
+    if (/^\/new(?:\s|$)/i.test(input)) { setError(operationsT('channelCommandOnly')); return; }
+    if (!canSend) return;
     if (!selected) return createWork();
     setBusy('input');
     setError(null);
@@ -1297,20 +1436,16 @@ export function WorkspaceWork({
     }
     if (await postAction('input', {
       input,
+      ...(references.length ? { references } : {}),
       ...(selected.runtimeKind === 'hermes' ? { reasoningEffort } : {}),
       ...(attachmentIds.length ? { attachmentIds } : {}),
     })) {
       setDraft('');
       setAttachments([]);
+      setReferenceSelection({ scope: '', items: [] });
     } else {
       await discardUploaded(attachmentIds);
     }
-  }
-
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
   }
 
   async function decideApproval(approvalId: string, decision: 'allow' | 'deny') {
@@ -1342,6 +1477,7 @@ export function WorkspaceWork({
         && activeSandbox
         && (activeSandbox.running || agent?.runtimeKind === 'hermes'),
       );
+  const localCommand = Boolean(parseRuntimeCommand(draft));
 
   function togglePanel(panel: WorkPanel) {
     if (typeof window.matchMedia === 'function' && window.matchMedia('(min-width: 1280px)').matches) {
@@ -1420,9 +1556,9 @@ export function WorkspaceWork({
             </Popover.Root>
           </div>
           <ul>
-            {visibleAgents.map(({ agent: itemAgent, sessions: agentSessions }) => {
+            {visibleAgents.map(({ agent: itemAgent, sessions: agentSessions, channels: agentChannels }) => {
               const expanded = Boolean(sessionQuery)
-                || (expandedAgents[itemAgent.id] ?? itemAgent.id === activeAgentId);
+                || (expandedAgents[itemAgent.id] ?? (itemAgent.id === activeAgentId || agentChannels.length > 0));
               const row = (
                 <div className={cx(
                   'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
@@ -1499,7 +1635,7 @@ export function WorkspaceWork({
                           </ContextMenu.Item>
                         ) : null}
                         <ContextMenu.Item asChild className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground">
-                          <Link href={`/app/${encodeURIComponent(slug)}/chat?agent=${encodeURIComponent(itemAgent.id)}`}>
+                          <Link href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`} onClick={() => startNewWork(itemAgent.id)}>
                             <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
                             {tAgents('chat')}
                           </Link>
@@ -1527,7 +1663,7 @@ export function WorkspaceWork({
                         <li key={item.id} className="group/session relative py-0.5">
                           <Link
                             href={workHref(slug, item.id)}
-                            onClick={() => { setCreatingMode(false); setMobilePane('work'); }}
+                            onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
                             aria-current={item.id === selected?.id ? 'page' : undefined}
                             title={`${statusLabels[item.status] ?? item.status} · ${item.sandbox?.name ?? t('sandboxUnavailable')}`}
                             className={cx(
@@ -1544,9 +1680,25 @@ export function WorkspaceWork({
                             </button>
                           ) : null}
                         </li>
-                      )) : (
+                      )) : !agentChannels.length ? (
                         <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noSessions')}</li>
-                      )}
+                      ) : null}
+                      {agentChannels.length > 0 && <li className="px-2 pb-1 pt-2 text-[11px] text-muted-foreground">{tAgents(agentChannels.every((item) => item.source) ? 'channels' : 'chat')}</li>}
+                      {agentChannels.map((item) => (
+                        <li key={item.id} className="py-0.5">
+                          <Link
+                            href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(item.agentId)}&c=${encodeURIComponent(item.id)}`}
+                            onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
+                            scroll={false}
+                            aria-current={item.id === conversation?.id ? 'page' : undefined}
+                            title={item.label}
+                            className={cx('flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px]', item.id === conversation?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60')}
+                          >
+                            {item.source ? <Radio className="size-3.5 shrink-0 text-muted-foreground" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />}
+                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                          </Link>
+                        </li>
+                      ))}
                     </ul>
                   ) : null}
                 </li>
@@ -1569,7 +1721,7 @@ export function WorkspaceWork({
             <button type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')} title={sidebarOpen ? t('hideSidebar') : t('showSidebar')} className="ui-button-ghost ui-icon-button hidden lg:!flex">
               {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
             </button>
-            {selected && controlAgent ? (
+            {(selected || conversation) && controlAgent ? (
               <Link
                 href={agentSettingsHref(slug, controlAgent.id, workReturnTo)}
                 aria-label={`${tAgents('configureAgent')}: ${controlAgent.name}`}
@@ -1610,20 +1762,20 @@ export function WorkspaceWork({
                   model: controlAgent.model ?? null,
                 }}
                 providers={providers}
-                confirmationMessage={selected?.messages.length ? t('modelSwitchConfirm') : undefined}
+                confirmationMessage={(conversation?.messages.length || selected?.messages.length) ? t('modelSwitchConfirm') : undefined}
                 hermesConversation={controlAgent.runtimeKind === 'hermes' ? {
-                  id: selected?.conversationId ?? null,
+                  id: conversation?.id ?? selected?.conversationId ?? null,
                   profile: controlHermesSelection?.profile ?? 'default',
                   provider: controlHermesSelection?.provider ?? null,
                   model: controlHermesSelection?.model ?? null,
-                  hasMessages: Boolean(selected?.messages.length),
-                  editable: !selected || MESSAGEABLE_STATUSES.has(selected.status),
+                  hasMessages: Boolean(conversation?.messages.length || selected?.messages.length),
+                  editable: conversation ? !conversation.readOnly : !selected || MESSAGEABLE_STATUSES.has(selected.status),
                   forkOnProfileChange: false,
                 } : undefined}
-                onHermesDraftChange={!selected ? (selection) => {
+                onHermesDraftChange={!selected && !conversation ? (selection) => {
                   setHermesDraftSelection({ agentId: controlAgent.id, ...selection });
                 } : undefined}
-                onHermesSelectionSaved={selected ? refreshSelected : undefined}
+                onHermesSelectionSaved={conversation ? async () => router.refresh() : selected ? refreshSelected : undefined}
                 trigger={(
                   <button type="button" aria-label={t('model')} title={t('model')} className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
                     {controlModelLabel !== t('selectModel') ? (
@@ -1639,8 +1791,8 @@ export function WorkspaceWork({
               icon={Boxes}
               label={t('sandbox')}
               value={controlSandbox?.id ?? ''}
-              disabled={Boolean(selected)}
-              options={(selected ? selectedAgent?.sandboxes ?? [] : sandboxOptions).map((item) => ({
+              disabled={Boolean(selected || conversation)}
+              options={(selected || conversation ? selectedAgent?.sandboxes ?? [] : sandboxOptions).map((item) => ({
                 value: item.id,
                 label: item.name,
                 description: item.running ? (item.isDefault ? t('default') : undefined) : t('stopped'),
@@ -1655,12 +1807,27 @@ export function WorkspaceWork({
               key={controlSandbox?.id ?? 'none'}
               sandbox={controlSandbox}
               value={activeWorkingDirectory}
-              locked={Boolean(selected)}
+              locked={Boolean(selected || conversation)}
               workspaceRoot={controlWorkspaceRoot}
               onChange={setWorkingDirectory}
             />
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {selected || (conversation && (!conversation.readOnly || conversation.source)) ? <>
+              <button type="button" disabled={Boolean(busy) || selectedActive || conversationBusy}
+                onClick={() => void operateSelectedConversation('compact')}
+                aria-label={operationsT('compact')} title={operationsT('compact')}
+                className="ui-button-ghost ui-icon-button text-muted-foreground disabled:opacity-50">
+                {busy === 'compact' ? <Loader2 className="size-4 animate-spin" /> : <Minimize2 className="size-4" />}
+              </button>
+              <button type="button" disabled={Boolean(busy) || conversationBusy}
+                onClick={() => conversation?.source ? void operateSelectedConversation('new') : startNewWork(controlAgent?.id)}
+                aria-label={conversation?.source ? operationsT('newChannel') : t('newWork')}
+                title={conversation?.source ? operationsT('newChannel') : t('newWork')}
+                className="ui-button-ghost ui-icon-button text-muted-foreground disabled:opacity-50">
+                {busy === 'new-channel' ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              </button>
+            </> : null}
             {selected ? (
               <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
                 <Circle className={cx('size-2 fill-current', statusDotClass(selected.status))} />
@@ -1687,7 +1854,7 @@ export function WorkspaceWork({
                 </SubmitButton>
               </form>
             ) : null}
-            {selected ? (
+            {selected || conversation ? (
                 <button type="button" onClick={() => togglePanel('context')} aria-label={tAgents('contextUsage')} title={tAgents('contextUsage')} aria-pressed={desktopPanel === 'context'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'context' && 'bg-muted text-foreground')}>
                   <Activity className="size-4" />
                 </button>
@@ -1706,30 +1873,49 @@ export function WorkspaceWork({
         </header>
 
         {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{visibleError}</p> : null}
+        {operationNotice && operationNotice.id === (conversation?.id ?? selected?.conversationId) ? <p role="status" className="shrink-0 px-4 py-2 text-xs text-muted-foreground">{operationNotice.text}</p> : null}
 
-        <div className="relative min-h-0 flex-1">
+        {conversation && !conversation.readOnly && controlAgent ? (
+          <AgentConversation
+            key={conversation.id}
+            activeConversationId={conversation.id}
+            agentId={controlAgent.id}
+            agentName={controlAgent.name}
+            ready={controlAgent.ready}
+            runtimeKind={controlAgent.runtimeKind}
+            initialMessages={conversation.messages.filter((message) => !messageCompaction(message)) as HermesUIMessage[]}
+            initialReasoningEffort={conversation.reasoningEffort ?? 'default'}
+            reasoningAvailable={controlAgent.runtimeKind === 'hermes'}
+            creatingConversation={false}
+            ensureConversation={async () => conversation.id}
+            attachmentUploadUrl={controlAgent.runtimeKind === 'hermes' ? undefined : `/api/v1/workspaces/${workspaceId}/attachments`}
+            mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
+            onBusyChange={setConversationBusy}
+            onConversationChanged={() => router.refresh()}
+          />
+        ) : <div className="relative min-h-0 flex-1">
           <div
             ref={transcriptViewportRef}
             data-ui="work.transcript"
             onScroll={handleTranscriptScroll}
             className="h-full overflow-y-auto [overflow-anchor:none]"
           >
-            {selected ? (
+            {selected || conversation ? (
               <>
                 <WorkTranscript
                   agentName={controlAgent?.name ?? t('agent')}
-                  modelName={selected?.hermesModel ?? selectedAgent?.model ?? null}
-                  messages={selected.messages}
+                  modelName={conversation?.hermesModel ?? selected?.hermesModel ?? selectedAgent?.model ?? null}
+                  messages={conversation?.messages ?? selected?.messages ?? []}
                   streamText={streamText}
                   streamActivities={streamActivities}
                   streamStartedAt={streamStartedAt}
                   streamRuntimeKind={streamRuntimeKind}
                   streamModelName={streamModelName}
-                  sessionStartedAt={selected.startedAt}
-                  sessionCompletedAt={selected.completedAt}
+                  sessionStartedAt={selected?.startedAt}
+                  sessionCompletedAt={selected?.completedAt}
                   streaming={selectedActive}
                 />
-                {selected.artifacts.length ? (
+                {selected?.artifacts.length ? (
                   <section className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-7">
                     <p className="flex items-center gap-2 text-xs font-semibold"><FileOutput className="size-4" />{t('artifacts')}</p>
                     <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
@@ -1748,7 +1934,7 @@ export function WorkspaceWork({
               </div>
             )}
           </div>
-          {!followingTranscript && selected ? (
+          {!followingTranscript && (selected || conversation) ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
               <button
                 type="button"
@@ -1761,9 +1947,9 @@ export function WorkspaceWork({
               </button>
             </div>
           ) : null}
-        </div>
+        </div>}
 
-        <div className="shrink-0 bg-background px-3 pb-3 sm:px-5 sm:pb-4">
+        {!conversation && <div className="shrink-0 bg-background px-3 pb-3 sm:px-5 sm:pb-4">
           <div className="mx-auto max-w-3xl">
             {pendingApprovals.length ? (
               <div className="divide-y divide-amber-500/20 rounded-lg border border-amber-500/30 bg-amber-500/5">
@@ -1785,61 +1971,27 @@ export function WorkspaceWork({
                 ))}
               </div>
             ) : (
-              <form
-                data-ui="chat.composer"
-                data-composer-inputbar=""
-                data-composer-presentation="regular"
+              <WorkComposer
+                key={composerScope}
+                agentId={controlAgent?.id}
+                sandboxId={controlSandbox?.id}
+                workSessionId={selected?.id}
+                conversationId={selected?.conversationId}
+                commands={commands}
+                draft={draft}
+                onDraftChange={setDraft}
+                attachments={attachments}
+                onAttachmentsChange={setAttachments}
+                references={references}
+                onReferencesChange={(items) => setReferenceSelection({ scope: composerScope, items })}
+                disabled={Boolean(busy) || running}
+                supportsAttachments={controlSandbox?.kind === 'docker' || controlSandbox?.kind === 'hermes'}
                 onSubmit={(event) => void sendMessage(event)}
-                className={conversationComposerClassName}
-              >
-                <ConversationComposerExpand expanded={composerExpanded} onToggle={toggleComposer} />
-                {selected?.waitingQuestion ? <p className="px-[15px] pb-2 pt-1 text-xs font-medium">{selected.waitingQuestion}</p> : null}
-                {attachments.length ? (
-                  <div className="flex flex-wrap gap-1 px-[15px] pb-1">
-                    {attachments.map((file, index) => (
-                      <ConversationAttachmentChip
-                        key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
-                        name={file.name}
-                        thumbnail={<FileText className="size-3.5 text-muted-foreground" />}
-                        removeButton={(
-                          <ConversationAttachmentRemoveButton
-                            label={tAgents('removeAttachment', { name: file.name })}
-                            onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                          />
-                        )}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-                <textarea
-                  ref={composerInputRef}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={handleComposerKeyDown}
-                  placeholder={t('taskPlaceholder')}
-                  rows={composerMinRows}
-                  className={conversationComposerInputClassName(composerExpanded)}
-                />
-                <div data-ui="part:composer-actions" data-composer-toolbar="" className={conversationComposerToolbarClassName}>
-                  <div className="flex min-w-0 flex-1 items-center gap-1">
-                    <ConversationAttachmentPicker
-                      disabled={Boolean(busy) || running}
-                      supportsAttachments={controlSandbox?.kind === 'docker' || controlSandbox?.kind === 'hermes'}
-                      onFiles={(files) => {
-                        const next = [...attachments, ...files];
-                        if (next.length > 5) setError(tAgents('attachmentLimitReached', { count: 5 }));
-                        setAttachments(next.slice(0, 5));
-                      }}
-                    />
-                    <McpPromptPickerButton
-                      apiPath={controlAgent ? `/api/v1/agents/${controlAgent.id}/prompts` : undefined}
-                      disabled={!controlAgent?.ready || Boolean(busy) || running}
-                      onError={setError}
-                      onInsert={(text) => {
-                        setDraft((current) => current ? `${text}\n${current}` : text);
-                        window.requestAnimationFrame(() => composerInputRef.current?.focus());
-                      }}
-                    />
+                onNewTask={() => startNewWork(selected?.agentId ?? agentId)}
+                onError={setError}
+                onPendingChange={setComposerPending}
+                waitingQuestion={selected?.waitingQuestion}
+                toolbarStart={<>
                     {controlAgent?.runtimeKind === 'hermes' ? (
                       <ReasoningEffortControl
                         value={reasoningEffort}
@@ -1851,28 +2003,26 @@ export function WorkspaceWork({
                       <TerminalSquare className="size-3.5 shrink-0" />
                       {runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}
                     </span>
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-2">
+                </>}
+                toolbarEnd={<>
                     <ConversationContextUsage busy={running} usage={contextUsage} />
                     {running ? (
                       <button type="button" disabled={!selected || busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted disabled:opacity-50">
                         {busy === 'cancel' ? <Loader2 className="size-[18px] animate-spin" /> : <CirclePause className="size-5" />}
                       </button>
                     ) : (
-                      <button type="submit" disabled={!draft.trim() || !canSend || Boolean(busy)} aria-label={t('sendInput')} title={t('sendInput')} className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50">
+                      <button type="submit" disabled={!draft.trim() || (!canSend && !localCommand) || Boolean(busy) || composerPending} aria-label={t('sendInput')} title={t('sendInput')} className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50">
                         {busy === 'create' || busy === 'input' ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
                       </button>
                     )}
-                  </div>
-                </div>
-              </form>
+                </>}
+              />
             )}
             {!selected && agent && !agent.ready ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('configureAgent')}</p> : null}
             {!selected && agent?.ready && !sandboxOptions.length ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('attachSandbox')}</p> : null}
             {!selected && activeSandbox && !activeSandbox.running && activeSandbox.status !== 'provisioning' && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('stopped')}</p> : null}
           </div>
-        </div>
+        </div>}
       </main>
 
       {workspacePanelOpen ? (

@@ -112,11 +112,6 @@ services:
       # for Remote MCPs. This does not allow loopback or link-local targets.
       TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS: ${TOOLPLANE_REMOTE_MCP_PRIVATE_HOSTS:-}
       TOOLPLANE_RUNTIME_ROOT: /app
-      # These paths are baked into the Docker image. Local `pnpm dev` may still
-      # override them through .env when running outside Compose.
-      HERMES_ROOT: /opt/hermes-agent
-      TOOLPLANE_HERMES_ROOT: /opt/hermes-agent
-      TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python
 
 volumes:
   mcp_pg:

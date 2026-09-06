@@ -6,6 +6,10 @@ export function isSilentAgentReply(text: string): boolean {
   return SILENCE_TOKENS.has(text.trim().toLowerCase().replace(/\s+/g, ' '));
 }
 
+export function displayMessagingUserText(text: string) {
+  return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
+}
+
 function cleanSegment(value: string | undefined, fallback: string): string {
   const cleaned = (value ?? '')
     .trim()

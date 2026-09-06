@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkspaceKnowledge } from '@/components/dashboard/knowledge/WorkspaceKnowledge';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
@@ -66,6 +66,231 @@ afterEach(() => {
 });
 
 describe('Chat, Work, and Knowledge surfaces', () => {
+  it('renders native and legacy command output as ordinary copyable assistant replies, without a command accordion', () => {
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'claude-code', sandboxes: [] };
+    const session = {
+      id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
+      runtimeKind: 'claude-code', status: 'completed', waitingQuestion: null, result: null, error: null,
+      artifacts: [], conversationId: 'conversation-1', sandbox: null, approvals: [], messages: [
+        { id: 'usage', role: 'assistant', parts: [{ type: 'text', text: 'Total cost: $0.03' }, { type: 'data-command-result', data: { command: 'usage', text: 'Total cost: $0.03' } }] },
+        { id: 'legacy-context', role: 'system', parts: [{ type: 'data-command-result', data: { command: 'context', text: 'Context Usage: 123 tokens' } }] },
+      ],
+    };
+    const { container } = render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[session]} selectedWorkSessionId={session.id} />);
+    for (const output of ['Total cost: $0.03', 'Context Usage: 123 tokens']) {
+      const text = screen.getByText(output);
+      expect(text.closest('details')).toBeNull();
+      expect(within(text.closest('[data-message-id]') as HTMLElement).getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+    }
+    expect(container.querySelector('[data-ui="conversation.command"]')).toBeNull();
+  });
+
+  it('shares the six tools between / and +, reserves /new for channels, and retains explicit compaction', async () => {
+    const user = userEvent.setup();
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
+    const session = {
+      id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
+      runtimeKind: 'dsh', status: 'completed', waitingQuestion: null, result: null, error: null,
+      artifacts: [], conversationId: 'conversation-1', sandbox: null,
+      messages: [{ id: 'reply', role: 'assistant', parts: [{ type: 'text', text: 'Original reply' }] }], approvals: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ compacted: true })).mockResolvedValueOnce(Response.json({ session }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[session]} selectedWorkSessionId={session.id} />);
+    const input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
+    await user.type(input, '/');
+    const menu = screen.getByRole('listbox', { name: 'Tools' });
+    const options = within(menu).getAllByRole('option');
+    const labels = ['Add attachment', 'Prompt management', 'MCP prompts', 'MCP resources', 'Skills', 'New task'];
+    expect(options.slice(0, 6).map((option) => option.textContent)).toEqual(labels);
+    expect(options.slice(6).map((option) => option.textContent)).toEqual([expect.stringContaining('/compact'), expect.stringContaining('/goal')]);
+    expect(input).toHaveAttribute('placeholder', '/ for tools, @ for sandbox files or conversations');
+    expect(screen.queryByText('/ for tools, @ for sandbox files or conversations')).not.toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-controls', menu.id);
+    expect(input).toHaveAttribute('aria-activedescendant', options[0].id);
+    await user.keyboard('{ArrowUp}');
+    expect(options[7]).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{ArrowDown}');
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Escape}');
+    await user.clear(input);
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(labels);
+    await user.keyboard('{Escape}');
+    await user.type(input, '/new{Enter}');
+    expect(screen.getByText('/new is only available in messaging channels. Use New task from the + menu here.')).toBeInTheDocument();
+    expect(screen.getByText('Original reply')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.clear(input);
+    await user.type(input, '/compact preserve file paths');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/agents/agent-1/conversations/conversation-1/commands',
+      expect.objectContaining({ body: '{"line":"/compact preserve file paths"}' }),
+    ));
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(screen.getByText('Original reply')).toBeInTheDocument();
+    fetchMock.mockClear();
+
+    await user.type(input, '/');
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    expect(input).toHaveValue('/');
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(input).toHaveValue('/');
+    await user.clear(input);
+    await user.type(input, '/task');
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    await user.keyboard('{Tab}');
+    expect(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' })).toHaveValue('');
+    expect(screen.queryByText('Original reply')).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps slash suggestions out of paths, selections and busy turns, and never sends an empty compaction to the model', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('EventSource', WorkEventSource);
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
+    const props = { slug: 'acme', workspaceId: 'workspace-1', agents: [agent], sessions: [], selectedWorkSessionId: null };
+    const { rerender } = render(<WorkspaceWork {...props} />);
+    let input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
+    await user.type(input, '/');
+    expect(screen.getAllByRole('option')).toHaveLength(8);
+    expect(screen.getByRole('option', { name: /\/compact/ })).toBeInTheDocument();
+    for (const value of ['/workspace/file', 'https://example.com', 'read /new', '/compact preserve details']) {
+      fireEvent.change(input, { target: { value } });
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    }
+    fireEvent.change(input, { target: { value: '/compact' } });
+    await user.keyboard('{Enter}');
+    expect(input).toHaveValue('/compact ');
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.keyboard('{Enter}');
+    expect(screen.getByText('Start a task before running this command.')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.clear(input);
+    await user.type(input, '/n');
+    await user.keyboard('{Shift>}{ArrowLeft}{/Shift}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, '/');
+    await user.click(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }));
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.click(input);
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(input).toHaveValue('/\n');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    const session = {
+      id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
+      runtimeKind: 'dsh', status: 'running', waitingQuestion: null, result: null, error: null,
+      artifacts: [], conversationId: 'conversation-1', sandbox: null, messages: [], approvals: [],
+    };
+    rerender(<WorkspaceWork {...props} sessions={[session]} selectedWorkSessionId={session.id} />);
+    input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
+    await user.clear(input);
+    await user.type(input, '/');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    await user.type(input, 'compact{Enter}');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('offers compaction and a separate new-channel conversation operation without changing the Work surface', async () => {
+    let complete!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { complete = resolve; });
+    const fetchMock = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(Response.json({ conversationId: 'new-channel', compacted: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<WorkspaceWork slug="acme" workspaceId="workspace-1" selectedWorkSessionId={null} sessions={[]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] }]}
+      selectedConversation={{ id: 'channel-chat', agentId: 'agent-1', source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' }, readOnly: true,
+        messages: [{ id: 'message', role: 'assistant', parts: [{ type: 'text', text: 'Preserved reply' }] }] }}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'Compact context' }));
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'New channel conversation' })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/agents/agent-1/conversations/channel-chat/commands', expect.objectContaining({ body: '{"line":"/compact"}' }));
+    await act(async () => { complete(Response.json({ kind: 'output', text: 'No compactable history yet.' })); });
+    expect(screen.queryByText('Context compacted')).not.toBeInTheDocument();
+    expect(screen.getByText('Preserved reply')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New channel conversation' }));
+    await waitFor(() => expect(surfaceMocks.routerPush).toHaveBeenCalledWith('/app/acme/work?agent=agent-1&c=new-channel'));
+    expect(document.querySelector('[data-ui="chat.composer"]')).toBeNull();
+  });
+
+  it('shows and searches channel conversations under their Agent and refreshes before the first message', () => {
+    vi.useFakeTimers();
+    const agent = {
+      id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true,
+      ready: false, runtimeKind: 'dsh', sandboxes: [],
+    };
+    const props = {
+      slug: 'acme', workspaceId: 'workspace-1', selectedWorkSessionId: null,
+      agents: [agent, { ...agent, id: 'agent-wechat', name: 'WeChat agent' }],
+      sessions: [], hasChannels: true,
+    };
+    const { rerender, unmount } = render(<WorkspaceWork {...props} />);
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
+
+    rerender(<WorkspaceWork {...props} conversations={[{
+      id: 'wechat-history', agentId: 'agent-wechat',
+      source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' },
+    }]} />);
+    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toHaveAttribute(
+      'href', '/app/acme/work?agent=agent-wechat&c=wechat-history',
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'wechat' } });
+    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Builder' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'no-match' } });
+    expect(screen.queryByRole('link', { name: 'WeChat · contact' })).not.toBeInTheDocument();
+    unmount();
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the Work sidebar, search, and sandbox tools while switching between task and channel messages', () => {
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh',
+      sandboxes: [{ id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'dep-1', running: true, isDefault: true }] };
+    const session = {
+      id: 'work-1', agentId: agent.id, title: 'Task history', task: 'Task history', acceptanceCriteria: null,
+      runtimeKind: 'dsh', status: 'completed', waitingQuestion: null, result: null, error: null, artifacts: [],
+      conversationId: 'task-conversation', sandbox: agent.sandboxes[0],
+      messages: [{ id: 'task-reply', role: 'assistant', parts: [{ type: 'text', text: 'Task reply' }] }], approvals: [],
+    };
+    const channel = { id: 'wechat-history', agentId: agent.id, source: { platform: 'weixin', chatType: 'dm' as const, chatId: 'contact' },
+      readOnly: true, messages: [
+        { id: 'inbound', role: 'user', parts: [{ type: 'text', text: '[Messaging source: platform=weixin]\n\nIncoming message' }] },
+        { id: 'reply', role: 'assistant', parts: [{ type: 'text', text: 'WeChat reply' }] },
+      ] };
+    const props = { slug: 'acme', workspaceId: 'workspace-1', agents: [agent], sessions: [session], conversations: [channel] };
+    const { container, rerender } = render(<WorkspaceWork {...props} selectedWorkSessionId="work-1" />);
+    const sidebar = screen.getByRole('textbox', { name: 'Search Agents and work sessions' }).closest('aside');
+    expect(screen.getByText('Task reply')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'Builder' } });
+    rerender(<WorkspaceWork {...props} selectedWorkSessionId={null} selectedConversation={channel} />);
+    expect(screen.getByRole('textbox', { name: 'Search Agents and work sessions' })).toHaveValue('Builder');
+    expect(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }).closest('aside')).toBe(sidebar);
+    expect(screen.getByText('WeChat reply').closest('[data-ui="work.transcript"]')).toBeInTheDocument();
+    expect(screen.getByText('Incoming message')).toBeInTheDocument();
+    expect(screen.queryByText(/Messaging source:/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Task history' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument();
+    expect(container.querySelector('[data-ui="chat.composer"]')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Builder' }));
+    rerender(<WorkspaceWork {...props} selectedWorkSessionId="work-1" selectedConversation={null} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Builder' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Task reply')).toBeInTheDocument();
+    expect(container.querySelector('[data-ui="chat.composer"]')).toBeInTheDocument();
+  });
+
   it.each(['pi', 'hermes'] as const)(
     'refreshes a newly created %s Agent until its runtime leaves provisioning',
     (runtimeKind) => {
@@ -146,7 +371,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    const input = screen.getByPlaceholderText('What should the Agent accomplish?');
+    const input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
     expect(input).toHaveAttribute('rows', '2');
     expect(input.closest('form')).toHaveClass('group/composer', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
     const expand = screen.getByRole('button', { name: 'Expand composer' });
@@ -218,11 +443,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(screen.getByRole('button', { name: 'New work · Hermes researcher' })).toBeInTheDocument();
     fireEvent.contextMenu(hermesRow, { clientX: 80, clientY: 120 });
     expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/chat?agent=agent-hermes');
+    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/work?agent=agent-hermes');
     const agentRow = builderDisclosure.parentElement!;
     fireEvent.contextMenu(agentRow, { clientX: 80, clientY: 120 });
     expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/chat?agent=agent-1');
+    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/work?agent=agent-1');
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
       'href',
       expect.stringContaining('/app/acme/agents/agent-1?settings=agent'),
@@ -289,7 +514,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       onHermesDraftChange: (selection: { profile: string; provider: string | null; model: string | null }) => void;
     };
     expect(dialogProps.hermesConversation).toMatchObject({ id: null, editable: true });
-    fireEvent.change(screen.getByPlaceholderText('What should the Agent accomplish?'), { target: { value: 'Research it' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' }), { target: { value: 'Research it' } });
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     act(() => dialogProps.onHermesDraftChange({ profile: 'research', provider: 'openrouter', model: 'model-b' }));
     expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('research · model-b');
@@ -325,7 +550,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    fireEvent.change(screen.getByPlaceholderText('What should the Agent accomplish?'), { target: { value: 'Run it' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' }), { target: { value: 'Run it' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/work-sessions', expect.anything()));
     const request = fetchMock.mock.calls.find(([url]) => url === '/api/v1/work-sessions')?.[1] as RequestInit;
@@ -360,15 +585,16 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open MCP prompts' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open tools' }));
+    fireEvent.click(screen.getByRole('option', { name: 'MCP prompts' }));
     fireEvent.click(await screen.findByRole('button', { name: /Summarize text/ }));
     fireEvent.change(screen.getByRole('textbox', { name: /Text/ }), { target: { value: 'Release notes' } });
     fireEvent.click(screen.getByRole('button', { name: 'Insert prompt' }));
 
-    await waitFor(() => expect(screen.getByPlaceholderText('What should the Agent accomplish?')).toHaveValue(
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' })).toHaveValue(
       'Summarize the following text:\n\nRelease notes',
     ));
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/agents/agent-1/prompts', { cache: 'no-store' });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/agents/agent-1/prompts', expect.objectContaining({ cache: 'no-store' }));
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/agents/agent-1/prompts', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({
@@ -505,6 +731,59 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(completedProcess?.querySelector('summary')).toHaveTextContent('Processed');
     expect(completedProcess?.querySelector('[data-ui="work-process-duration"]')).toHaveTextContent('29 s');
     expect(screen.getByText('Hello').closest('details')).toBeNull();
+  });
+
+  it('replaces a persisted turn stream without hiding identical replies from different turns', () => {
+    vi.stubGlobal('EventSource', WorkEventSource);
+    const startedAt = 1_700_000_000_000;
+    const reply = (id: string, turnStart: number) => ({ id, role: 'assistant', parts: [
+      { type: 'text', text: 'Same reply' },
+      { type: 'data-work-timing', data: { startedAt: turnStart, completedAt: turnStart + 1_000 } },
+    ] });
+    const session = {
+      id: 'work-1', agentId: 'agent-1', title: 'Repeated replies', task: 'Reply again',
+      acceptanceCriteria: null, runtimeKind: 'dsh', status: 'running', waitingQuestion: null,
+      result: null, error: null, artifacts: [], approvals: [], conversationId: 'conversation-1', sandbox: null,
+      messages: [reply('previous-reply', startedAt - 10_000), { id: 'user', role: 'user', parts: [{ type: 'text', text: 'Again' }] }],
+    };
+    const props = {
+      slug: 'acme', workspaceId: 'workspace-1', selectedWorkSessionId: session.id,
+      agents: [{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] }],
+    };
+    const { rerender } = render(<WorkspaceWork {...props} sessions={[session]} />);
+    act(() => WorkEventSource.latest?.emit('snapshot', { text: 'Same reply', startedAt, active: true }));
+    expect(screen.getAllByText('Same reply')).toHaveLength(2);
+
+    rerender(<WorkspaceWork {...props} sessions={[{ ...session, messages: [...session.messages, reply('current-reply', startedAt)] }]} />);
+    expect(screen.getAllByText('Same reply')).toHaveLength(2);
+    expect(document.querySelector('[data-message-id="work-stream"]')).toBeNull();
+    expect(document.querySelector('[data-message-id="current-reply"]')).not.toBeNull();
+  });
+
+  it('refreshes a background title without keeping the reply busy and stops polling when naming finishes', async () => {
+    vi.useFakeTimers();
+    const session = {
+      id: 'work-1', agentId: 'agent-1', title: 'Reply slowly', task: 'Reply slowly', titlePending: true,
+      acceptanceCriteria: null, runtimeKind: 'dsh', status: 'idle', waitingQuestion: null,
+      result: null, error: null, artifacts: [], approvals: [], conversationId: 'conversation-1', sandbox: null,
+      messages: [{ id: 'assistant', role: 'assistant', parts: [{ type: 'text', text: 'Reply is ready' }] }],
+    };
+    const fetchMock = vi.fn().mockImplementation(async () => Response.json({ ...session, title: 'Generated title', titlePending: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { unmount } = render(<WorkspaceWork
+      slug="acme" workspaceId="workspace-1" selectedWorkSessionId={session.id} sessions={[session]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] }]}
+    />);
+    expect(screen.getAllByText('Reply is ready')).toHaveLength(1);
+    expect(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' })).toBeEnabled();
+    expect(document.querySelector('[data-message-id="work-stream"]')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(screen.getByRole('link', { name: 'Generated title' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Reply slowly' })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it('keeps a text-only completed Work reply free of an empty process group', () => {

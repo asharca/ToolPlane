@@ -86,6 +86,8 @@ describe('DashboardTabsProvider', () => {
 
   it.each([
     ['work', 'Agents'],
+    ['work/chat', 'Agents'],
+    ['chat', 'Assistants'],
     ['knowledge', 'Knowledge'],
   ])('uses the sidebar name for the %s tab', (segment, label) => {
     navigation.pathname = `/app/smoke/${segment}`;
@@ -106,11 +108,11 @@ describe('DashboardTabsProvider', () => {
 
   it('keeps the originating tab while agent settings is open', () => {
     navigation.pathname = '/app/smoke/agents/agent-1';
-    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fchat%3Fagent%3Dagent-1%26c%3Dchat-1%26__dashboardTab%3Dchat-tab';
+    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fwork%3Fagent%3Dagent-1%26c%3Dchat-1%26__dashboardTab%3Dchat-tab';
 
     renderTabs();
 
-    expect(activeTab()).toHaveTextContent('Assistants');
+    expect(activeTab()).toHaveTextContent('Agents');
     expect(activeTab()).toHaveAttribute('data-tab-id', 'chat-tab');
   });
 

@@ -1583,14 +1583,14 @@ describe('agents mutations', () => {
     await deleteAgentChannelConnection(workspaceId, connectionId);
   });
 
-  it('requests Telegram managed-bot QR, waits for ready, then applies allowed users', async () => {
+  it('requests Telegram managed-bot QR and clears prior restrictions when applying an empty allowlist', async () => {
     const a = await createAgent(workspaceId, 'Telegram active QR', { runtime: 'pi' });
     const result = await createAgentChannelConnection({
       workspaceId,
       agentId: a.id,
       platform: 'telegram',
       name: 'Telegram active setup',
-      credentials: {},
+      credentials: { TELEGRAM_ALLOWED_USERS: '987654321', TELEGRAM_ALLOW_ALL_USERS: 'false' },
     });
     expect(result.error).toBeUndefined();
     expect(result.connection?.status).toBe('setup_required');
@@ -1642,7 +1642,8 @@ describe('agents mutations', () => {
     const afterApply = await listAgentChannelConnections(workspaceId, a.id);
     expect(afterApply[0].status).toBe('stopped');
     expect(afterApply[0].missingStartCredentialNames).toEqual([]);
-    expect(afterApply[0].credentialNames).toEqual(['TELEGRAM_BOT_TOKEN']);
+    expect(afterApply[0].credentialNames).toEqual(['TELEGRAM_ALLOW_ALL_USERS', 'TELEGRAM_BOT_TOKEN']);
+    expect(afterApply[0].credentialValues).toEqual({ TELEGRAM_ALLOW_ALL_USERS: 'true' });
 
     const raw = await db.agentChannelConnection.findUnique({ where: { id: connectionId } });
     expect(JSON.stringify(raw?.credentials)).not.toContain('SECRET');

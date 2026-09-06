@@ -13,11 +13,12 @@ const mocks = vi.hoisted(() => ({
   livePort: vi.fn(),
   ensureHermesRuntimeReady: vi.fn(),
   prepareHermesConversationSelection: vi.fn(),
+  isWorkSessionTitlePending: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
 vi.mock('@/lib/agents/queries', () => ({ getAgentForRequest: mocks.getAgentForRequest }));
-vi.mock('@/lib/work/coordinator', () => ({ kickWorkCoordinator: vi.fn() }));
+vi.mock('@/lib/work/coordinator', () => ({ kickWorkCoordinator: vi.fn(), isWorkSessionTitlePending: mocks.isWorkSessionTitlePending }));
 vi.mock('@/lib/db', () => ({ db: { workSession: { findFirst: mocks.findWorkSession } } }));
 vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort }));
 vi.mock('@/lib/agents/hermes/runtime', () => ({
@@ -45,6 +46,7 @@ describe('WorkSession API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveRequestUser.mockResolvedValue({ id: 'user-1' });
+    mocks.isWorkSessionTitlePending.mockReturnValue(false);
     mocks.getAgentForRequest.mockResolvedValue({ id: 'agent-1', workspaceId: 'workspace-1' });
     mocks.createWorkSession.mockResolvedValue({
       id: 'work-1',
@@ -103,6 +105,24 @@ describe('WorkSession API', () => {
 
     expect(response.status).toBe(400);
     expect(mocks.getAgentForRequest).not.toHaveBeenCalled();
+  });
+
+  it('validates references before either create or append and forwards valid reference context', async () => {
+    const request = (body: unknown) => new Request('http://toolplane.test/api/v1/work-sessions', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const references = [{ kind: 'file', id: 'plan.md', label: 'plan.md', text: 'Reference material: release checklist' }];
+    const params = { params: Promise.resolve({ workSessionId: 'work-1' }) };
+    const invalid = { references: Array(11).fill(references[0]) };
+    expect((await createWork(request({ agentId: 'agent-1', task: 'Review', ...invalid }))).status).toBe(400);
+    expect((await appendWorkInput(request({ input: 'Review', ...invalid }), params)).status).toBe(400);
+    expect(mocks.getAgentForRequest).not.toHaveBeenCalled();
+    expect(mocks.getWorkSessionForUser).not.toHaveBeenCalled();
+    expect((await createWork(request({ agentId: 'agent-1', sandboxId: 'sandbox-1', task: 'Review', references }))).status).toBe(202);
+    expect(mocks.createWorkSession).toHaveBeenCalledWith(expect.objectContaining({ references }));
+    mocks.getWorkSessionForUser.mockResolvedValue({ id: 'work-1', workspaceId: 'workspace-1', conversationId: 'conversation-1', sandbox: { id: 'sandbox-1' } });
+    expect((await appendWorkInput(request({ input: 'Review', references }), params)).status).toBe(202);
+    expect(mocks.appendWorkSessionInput).toHaveBeenCalledWith('workspace-1', 'work-1', 'Review', { references });
   });
 
   it('validates and forwards a Hermes model selected for the new Work conversation', async () => {
@@ -211,6 +231,7 @@ describe('WorkSession API', () => {
   });
 
   it('reads a session only through the caller workspace boundary', async () => {
+    mocks.isWorkSessionTitlePending.mockReturnValue(true);
     mocks.getWorkSessionForUser.mockResolvedValue({
       id: 'work-1',
       status: 'queued',
@@ -223,6 +244,7 @@ describe('WorkSession API', () => {
     );
 
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ titlePending: true });
     expect(mocks.getWorkSessionForUser).toHaveBeenCalledWith('user-1', 'work-1');
   });
 

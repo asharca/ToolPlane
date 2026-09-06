@@ -890,7 +890,7 @@ export function AgentsBrowser({
                     <div className="flex flex-wrap gap-2.5 lg:justify-end">
                       {ready ? (
                         <Link
-                          href={`/app/${encodeURIComponent(slug)}/chat?agent=${encodeURIComponent(agent.id)}`}
+                          href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`}
                           aria-label={t('chat')}
                           title={t('chat')}
                           className="ui-button-primary size-10 shrink-0 px-0"

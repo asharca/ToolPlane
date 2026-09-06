@@ -58,12 +58,12 @@ describe('AgentSettings', () => {
     expect(screen.queryByText('New chat')).not.toBeInTheDocument();
   });
 
-  it('keeps channels inside the same settings navigation', async () => {
+  it.each(['pi', 'hermes'])('keeps channels inside the %s settings navigation', async (runtimeKind) => {
     render(
       <AgentSettings
         slug="acme"
         agentId="agent-1"
-        settings={settings}
+        settings={{ ...settings, runtimeKind }}
         channelSettings={{ connections: [] }}
         ready
         agentName="Release copilot"

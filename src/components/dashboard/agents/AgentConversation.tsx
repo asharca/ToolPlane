@@ -23,6 +23,7 @@ import { resolveContextUsage } from '@/lib/context-usage';
 import type { ChatBranchNavigation } from '@/lib/chat/branches';
 import type { ReasoningEffort } from '@/lib/agents/constants';
 import { ReasoningEffortControl } from '@/components/dashboard/agents/ReasoningEffortControl';
+import { displayMessagingUserText } from '@/lib/agents/messaging';
 import {
   expandHermesAssistantMessages,
   type HermesUIMessage,
@@ -36,10 +37,6 @@ type DraftSnapshot = {
   text: string;
   files: File[];
 };
-
-function displayUserText(text: string) {
-  return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, '').trim() || text;
-}
 
 function toChatCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
   message: AppendMessage,
@@ -619,7 +616,7 @@ export function AgentConversation({
       disabled={!ready || composerDisabled}
       error={submitError || chat.error?.message}
       labels={threadLabels}
-      transformUserText={displayUserText}
+      transformUserText={displayMessagingUserText}
       onBranchSelect={onBranchChange}
       onBranchStart={onStartBranch}
       onRegenerateMessage={!includeConversationIdInBody

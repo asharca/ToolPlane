@@ -3,6 +3,7 @@
 import {
   CreditCard,
   KeyRound,
+  Radio,
   Plug,
   Settings,
   type LucideIcon,
@@ -22,6 +23,7 @@ export function SettingsTabs({ slug }: { slug: string }) {
   const tabs: { label: string; href: string; icon: LucideIcon }[] = [
     { label: t('general'), href: withReturnTo(base), icon: Settings },
     { label: t('tokens'), href: withReturnTo(`${base}/tokens`), icon: KeyRound },
+    { label: t('channels'), href: withReturnTo(`${base}/channels`), icon: Radio },
   ];
   const muted: { label: string; icon: LucideIcon }[] = [
     { label: t('integrations'), icon: Plug },

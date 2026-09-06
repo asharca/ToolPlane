@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   removeStaleDeploymentConfigMaterializerHelpers: vi.fn(),
   reconcileSandboxVolumeCopies: vi.fn(),
   reconcileDeployments: vi.fn(),
+  reconcileAgentChannelRunners: vi.fn(),
 }));
 
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
@@ -31,6 +32,9 @@ vi.mock('@/lib/sandboxes/reconcile', () => ({
 vi.mock('@/lib/process/reconcile', () => ({
   reconcileDeployments: mocks.reconcileDeployments,
 }));
+vi.mock('@/lib/agents/channel-runtime', () => ({
+  reconcileAgentChannelRunners: mocks.reconcileAgentChannelRunners,
+}));
 
 import { register } from '@/instrumentation';
 
@@ -51,6 +55,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     mocks.cleanupHermesArchiveStaging.mockResolvedValue(undefined);
     mocks.removeStaleDeploymentConfigMaterializerHelpers.mockResolvedValue(0);
     mocks.reconcileDeployments.mockResolvedValue(0);
+    mocks.reconcileAgentChannelRunners.mockResolvedValue(0);
   });
 
   afterEach(() => {
@@ -80,6 +85,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     });
 
     expect(mocks.cleanupHermesArchiveStaging).toHaveBeenCalledTimes(1);
+    expect(mocks.reconcileAgentChannelRunners).toHaveBeenCalledTimes(1);
     expect(mocks.ensureHermesDashboardBroker).toHaveBeenCalledTimes(1);
     expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
     expect(mocks.reconcileSandboxVolumeCopies).toHaveBeenCalledTimes(1);

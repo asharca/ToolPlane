@@ -34,6 +34,8 @@ import {
   isDedicatedSandboxRuntimeKind,
 } from '@/lib/agents/runtime-kind';
 import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
+import { activeConversationMessages, latestCompaction, compactedConversationSeed, needsCompactionSeed } from '@/lib/agents/conversation-context';
+import { acquireConversationOperation } from '@/lib/agents/conversation-operations';
 import {
   AttachmentMessageError,
   attachmentIdsFromParts,
@@ -75,6 +77,8 @@ export async function POST(
     return new Response(HERMES_RUNTIME_COPY_IN_PROGRESS_ERROR, { status: 503 });
   }
   let streamOwnsHermesWriteLease = false;
+  let releaseConversation: (() => void) | null = null;
+  let streamOwnsConversation = false;
   let hermesLeaseReleased = false;
   const releaseHermesWriteLease = () => {
     if (hermesWriteLease && !hermesLeaseReleased) {
@@ -126,6 +130,18 @@ export async function POST(
     if (conversation?.publicApiConversation || conversation?.title?.startsWith('msg:')) {
       return new Response('This conversation is read-only in the console', { status: 400 });
     }
+    if (conversationId) {
+      releaseConversation = acquireConversationOperation(conversationId);
+      if (!releaseConversation) return new Response('This conversation is busy.', { status: 409 });
+    }
+    const storedMessages = conversationId
+      ? await db.message.findMany({ where: { conversationId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
+      : [];
+    const compaction = latestCompaction(storedMessages);
+    const lastInput = messages.at(-1);
+    const modelMessages = compaction
+      ? [...activeConversationMessages(storedMessages), ...(lastInput?.role === 'user' ? [lastInput] : [])] as HermesUIMessage[]
+      : messages;
     const storedReasoningEffort = normalizeReasoningEffort(conversation?.reasoningEffort) ?? 'default';
     const reasoningEffort = body.reasoningEffort ?? storedReasoningEffort;
     if (conversationId && body.reasoningEffort && body.reasoningEffort !== storedReasoningEffort) {
@@ -157,7 +173,10 @@ export async function POST(
           try {
             const result = await writeHermesChatStream({
               agent,
-              messages,
+              messages: compaction && needsCompactionSeed(storedMessages) && lastInput?.role === 'user'
+                ? [...modelMessages.slice(0, -1), { ...lastInput, parts: [
+                  { type: 'text', text: compactedConversationSeed(storedMessages)! }, ...lastInput.parts,
+                ] }] : modelMessages,
               conversationId: conversationId ?? runtimeSessionId,
               runtimeSessionId,
               sessionKey: runtimeSessionKey,
@@ -220,10 +239,12 @@ export async function POST(
               },
             })));
           } finally {
+            releaseConversation?.();
             releaseHermesWriteLease();
           }
         },
       });
+      streamOwnsConversation = true;
       const response = createUIMessageStreamResponse({ stream });
       const reader = response.body!.getReader();
       const body = new ReadableStream<Uint8Array>({
@@ -259,7 +280,7 @@ export async function POST(
       attachmentIds = last
         ? attachmentIdsFromParts(last.parts as unknown as Array<Record<string, unknown>>)
         : [];
-      hasAttachments = messages.some((message) => (
+      hasAttachments = modelMessages.some((message) => (
         attachmentIdsFromParts(message.parts as unknown as Array<Record<string, unknown>>).length > 0
       ));
     } catch (error) {
@@ -274,7 +295,7 @@ export async function POST(
       return new Response('Attachments must be sent in the current user message.', { status: 400 });
     }
 
-    let hydratedMessages = messages;
+    let hydratedMessages = modelMessages;
     if (hasAttachments) {
       try {
         await db.$transaction((tx) => claimWorkspaceAttachments(tx, {
@@ -284,7 +305,7 @@ export async function POST(
           scope: { conversationId: conversationId! },
         }));
         hydratedMessages = await hydrateWorkspaceAttachmentMessages(
-          messages as unknown as Array<{ role: string; parts: Array<Record<string, unknown>> }>,
+          modelMessages as unknown as Array<{ role: string; parts: Array<Record<string, unknown>> }>,
           { workspaceId: agent.workspaceId, scope: { conversationId: conversationId! } },
         ) as HermesUIMessage[];
       } catch (error) {
@@ -344,15 +365,19 @@ export async function POST(
         return error instanceof Error ? error.message : 'Agent request failed.';
       },
       onFinish: async ({ responseMessage, isAborted }) => {
+        try {
         if (isAborted || req.signal.aborted || !executionSucceeded || !conversationId) return;
         if (last?.role === 'user') {
           await appendMessage(conversationId, 'user', last.parts as never);
         }
         await appendMessage(conversationId, 'assistant', responseMessage.parts as never);
+        } finally { releaseConversation?.(); }
       },
     });
+    streamOwnsConversation = true;
     return createUIMessageStreamResponse({ stream });
   } finally {
+    if (!streamOwnsConversation) releaseConversation?.();
     if (!streamOwnsHermesWriteLease) releaseHermesWriteLease();
   }
 }

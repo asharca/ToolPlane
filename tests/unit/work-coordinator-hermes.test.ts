@@ -216,6 +216,39 @@ describe('Work coordinator', () => {
     unsubscribe();
   });
 
+  it.each(['hermes', 'dsh'])('finishes %s Work and releases its slot before the title is generated', async (runtimeKind) => {
+    if (runtimeKind === 'dsh') {
+      const work = await mocks.workFindUnique();
+      const agent = await mocks.getAgentForRun();
+      mocks.workFindUnique.mockResolvedValue({ ...work, runtimeKind });
+      mocks.getAgentForRun.mockResolvedValue({ ...agent, runtimeKind, provider: { id: 'provider-1' }, model: 'model-a' });
+      mocks.runDedicatedSandboxTurn.mockResolvedValue('Done');
+    }
+    let resolveTitle!: (value: string) => void;
+    mocks.generateWorkSessionTitle.mockReturnValueOnce(new Promise<string>((resolve) => { resolveTitle = resolve; }));
+    const { kickWorkCoordinator, isWorkSessionTitlePending } = await import('@/lib/work/coordinator');
+    const { subscribeWorkOutput, isWorkRunActive } = await import('@/lib/work/run-control');
+    kickWorkCoordinator();
+
+    try {
+      await vi.waitFor(() => expect(mocks.generateWorkSessionTitle).toHaveBeenCalled());
+      const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
+      unsubscribe();
+      expect(snapshot.done).toBe(true);
+      expect(isWorkSessionTitlePending('work-1')).toBe(true);
+      expect(isWorkRunActive('work-1')).toBe(false);
+      expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'work-1', status: 'running' },
+        data: expect.objectContaining({ status: 'idle' }),
+      }));
+      expect((globalThis as { __workCoordinator?: { active: Set<string> } }).__workCoordinator?.active.size).toBe(0);
+      expect(mocks.messageCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      resolveTitle('Repository inspection');
+    }
+    await vi.waitFor(() => expect(isWorkSessionTitlePending('work-1')).toBe(false));
+  });
+
   it('finishes Work when automatic title generation fails', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     mocks.generateWorkSessionTitle.mockRejectedValueOnce(new Error('Naming unavailable'));
@@ -292,6 +325,33 @@ describe('Work coordinator', () => {
         ]),
       }),
     });
+  });
+
+  it.each(['pi', 'claude-code', 'dsh'])('runs %s commands natively and persists a normal assistant reply without generating a title', async (runtimeKind) => {
+    const command = runtimeKind === 'claude-code' ? '/usage' : '/compact';
+    mocks.workFindUnique.mockResolvedValue({
+      id: 'work-1', workspaceId: 'workspace-1', agentId: 'agent-1', sandboxId: 'sandbox-1', conversationId: 'conversation-1',
+      task: 'Original task', runtimeKind, runtimeSnapshot: { workingDirectory: 'src', systemPrompt: 'Saved instructions' }, status: 'running',
+      sandbox: { id: 'sandbox-1', deploymentId: 'deployment-1', deployment: { status: 'running' } },
+      conversation: { messages: [
+        { id: 'old', role: 'user', parts: [{ type: 'text', text: 'Keep plan.md' }] },
+        { id: 'command', role: 'user', parts: [{ type: 'text', text: command }] },
+      ] },
+    });
+    mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind, provider: { name: 'P', format: 'openai' }, model: 'test', systemPrompt: 'Current instructions' });
+    mocks.runDedicatedSandboxTurn.mockImplementation(async (options) => { await options.onTextDelta?.('Native command output'); return 'Native command output'; });
+    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
+    kickWorkCoordinator();
+    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledTimes(1));
+    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(expect.objectContaining({
+      command, runtimeSessionId: 'conversation-1', workingDirectory: 'src', systemPrompt: expect.stringContaining('Saved instructions'),
+      messages: [expect.objectContaining({ id: 'old' })],
+    }));
+    expect(mocks.messageCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: 'assistant', parts: expect.arrayContaining([
+      { type: 'text', text: 'Native command output', state: 'done' },
+      { type: 'data-command-result', data: { command: command.slice(1), text: 'Native command output' } },
+    ]) }) });
+    expect(mocks.generateWorkSessionTitle).not.toHaveBeenCalled();
   });
 
   it('persists reachable Pi Work process events in order', async () => {

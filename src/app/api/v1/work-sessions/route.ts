@@ -7,6 +7,8 @@ import { HermesProfileError } from '@/lib/agents/hermes/profiles';
 import { createWorkSession, listWorkSessions, normalizeWorkDirectory } from '@/lib/work/sessions';
 import { kickWorkCoordinator } from '@/lib/work/coordinator';
 import { startWorkOutput } from '@/lib/work/run-control';
+import { ComposerReferencesSchema } from '@/lib/work/composer-types';
+import { parseRuntimeCommand, runtimeCommands } from '@/lib/agents/runtime-commands';
 import {
   prepareWorkAttachments,
   WorkAttachmentError,
@@ -34,6 +36,7 @@ export async function POST(req: Request) {
     acceptanceCriteria?: unknown;
     workingDirectory?: unknown;
     attachmentIds?: unknown;
+    references?: unknown;
     reasoningEffort?: unknown;
     hermesProfile?: unknown;
     hermesProvider?: unknown;
@@ -53,6 +56,8 @@ export async function POST(req: Request) {
   if (typeof body.task !== 'string' || !body.task.trim() || body.task.length > 20_000) {
     return Response.json({ error: 'Invalid task' }, { status: 400 });
   }
+  const references = ComposerReferencesSchema.safeParse(body.references);
+  if (!references.success) return Response.json({ error: 'Invalid references' }, { status: 400 });
   if (body.acceptanceCriteria !== undefined && (
     typeof body.acceptanceCriteria !== 'string' || body.acceptanceCriteria.length > 20_000
   )) {
@@ -69,6 +74,9 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Invalid workingDirectory' }, { status: 400 });
   }
   const agent = await getAgentForRequest(body.agentId, user.id);
+  const command = parseRuntimeCommand(body.task);
+  if (agent && command && !runtimeCommands(agent.runtimeKind).some((item) => item.name === command.name)) return Response.json({ error: 'unsupportedCommand' }, { status: 400 });
+  if (command && (body.task.length > 2000 || references.data.length || (Array.isArray(body.attachmentIds) && body.attachmentIds.length))) return Response.json({ error: 'Invalid command input.' }, { status: 400 });
   if (!agent) return Response.json({ error: 'Agent not found' }, { status: 404 });
   const hasHermesSelection = body.hermesProfile !== undefined
     || body.hermesProvider !== undefined
@@ -132,6 +140,7 @@ export async function POST(req: Request) {
       agentId: agent.id,
       sandboxId: body.sandboxId,
       task: body.task,
+      ...(references.data.length ? { references: references.data } : {}),
       ...(body.acceptanceCriteria !== undefined ? { acceptanceCriteria: body.acceptanceCriteria } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(hermesSelection ? { hermesSelection } : {}),

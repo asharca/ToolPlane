@@ -60,6 +60,9 @@ export type MessagingCredential = {
   placeholder?: string;
   help?: string;
   multiline?: boolean;
+  inputType?: 'boolean' | 'select';
+  options?: { value: string; label: string }[];
+  defaultValue?: string;
 };
 
 export type MessagingPairing = {
@@ -69,6 +72,7 @@ export type MessagingPairing = {
     | 'wecom_admin_qr'
     | 'weixin_ilink_qr'
     | 'dingtalk_device_qr'
+    | 'feishu_device_qr'
     | 'external_setup_runner';
   label: string;
   description: string;
@@ -187,7 +191,7 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       { name: 'TELEGRAM_BOT_TOKEN', label: 'Bot token from @BotFather', required: true, requiredAt: 'start', secret: true, placeholder: 'auto-filled by QR or 123456789:ABCdef...' },
       { name: 'TELEGRAM_ALLOWED_USERS', label: 'Allowed Telegram user IDs', placeholder: 'blank means everyone', help: 'Optional numeric Telegram IDs. Leave blank to allow everyone.' },
       { name: 'TELEGRAM_ALLOWED_CHATS', label: 'Allowed group or topic IDs', placeholder: '-1001234567890' },
-      { name: 'TELEGRAM_ALLOW_ALL_USERS', label: 'Allow all users', placeholder: 'defaults to true when allowed users is blank' },
+      { name: 'TELEGRAM_ALLOW_ALL_USERS', label: 'Allow all users', inputType: 'boolean', defaultValue: 'true' },
     ],
     pairing: {
       type: 'qr',
@@ -223,7 +227,8 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       { name: 'DISCORD_BOT_TOKEN', label: 'Bot token', required: true, secret: true },
       { name: 'DISCORD_ALLOWED_USERS', label: 'Allowed Discord user IDs', placeholder: '284102345871466496' },
       { name: 'DISCORD_ALLOWED_ROLES', label: 'Allowed role IDs', placeholder: 'optional role allowlist' },
-      { name: 'DISCORD_ALLOW_ALL_USERS', label: 'Allow all users', placeholder: 'true or false' },
+      { name: 'DISCORD_ALLOWED_CHANNELS', label: 'Allowed channel IDs' },
+      { name: 'DISCORD_ALLOW_ALL_USERS', label: 'Allow all users', inputType: 'boolean', defaultValue: 'true' },
       { name: 'DISCORD_HOME_CHANNEL', label: 'Home channel ID', placeholder: 'optional default channel' },
     ],
     setupSteps: [
@@ -240,7 +245,7 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     label: 'Slack',
     kind: 'bot',
     summary: 'Slack Events API, slash commands, channels, DMs, and threads.',
-    requiredEnv: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_ALLOWED_USERS'],
+    requiredEnv: ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'],
     setupFlow: 'socket_mode',
     primaryAction: 'Save Socket Mode tokens',
     connectionMode: 'Slack Socket Mode WebSocket; no public Events URL required.',
@@ -249,7 +254,8 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     credentials: [
       { name: 'SLACK_BOT_TOKEN', label: 'Bot User OAuth Token', required: true, secret: true, placeholder: 'xoxb-...' },
       { name: 'SLACK_APP_TOKEN', label: 'App-Level Token', required: true, secret: true, placeholder: 'xapp-...' },
-      { name: 'SLACK_ALLOWED_USERS', label: 'Allowed Slack member IDs', required: true, placeholder: 'U01ABC2DEF3' },
+      { name: 'SLACK_ALLOWED_USERS', label: 'Allowed Slack member IDs', placeholder: 'U01ABC2DEF3' },
+      { name: 'SLACK_ALLOWED_CHANNELS', label: 'Allowed channel IDs', placeholder: 'C01ABC2DEF3' },
     ],
     setupSteps: [
       'Create a Slack app, preferably from a generated manifest.',
@@ -526,22 +532,30 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
   {
     slug: 'feishu',
     label: 'Feishu / Lark',
-    kind: 'webhook',
+    kind: 'bot',
     summary: 'Feishu/Lark bot events, comments, meetings, and threads.',
-    requiredEnv: ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_ALLOWED_USERS'],
-    setupFlow: 'webhook_callback',
+    requiredEnv: ['FEISHU_APP_ID', 'FEISHU_APP_SECRET'],
+    setupFlow: 'qr_scan',
     primaryAction: 'Create Feishu/Lark bot app',
-    connectionMode: 'Feishu event subscription callback or stream worker.',
-    publicEndpointRequired: true,
+    connectionMode: 'WebSocket',
+    publicEndpointRequired: false,
     credentials: [
-      { name: 'FEISHU_APP_ID', label: 'App ID', required: true },
-      { name: 'FEISHU_APP_SECRET', label: 'App secret', required: true, secret: true },
+      { name: 'FEISHU_APP_ID', label: 'App ID', required: true, requiredAt: 'start' },
+      { name: 'FEISHU_APP_SECRET', label: 'App secret', required: true, requiredAt: 'start', secret: true },
+      { name: 'FEISHU_ENCRYPT_KEY', label: 'Encrypt key', secret: true },
       { name: 'FEISHU_VERIFICATION_TOKEN', label: 'Verification token', secret: true },
-      { name: 'FEISHU_ALLOWED_USERS', label: 'Allowed user IDs', required: true },
+      { name: 'FEISHU_DOMAIN', label: 'Domain', inputType: 'select', defaultValue: 'feishu', options: [{ value: 'feishu', label: 'Feishu (China)' }, { value: 'lark', label: 'Lark (International)' }] },
+      { name: 'FEISHU_ALLOWED_USERS', label: 'Allowed user IDs' },
+      { name: 'FEISHU_ALLOWED_CHATS', label: 'Allowed chat IDs' },
     ],
+    pairing: {
+      type: 'qr', provider: 'feishu_device_qr', label: 'Feishu / Lark',
+      description: 'Register a bot by scanning with Feishu or Lark.',
+      scanTarget: 'Feishu / Lark', completion: 'App credentials are saved after confirmation.',
+    },
     setupSteps: [
       'Create an internal Feishu/Lark app and bot.',
-      'Subscribe to message events and configure callback verification.',
+      'Subscribe to message events using the persistent connection mode.',
       'Publish or install the app to the tenant, then start the hosted runner.',
     ],
     capabilities: { voice: true, images: true, files: true, threads: true, reactions: true, typing: true, streaming: true },
@@ -688,6 +702,8 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       { name: 'QQBOT_APP_ID', label: 'App ID', required: true },
       { name: 'QQBOT_SECRET', label: 'Secret', required: true, secret: true },
       { name: 'QQBOT_ALLOWED_USERS', label: 'Allowed QQ users', placeholder: 'optional allowlist' },
+      { name: 'QQBOT_ALLOWED_CHATS', label: 'Allowed chat IDs' },
+      { name: 'QQBOT_REQUIRE_MENTION', label: 'Only respond to mentions', inputType: 'boolean', defaultValue: 'true' },
     ],
     setupSteps: [
       'Create a QQ bot app and copy App ID and Secret.',

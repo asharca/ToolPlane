@@ -2,11 +2,12 @@
 
 import { useId, useState, type ComponentProps } from 'react';
 import { useTranslations } from 'next-intl';
-import { Folder, Monitor, TerminalIcon } from 'lucide-react';
+import { Folder, Monitor, Radio, TerminalIcon } from 'lucide-react';
 import { SandboxConsole } from './SandboxConsole';
 import { SandboxScreen, type SandboxDisplay } from './SandboxScreen';
+import { AgentMessagingPanel } from '../agents/AgentMessagingPanel';
 
-type View = 'terminal' | 'files' | 'screen';
+type View = 'terminal' | 'files' | 'screen' | 'channels';
 type ConsoleProps = Omit<ComponentProps<typeof SandboxConsole>, 'compact' | 'filesOnly' | 'terminalOnly'>;
 
 export function SandboxWorkspace({
@@ -26,11 +27,12 @@ export function SandboxWorkspace({
     { id: 'terminal' as const, label: t('terminal'), icon: TerminalIcon },
     { id: 'files' as const, label: t('files'), icon: Folder },
     ...(displays.length ? [{ id: 'screen' as const, label: t('screen'), icon: Monitor }] : []),
+    { id: 'channels' as const, label: t('channels'), icon: Radio },
   ];
 
   return (
     <div className="ui-panel flex h-[calc(100vh-13rem)] min-h-[34rem] flex-col overflow-hidden">
-      <div role="tablist" aria-label={t('sandboxViews')} className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-2">
+      <div role="tablist" aria-label={t('sandboxViews')} className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const selected = tab.id === view;
@@ -43,7 +45,7 @@ export function SandboxWorkspace({
               aria-selected={selected}
               aria-controls={`${id}-panel`}
               onClick={() => setView(tab.id)}
-              className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors ${selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+              className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors ${selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
             >
               <Icon className="size-4" />
               {tab.label}
@@ -59,6 +61,7 @@ export function SandboxWorkspace({
       >
         {view === 'terminal' ? <SandboxConsole {...consoleProps} terminalOnly compact /> : null}
         {view === 'files' ? <SandboxConsole {...consoleProps} filesOnly compact /> : null}
+        {view === 'channels' ? <AgentMessagingPanel slug={workspace} sandboxId={sandboxId} connections={[]} /> : null}
         {view === 'screen' && displays.length ? (
           <SandboxScreen
             workspace={workspace}

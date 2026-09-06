@@ -7,6 +7,7 @@ describe('toAgentChannelConnectionClientView', () => {
     const connection: AgentChannelConnectionView = {
       id: 'connection-1',
       agentId: 'agent-1',
+      sandboxId: 'sandbox-1',
       workspaceId: 'workspace-1',
       platform: 'telegram',
       platformLabel: 'Telegram',
@@ -17,6 +18,7 @@ describe('toAgentChannelConnectionClientView', () => {
       connectionMode: 'hosted',
       runnerSupported: true,
       credentialNames: ['botToken'],
+      credentialValues: { TELEGRAM_ALLOWED_USERS: '123' },
       missingStartCredentialNames: [],
       pairing: null,
       inboundToken: 'secret-inbound-token',
@@ -31,12 +33,15 @@ describe('toAgentChannelConnectionClientView', () => {
 
     expect(toAgentChannelConnectionClientView(connection)).toEqual({
       id: 'connection-1',
+      agentId: 'agent-1',
+      sandboxId: 'sandbox-1',
       platform: 'telegram',
       platformLabel: 'Telegram',
       name: 'Support bot',
       status: 'running',
       connectionMode: 'hosted',
       credentialNames: ['botToken'],
+      credentialValues: { TELEGRAM_ALLOWED_USERS: '123' },
       missingStartCredentialNames: [],
       pairing: null,
       lastError: null,

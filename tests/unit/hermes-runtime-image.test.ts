@@ -6,29 +6,25 @@ function readRepoFile(file: string) {
   return readFileSync(path.join(process.cwd(), file), 'utf8');
 }
 
-describe('Hermes hosted runner image contract', () => {
-  it('bundles a pinned Hermes checkout and runner venv in the app image', () => {
+describe('app image runtime contract', () => {
+  it('keeps archive tools without bundling Hermes channel adapters', () => {
     const dockerfile = readRepoFile('Dockerfile');
     const runtimeAssembler = readRepoFile('scripts/assemble-runtime.mjs');
 
-    expect(dockerfile).toContain('ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git');
-    expect(dockerfile).toContain('ARG HERMES_REF=7e8f50a14176e02b514631b0b04470acaadae32a');
-    expect(dockerfile).toContain('ARG HERMES_ARCHIVE_URL=');
+    expect(dockerfile).not.toContain('ARG HERMES_');
     expect(dockerfile).toContain('FROM ${NODE_IMAGE} AS python-runtime-base');
-    expect(dockerfile).toContain('FROM python-runtime-base AS hermes');
+    expect(dockerfile).not.toContain('FROM python-runtime-base AS hermes');
     expect(dockerfile).toContain('FROM python-runtime-base AS runtime');
     expect(dockerfile).toContain('Acquire::Retries "5";');
-    expect(dockerfile).toContain('/archive/${HERMES_REF}.tar.gz');
-    expect(dockerfile).toContain('/opt/hermes-agent');
-    expect(dockerfile).toContain('/opt/toolplane-hermes-venv');
-    expect(dockerfile).toContain('pip install ".[messaging,wecom,dingtalk]"');
+    expect(dockerfile).not.toContain('/opt/hermes-agent');
+    expect(dockerfile).toContain('python3');
     expect(dockerfile).toContain('ARG TOOLPLANE_VERSION=dev');
     expect(dockerfile).toContain('/app/dist/release/app/');
     expect(runtimeAssembler).toContain("path.join(outputRoot, '.toolplane-version')");
     expect(dockerfile).toContain('chown -R node:node /app /var/lib/toolplane');
   });
 
-  it('runs the prebuilt app image and wires bundled Hermes runtime through Docker Compose', () => {
+  it('runs the prebuilt app with brokers and archive storage but no channel Python path', () => {
     const compose = readRepoFile('docker-compose.yml');
     const envExample = readRepoFile('.env.example');
 
@@ -52,9 +48,8 @@ describe('Hermes hosted runner image contract', () => {
     expect(compose).toContain('TOOLPLANE_UPDATE_REPO: ${TOOLPLANE_UPDATE_REPO:-asharca/ToolPlane}');
     expect(compose).toContain('TOOLPLANE_UPDATE_ARTIFACT: ${TOOLPLANE_UPDATE_ARTIFACT:-toolplane-runtime-linux-amd64.tar.gz}');
     expect(compose).toContain('TOOLPLANE_RUNTIME_ROOT: /app');
-    expect(compose).toContain('HERMES_ROOT: /opt/hermes-agent');
-    expect(compose).toContain('TOOLPLANE_HERMES_ROOT: /opt/hermes-agent');
-    expect(compose).toContain('TOOLPLANE_PYTHON: /opt/toolplane-hermes-venv/bin/python');
+    expect(compose).not.toContain('HERMES_ROOT:');
+    expect(compose).not.toContain('TOOLPLANE_PYTHON:');
     expect(compose).toContain('${TOOLPLANE_HERMES_ARCHIVE_VOLUME:-toolplane_imports}:/var/lib/toolplane/imports');
     expect(compose).toContain('TOOLPLANE_HERMES_ARCHIVE_TMP_DIR: /var/lib/toolplane/imports');
     expect(compose).toContain('TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS: ${TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS:-14400000}');
