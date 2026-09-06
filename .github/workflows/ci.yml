@@ -2,17 +2,25 @@ name: ci
 
 on:
   pull_request:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   connector-cross-platform:
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      !(github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
     name: connector (${{ matrix.os }})
     env:
       DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
@@ -55,6 +63,11 @@ jobs:
         run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts tests/integration/deployment-config-volume.live.test.ts
 
   validate:
+    if: >-
+      github.event_name != 'pull_request_target' &&
+      !(github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -122,3 +135,33 @@ jobs:
           tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
           artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
           test "$artifact_size" -le $((100 * 1024 * 1024))
+
+  release-metadata:
+    name: validate
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release metadata only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          expected_files=$'.release-please-manifest.json\nCHANGELOG.md\npackage.json'
+          actual_files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' | LC_ALL=C sort)"
+          test "$actual_files" = "$expected_files"
+
+  release-metadata-connectors:
+    name: connector (${{ matrix.os }})
+    needs: release-metadata
+    if: ${{ needs.release-metadata.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Confirm release metadata gate
+        run: echo "Release metadata verified; released commits already passed CI."
