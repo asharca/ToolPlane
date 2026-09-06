@@ -21,7 +21,13 @@ import {
   getAssistantMarketTemplate,
   listAssistantMarketTemplates,
 } from '@/lib/market/skills';
-import { assistantChatSidebarCookieName } from '@/lib/chat/sidebar-preferences';
+import {
+  assistantChatExpandedCookieName,
+  assistantChatGroupPreferencesCookieName,
+  assistantChatSidebarCookieName,
+  parseBooleanRecordCookie,
+} from '@/lib/sidebar-preferences';
+import { parseSidebarGroupPreferencesCookie } from '@/lib/sidebar-groups';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,6 +61,12 @@ export default async function WorkspaceChatPage({
   if (!workspace) redirect('/app');
   const cookieStore = await cookies();
   const initialSidebarOpen = cookieStore.get(assistantChatSidebarCookieName(workspace.id))?.value !== 'false';
+  const initialExpandedAssistants = parseBooleanRecordCookie(
+    cookieStore.get(assistantChatExpandedCookieName(workspace.id))?.value,
+  );
+  const initialGroupPreferences = parseSidebarGroupPreferencesCookie(
+    cookieStore.get(assistantChatGroupPreferencesCookieName(workspace.id))?.value,
+  );
 
   if (query.agent || query.c) {
     const destination = new URLSearchParams();
@@ -140,6 +152,8 @@ export default async function WorkspaceChatPage({
       <WorkspaceAssistantChat
         slug={slug}
         workspaceId={workspace.id}
+        initialExpandedAssistants={initialExpandedAssistants}
+        initialGroupPreferences={initialGroupPreferences}
         initialSidebarOpen={initialSidebarOpen}
         startCreating={query.newAssistant === '1'}
         selectedAssistantId={activeAssistant?.id ?? null}

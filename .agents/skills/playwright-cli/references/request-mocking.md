@@ -2,6 +2,11 @@
 
 Intercept, mock, modify, and block network requests.
 
+Use only for intentionally isolated scenarios in the task's named session.
+Do not mock authentication, deployment status, or tool responses to make a real
+end-to-end check pass. Report which responses were mocked and remove this task's
+routes afterward; do not change routes in another user's session.
+
 ## CLI Route Commands
 
 ```bash

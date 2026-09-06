@@ -33,14 +33,16 @@ function setDesktopViewport(matches: boolean) {
   });
 }
 
-function renderChrome(isAdmin = false) {
+function renderChrome(isAdmin = false, initialSidebarCollapsed = false) {
   return render(
     <DashboardChrome
       slug="smoke"
+      workspaceId="workspace-1"
       workspaceName="Smoke Workspace"
       userLabel="smoke@example.com"
       supportEmail="support@example.com"
       isAdmin={isAdmin}
+      initialSidebarCollapsed={initialSidebarCollapsed}
       workspaces={workspaces}
     >
       <main>Workspace content</main>
@@ -75,6 +77,12 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
   });
 
+  it('uses the server-seeded collapsed state on the first render', () => {
+    renderChrome(false, true);
+
+    expect(screen.getByRole('complementary')).toHaveAttribute('data-collapsed', 'true');
+  });
+
   it('collapses and expands the desktop sidebar', async () => {
     const user = userEvent.setup();
     renderChrome();
@@ -86,6 +94,7 @@ describe('DashboardChrome sidebar', () => {
     expect(collapseButton.parentElement).toHaveClass('lg:justify-between');
     await user.click(collapseButton);
     expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    expect(document.cookie).toContain('toolplane_dashboard_sidebar_workspace-1=true');
 
     const expandButton = screen.getByRole('button', { name: 'Expand sidebar' });
     expect(expandButton).toHaveAttribute('aria-controls', 'dashboard-sidebar');

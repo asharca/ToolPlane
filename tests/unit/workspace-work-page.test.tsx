@@ -13,9 +13,11 @@ const mocks = vi.hoisted(() => ({
   getWorkSession: vi.fn(),
   effectiveStatus: vi.fn(),
   surface: vi.fn(),
+  cookies: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ redirect: vi.fn(), notFound: () => { throw new Error('not found'); } }));
+vi.mock('next/headers', () => ({ cookies: mocks.cookies }));
 vi.mock('next-intl/server', () => ({
   getTranslations: vi.fn().mockResolvedValue((key: string) => key),
 }));
@@ -56,6 +58,7 @@ describe('Workspace Work page', () => {
     mocks.listWorkSessions.mockResolvedValue([]);
     mocks.getWorkSession.mockResolvedValue(null);
     mocks.effectiveStatus.mockReturnValue('provisioning');
+    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue(undefined) });
     mocks.listAgents.mockResolvedValue([
       {
         id: 'agent-hermes', name: 'Hermes researcher', runtimeKind: 'hermes',
@@ -100,6 +103,55 @@ describe('Workspace Work page', () => {
         }),
         expect.objectContaining({ id: 'agent-pi', pinned: false, supportsWork: true }),
       ],
+    }));
+  });
+
+  it('seeds the Work sidebar from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({ get: vi.fn().mockReturnValue({ value: 'false' }) });
+
+    render(await WorkspaceWorkPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({}),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ initialSidebarOpen: false }));
+  });
+
+  it('seeds Work agent disclosures from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) => name === 'toolplane_work_agent_groups_workspace-1'
+        ? { value: '%7B%22agent-pi%22%3Afalse%7D' }
+        : undefined),
+    });
+
+    render(await WorkspaceWorkPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({}),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      initialExpandedAgents: { 'agent-pi': false },
+    }));
+  });
+
+  it('seeds Work agent groups from its workspace cookie', async () => {
+    mocks.cookies.mockResolvedValue({
+      get: vi.fn((name: string) => name === 'toolplane_work_agent_group_preferences_workspace-1'
+        ? { value: '%7B%22groups%22%3A%5B%7B%22id%22%3A%22group-1%22%2C%22name%22%3A%22Engineering%22%7D%5D%2C%22assignments%22%3A%7B%22agent-pi%22%3A%22group-1%22%7D%2C%22collapsed%22%3A%7B%22group-1%22%3Afalse%7D%7D' }
+        : undefined),
+    });
+
+    render(await WorkspaceWorkPage({
+      params: Promise.resolve({ workspace: 'acme' }),
+      searchParams: Promise.resolve({}),
+    }));
+
+    expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({
+      initialGroupPreferences: {
+        groups: [{ id: 'group-1', name: 'Engineering' }],
+        assignments: { 'agent-pi': 'group-1' },
+        collapsed: { 'group-1': false },
+      },
     }));
   });
 

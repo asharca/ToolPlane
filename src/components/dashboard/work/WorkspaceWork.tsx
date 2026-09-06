@@ -28,11 +28,14 @@ import {
   FileText,
   FileOutput,
   Folder,
+  FolderPlus,
+  GripVertical,
   Loader2,
   ListFilter,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Play,
   Plus,
   Radio,
@@ -58,6 +61,7 @@ import { WorkComposer } from './WorkComposer';
 import type { ComposerReference } from '@/lib/work/composer-types';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
+import { SidebarGroupDialog } from '@/components/dashboard/SidebarGroupDialog';
 import {
   AssistantMarkdown,
   AssistantReply,
@@ -73,6 +77,21 @@ import { activeConversationMessages, isConversationControl, messageCompaction } 
 import { COMMAND_RESULT_PART, parseRuntimeCommand, sessionRuntimeCommands } from '@/lib/agents/runtime-commands';
 import type { executeRuntimeCommand } from '@/lib/agents/runtime-command-service';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
+import {
+  usePersistentBoolean,
+  usePersistentBooleanRecord,
+} from '@/lib/use-persistent-boolean';
+import {
+  workAgentGroupPreferencesCookieName,
+  workAgentGroupsCookieName,
+  workSidebarCookieName,
+} from '@/lib/sidebar-preferences';
+import {
+  createSidebarGroupId,
+  EMPTY_SIDEBAR_GROUP_PREFERENCES,
+  type SidebarGroupPreferences,
+} from '@/lib/sidebar-groups';
+import { usePersistentSidebarGroups } from '@/lib/use-persistent-sidebar-groups';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import {
   Dialog,
@@ -155,6 +174,16 @@ type ConversationDetail = ConversationSummary & {
   hermesModel?: string | null;
 };
 
+type WorkSidebarAgent = {
+  agent: WorkAgent;
+  sessions: WorkItem[];
+  channels: Array<ConversationSummary & { label: string }>;
+};
+
+type WorkSidebarEntry =
+  | { kind: 'group'; id: string; name: string; editable: boolean; count: number }
+  | { kind: 'agent'; groupId: string | null; item: WorkSidebarAgent };
+
 type WorkTiming = {
   startedAt: number;
   completedAt?: number;
@@ -205,6 +234,8 @@ const STOPPABLE_STATUSES = new Set(['queued', 'running', 'waiting_approval']);
 const MESSAGEABLE_STATUSES = new Set(['idle', 'waiting_user', 'completed', 'failed']);
 const ARCHIVABLE_STATUSES = new Set(['idle', 'completed', 'failed', 'cancelled']);
 const EMPTY_WORK_ACTIVITIES: WorkActivity[] = [];
+const EMPTY_EXPANDED_AGENTS: Record<string, boolean> = {};
+const UNGROUPED_SIDEBAR_GROUP_ID = '__ungrouped__';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -908,6 +939,9 @@ export function WorkspaceWork({
   conversations = [],
   selectedConversation = null,
   hasChannels = false,
+  initialExpandedAgents = EMPTY_EXPANDED_AGENTS,
+  initialGroupPreferences = EMPTY_SIDEBAR_GROUP_PREFERENCES,
+  initialSidebarOpen = true,
 }: {
   slug: string;
   workspaceId: string;
@@ -920,6 +954,9 @@ export function WorkspaceWork({
   conversations?: ConversationSummary[];
   selectedConversation?: ConversationDetail | null;
   hasChannels?: boolean;
+  initialExpandedAgents?: Record<string, boolean>;
+  initialGroupPreferences?: SidebarGroupPreferences;
+  initialSidebarOpen?: boolean;
 }) {
   const t = useTranslations('console.work');
   const tAgents = useTranslations('console.agents');
@@ -939,9 +976,22 @@ export function WorkspaceWork({
   const conversation = creatingMode ? null : selectedConversation;
   const [conversationBusy, setConversationBusy] = useState(false);
   const [mobilePane, setMobilePane] = useState<'sessions' | 'work'>('work');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
+    `toolplane:work-sidebar:${workspaceId}`,
+    initialSidebarOpen,
+    workSidebarCookieName(workspaceId),
+  );
   const [sessionQuery, setSessionQuery] = useState('');
-  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
+  const [expandedAgents, setExpandedAgents] = usePersistentBooleanRecord(
+    `toolplane:work-agent-groups:${workspaceId}`,
+    initialExpandedAgents,
+    workAgentGroupsCookieName(workspaceId),
+  );
+  const [groupPreferences, setGroupPreferences] = usePersistentSidebarGroups(
+    `toolplane:work-agent-sidebar-groups:${workspaceId}`,
+    initialGroupPreferences,
+    workAgentGroupPreferencesCookieName(workspaceId),
+  );
   const selected = creatingMode || conversation ? null : liveSelected?.id === selectedWorkSessionId ? liveSelected : initialSelected;
   const initialAgentId = selectedConversation?.agentId ?? initialSelected?.agentId
     ?? workAgents.find((item) => item.id === requestedAgentId)?.id
@@ -972,6 +1022,10 @@ export function WorkspaceWork({
   const [workingDirectory, setWorkingDirectory] = useState(initialSelected?.workingDirectory ?? '.');
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(null);
+  const [groupEditor, setGroupEditor] = useState<{ id: string | null; name: string } | null>(null);
+  const [draggingAgentId, setDraggingAgentId] = useState<string | null>(null);
+  const draggingAgentIdRef = useRef<string | null>(null);
+  const [dropGroupId, setDropGroupId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{ scope: string; items: ComposerReference[] }>({ scope: '', items: [] });
@@ -1099,7 +1153,7 @@ export function WorkspaceWork({
     cancelled: t('statusCancelled'),
     archived: t('statusArchived'),
   };
-  const visibleAgents = useMemo(() => {
+  const visibleAgents = useMemo<WorkSidebarAgent[]>(() => {
     const query = sessionQuery.trim().toLocaleLowerCase();
     return agents.flatMap((item) => {
       const agentSessions = items.filter((session) => session.agentId === item.id);
@@ -1125,9 +1179,47 @@ export function WorkspaceWork({
     });
   }, [agents, items, conversations, sessionQuery, tChannels, tAgents]);
   const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
-  const allAgentsExpanded = agents.length > 0 && agents.every((item) => (
-    expandedAgents[item.id] ?? (item.id === activeAgentId || conversations.some((conversation) => conversation.agentId === item.id))
-  ));
+  const groupedAgents = useMemo(() => {
+    const agentsByGroup = new Map<string, WorkSidebarAgent[]>(
+      groupPreferences.groups.map((group) => [group.id, []]),
+    );
+    const ungrouped: WorkSidebarAgent[] = [];
+    for (const item of visibleAgents) {
+      const group = agentsByGroup.get(groupPreferences.assignments[item.agent.id] ?? '');
+      if (group) group.push(item);
+      else ungrouped.push(item);
+    }
+    return {
+      groups: groupPreferences.groups.map((group) => ({
+        group,
+        agents: agentsByGroup.get(group.id) ?? [],
+      })),
+      ungrouped,
+    };
+  }, [groupPreferences.assignments, groupPreferences.groups, visibleAgents]);
+  const sidebarAgentEntries = useMemo<WorkSidebarEntry[]>(() => {
+    if (!groupPreferences.groups.length) {
+      return visibleAgents.map((item) => ({ kind: 'agent', groupId: null, item }));
+    }
+    const entries: WorkSidebarEntry[] = [];
+    for (const { group, agents: groupAgents } of groupedAgents.groups) {
+      if (!sessionQuery.trim() || groupAgents.length) {
+        entries.push({ kind: 'group', id: group.id, name: group.name, editable: true, count: groupAgents.length });
+        entries.push(...groupAgents.map((item) => ({ kind: 'agent' as const, groupId: group.id, item })));
+      }
+    }
+    if (!sessionQuery || groupedAgents.ungrouped.length) {
+      entries.push({
+        kind: 'group',
+        id: UNGROUPED_SIDEBAR_GROUP_ID,
+        name: t('ungrouped'),
+        editable: false,
+        count: groupedAgents.ungrouped.length,
+      });
+      entries.push(...groupedAgents.ungrouped.map((item) => ({ kind: 'agent' as const, groupId: UNGROUPED_SIDEBAR_GROUP_ID, item })));
+    }
+    return entries;
+  }, [groupPreferences.groups.length, groupedAgents, sessionQuery, t, visibleAgents]);
 
   const refreshSelected = useCallback(async () => {
     if (!selectedWorkSessionId || creatingMode) return false;
@@ -1261,7 +1353,17 @@ export function WorkspaceWork({
     };
   }, [creatingMode, refreshSelected, selectedActive, selectedWorkSessionId]);
 
+  function openAgentGroup(nextAgentId: string) {
+    setGroupPreferences((current) => {
+      const groupId = current.assignments[nextAgentId];
+      if (!groupId || !current.collapsed[groupId]) return current;
+      return { ...current, collapsed: { ...current.collapsed, [groupId]: false } };
+    });
+  }
+
   function startNewWork(nextAgentId = agentId) {
+    setExpandedAgents((current) => ({ ...current, [nextAgentId]: true }));
+    openAgentGroup(nextAgentId);
     setAgentId(nextAgentId);
     setSandboxId('');
     setDraftSelectionKey(selectionKey);
@@ -1436,6 +1538,132 @@ export function WorkspaceWork({
     router.refresh();
   }
 
+  function setAllAgentSections(collapsed: boolean) {
+    setExpandedAgents(Object.fromEntries(agents.map((item) => [item.id, !collapsed])));
+    setGroupPreferences((current) => {
+      if (!current.groups.length) return current;
+      return {
+        ...current,
+        collapsed: Object.fromEntries([
+          ...current.groups.map((group) => [group.id, collapsed]),
+          [UNGROUPED_SIDEBAR_GROUP_ID, collapsed],
+        ]),
+      };
+    });
+  }
+
+  function saveAgentGroup(name: string) {
+    if (!groupEditor) return;
+    setGroupPreferences((current) => {
+      if (groupEditor.id) {
+        return {
+          ...current,
+          groups: current.groups.map((group) => (
+            group.id === groupEditor.id ? { ...group, name } : group
+          )),
+        };
+      }
+      const id = createSidebarGroupId();
+      return {
+        ...current,
+        groups: [...current.groups, { id, name }],
+        collapsed: { ...current.collapsed, [id]: false },
+      };
+    });
+    setGroupEditor(null);
+  }
+
+  function deleteAgentGroup(groupId: string) {
+    const group = groupPreferences.groups.find((item) => item.id === groupId);
+    if (!group || !window.confirm(t('deleteGroupConfirm', { name: group.name }))) return;
+    setGroupPreferences((current) => {
+      const assignments = Object.fromEntries(
+        Object.entries(current.assignments).filter(([, assignedGroupId]) => assignedGroupId !== groupId),
+      );
+      const collapsed = { ...current.collapsed };
+      delete collapsed[groupId];
+      return {
+        ...current,
+        groups: current.groups.filter((item) => item.id !== groupId),
+        assignments,
+        collapsed,
+      };
+    });
+  }
+
+  function assignAgentToGroup(agentId: string, groupId: string | null) {
+    setGroupPreferences((current) => {
+      const assignments = { ...current.assignments };
+      if (groupId) assignments[agentId] = groupId;
+      else delete assignments[agentId];
+      return {
+        ...current,
+        assignments,
+        ...(groupId ? { collapsed: { ...current.collapsed, [groupId]: false } } : {}),
+      };
+    });
+  }
+
+  function renderAgentGroup(entry: Extract<WorkSidebarEntry, { kind: 'group' }>) {
+    const expanded = Boolean(sessionQuery.trim()) || !groupPreferences.collapsed[entry.id];
+    const targetGroupId = entry.editable ? entry.id : null;
+    const label = expanded ? t('hideGroup', { name: entry.name }) : t('showGroup', { name: entry.name });
+    return (
+      <li key={entry.id} data-sidebar-group-id={entry.id} className="py-1">
+        <div
+          onDragOver={(event) => {
+            const agentId = draggingAgentIdRef.current;
+            const assignedGroupId = agentId ? groupPreferences.assignments[agentId] ?? null : null;
+            if (!agentId || assignedGroupId === targetGroupId) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            setDropGroupId(entry.id);
+          }}
+          onDrop={(event) => {
+            const agentId = draggingAgentIdRef.current;
+            if (!agentId) return;
+            event.preventDefault();
+            assignAgentToGroup(agentId, targetGroupId);
+            draggingAgentIdRef.current = null;
+            setDraggingAgentId(null);
+            setDropGroupId(null);
+          }}
+          className={cx(
+            'group/sidebar-group flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground',
+            dropGroupId === entry.id && 'bg-muted ring-1 ring-inset ring-brand/50',
+          )}
+        >
+          <button
+            type="button"
+            aria-label={label}
+            aria-expanded={expanded}
+            title={label}
+            onClick={() => setGroupPreferences((current) => ({
+              ...current,
+              collapsed: { ...current.collapsed, [entry.id]: !current.collapsed[entry.id] },
+            }))}
+            className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium"
+          >
+            <Folder className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+            <span className="text-[10px] text-muted-foreground">{entry.count}</span>
+            <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+          </button>
+          {entry.editable ? (
+            <>
+              <button type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: entry.id, name: entry.name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
+                <Pencil className="size-3.5" />
+              </button>
+              <button type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAgentGroup(entry.id)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
+                <Trash2 className="size-3.5" />
+              </button>
+            </>
+          ) : null}
+        </div>
+      </li>
+    );
+  }
+
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
   const draftHermesModelReady = agent?.runtimeKind === 'hermes'
     && hermesDraftSelection?.agentId === agent.id
@@ -1503,18 +1731,28 @@ export function WorkspaceWork({
                 <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
                   <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('listOptions')}</p>
                   {agents.length ? (
-                    <Popover.Close asChild>
-                      <button
-                        type="button"
-                        onClick={() => setExpandedAgents(Object.fromEntries(agents.map((item) => [item.id, !allAgentsExpanded])))}
-                        className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent"
-                      >
-                        {allAgentsExpanded ? <ChevronsDownUp className="size-4" /> : <ChevronsUpDown className="size-4" />}
-                        {t(allAgentsExpanded ? 'collapseAll' : 'expandAll')}
-                      </button>
-                    </Popover.Close>
+                    <>
+                      <Popover.Close asChild>
+                        <button type="button" onClick={() => setAllAgentSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                          <ChevronsUpDown className="size-4" />
+                          {t('expandAll')}
+                        </button>
+                      </Popover.Close>
+                      <Popover.Close asChild>
+                        <button type="button" onClick={() => setAllAgentSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                          <ChevronsDownUp className="size-4" />
+                          {t('collapseAll')}
+                        </button>
+                      </Popover.Close>
+                    </>
                   ) : null}
                   <div className="my-1 h-px bg-border" />
+                  <Popover.Close asChild>
+                    <button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                      <FolderPlus className="size-4" />
+                      {t('newGroup')}
+                    </button>
+                  </Popover.Close>
                   <Popover.Close asChild>
                     <Link href={`/app/${encodeURIComponent(slug)}/agents?returnTo=${encodeURIComponent(workReturnTo)}`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
                       <Settings2 className="size-4" />
@@ -1526,14 +1764,38 @@ export function WorkspaceWork({
             </Popover.Root>
           </div>
           <ul>
-            {visibleAgents.map(({ agent: itemAgent, sessions: agentSessions, channels: agentChannels }) => {
+            {sidebarAgentEntries.map((entry) => {
+              if (entry.kind === 'group') return renderAgentGroup(entry);
+              const { agent: itemAgent, sessions: agentSessions, channels: agentChannels } = entry.item;
+              if (entry.groupId && !sessionQuery.trim() && groupPreferences.collapsed[entry.groupId]) return null;
               const expanded = Boolean(sessionQuery)
                 || (expandedAgents[itemAgent.id] ?? (itemAgent.id === activeAgentId || agentChannels.length > 0));
               const row = (
                 <div className={cx(
                   'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
                   itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
+                  draggingAgentId === itemAgent.id && 'opacity-50',
                 )}>
+                  <button
+                    type="button"
+                    draggable
+                    aria-label={t('moveToGroup')}
+                    title={t('moveToGroup')}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('application/x-toolplane-agent', itemAgent.id);
+                      draggingAgentIdRef.current = itemAgent.id;
+                      setDraggingAgentId(itemAgent.id);
+                    }}
+                    onDragEnd={() => {
+                      draggingAgentIdRef.current = null;
+                      setDraggingAgentId(null);
+                      setDropGroupId(null);
+                    }}
+                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                  >
+                    <GripVertical className="size-3.5" />
+                  </button>
                   <button
                     type="button"
                     aria-expanded={expanded}
@@ -1587,7 +1849,7 @@ export function WorkspaceWork({
                 </div>
               );
               return (
-                <li key={itemAgent.id} className="py-0.5">
+                <li key={`agent-${itemAgent.id}`} className={cx('py-0.5', entry.groupId && 'ml-2 border-l border-border/60 pl-1')}>
                   <ContextMenu.Root modal={false}>
                     <ContextMenu.Trigger asChild>{row}</ContextMenu.Trigger>
                     <ContextMenu.Portal>
@@ -2038,6 +2300,18 @@ export function WorkspaceWork({
           </div>
         </div>
       ) : null}
+
+      <SidebarGroupDialog
+        initialName={groupEditor?.name ?? ''}
+        open={Boolean(groupEditor)}
+        title={t(groupEditor?.id ? 'renameGroup' : 'newGroup')}
+        nameLabel={t('groupName')}
+        placeholder={t('groupNamePlaceholder')}
+        cancelLabel={common('cancel')}
+        submitLabel={groupEditor?.id ? common('save') : common('create')}
+        onClose={() => setGroupEditor(null)}
+        onSubmit={saveAgentGroup}
+      />
 
       <Dialog open={Boolean(deleteAgentTarget)} onOpenChange={(open) => { if (!open) setDeleteAgentTarget(null); }}>
         <DialogPortal>

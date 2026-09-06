@@ -60,12 +60,56 @@ class WorkEventSource {
 
 afterEach(() => {
   WorkEventSource.latest = null;
+  window.localStorage.removeItem('toolplane:work-sidebar:workspace-1');
+  window.localStorage.removeItem('toolplane:work-agent-groups:workspace-1');
+  window.localStorage.removeItem('toolplane:work-agent-sidebar-groups:workspace-1');
+  document.cookie = 'toolplane_work_sidebar_workspace-1=; Path=/; Max-Age=0';
+  document.cookie = 'toolplane_work_agent_groups_workspace-1=; Path=/; Max-Age=0';
+  document.cookie = 'toolplane_work_agent_group_preferences_workspace-1=; Path=/; Max-Age=0';
   vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('Chat, Work, and Knowledge surfaces', () => {
+  it('restores Work sidebar and agent disclosure preferences', async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem('toolplane:work-sidebar:workspace-1');
+    window.localStorage.removeItem('toolplane:work-agent-groups:workspace-1');
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    const firstRender = render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      agents={[agent]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+
+    await user.click(screen.getByRole('button', { name: 'Builder' }));
+    expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-groups:workspace-1')!)).toEqual({
+      'agent-1': false,
+    });
+    expect(document.cookie).toContain('toolplane_work_agent_groups_workspace-1=%7B%22agent-1%22%3Afalse%7D');
+    await user.click(screen.getByRole('button', { name: 'Hide Agents and work sessions' }));
+    expect(window.localStorage.getItem('toolplane:work-sidebar:workspace-1')).toBe('false');
+    expect(document.cookie).toContain('toolplane_work_sidebar_workspace-1=false');
+    firstRender.unmount();
+    window.localStorage.removeItem('toolplane:work-agent-groups:workspace-1');
+
+    render(<WorkspaceWork
+      slug="acme"
+      workspaceId="workspace-1"
+      initialExpandedAgents={{ 'agent-1': false }}
+      initialSidebarOpen={false}
+      agents={[agent]}
+      sessions={[]}
+      selectedWorkSessionId={null}
+    />);
+    expect(document.querySelector('aside')).toHaveClass('hidden');
+    expect(screen.getAllByRole('button', { name: 'Show Agents and work sessions' })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Builder' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('renders native and legacy command output as ordinary copyable assistant replies, without a command accordion', () => {
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'claude-code', sandboxes: [] };
     const session = {
@@ -386,6 +430,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork',
     );
     fireEvent.click(screen.getByRole('button', { name: 'List options' }));
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Manage agents' })).toHaveAttribute(
       'href',
       '/app/acme/agents?returnTo=%2Fapp%2Facme%2Fwork',
@@ -458,6 +503,36 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
     expect(screen.queryByText('Run budget')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+  });
+
+  it('groups Work agents, opens the target group after a drop, and persists the workspace preference', async () => {
+    const user = userEvent.setup();
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[]} selectedWorkSessionId={null} />);
+
+    await user.click(screen.getByRole('button', { name: 'List options' }));
+    await user.click(screen.getByRole('button', { name: 'New group' }));
+    await user.type(screen.getByRole('textbox', { name: 'Group name' }), 'Engineering');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    const group = screen.getByText('Engineering').closest('[data-sidebar-group-id]') as HTMLElement;
+    await user.click(screen.getByRole('button', { name: 'Hide Engineering' }));
+    expect(screen.getByRole('button', { name: 'Show Engineering' })).toHaveAttribute('aria-expanded', 'false');
+
+    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Move to group' }), { dataTransfer });
+    fireEvent.dragOver(group.firstElementChild!, { dataTransfer });
+    fireEvent.drop(group.firstElementChild!, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Hide Engineering' })).toHaveAttribute('aria-expanded', 'true');
+      expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-sidebar-groups:workspace-1')!)).toEqual(expect.objectContaining({
+        groups: [expect.objectContaining({ name: 'Engineering' })],
+        assignments: { 'agent-1': expect.any(String) },
+      }));
+    });
+    const builder = screen.getByRole('button', { name: 'Builder' }).closest('li')!;
+    expect(group.compareDocumentPosition(builder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows Cherry-style thinking effort control for Hermes Work', async () => {

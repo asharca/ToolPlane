@@ -2,6 +2,11 @@
 
 Capture browser automation sessions as video for debugging, documentation, or verification. Produces WebM (VP8/VP9 codec).
 
+Record only when the requested deliverable needs video. Use the task's named
+session and keep recordings under `.playwright-cli/`. The scripted overlays below
+are optional presentation examples, not UI validation steps; inspect support in
+the installed version before using them. For bug evidence, leave the UI unaltered.
+
 ## Basic Recording
 
 ```bash
@@ -9,7 +14,7 @@ Capture browser automation sessions as video for debugging, documentation, or ve
 playwright-cli open
 
 # Start recording
-playwright-cli video-start demo.webm
+playwright-cli video-start .playwright-cli/tp-check-demo.webm
 
 # Add a chapter marker for section transitions
 playwright-cli video-chapter "Getting Started" --description="Opening the homepage" --duration=2000
@@ -33,14 +38,15 @@ playwright-cli video-stop
 
 ```bash
 # Include context in filename
-playwright-cli video-start recordings/login-flow-2024-01-15.webm
-playwright-cli video-start recordings/checkout-test-run-42.webm
+playwright-cli video-start .playwright-cli/tp-check-login.webm
+playwright-cli video-start .playwright-cli/tp-check-checkout.webm
 ```
 
-### 2. Record entire hero scripts.
+### 2. Optional narrated demos
 
-When recording a video for the user or as a proof of work, it is best to create a code snippet and execute it with run-code.
-It allows inserting appropriate pauses between the actions and annotating the video. There are new Playwright APIs for that.
+For a requested narrated demo, a `run-code` script can add pauses and annotations.
+Use the basic CLI recording above for unaltered bug evidence. The script below
+requires screencast APIs that may not exist in the installed Playwright version.
 
 1) Perform scenario using CLI and take note of all locators and actions. You'll need those locators to request their bounding boxes for highlight.
 2) Create a file with the intended script for video (below). Use pressSequentially w/ delay for nice typing, make reasonable pauses.
@@ -50,13 +56,11 @@ It allows inserting appropriate pauses between the actions and annotating the vi
 
 ```js
 async page => {
-  await page.screencast.start({ path: 'video.webm', size: { width: 1280, height: 800 } });
+  await page.screencast.start({ path: '.playwright-cli/tp-check-demo.webm', size: { width: 1280, height: 800 } });
   await page.goto('https://demo.playwright.dev/todomvc');
 
   // Show a chapter card — blurs the page and shows a dialog.
   // Blocks until duration expires, then auto-removes.
-  // Use this for simple use cases, but always feel free to hand-craft your own beautiful
-  // overlay via await page.screencast.showOverlay().
   await page.screencast.showChapter('Adding Todo Items', {
     description: 'We will add several items to the todo list.',
     duration: 2000,
@@ -116,8 +120,6 @@ async page => {
   await page.screencast.stop();
 }
 ```
-
-Embrace creativity, overlays are powerful.
 
 ### Overlay API Summary
 

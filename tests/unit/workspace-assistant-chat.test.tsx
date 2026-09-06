@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
@@ -54,6 +54,8 @@ function renderChat(
     }],
     }],
   initialSidebarOpen = true,
+  initialExpandedAssistants: Parameters<typeof WorkspaceAssistantChat>[0]['initialExpandedAssistants'] = {},
+  initialGroupPreferences: Parameters<typeof WorkspaceAssistantChat>[0]['initialGroupPreferences'] = undefined,
 ) {
   return render(<WorkspaceAssistantChat
     assistants={assistants}
@@ -63,6 +65,8 @@ function renderChat(
     reasoningAvailable
     selectedAssistantId="assistant-1"
     selectedThreadId="thread-1"
+    initialExpandedAssistants={initialExpandedAssistants}
+    initialGroupPreferences={initialGroupPreferences}
     initialSidebarOpen={initialSidebarOpen}
     slug="acme"
     startCreating={startCreating}
@@ -77,6 +81,9 @@ describe('WorkspaceAssistantChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    document.cookie = 'toolplane_assistant_chat_sidebar_workspace-1=; Path=/; Max-Age=0';
+    document.cookie = 'toolplane_assistant_chat_expanded_workspace-1=; Path=/; Max-Age=0';
+    document.cookie = 'toolplane_assistant_chat_group_preferences_workspace-1=; Path=/; Max-Age=0';
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -104,6 +111,30 @@ describe('WorkspaceAssistantChat', () => {
       .toHaveAttribute('aria-pressed', 'false'));
   });
 
+  it('restores individual assistant conversation disclosures after a refresh', async () => {
+    const user = userEvent.setup();
+    const firstRender = renderChat();
+
+    await user.click(screen.getByRole('button', { name: 'Helper' }));
+    expect(JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-expanded:workspace-1')!)).toEqual({
+      'assistant-1': false,
+    });
+    expect(document.cookie).toContain('toolplane_assistant_chat_expanded_workspace-1=%7B%22assistant-1%22%3Afalse%7D');
+    firstRender.unmount();
+
+    renderChat();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Helper' }))
+      .toHaveAttribute('aria-expanded', 'false'));
+  });
+
+  it('uses server-seeded assistant disclosures on the first render', async () => {
+    renderChat(undefined, false, undefined, null, [], undefined, true, { 'assistant-1': false });
+
+    expect(screen.getByRole('button', { name: 'Helper' })).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(document.cookie)
+      .toContain('toolplane_assistant_chat_expanded_workspace-1=%7B%22assistant-1%22%3Afalse%7D'));
+  });
+
   it('uses the server-seeded collapsed state before hydrating browser preferences', async () => {
     renderChat(undefined, false, undefined, null, [], undefined, false);
 
@@ -118,6 +149,8 @@ describe('WorkspaceAssistantChat', () => {
 
     expect(screen.getByRole('button', { name: 'Add assistant' })).toHaveTextContent('Add assistant');
     await user.click(screen.getByRole('button', { name: 'List options' }));
+    expect(screen.getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Choose from assistant market' })).toHaveAttribute(
       'href',
       '/app/acme/market/assistants',
@@ -127,6 +160,44 @@ describe('WorkspaceAssistantChat', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add assistant' }));
     expect(screen.getByRole('dialog', { name: 'Add assistant' })).toBeInTheDocument();
+  });
+
+  it('groups assistants, opens the target group after a drop, and persists the workspace preference', async () => {
+    const user = userEvent.setup();
+    renderChat();
+
+    await user.click(screen.getByRole('button', { name: 'List options' }));
+    await user.click(screen.getByRole('button', { name: 'New group' }));
+    await user.type(screen.getByRole('textbox', { name: 'Group name' }), 'Research');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    const group = screen.getByText('Research').closest('[data-sidebar-group-id]') as HTMLElement;
+    await user.click(screen.getByRole('button', { name: 'Hide Research' }));
+    expect(screen.getByRole('button', { name: 'Show Research' })).toHaveAttribute('aria-expanded', 'false');
+
+    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Move to group' }), { dataTransfer });
+    fireEvent.dragOver(group.firstElementChild!, { dataTransfer });
+    fireEvent.drop(group.firstElementChild!, { dataTransfer });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Hide Research' })).toHaveAttribute('aria-expanded', 'true');
+      expect(within(group).getByRole('link', { name: 'Helper' })).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-groups:workspace-1')!)).toEqual(expect.objectContaining({
+        groups: [expect.objectContaining({ name: 'Research' })],
+        assignments: { 'assistant-1': expect.any(String) },
+      }));
+    });
+  });
+
+  it('uses server-seeded assistant groups before browser preferences load', () => {
+    renderChat(undefined, false, undefined, null, [], undefined, true, {}, {
+      groups: [{ id: 'group-research', name: 'Research' }],
+      assignments: { 'assistant-1': 'group-research' },
+      collapsed: { 'group-research': true },
+    });
+
+    expect(screen.getByRole('button', { name: 'Show Research' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('uses the API step limit and enables persisted branch regeneration', async () => {

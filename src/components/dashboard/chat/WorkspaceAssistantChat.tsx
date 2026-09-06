@@ -15,7 +15,10 @@ import {
   ChevronsUpDown,
   Cpu,
   Eye,
+  Folder,
+  FolderPlus,
   GitBranch,
+  GripVertical,
   ListFilter,
   Loader2,
   MessageSquare,
@@ -50,10 +53,24 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
+import { SidebarGroupDialog } from '@/components/dashboard/SidebarGroupDialog';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import { estimatePromptTokens } from '@/lib/prompt-tokens';
-import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
-import { assistantChatSidebarCookieName } from '@/lib/chat/sidebar-preferences';
+import {
+  usePersistentBoolean,
+  usePersistentBooleanRecord,
+} from '@/lib/use-persistent-boolean';
+import {
+  assistantChatExpandedCookieName,
+  assistantChatGroupPreferencesCookieName,
+  assistantChatSidebarCookieName,
+} from '@/lib/sidebar-preferences';
+import {
+  createSidebarGroupId,
+  EMPTY_SIDEBAR_GROUP_PREFERENCES,
+  type SidebarGroupPreferences,
+} from '@/lib/sidebar-groups';
+import { usePersistentSidebarGroups } from '@/lib/use-persistent-sidebar-groups';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
 
 type ProviderOption = ModelProviderOption & { format: string };
@@ -106,6 +123,9 @@ export type ChatAssistantItem = {
     lastMessageAt: string | null;
   }>;
 };
+
+const EMPTY_EXPANDED_ASSISTANTS: Record<string, boolean> = {};
+const UNGROUPED_SIDEBAR_GROUP_ID = '__ungrouped__';
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -891,6 +911,8 @@ export function WorkspaceAssistantChat({
   selectedThreadId,
   slug,
   startCreating = false,
+  initialExpandedAssistants = EMPTY_EXPANDED_ASSISTANTS,
+  initialGroupPreferences = EMPTY_SIDEBAR_GROUP_PREFERENCES,
   initialSidebarOpen = true,
   workspaceId,
 }: {
@@ -906,6 +928,8 @@ export function WorkspaceAssistantChat({
   selectedThreadId: string | null;
   slug: string;
   startCreating?: boolean;
+  initialExpandedAssistants?: Record<string, boolean>;
+  initialGroupPreferences?: SidebarGroupPreferences;
   initialSidebarOpen?: boolean;
   workspaceId: string;
 }) {
@@ -915,10 +939,20 @@ export function WorkspaceAssistantChat({
   const activeAssistant = assistants.find((assistant) => assistant.id === selectedAssistantId) ?? assistants[0] ?? null;
   const activeThread = activeAssistant?.threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const [query, setQuery] = useState('');
-  const [expandedAssistants, setExpandedAssistants] = useState<Record<string, boolean>>({});
+  const [expandedAssistants, setExpandedAssistants] = usePersistentBooleanRecord(
+    `toolplane:assistant-chat-expanded:${workspaceId}`,
+    initialExpandedAssistants,
+    assistantChatExpandedCookieName(workspaceId),
+  );
+  const [groupPreferences, setGroupPreferences] = usePersistentSidebarGroups(
+    `toolplane:assistant-chat-groups:${workspaceId}`,
+    initialGroupPreferences,
+    assistantChatGroupPreferencesCookieName(workspaceId),
+  );
   const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
     `toolplane:assistant-chat-sidebar:${workspaceId}`,
     initialSidebarOpen,
+    assistantChatSidebarCookieName(workspaceId),
   );
   const [branchOpen, setBranchOpen] = useState(false);
   const [branchMaximized, setBranchMaximized] = useState(false);
@@ -933,6 +967,10 @@ export function WorkspaceAssistantChat({
   const [draggingThread, setDraggingThread] = useState<{ id: string; assistantId: string } | null>(null);
   const draggingThreadRef = useRef<{ id: string; assistantId: string } | null>(null);
   const [dropAssistantId, setDropAssistantId] = useState<string | null>(null);
+  const [groupEditor, setGroupEditor] = useState<{ id: string | null; name: string } | null>(null);
+  const [draggingAssistantId, setDraggingAssistantId] = useState<string | null>(null);
+  const draggingAssistantIdRef = useRef<string | null>(null);
+  const [dropGroupId, setDropGroupId] = useState<string | null>(null);
   const branchBusy = branchMutating || branchRefreshPending;
   const refreshChat = useCallback(() => {
     startBranchRefresh(() => router.refresh());
@@ -946,18 +984,30 @@ export function WorkspaceAssistantChat({
       return assistantMatches || threads.length ? [{ ...assistant, threads: assistantMatches ? assistant.threads : threads }] : [];
     });
   }, [assistants, query, t]);
-  const allAssistantsExpanded = assistants.length > 0
-    && assistants.every((assistant) => expandedAssistants[assistant.id] ?? true);
+  const groupedAssistants = useMemo(() => {
+    const assistantsByGroup = new Map<string, ChatAssistantItem[]>(
+      groupPreferences.groups.map((group) => [group.id, []]),
+    );
+    const ungrouped: ChatAssistantItem[] = [];
+    for (const assistant of visibleAssistants) {
+      const group = assistantsByGroup.get(groupPreferences.assignments[assistant.id] ?? '');
+      if (group) group.push(assistant);
+      else ungrouped.push(assistant);
+    }
+    return {
+      groups: groupPreferences.groups.map((group) => ({
+        group,
+        assistants: assistantsByGroup.get(group.id) ?? [],
+      })),
+      ungrouped,
+    };
+  }, [groupPreferences.assignments, groupPreferences.groups, visibleAssistants]);
 
   useEffect(() => {
     if (!focusBranchMessageIdRef.current || branch?.activeMessageId !== focusBranchMessageIdRef.current) return;
     document.querySelector<HTMLTextAreaElement>('[data-ui="chat.composer"] textarea')?.focus();
     focusBranchMessageIdRef.current = null;
   }, [branch?.activeMessageId]);
-
-  useEffect(() => {
-    document.cookie = `${assistantChatSidebarCookieName(workspaceId)}=${sidebarOpen}; Path=/; Max-Age=31536000; SameSite=Lax`;
-  }, [sidebarOpen, workspaceId]);
 
   async function switchBranch(messageId: string) {
     if (!activeThread || branchBusy) return;
@@ -1043,6 +1093,8 @@ export function WorkspaceAssistantChat({
       const body = await response.json().catch(() => ({})) as { thread?: { id?: string }; id?: string; error?: string };
       const threadId = body.thread?.id ?? body.id;
       if (!response.ok || !threadId) throw new Error(body.error || t('threadCreateError'));
+      setExpandedAssistants((current) => ({ ...current, [assistantId]: true }));
+      openAssistantGroup(assistantId);
       window.location.assign(chatHref(slug, assistantId, threadId));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('threadCreateError'));
@@ -1062,6 +1114,8 @@ export function WorkspaceAssistantChat({
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || t('moveThreadError'));
+      setExpandedAssistants((current) => ({ ...current, [targetAssistantId]: true }));
+      openAssistantGroup(targetAssistantId);
       router.push(chatHref(slug, targetAssistantId, threadId));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('moveThreadError'));
@@ -1141,6 +1195,313 @@ export function WorkspaceAssistantChat({
     }
   }
 
+  function openAssistantGroup(assistantId: string) {
+    setGroupPreferences((current) => {
+      const groupId = current.assignments[assistantId];
+      if (!groupId || !current.collapsed[groupId]) return current;
+      return { ...current, collapsed: { ...current.collapsed, [groupId]: false } };
+    });
+  }
+
+  function setAllAssistantSections(collapsed: boolean) {
+    setExpandedAssistants(Object.fromEntries(assistants.map((assistant) => [assistant.id, !collapsed])));
+    setGroupPreferences((current) => {
+      if (!current.groups.length) return current;
+      return {
+        ...current,
+        collapsed: Object.fromEntries([
+          ...current.groups.map((group) => [group.id, collapsed]),
+          [UNGROUPED_SIDEBAR_GROUP_ID, collapsed],
+        ]),
+      };
+    });
+  }
+
+  function saveAssistantGroup(name: string) {
+    if (!groupEditor) return;
+    setGroupPreferences((current) => {
+      if (groupEditor.id) {
+        return {
+          ...current,
+          groups: current.groups.map((group) => (
+            group.id === groupEditor.id ? { ...group, name } : group
+          )),
+        };
+      }
+      const id = createSidebarGroupId();
+      return {
+        ...current,
+        groups: [...current.groups, { id, name }],
+        collapsed: { ...current.collapsed, [id]: false },
+      };
+    });
+    setGroupEditor(null);
+  }
+
+  function deleteAssistantGroup(groupId: string) {
+    const group = groupPreferences.groups.find((item) => item.id === groupId);
+    if (!group || !window.confirm(t('deleteGroupConfirm', { name: group.name }))) return;
+    setGroupPreferences((current) => {
+      const assignments = Object.fromEntries(
+        Object.entries(current.assignments).filter(([, assignedGroupId]) => assignedGroupId !== groupId),
+      );
+      const collapsed = { ...current.collapsed };
+      delete collapsed[groupId];
+      return {
+        ...current,
+        groups: current.groups.filter((item) => item.id !== groupId),
+        assignments,
+        collapsed,
+      };
+    });
+  }
+
+  function assignAssistantToGroup(assistantId: string, groupId: string | null) {
+    setGroupPreferences((current) => {
+      const assignments = { ...current.assignments };
+      if (groupId) assignments[assistantId] = groupId;
+      else delete assignments[assistantId];
+      return {
+        ...current,
+        assignments,
+        ...(groupId ? { collapsed: { ...current.collapsed, [groupId]: false } } : {}),
+      };
+    });
+  }
+
+  function renderAssistant(assistant: ChatAssistantItem) {
+    const expanded = Boolean(query) || (expandedAssistants[assistant.id] ?? true);
+    return (
+      <li key={assistant.id} className="py-0.5">
+        <div
+          onDragOver={(event) => {
+            const dragged = draggingThreadRef.current;
+            if (!dragged || dragged.assistantId === assistant.id || busy) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            setDropAssistantId(assistant.id);
+          }}
+          onDrop={(event) => {
+            const dragged = draggingThreadRef.current;
+            if (!dragged || dragged.assistantId === assistant.id || busy) return;
+            event.preventDefault();
+            const threadId = dragged.id;
+            draggingThreadRef.current = null;
+            setDraggingThread(null);
+            setDropAssistantId(null);
+            void moveThread(threadId, assistant.id);
+          }}
+          className={cx(
+            'group flex h-8 items-center gap-1.5 rounded-lg px-1.5',
+            assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
+            dropAssistantId === assistant.id && 'ring-1 ring-inset ring-brand/50',
+            draggingAssistantId === assistant.id && 'opacity-50',
+          )}
+        >
+          <button
+            type="button"
+            draggable={!busy}
+            aria-label={t('moveToGroup')}
+            title={t('moveToGroup')}
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('application/x-toolplane-assistant', assistant.id);
+              draggingAssistantIdRef.current = assistant.id;
+              setDraggingAssistantId(assistant.id);
+            }}
+            onDragEnd={() => {
+              draggingAssistantIdRef.current = null;
+              setDraggingAssistantId(null);
+              setDropGroupId(null);
+            }}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+          >
+            <GripVertical className="size-3.5" />
+          </button>
+          <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
+            <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
+          </Link>
+          <button
+            type="button"
+            aria-label={assistant.name}
+            aria-expanded={expanded}
+            aria-controls={`assistant-chat-threads-${assistant.id}`}
+            title={expanded ? t('hideConversations') : t('showConversations')}
+            onClick={() => setExpandedAssistants((current) => ({ ...current, [assistant.id]: !expanded }))}
+            className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex hover:bg-background hover:text-foreground"
+          >
+            <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+          </button>
+          <SidebarActionRail hasLeadingSlot revealOnCellFocus>
+            <SidebarEntityActionsMenu
+              actionsLabel={t('assistantActions', { name: assistant.name })}
+              deleteLabel={common('delete')}
+              editLabel={common('edit')}
+              onDelete={() => void deleteAssistant(assistant.id)}
+              onEdit={() => setEditing(assistant)}
+              onTogglePin={() => void toggleAssistantPin(assistant)}
+              pinned={assistant.pinned}
+              pinLabel={t('pinAssistant')}
+              unpinLabel={t('unpinAssistant')}
+            />
+            <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground">
+              <Plus className="size-3.5" />
+            </button>
+          </SidebarActionRail>
+        </div>
+        {expanded ? (
+          <ul id={`assistant-chat-threads-${assistant.id}`} className="ml-4 py-0.5 pl-1">
+            {assistant.threads.length > 0 ? assistant.threads.map((thread) => (
+            <ContextMenu.Root key={thread.id} modal={false}>
+              <ContextMenu.Trigger asChild>
+                <li
+                  draggable={!busy}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', thread.id);
+                    draggingThreadRef.current = { id: thread.id, assistantId: assistant.id };
+                    setDraggingThread({ id: thread.id, assistantId: assistant.id });
+                  }}
+                  onDragEnd={() => {
+                    draggingThreadRef.current = null;
+                    setDraggingThread(null);
+                    setDropAssistantId(null);
+                  }}
+                  className={cx(
+                    'group group/thread relative py-0.5',
+                    draggingThread?.id === thread.id && 'opacity-50',
+                  )}
+                >
+                  <Link
+                    draggable={false}
+                    href={chatHref(slug, assistant.id, thread.id)}
+                    onClick={() => setMobilePane('chat')}
+                    aria-current={thread.id === activeThread?.id ? 'page' : undefined}
+                    title={thread.lastMessageAt ?? thread.createdAt}
+                    className={cx(
+                      'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px] transition-colors group-data-[state=open]/thread:bg-muted/60',
+                      thread.id === activeThread?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
+                    )}
+                  >
+                    <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{thread.title || t('newChat')}</span>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void deleteThread(thread.id)}
+                    aria-label={t('deleteThread')}
+                    title={t('deleteThread')}
+                    className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/thread:opacity-100 focus:opacity-100"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </li>
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content className="z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+                  <ContextMenu.Sub>
+                    <ContextMenu.SubTrigger
+                      disabled={assistants.length < 2 || busy}
+                      className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                    >
+                      <MoveRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      {t('moveThreadTo')}
+                      <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
+                    </ContextMenu.SubTrigger>
+                    <ContextMenu.Portal>
+                      <ContextMenu.SubContent className="z-50 min-w-36 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+                        {assistants.filter((target) => target.id !== assistant.id).map((target) => (
+                          <ContextMenu.Item
+                            key={target.id}
+                            onSelect={() => void moveThread(thread.id, target.id)}
+                            className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                          >
+                            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{target.name}</span>
+                          </ContextMenu.Item>
+                        ))}
+                      </ContextMenu.SubContent>
+                    </ContextMenu.Portal>
+                  </ContextMenu.Sub>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
+            )) : (
+              <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noConversations')}</li>
+            )}
+          </ul>
+        ) : null}
+      </li>
+    );
+  }
+
+  function renderAssistantGroup(groupId: string, name: string, groupAssistants: ChatAssistantItem[], editable: boolean) {
+    const expanded = Boolean(query) || !groupPreferences.collapsed[groupId];
+    const targetGroupId = editable ? groupId : null;
+    const label = expanded ? t('hideGroup', { name }) : t('showGroup', { name });
+    return (
+      <li key={groupId} data-sidebar-group-id={groupId} className="py-1">
+        <div
+          onDragOver={(event) => {
+            const assistantId = draggingAssistantIdRef.current;
+            const assignedGroupId = assistantId ? groupPreferences.assignments[assistantId] ?? null : null;
+            if (!assistantId || assignedGroupId === targetGroupId) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            setDropGroupId(groupId);
+          }}
+          onDrop={(event) => {
+            const assistantId = draggingAssistantIdRef.current;
+            if (!assistantId) return;
+            event.preventDefault();
+            assignAssistantToGroup(assistantId, targetGroupId);
+            draggingAssistantIdRef.current = null;
+            setDraggingAssistantId(null);
+            setDropGroupId(null);
+          }}
+          className={cx(
+            'group/sidebar-group flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground',
+            dropGroupId === groupId && 'bg-muted ring-1 ring-inset ring-brand/50',
+          )}
+        >
+          <button
+            type="button"
+            aria-label={label}
+            aria-expanded={expanded}
+            aria-controls={`assistant-sidebar-group-${groupId}`}
+            title={label}
+            onClick={() => setGroupPreferences((current) => ({
+              ...current,
+              collapsed: { ...current.collapsed, [groupId]: !current.collapsed[groupId] },
+            }))}
+            className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium"
+          >
+            <Folder className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{name}</span>
+            <span className="text-[10px] text-muted-foreground">{groupAssistants.length}</span>
+            <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
+          </button>
+          {editable ? (
+            <>
+              <button type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: groupId, name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
+                <Pencil className="size-3.5" />
+              </button>
+              <button type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAssistantGroup(groupId)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
+                <Trash2 className="size-3.5" />
+              </button>
+            </>
+          ) : null}
+        </div>
+        {expanded ? (
+          <ul id={`assistant-sidebar-group-${groupId}`} className="ml-2 border-l border-border/60 py-0.5 pl-1">
+            {groupAssistants.map(renderAssistant)}
+          </ul>
+        ) : null}
+      </li>
+    );
+  }
+
   return (
     <>
       <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
@@ -1185,18 +1546,28 @@ export function WorkspaceAssistantChat({
                     <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
                       <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('listOptions')}</p>
                       {assistants.length ? (
-                        <Popover.Close asChild>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedAssistants(Object.fromEntries(assistants.map((assistant) => [assistant.id, !allAssistantsExpanded])))}
-                            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent"
-                          >
-                            {allAssistantsExpanded ? <ChevronsDownUp className="size-4" /> : <ChevronsUpDown className="size-4" />}
-                            {t(allAssistantsExpanded ? 'collapseAll' : 'expandAll')}
-                          </button>
-                        </Popover.Close>
+                        <>
+                          <Popover.Close asChild>
+                            <button type="button" onClick={() => setAllAssistantSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                              <ChevronsUpDown className="size-4" />
+                              {t('expandAll')}
+                            </button>
+                          </Popover.Close>
+                          <Popover.Close asChild>
+                            <button type="button" onClick={() => setAllAssistantSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                              <ChevronsDownUp className="size-4" />
+                              {t('collapseAll')}
+                            </button>
+                          </Popover.Close>
+                        </>
                       ) : null}
                       <div className="my-1 h-px bg-border" />
+                      <Popover.Close asChild>
+                        <button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                          <FolderPlus className="size-4" />
+                          {t('newGroup')}
+                        </button>
+                      </Popover.Close>
                       <Popover.Close asChild>
                         <Link href={`/app/${encodeURIComponent(slug)}/market/assistants`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
                           <Store className="size-4" />
@@ -1207,6 +1578,19 @@ export function WorkspaceAssistantChat({
                   </Popover.Portal>
                 </Popover.Root>
               </div>
+              {groupPreferences.groups.length ? (
+                <ul>
+                  {groupedAssistants.groups.map(({ group, assistants: groupAssistants }) => (
+                    !query || groupAssistants.length ? renderAssistantGroup(group.id, group.name, groupAssistants, true) : null
+                  ))}
+                  {!query || groupedAssistants.ungrouped.length ? renderAssistantGroup(
+                    UNGROUPED_SIDEBAR_GROUP_ID,
+                    t('ungrouped'),
+                    groupedAssistants.ungrouped,
+                    false,
+                  ) : null}
+                </ul>
+              ) : (
               <ul>
                 {visibleAssistants.map((assistant) => {
                   const expanded = Boolean(query) || (expandedAssistants[assistant.id] ?? true);
@@ -1354,6 +1738,7 @@ export function WorkspaceAssistantChat({
                   );
                 })}
               </ul>
+              )}
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
           </aside>
@@ -1529,6 +1914,18 @@ export function WorkspaceAssistantChat({
           />
         </div>
       ) : null}
+
+      <SidebarGroupDialog
+        initialName={groupEditor?.name ?? ''}
+        open={Boolean(groupEditor)}
+        title={t(groupEditor?.id ? 'renameGroup' : 'newGroup')}
+        nameLabel={t('groupName')}
+        placeholder={t('groupNamePlaceholder')}
+        cancelLabel={common('cancel')}
+        submitLabel={groupEditor?.id ? common('save') : common('create')}
+        onClose={() => setGroupEditor(null)}
+        onSubmit={saveAssistantGroup}
+      />
 
       {editing ? (
         <AssistantEditor
