@@ -12,8 +12,8 @@ importers:
         specifier: 4.0.96
         version: 4.0.96(react@19.2.4)(zod@4.4.3)
       '@asharca/ui':
-        specifier: 0.2.0
-        version: 0.2.0(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)
+        specifier: 0.2.1
+        version: 0.2.1(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)
       '@assistant-ui/react':
         specifier: 0.15.18
         version: 0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
@@ -263,8 +263,8 @@ packages:
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
 
-  '@asharca/ui@0.2.0':
-    resolution: {integrity: sha512-yeuRETsLKxNQHdYK61/FrCQb9llJ4nnIj1oWvaJdafGdWA+YwD6Voray1jUt8abatLoRb9jSGq4uTBkMk/qTBQ==}
+  '@asharca/ui@0.2.1':
+    resolution: {integrity: sha512-iFQX0uBBn7kU5AOKUGNEnYPzVpGI73OcFnnqD7+YEiZ51wJrr4OUtUEOYdthrFURYPrvZzesw+KmJ2rzyqyKTQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@assistant-ui/react': 0.15.18
@@ -7085,7 +7085,7 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@asharca/ui@0.2.0(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)':
+  '@asharca/ui@0.2.1(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.3.1)':
     dependencies:
       '@assistant-ui/react': 0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
       '@assistant-ui/react-streamdown': 0.3.13(@assistant-ui/react@0.15.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4)))(@streamdown/code@1.1.1(react@19.2.4))(@streamdown/mermaid@1.0.2(react@19.2.4))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
