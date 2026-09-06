@@ -75,6 +75,12 @@ describe('WorkspaceAssistantChat', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllGlobals());
 
+  it('uses the agent chat header spacing', () => {
+    renderChat();
+
+    expect(screen.getByRole('button', { name: 'Hide assistants and chats' }).closest('header')).toHaveClass('h-11', 'px-2.5');
+  });
+
   it('uses the sidebar header to add assistants and list existing conversations', async () => {
     const user = userEvent.setup();
     renderChat();

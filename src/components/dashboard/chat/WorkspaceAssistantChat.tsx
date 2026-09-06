@@ -5,11 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
-import {
-  ChatShell,
-  SearchInput,
-  SidebarActionRail,
-} from '@asharca/ui';
+import { SearchInput, SidebarActionRail } from '@asharca/ui';
 import {
   Bot,
   ChevronDown,
@@ -22,6 +18,8 @@ import {
   ListFilter,
   MessageSquare,
   MoveRight,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Store,
   Trash2,
@@ -771,16 +769,21 @@ export function WorkspaceAssistantChat({
 
   return (
     <>
-      <ChatShell
-        className="relative"
-        sidebarOpen={sidebarOpen}
-        onSidebarOpenChange={setSidebarOpen}
-        mobilePane={mobilePane}
-        onMobilePaneChange={setMobilePane}
-        labels={{ showSidebar: t('showSidebar'), hideSidebar: t('hideSidebar') }}
-        sidebarLabel={t('assistants')}
-        sidebar={(
-          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background p-1.5">
+      <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
+        <div className={cx(
+          'grid min-h-0 flex-1 grid-cols-1',
+          sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)] min-[1024px]:max-[1080px]:grid-cols-[13.125rem_minmax(0,1fr)]!',
+          branchOpen && !branchMaximized && (sidebarOpen
+            ? 'xl:grid-cols-[15rem_minmax(0,1fr)_20rem]'
+            : 'xl:grid-cols-[minmax(0,1fr)_20rem]'),
+        )}>
+          <aside
+            aria-label={t('assistants')}
+            className={cx(
+              'min-h-0 flex-col overflow-hidden bg-background p-1.5',
+              mobilePane === 'chat' ? (sidebarOpen ? 'hidden lg:flex' : 'hidden') : (sidebarOpen ? 'flex' : 'flex lg:hidden'),
+            )}
+          >
             <SearchInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -979,11 +982,33 @@ export function WorkspaceAssistantChat({
               </ul>
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
-          </div>
-        )}
-        header={(
-          <>
+          </aside>
+
+          <section className={cx(
+            'min-h-0 min-w-0 flex-col overflow-hidden bg-background',
+            mobilePane === 'sidebar' ? 'hidden lg:flex' : 'flex',
+          )}>
+            <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-background px-2.5">
               <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-label={t('showSidebar')}
+                  title={t('showSidebar')}
+                  onClick={() => setMobilePane('sidebar')}
+                  className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                >
+                  <PanelLeftOpen className="size-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
+                  title={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
+                  aria-pressed={sidebarOpen}
+                  onClick={() => setSidebarOpen((open) => !open)}
+                  className="hidden size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:flex"
+                >
+                  {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
+                </button>
                 {activeAssistant ? (
                   <>
                     <button type="button" onClick={() => setEditing(activeAssistant)} aria-label={`${t('settings')}: ${activeAssistant.name}`} title={t('settings')} className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium hover:bg-muted">
@@ -1031,22 +1056,7 @@ export function WorkspaceAssistantChat({
                   <GitBranch className="size-[17px]" />
                 </button>
               ) : null}
-          </>
-        )}
-        rightPanelOpen={branchOpen && !branchMaximized && Boolean(activeThread && branch)}
-        rightPanel={activeThread && branch ? (
-          <ChatBranchPanel
-            branch={branch}
-            busy={branchBusy}
-            canMaximize
-            onClose={() => setBranchOpen(false)}
-            onDelete={(messageId) => void deleteBranch(messageId)}
-            onMaximize={() => setBranchMaximized(true)}
-            onSelect={(messageId) => void switchBranch(messageId)}
-            onStart={(messageId) => void startBranch(messageId)}
-          />
-        ) : undefined}
-      >
+            </header>
             {error ? <p role="alert" className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
             {activeAssistant && activeThread ? (
               <AgentConversation
@@ -1090,7 +1100,24 @@ export function WorkspaceAssistantChat({
                 </button>
               </div>
             )}
-      </ChatShell>
+          </section>
+
+          {branchOpen && !branchMaximized && activeThread && branch ? (
+            <aside className="hidden min-h-0 flex-col overflow-hidden border-l border-border bg-background xl:flex">
+              <ChatBranchPanel
+                branch={branch}
+                busy={branchBusy}
+                canMaximize
+                onClose={() => setBranchOpen(false)}
+                onDelete={(messageId) => void deleteBranch(messageId)}
+                onMaximize={() => setBranchMaximized(true)}
+                onSelect={(messageId) => void switchBranch(messageId)}
+                onStart={(messageId) => void startBranch(messageId)}
+              />
+            </aside>
+          ) : null}
+        </div>
+      </div>
 
       {branchOpen && !branchMaximized && activeThread && branch ? (
         <div className="fixed inset-0 z-50 flex justify-end xl:hidden">
