@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.28.0](https://github.com/asharca/ToolPlane/compare/v0.27.0...v0.28.0) (2026-09-06)
+
+
+### Features
+
+* add sandbox-scoped agent channels and native commands ([#116](https://github.com/asharca/ToolPlane/issues/116)) ([469183a](https://github.com/asharca/ToolPlane/commit/469183a3d26ec54ae39477f145f869fe7e3037e3))
+* **console:** expand assistant and agent configuration ([#115](https://github.com/asharca/ToolPlane/issues/115)) ([0c73603](https://github.com/asharca/ToolPlane/commit/0c73603e400e6e42d6a90d4545fc8ca5b3e8e300))
+* refine workspace UI and agent runtime lifecycle ([#111](https://github.com/asharca/ToolPlane/issues/111)) ([442d223](https://github.com/asharca/ToolPlane/commit/442d223be9cf9c2b043b03be5c549bf960113878))
+
 ## [0.27.0](https://github.com/asharca/ToolPlane/compare/v0.26.0...v0.27.0) (2026-09-04)
 
 
