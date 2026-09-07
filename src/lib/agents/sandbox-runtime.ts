@@ -534,6 +534,33 @@ export function buildClaudeMcpConfig(
   return JSON.stringify({ mcpServers });
 }
 
+export function buildClaudeSkillPluginManifest(): string {
+  return `${JSON.stringify({
+    name: 'toolplane-agent',
+    version: '0.0.0',
+    description: 'Skills selected for this ToolPlane agent.',
+    skills: './skills/',
+  }, null, 2)}\n`;
+}
+
+export function buildClaudeRuntimeArgs(options: {
+  modelId: string;
+  runtimeSessionId?: string;
+  systemPrompt: string;
+  disabledBuiltinTools: readonly string[];
+  skillPluginRoot?: string;
+}): string[] {
+  return [
+    '--bare', '--print', '--verbose', '--output-format', 'stream-json',
+    '--include-partial-messages', ...(options.runtimeSessionId ? ['--input-format', 'stream-json'] : ['--no-session-persistence']),
+    '--setting-sources', 'user',
+    '--dangerously-skip-permissions', '--model', options.modelId,
+    ...(options.disabledBuiltinTools.length ? ['--disallowedTools', ...options.disabledBuiltinTools] : []),
+    ...(options.skillPluginRoot ? ['--plugin-dir', options.skillPluginRoot] : []),
+    ...(options.systemPrompt ? ['--append-system-prompt', options.systemPrompt] : []),
+  ];
+}
+
 export function buildPiModelsConfig(options: {
   provider: SandboxRuntimeProvider;
   modelId: string;
@@ -1194,12 +1221,18 @@ async function writeSandboxFile(
 
 async function materializeSandboxSkills(
   container: string,
+  runtimeKind: SandboxAgentRuntimeKind,
   skillRoot: string,
   skills: readonly SkillForPrompt[],
   signal?: AbortSignal,
 ): Promise<void> {
+  const claudePlugin = runtimeKind === 'claude-code';
+  const skillDirectory = claudePlugin ? `${skillRoot}/skills` : skillRoot;
   const bundles = buildSandboxSkillBundles(skills);
-  const digest = sandboxSkillBundleDigest(bundles);
+  const pluginManifest = claudePlugin ? buildClaudeSkillPluginManifest() : '';
+  const digest = claudePlugin
+    ? createHash('sha256').update(pluginManifest).update('\0').update(sandboxSkillBundleDigest(bundles)).digest('hex')
+    : sandboxSkillBundleDigest(bundles);
   const marker = `${skillRoot}/.toolplane-skills.sha256`;
   const unchanged = await runTrackedDockerExec({
     container,
@@ -1227,7 +1260,7 @@ mkdir -p "$root"
     timeoutMs: 30_000,
   });
   for (const bundle of bundles) {
-    const directory = `${skillRoot}/${bundle.directory}`;
+    const directory = `${skillDirectory}/${bundle.directory}`;
     await writeSandboxFile(container, `${directory}/SKILL.md`, bundle.markdown, signal);
     for (const file of bundle.files) {
       const path = safeSkillFilePath(file.path);
@@ -1239,6 +1272,9 @@ mkdir -p "$root"
         signal,
       );
     }
+  }
+  if (claudePlugin) {
+    await writeSandboxFile(container, `${skillRoot}/.claude-plugin/plugin.json`, pluginManifest, signal);
   }
   await writeSandboxFile(container, marker, digest, signal);
 }
@@ -1554,14 +1590,13 @@ async function runClaudeCode(
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
   const stateRoot = sandboxRuntimeStateRoot('claude-code', options.agentId);
   const tempPath = `${RUNTIME_TEMP_ROOT}/${options.runtimeSessionId ?? randomUUID()}-claude-mcp.json`;
-  const args = [
-    '--bare', '--print', '--verbose', '--output-format', 'stream-json',
-    '--include-partial-messages', ...(options.runtimeSessionId ? ['--input-format', 'stream-json'] : ['--no-session-persistence']),
-    '--setting-sources', 'user',
-    '--dangerously-skip-permissions', '--model', options.modelId,
-    ...(disabledBuiltinTools.length ? ['--disallowedTools', ...disabledBuiltinTools] : []),
-    ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
-  ];
+  const args = buildClaudeRuntimeArgs({
+    modelId: options.modelId,
+    runtimeSessionId: options.runtimeSessionId,
+    systemPrompt,
+    disabledBuiltinTools,
+    ...(options.skills?.length ? { skillPluginRoot: sandboxRuntimeSkillRoot('claude-code', options.agentId) } : {}),
+  });
   if (mcpServers.length) {
     await writeSandboxFile(container, tempPath, buildClaudeMcpConfig(mcpServers, options.runtimeAccessToken), options.signal);
     args.push('--mcp-config', tempPath, '--strict-mcp-config');
@@ -1791,7 +1826,7 @@ export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): 
   const mcpServers = (options.mcpServers ?? []).filter((server) => server.deploymentId !== sandboxDeploymentId);
   const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
   const skillRoot = sandboxRuntimeSkillRoot(options.runtimeKind, options.agentId);
-  await materializeSandboxSkills(container, skillRoot, options.skills ?? [], options.signal);
+  await materializeSandboxSkills(container, options.runtimeKind, skillRoot, options.skills ?? [], options.signal);
   if (options.runtimeKind === 'pi') {
     return runPi(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers, disabledBuiltinTools);
   }
