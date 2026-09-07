@@ -7,6 +7,8 @@ export type SidebarGroupPreferences = {
   groups: SidebarGroup[];
   assignments: Record<string, string>;
   collapsed: Record<string, boolean>;
+  entityOrder?: string[];
+  conversationOrder?: Record<string, string[]>;
 };
 
 export const EMPTY_SIDEBAR_GROUP_PREFERENCES: SidebarGroupPreferences = {
@@ -21,6 +23,8 @@ function parsePreferences(value: unknown): SidebarGroupPreferences | null {
     groups?: unknown;
     assignments?: unknown;
     collapsed?: unknown;
+    entityOrder?: unknown;
+    conversationOrder?: unknown;
   };
   if (!Array.isArray(input.groups)) return null;
 
@@ -45,7 +49,63 @@ function parsePreferences(value: unknown): SidebarGroupPreferences | null {
     ? Object.fromEntries(Object.entries(input.collapsed).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
     : {};
 
-  return { groups, assignments, collapsed };
+  const entityOrder = Array.isArray(input.entityOrder) ? parseOrder(input.entityOrder) : undefined;
+  const conversationOrder = input.conversationOrder && typeof input.conversationOrder === 'object' && !Array.isArray(input.conversationOrder)
+    ? Object.fromEntries(Object.entries(input.conversationOrder)
+      .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
+      .map(([id, order]) => [id, parseOrder(order)]))
+    : undefined;
+
+  return {
+    groups,
+    assignments,
+    collapsed,
+    ...(entityOrder ? { entityOrder } : {}),
+    ...(conversationOrder ? { conversationOrder } : {}),
+  };
+}
+
+function parseOrder(value: unknown[]) {
+  return [...new Set(value.filter((id): id is string => (
+    typeof id === 'string' && id.length > 0 && id.length <= 120
+  )))];
+}
+
+export type SidebarDropEdge = 'before' | 'after';
+
+export function sortSidebarItems<T extends { id: string; pinned?: boolean }>(
+  items: readonly T[],
+  order: readonly string[] = [],
+): T[] {
+  const positions = new Map(order.map((id, index) => [id, index]));
+  return [...items].sort((left, right) => (
+    Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
+    || (positions.get(left.id) ?? order.length) - (positions.get(right.id) ?? order.length)
+  ));
+}
+
+export function reorderSidebarItems(
+  items: readonly { id: string }[],
+  sourceId: string,
+  targetId: string,
+  edge: SidebarDropEdge,
+): string[] {
+  const order = items.map((item) => item.id);
+  if (sourceId === targetId || !order.includes(sourceId) || !order.includes(targetId)) return order;
+  order.splice(order.indexOf(sourceId), 1);
+  order.splice(order.indexOf(targetId) + Number(edge === 'after'), 0, sourceId);
+  return order;
+}
+
+export function getSidebarDropEdge(clientY: number, rect: { top: number; height: number }): SidebarDropEdge {
+  return clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+}
+
+export function sidebarDropIndicatorClassName(edge: SidebarDropEdge | undefined) {
+  if (!edge) return '';
+  return `before:pointer-events-none before:absolute before:inset-x-0 before:z-10 before:h-0.5 before:bg-brand before:content-[''] ${
+    edge === 'before' ? 'before:top-0' : 'before:bottom-0'
+  }`;
 }
 
 export function parseSidebarGroupPreferences(value: string | null | undefined) {

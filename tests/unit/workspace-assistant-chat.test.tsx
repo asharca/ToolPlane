@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
@@ -75,6 +75,51 @@ function renderChat(
     workspaceId="workspace-1"
     branch={branch}
   />);
+}
+
+const sidebarAssistants: Parameters<typeof WorkspaceAssistantChat>[0]['assistants'] = [1, 2, 3].map((id) => ({
+  id: `assistant-${id}`,
+  name: ['Match Alpha', 'Hidden assistant', 'Match Gamma'][id - 1],
+  pinned: false,
+  systemPrompt: null,
+  modelProviderId: 'provider-1',
+  model: 'model-1',
+  maxSteps: 8,
+  providerName: 'Provider',
+  deploymentIds: [],
+  threads: (id === 1 ? [1, 2, 3] : [id + 3]).map((threadId) => ({
+    id: `thread-${threadId}`,
+    title: threadId === 2 ? 'Hidden thread' : `Find thread ${threadId}`,
+    createdAt: '2026-08-25T00:00:00.000Z',
+    lastMessageAt: null,
+  })),
+}));
+
+function sidebarRow(kind: 'entity' | 'conversation', id: string) {
+  return document.querySelector<HTMLElement>(`[data-sidebar-${kind}-id="${id}"]`)!;
+}
+
+function sidebarOrder(kind: 'entity' | 'conversation', root: ParentNode = document) {
+  return Array.from(root.querySelectorAll(`[data-sidebar-${kind}-id]`), (row) => row.getAttribute(`data-sidebar-${kind}-id`));
+}
+
+function sidebarPreferences() {
+  return JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-groups:workspace-1') ?? '{}');
+}
+
+function dropSidebarRow(source: HTMLElement, target: HTMLElement, edge: 'before' | 'after') {
+  const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+  const rect = vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 100, top: 100, bottom: 132, left: 0, right: 200, width: 200, height: 32, toJSON: () => ({}),
+  });
+  fireEvent.dragStart(source, { dataTransfer });
+  for (const type of ['dragOver', 'drop'] as const) {
+    const event = createEvent[type](target, { dataTransfer });
+    Object.defineProperty(event, 'clientY', { value: edge === 'before' ? 104 : 128 });
+    fireEvent(target, event);
+  }
+  fireEvent.dragEnd(source, { dataTransfer });
+  rect.mockRestore();
 }
 
 describe('WorkspaceAssistantChat', () => {
@@ -198,6 +243,257 @@ describe('WorkspaceAssistantChat', () => {
     });
 
     expect(screen.getByRole('button', { name: 'Show Research' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it.each([false, true])('orders assistants by row halves and restores preferences (grouped=%s)', (grouped) => {
+    const preferences: Parameters<typeof WorkspaceAssistantChat>[0]['initialGroupPreferences'] = {
+      groups: grouped ? [{ id: 'research', name: 'Research' }] : [],
+      assignments: grouped ? Object.fromEntries(sidebarAssistants.map(({ id }) => [id, 'research'])) : {},
+      collapsed: grouped ? { research: false } : {},
+    };
+    const mount = () => renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, preferences);
+    const firstRender = mount();
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-3')).getByRole('button', { name: 'Move to group' }),
+      sidebarRow('entity', 'assistant-1'), 'before',
+    );
+    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1', 'assistant-2']);
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
+      sidebarRow('entity', 'assistant-2'), 'after',
+    );
+    const order = ['assistant-3', 'assistant-2', 'assistant-1'];
+    expect(sidebarOrder('entity')).toEqual(order);
+    expect(sidebarPreferences()).toEqual({
+      ...preferences,
+      collapsed: { [grouped ? 'research' : '__ungrouped__']: false },
+      entityOrder: order,
+    });
+    expect(document.cookie).toContain(encodeURIComponent(JSON.stringify(sidebarPreferences())));
+    expect(mocks.push).not.toHaveBeenCalled();
+    firstRender.unmount();
+    mount();
+    expect(sidebarOrder('entity')).toEqual(order);
+  });
+
+  it('adopts the target assistant group, allows cross-group pin moves, and can return to ungrouped', () => {
+    const assistants = sidebarAssistants.map((assistant) => ({ ...assistant, pinned: assistant.id === 'assistant-1' }));
+    renderChat(undefined, false, undefined, null, [], assistants, true, {}, {
+      groups: [{ id: 'research', name: 'Research' }],
+      assignments: { 'assistant-2': 'research' },
+      collapsed: {},
+    });
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
+      sidebarRow('entity', 'assistant-2'), 'after',
+    );
+    const research = document.querySelector('[data-sidebar-group-id="research"]')!;
+    expect(sidebarOrder('entity', research)).toEqual(['assistant-1', 'assistant-2']);
+    expect(sidebarPreferences().assignments).toEqual({ 'assistant-1': 'research', 'assistant-2': 'research' });
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
+      sidebarRow('entity', 'assistant-3'), 'after',
+    );
+    expect(sidebarPreferences().assignments).toEqual({ 'assistant-2': 'research' });
+    expect(sidebarOrder('entity', document.querySelector('[data-sidebar-group-id="__ungrouped__"]')!))
+      .toEqual(['assistant-1', 'assistant-3']);
+  });
+
+  it.each(['header', 'row'] as const)('opens collapsed Ungrouped after an assistant drop onto its %s', (target) => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
+      groups: [{ id: 'research', name: 'Research' }],
+      assignments: { 'assistant-1': 'research' },
+      collapsed: { research: false, __ungrouped__: true },
+    });
+    expect(screen.getByRole('button', { name: 'Show Ungrouped' })).toHaveAttribute('aria-expanded', 'false');
+    const group = document.querySelector<HTMLElement>('[data-sidebar-group-id="__ungrouped__"]')!;
+    if (target === 'row') fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
+      target === 'header' ? group.firstElementChild as HTMLElement : sidebarRow('entity', 'assistant-3'),
+      'before',
+    );
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(sidebarPreferences().assignments).toEqual({});
+    expect(sidebarPreferences().collapsed).toEqual({ research: false, __ungrouped__: false });
+    expect(screen.getByRole('button', { name: 'Hide Ungrouped' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(group).getByRole('link', { name: 'Match Alpha' })).toBeInTheDocument();
+  });
+
+  it('opens a collapsed Ungrouped owner after transferring a chat through search results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      thread: { id: 'thread-1', assistantId: 'assistant-3' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
+      groups: [{ id: 'research', name: 'Research' }],
+      assignments: { 'assistant-1': 'research' },
+      collapsed: { __ungrouped__: true },
+    });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
+    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('entity', 'assistant-3'), 'after');
+    await waitFor(() => expect(sidebarPreferences().collapsed.__ungrouped__).toBe(false));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Hide Ungrouped' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Match Gamma' })).toBeInTheDocument();
+    expect(mocks.push).toHaveBeenCalledWith('/app/acme/chat?assistant=assistant-3&thread=thread-1');
+  });
+
+  it('ignores assistant row and keyboard reorders across the same-group pin boundary', () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants.map((assistant) => ({
+      ...assistant, pinned: assistant.id === 'assistant-2',
+    })));
+    const handle = within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' });
+    dropSidebarRow(handle, sidebarRow('entity', 'assistant-2'), 'before');
+    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowUp' });
+    expect(sidebarOrder('entity')).toEqual(['assistant-2', 'assistant-1', 'assistant-3']);
+    expect(sidebarPreferences().entityOrder).toBeUndefined();
+  });
+
+  it('keeps hidden assistants in the full saved order when dragging search results', () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
+      groups: [], assignments: {}, collapsed: {}, entityOrder: ['assistant-3', 'assistant-2', 'assistant-1'],
+    });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
+    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1']);
+    dropSidebarRow(
+      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
+      sidebarRow('entity', 'assistant-3'), 'before',
+    );
+    expect(sidebarPreferences().entityOrder).toEqual(['assistant-1', 'assistant-3', 'assistant-2']);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(sidebarOrder('entity')).toEqual(['assistant-1', 'assistant-3', 'assistant-2']);
+  });
+
+  it('orders threads within their assistant, preserves other owners, and restores the order', () => {
+    const preferences = {
+      groups: [], assignments: {}, collapsed: {}, conversationOrder: { 'assistant-2': ['thread-5'] },
+    };
+    const mount = () => renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, preferences);
+    const firstRender = mount();
+    dropSidebarRow(sidebarRow('conversation', 'thread-3'), sidebarRow('conversation', 'thread-1'), 'before');
+    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(['thread-3', 'thread-1', 'thread-2']);
+    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-2'), 'after');
+    const order = ['thread-3', 'thread-2', 'thread-1'];
+    expect(sidebarPreferences().conversationOrder).toEqual({ 'assistant-1': order, 'assistant-2': ['thread-5'] });
+    expect(document.cookie).toContain(encodeURIComponent(JSON.stringify(sidebarPreferences())));
+    expect(mocks.push).not.toHaveBeenCalled();
+    firstRender.unmount();
+    mount();
+    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(order);
+  });
+
+  it('keeps hidden threads in the full saved owner order when dragging search results', () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
+      groups: [], assignments: {}, collapsed: {}, conversationOrder: { 'assistant-1': ['thread-3', 'thread-2', 'thread-1'] },
+    });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Find' } });
+    expect(sidebarOrder('conversation').slice(0, 2)).toEqual(['thread-3', 'thread-1']);
+    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-3'), 'before');
+    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-1', 'thread-3', 'thread-2']);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(['thread-1', 'thread-3', 'thread-2']);
+  });
+
+  it('supports Alt+Arrow ordering on handles and focused thread links without navigation', () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    const handle = within(sidebarRow('entity', 'assistant-2')).getByRole('button', { name: 'Move to group' });
+    handle.focus();
+    expect(fireEvent.keyDown(handle, { altKey: true, key: 'ArrowUp' })).toBe(false);
+    expect(handle).toHaveFocus();
+    expect(sidebarPreferences().entityOrder).toEqual(['assistant-2', 'assistant-1', 'assistant-3']);
+    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowDown' });
+    expect(sidebarPreferences().entityOrder).toEqual(['assistant-1', 'assistant-2', 'assistant-3']);
+    const link = screen.getByRole('link', { name: 'Find thread 1' });
+    link.focus();
+    expect(fireEvent.keyDown(link, { altKey: true, key: 'ArrowDown' })).toBe(false);
+    expect(link).toHaveFocus();
+    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-2', 'thread-1', 'thread-3']);
+    fireEvent.keyDown(link, { altKey: true, key: 'ArrowUp' });
+    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-1', 'thread-2', 'thread-3']);
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it('uses visible keyboard neighbors while preserving hidden assistant and thread order', () => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
+    const handle = within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' });
+    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowDown' });
+    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1']);
+    expect(sidebarPreferences().entityOrder).toEqual(['assistant-2', 'assistant-3', 'assistant-1']);
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Find' } });
+    fireEvent.keyDown(screen.getByRole('link', { name: 'Find thread 3' }), { altKey: true, key: 'ArrowUp' });
+    expect(sidebarOrder('conversation', document.getElementById('assistant-chat-threads-assistant-1')!))
+      .toEqual(['thread-3', 'thread-1']);
+    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-3', 'thread-1', 'thread-2']);
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(sidebarOrder('entity')).toEqual(['assistant-2', 'assistant-3', 'assistant-1']);
+    expect(sidebarOrder('conversation', document.getElementById('assistant-chat-threads-assistant-1')!))
+      .toEqual(['thread-3', 'thread-1', 'thread-2']);
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it('ignores wrong-owner thread row drops and external drag payloads', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-5'), 'before');
+    const dataTransfer = { getData: () => 'thread-1', dropEffect: 'none' };
+    fireEvent.dragOver(sidebarRow('entity', 'assistant-2'), { dataTransfer });
+    fireEvent.drop(sidebarRow('entity', 'assistant-2'), { dataTransfer });
+    expect(sidebarPreferences().conversationOrder).toBeUndefined();
+    expect(sidebarOrder('conversation')).toEqual(['thread-1', 'thread-2', 'thread-3', 'thread-5', 'thread-6']);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale thread owner when assistant props change during the drag', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const view = renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+    fireEvent.dragStart(sidebarRow('conversation', 'thread-1'), { dataTransfer });
+    view.rerender(<WorkspaceAssistantChat
+      assistants={sidebarAssistants.map((assistant) => ({
+        ...assistant,
+        threads: assistant.id === 'assistant-1' ? assistant.threads.slice(1)
+          : assistant.id === 'assistant-2' ? [...assistant.threads, sidebarAssistants[0].threads[0]] : assistant.threads,
+      }))}
+      deployments={[]}
+      initialMessages={[]}
+      providers={[]}
+      reasoningAvailable
+      selectedAssistantId="assistant-1"
+      selectedThreadId={null}
+      slug="acme"
+      workspaceId="workspace-1"
+    />);
+    fireEvent.dragOver(sidebarRow('entity', 'assistant-3'), { dataTransfer });
+    fireEvent.drop(sidebarRow('entity', 'assistant-3'), { dataTransfer });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sidebarPreferences().conversationOrder).toBeUndefined();
+  });
+
+  it.each(['entity', 'conversation'] as const)('clears %s insertion highlights on leave, drag end, and drop', (kind) => {
+    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
+    const source = kind === 'entity'
+      ? within(sidebarRow(kind, 'assistant-1')).getByRole('button', { name: 'Move to group' })
+      : sidebarRow(kind, 'thread-1');
+    const target = sidebarRow(kind, kind === 'entity' ? 'assistant-2' : 'thread-2');
+    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    expect(target).toHaveClass('relative', 'before:bg-brand');
+    fireEvent.dragLeave(target, { dataTransfer });
+    expect(target).not.toHaveClass('before:bg-brand');
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+    expect(target).not.toHaveClass('before:bg-brand');
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    expect(target).not.toHaveClass('before:bg-brand');
   });
 
   it('uses the API step limit and enables persisted branch regeneration', async () => {

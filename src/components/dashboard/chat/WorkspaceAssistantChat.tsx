@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type DragEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
 import { SearchInput, SidebarActionRail } from '@asharca/ui';
@@ -68,6 +68,10 @@ import {
 import {
   createSidebarGroupId,
   EMPTY_SIDEBAR_GROUP_PREFERENCES,
+  getSidebarDropEdge,
+  reorderSidebarItems,
+  sidebarDropIndicatorClassName,
+  sortSidebarItems,
   type SidebarGroupPreferences,
 } from '@/lib/sidebar-groups';
 import { usePersistentSidebarGroups } from '@/lib/use-persistent-sidebar-groups';
@@ -971,19 +975,24 @@ export function WorkspaceAssistantChat({
   const [draggingAssistantId, setDraggingAssistantId] = useState<string | null>(null);
   const draggingAssistantIdRef = useRef<string | null>(null);
   const [dropGroupId, setDropGroupId] = useState<string | null>(null);
+  const [dropRow, setDropRow] = useState<{ kind: 'assistant' | 'thread'; id: string; edge: 'before' | 'after' } | null>(null);
   const branchBusy = branchMutating || branchRefreshPending;
   const refreshChat = useCallback(() => {
     startBranchRefresh(() => router.refresh());
   }, [router]);
+  const sortedAssistants = useMemo(() => sortSidebarItems(assistants, groupPreferences.entityOrder).map((assistant) => ({
+    ...assistant,
+    threads: sortSidebarItems(assistant.threads, groupPreferences.conversationOrder?.[assistant.id]),
+  })), [assistants, groupPreferences.entityOrder, groupPreferences.conversationOrder]);
   const visibleAssistants = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return assistants;
-    return assistants.flatMap((assistant) => {
+    if (!needle) return sortedAssistants;
+    return sortedAssistants.flatMap((assistant) => {
       const assistantMatches = assistant.name.toLocaleLowerCase().includes(needle);
       const threads = assistant.threads.filter((thread) => (thread.title || t('newChat')).toLocaleLowerCase().includes(needle));
       return assistantMatches || threads.length ? [{ ...assistant, threads: assistantMatches ? assistant.threads : threads }] : [];
     });
-  }, [assistants, query, t]);
+  }, [sortedAssistants, query, t]);
   const groupedAssistants = useMemo(() => {
     const assistantsByGroup = new Map<string, ChatAssistantItem[]>(
       groupPreferences.groups.map((group) => [group.id, []]),
@@ -1197,8 +1206,8 @@ export function WorkspaceAssistantChat({
 
   function openAssistantGroup(assistantId: string) {
     setGroupPreferences((current) => {
-      const groupId = current.assignments[assistantId];
-      if (!groupId || !current.collapsed[groupId]) return current;
+      const groupId = current.assignments[assistantId] ?? UNGROUPED_SIDEBAR_GROUP_ID;
+      if (!current.collapsed[groupId]) return current;
       return { ...current, collapsed: { ...current.collapsed, [groupId]: false } };
     });
   }
@@ -1264,9 +1273,65 @@ export function WorkspaceAssistantChat({
       return {
         ...current,
         assignments,
-        ...(groupId ? { collapsed: { ...current.collapsed, [groupId]: false } } : {}),
+        collapsed: { ...current.collapsed, [groupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
       };
     });
+  }
+
+  function clearDrag() {
+    draggingAssistantIdRef.current = null;
+    draggingThreadRef.current = null;
+    setDraggingAssistantId(null);
+    setDraggingThread(null);
+    setDropAssistantId(null);
+    setDropGroupId(null);
+    setDropRow(null);
+  }
+
+  function canReorderAssistant(sourceId: string, targetId: string) {
+    const source = assistants.find((item) => item.id === sourceId);
+    const target = assistants.find((item) => item.id === targetId);
+    return !busy && source && target && sourceId !== targetId && (
+      groupPreferences.assignments[sourceId] !== groupPreferences.assignments[targetId]
+      || source.pinned === target.pinned
+    );
+  }
+
+  function reorderAssistant(sourceId: string, targetId: string, edge: 'before' | 'after') {
+    if (!canReorderAssistant(sourceId, targetId)) return;
+    setGroupPreferences((current) => {
+      const groupId = current.assignments[targetId];
+      const assignments = { ...current.assignments };
+      if (groupId) assignments[sourceId] = groupId;
+      else delete assignments[sourceId];
+      return {
+        ...current,
+        assignments,
+        entityOrder: reorderSidebarItems(sortSidebarItems(assistants, current.entityOrder), sourceId, targetId, edge),
+        collapsed: { ...current.collapsed, [groupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
+      };
+    });
+  }
+
+  function validDraggedThread() {
+    const dragged = draggingThreadRef.current;
+    return dragged && assistants.some((assistant) => assistant.id === dragged.assistantId
+      && assistant.threads.some((thread) => thread.id === dragged.id)) ? dragged : null;
+  }
+
+  function reorderThread(assistantId: string, sourceId: string, targetId: string, edge: 'before' | 'after') {
+    const owner = assistants.find((assistant) => assistant.id === assistantId);
+    if (busy || sourceId === targetId || !owner?.threads.some((thread) => thread.id === sourceId)
+      || !owner.threads.some((thread) => thread.id === targetId)) return;
+    setGroupPreferences((current) => ({
+      ...current,
+      conversationOrder: {
+        ...current.conversationOrder,
+        [assistantId]: reorderSidebarItems(
+          sortSidebarItems(owner.threads, current.conversationOrder?.[assistantId]), sourceId, targetId, edge,
+        ),
+      },
+    }));
   }
 
   function renderAssistant(assistant: ChatAssistantItem) {
@@ -1274,25 +1339,39 @@ export function WorkspaceAssistantChat({
     return (
       <li key={assistant.id} className="py-0.5">
         <div
+          data-sidebar-entity-id={assistant.id}
           onDragOver={(event) => {
-            const dragged = draggingThreadRef.current;
+            event.stopPropagation();
+            const sourceId = draggingAssistantIdRef.current;
+            const dragged = validDraggedThread();
+            if (sourceId && canReorderAssistant(sourceId, assistant.id)) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDropRow({ kind: 'assistant', id: assistant.id, edge: getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()) });
+              return;
+            }
             if (!dragged || dragged.assistantId === assistant.id || busy) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
             setDropAssistantId(assistant.id);
           }}
-          onDrop={(event) => {
-            const dragged = draggingThreadRef.current;
-            if (!dragged || dragged.assistantId === assistant.id || busy) return;
-            event.preventDefault();
-            const threadId = dragged.id;
-            draggingThreadRef.current = null;
-            setDraggingThread(null);
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
             setDropAssistantId(null);
-            void moveThread(threadId, assistant.id);
+            setDropRow(null);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const sourceId = draggingAssistantIdRef.current;
+            const dragged = validDraggedThread();
+            clearDrag();
+            if (sourceId) reorderAssistant(sourceId, assistant.id, getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()));
+            else if (dragged && dragged.assistantId !== assistant.id && !busy) void moveThread(dragged.id, assistant.id);
           }}
           className={cx(
-            'group flex h-8 items-center gap-1.5 rounded-lg px-1.5',
+            'group relative flex h-8 items-center gap-1.5 rounded-lg px-1.5',
+            sidebarDropIndicatorClassName(dropRow?.kind === 'assistant' && dropRow.id === assistant.id ? dropRow.edge : undefined),
             assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
             dropAssistantId === assistant.id && 'ring-1 ring-inset ring-brand/50',
             draggingAssistantId === assistant.id && 'opacity-50',
@@ -1304,21 +1383,31 @@ export function WorkspaceAssistantChat({
             aria-label={t('moveToGroup')}
             title={t('moveToGroup')}
             onDragStart={(event) => {
+              event.stopPropagation();
+              clearDrag();
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('application/x-toolplane-assistant', assistant.id);
               draggingAssistantIdRef.current = assistant.id;
               setDraggingAssistantId(assistant.id);
             }}
-            onDragEnd={() => {
-              draggingAssistantIdRef.current = null;
-              setDraggingAssistantId(null);
-              setDropGroupId(null);
+            onDragEnd={(event) => { event.stopPropagation(); clearDrag(); }}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+            onKeyDown={(event) => {
+              if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const siblings = visibleAssistants.filter((item) => groupPreferences.assignments[item.id] === groupPreferences.assignments[assistant.id]);
+              const target = siblings[siblings.findIndex((item) => item.id === assistant.id) + (event.key === 'ArrowUp' ? -1 : 1)];
+              if (target) reorderAssistant(assistant.id, target.id, event.key === 'ArrowUp' ? 'before' : 'after');
             }}
             className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
           >
             <GripVertical className="size-3.5" />
           </button>
-          <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+          <Link draggable={false} href={chatHref(slug, assistant.id)} onClick={(event) => {
+            if (draggingAssistantIdRef.current || draggingThreadRef.current) event.preventDefault();
+            else setMobilePane('chat');
+          }} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
             <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
           </Link>
@@ -1356,27 +1445,57 @@ export function WorkspaceAssistantChat({
             <ContextMenu.Root key={thread.id} modal={false}>
               <ContextMenu.Trigger asChild>
                 <li
+                  data-sidebar-conversation-id={thread.id}
                   draggable={!busy}
                   onDragStart={(event) => {
+                    event.stopPropagation();
+                    clearDrag();
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData('text/plain', thread.id);
                     draggingThreadRef.current = { id: thread.id, assistantId: assistant.id };
                     setDraggingThread({ id: thread.id, assistantId: assistant.id });
                   }}
-                  onDragEnd={() => {
-                    draggingThreadRef.current = null;
-                    setDraggingThread(null);
-                    setDropAssistantId(null);
+                  onDragEnd={(event) => { event.stopPropagation(); clearDrag(); }}
+                  onDragOver={(event) => {
+                    event.stopPropagation();
+                    const dragged = validDraggedThread();
+                    if (!dragged || dragged.assistantId !== assistant.id || dragged.id === thread.id || busy) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    setDropRow({ kind: 'thread', id: thread.id, edge: getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()) });
+                  }}
+                  onDragLeave={(event) => {
+                    event.stopPropagation();
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropRow(null);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const dragged = validDraggedThread();
+                    clearDrag();
+                    if (dragged?.assistantId === assistant.id) reorderThread(assistant.id, dragged.id, thread.id, getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()));
                   }}
                   className={cx(
                     'group group/thread relative py-0.5',
+                    sidebarDropIndicatorClassName(dropRow?.kind === 'thread' && dropRow.id === thread.id ? dropRow.edge : undefined),
                     draggingThread?.id === thread.id && 'opacity-50',
                   )}
                 >
                   <Link
                     draggable={false}
                     href={chatHref(slug, assistant.id, thread.id)}
-                    onClick={() => setMobilePane('chat')}
+                    onClick={(event) => {
+                      if (draggingThreadRef.current || draggingAssistantIdRef.current) event.preventDefault();
+                      else setMobilePane('chat');
+                    }}
+                    onKeyDown={(event) => {
+                      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const threads = assistant.threads;
+                      const target = threads[threads.findIndex((item) => item.id === thread.id) + (event.key === 'ArrowUp' ? -1 : 1)];
+                      if (target) reorderThread(assistant.id, thread.id, target.id, event.key === 'ArrowUp' ? 'before' : 'after');
+                    }}
                     aria-current={thread.id === activeThread?.id ? 'page' : undefined}
                     title={thread.lastMessageAt ?? thread.createdAt}
                     className={cx(
@@ -1436,30 +1555,41 @@ export function WorkspaceAssistantChat({
     );
   }
 
+  function handleGroupDragOver(event: DragEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    const groupId = event.currentTarget.dataset.sidebarDropGroupId!;
+    const targetGroupId = groupId === UNGROUPED_SIDEBAR_GROUP_ID ? null : groupId;
+    const assistantId = draggingAssistantIdRef.current;
+    const assignedGroupId = assistantId ? groupPreferences.assignments[assistantId] ?? null : null;
+    if (!assistantId || !assistants.some((item) => item.id === assistantId) || assignedGroupId === targetGroupId || busy) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropGroupId(groupId);
+  }
+
+  function handleGroupDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const groupId = event.currentTarget.dataset.sidebarDropGroupId!;
+    const targetGroupId = groupId === UNGROUPED_SIDEBAR_GROUP_ID ? null : groupId;
+    const assistantId = draggingAssistantIdRef.current;
+    clearDrag();
+    if (!assistantId || !assistants.some((item) => item.id === assistantId) || busy) return;
+    assignAssistantToGroup(assistantId, targetGroupId);
+  }
+
   function renderAssistantGroup(groupId: string, name: string, groupAssistants: ChatAssistantItem[], editable: boolean) {
     const expanded = Boolean(query) || !groupPreferences.collapsed[groupId];
-    const targetGroupId = editable ? groupId : null;
     const label = expanded ? t('hideGroup', { name }) : t('showGroup', { name });
     return (
       <li key={groupId} data-sidebar-group-id={groupId} className="py-1">
         <div
-          onDragOver={(event) => {
-            const assistantId = draggingAssistantIdRef.current;
-            const assignedGroupId = assistantId ? groupPreferences.assignments[assistantId] ?? null : null;
-            if (!assistantId || assignedGroupId === targetGroupId) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-            setDropGroupId(groupId);
+          data-sidebar-drop-group-id={groupId}
+          onDragOver={handleGroupDragOver}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropGroupId(null);
           }}
-          onDrop={(event) => {
-            const assistantId = draggingAssistantIdRef.current;
-            if (!assistantId) return;
-            event.preventDefault();
-            assignAssistantToGroup(assistantId, targetGroupId);
-            draggingAssistantIdRef.current = null;
-            setDraggingAssistantId(null);
-            setDropGroupId(null);
-          }}
+          onDrop={handleGroupDrop}
           className={cx(
             'group/sidebar-group flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground',
             dropGroupId === groupId && 'bg-muted ring-1 ring-inset ring-brand/50',
@@ -1591,153 +1721,7 @@ export function WorkspaceAssistantChat({
                   ) : null}
                 </ul>
               ) : (
-              <ul>
-                {visibleAssistants.map((assistant) => {
-                  const expanded = Boolean(query) || (expandedAssistants[assistant.id] ?? true);
-                  return (
-                    <li key={assistant.id} className="py-0.5">
-                      <div
-                        onDragOver={(event) => {
-                          const dragged = draggingThreadRef.current;
-                          if (!dragged || dragged.assistantId === assistant.id || busy) return;
-                          event.preventDefault();
-                          event.dataTransfer.dropEffect = 'move';
-                          setDropAssistantId(assistant.id);
-                        }}
-                        onDrop={(event) => {
-                          const dragged = draggingThreadRef.current;
-                          if (!dragged || dragged.assistantId === assistant.id || busy) return;
-                          event.preventDefault();
-                          const threadId = dragged.id;
-                          draggingThreadRef.current = null;
-                          setDraggingThread(null);
-                          setDropAssistantId(null);
-                          void moveThread(threadId, assistant.id);
-                        }}
-                        className={cx(
-                          'group flex h-8 items-center gap-1.5 rounded-lg px-1.5',
-                          assistant.id === activeAssistant?.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
-                          dropAssistantId === assistant.id && 'ring-1 ring-inset ring-brand/50',
-                        )}
-                      >
-                        <Link href={chatHref(slug, assistant.id)} onClick={() => setMobilePane('chat')} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
-                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
-                          <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
-                        </Link>
-                        <button
-                          type="button"
-                          aria-label={assistant.name}
-                          aria-expanded={expanded}
-                          aria-controls={`assistant-chat-threads-${assistant.id}`}
-                          title={expanded ? t('hideConversations') : t('showConversations')}
-                          onClick={() => setExpandedAssistants((current) => ({ ...current, [assistant.id]: !expanded }))}
-                          className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex hover:bg-background hover:text-foreground"
-                        >
-                          <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-                        </button>
-                        <SidebarActionRail hasLeadingSlot revealOnCellFocus>
-                          <SidebarEntityActionsMenu
-                            actionsLabel={t('assistantActions', { name: assistant.name })}
-                            deleteLabel={common('delete')}
-                            editLabel={common('edit')}
-                            onDelete={() => void deleteAssistant(assistant.id)}
-                            onEdit={() => setEditing(assistant)}
-                            onTogglePin={() => void toggleAssistantPin(assistant)}
-                            pinned={assistant.pinned}
-                            pinLabel={t('pinAssistant')}
-                            unpinLabel={t('unpinAssistant')}
-                          />
-                          <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground">
-                            <Plus className="size-3.5" />
-                          </button>
-                        </SidebarActionRail>
-                      </div>
-                      {expanded ? (
-                        <ul id={`assistant-chat-threads-${assistant.id}`} className="ml-4 py-0.5 pl-1">
-                          {assistant.threads.length > 0 ? assistant.threads.map((thread) => (
-                          <ContextMenu.Root key={thread.id} modal={false}>
-                            <ContextMenu.Trigger asChild>
-                              <li
-                                draggable={!busy}
-                                onDragStart={(event) => {
-                                  event.dataTransfer.effectAllowed = 'move';
-                                  event.dataTransfer.setData('text/plain', thread.id);
-                                  draggingThreadRef.current = { id: thread.id, assistantId: assistant.id };
-                                  setDraggingThread({ id: thread.id, assistantId: assistant.id });
-                                }}
-                                onDragEnd={() => {
-                                  draggingThreadRef.current = null;
-                                  setDraggingThread(null);
-                                  setDropAssistantId(null);
-                                }}
-                                className={cx(
-                                  'group group/thread relative py-0.5',
-                                  draggingThread?.id === thread.id && 'opacity-50',
-                                )}
-                              >
-                                <Link
-                                  draggable={false}
-                                  href={chatHref(slug, assistant.id, thread.id)}
-                                  onClick={() => setMobilePane('chat')}
-                                  aria-current={thread.id === activeThread?.id ? 'page' : undefined}
-                                  title={thread.lastMessageAt ?? thread.createdAt}
-                                  className={cx(
-                                    'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px] transition-colors group-data-[state=open]/thread:bg-muted/60',
-                                    thread.id === activeThread?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
-                                  )}
-                                >
-                                  <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
-                                  <span className="min-w-0 flex-1 truncate">{thread.title || t('newChat')}</span>
-                                </Link>
-                                <button
-                                  type="button"
-                                  onClick={() => void deleteThread(thread.id)}
-                                  aria-label={t('deleteThread')}
-                                  title={t('deleteThread')}
-                                  className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/thread:opacity-100 focus:opacity-100"
-                                >
-                                  <X className="size-3.5" />
-                                </button>
-                              </li>
-                            </ContextMenu.Trigger>
-                            <ContextMenu.Portal>
-                              <ContextMenu.Content className="z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
-                                <ContextMenu.Sub>
-                                  <ContextMenu.SubTrigger
-                                    disabled={assistants.length < 2 || busy}
-                                    className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                                  >
-                                    <MoveRight className="size-3.5 shrink-0 text-muted-foreground" />
-                                    {t('moveThreadTo')}
-                                    <ChevronRight className="ml-auto size-3.5 text-muted-foreground" />
-                                  </ContextMenu.SubTrigger>
-                                  <ContextMenu.Portal>
-                                    <ContextMenu.SubContent className="z-50 min-w-36 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
-                                      {assistants.filter((target) => target.id !== assistant.id).map((target) => (
-                                        <ContextMenu.Item
-                                          key={target.id}
-                                          onSelect={() => void moveThread(thread.id, target.id)}
-                                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                                        >
-                                          <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                                          <span className="truncate">{target.name}</span>
-                                        </ContextMenu.Item>
-                                      ))}
-                                    </ContextMenu.SubContent>
-                                  </ContextMenu.Portal>
-                                </ContextMenu.Sub>
-                              </ContextMenu.Content>
-                            </ContextMenu.Portal>
-                          </ContextMenu.Root>
-                          )) : (
-                            <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noConversations')}</li>
-                          )}
-                        </ul>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
+                <ul>{visibleAssistants.map(renderAssistant)}</ul>
               )}
               {!visibleAssistants.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('empty')}</p> : null}
             </div>
