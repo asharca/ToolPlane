@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkspaceKnowledge } from '@/components/dashboard/knowledge/WorkspaceKnowledge';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
@@ -533,6 +533,282 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     });
     const builder = screen.getByRole('button', { name: 'Builder' }).closest('li')!;
     expect(group.compareDocumentPosition(builder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe('Work sidebar ordering', () => {
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    const props = {
+      slug: 'acme', workspaceId: 'workspace-1', selectedWorkSessionId: null, sessions: [],
+      agents: [agent, { ...agent, id: 'agent-2', name: 'Reviewer' }, { ...agent, id: 'agent-3', name: 'Researcher' }],
+      initialExpandedAgents: { 'agent-1': true, 'agent-2': true, 'agent-3': true },
+    };
+    const storageKey = 'toolplane:work-agent-sidebar-groups:workspace-1';
+    const preferences = () => JSON.parse(window.localStorage.getItem(storageKey)!);
+    const entityRow = (id: string) => document.querySelector<HTMLElement>(`[data-sidebar-entity-id="${id}"]`)!;
+    const handle = (id: string) => within(entityRow(id)).getByRole('button', { name: 'Move to group' });
+    const conversationRow = (id: string) => document.querySelector<HTMLElement>(`[data-sidebar-conversation-id="${id}"]`)!;
+    const entityIds = () => Array.from(document.querySelectorAll('[data-sidebar-entity-id]'), (row) => row.getAttribute('data-sidebar-entity-id'));
+    const conversationIds = (agentId = agent.id) => Array.from(
+      document.getElementById(`agent-work-sessions-${agentId}`)!.querySelectorAll('[data-sidebar-conversation-id]'),
+      (row) => row.getAttribute('data-sidebar-conversation-id'),
+    );
+    const session = (id: string, agentId = agent.id) => ({
+      id, agentId, title: id, task: id, acceptanceCriteria: null, runtimeKind: 'pi', status: 'completed',
+      waitingQuestion: null, result: null, error: null, artifacts: [], conversationId: `${id}-conversation`,
+      sandbox: null, messages: [], approvals: [],
+    });
+    const channel = (id: string, agentId = agent.id) => ({
+      id, agentId, source: { platform: 'weixin', chatType: 'dm' as const, chatId: id },
+    });
+    function drag(source: HTMLElement, target: HTMLElement, edge: 'before' | 'after' = 'before') {
+      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+      fireEvent.dragStart(source, { dataTransfer });
+      const rect = vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 32 } as DOMRect);
+      for (const type of ['dragOver', 'drop'] as const) {
+        const event = createEvent[type](target, { dataTransfer });
+        Object.defineProperty(event, 'clientY', { value: edge === 'before' ? 104 : 128 });
+        fireEvent(target, event);
+      }
+      rect.mockRestore();
+      fireEvent.dragEnd(source, { dataTransfer });
+    }
+
+    it('reorders ungrouped agents using both row halves and the handle keyboard shortcut, then restores the order', () => {
+      const first = render(<WorkspaceWork {...props} />);
+      drag(handle('agent-3'), entityRow('agent-1'));
+      expect(entityIds()).toEqual(['agent-3', 'agent-1', 'agent-2']);
+      drag(handle('agent-3'), entityRow('agent-2'), 'after');
+      expect(entityIds()).toEqual(['agent-1', 'agent-2', 'agent-3']);
+      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
+      expect(entityIds()).toEqual(['agent-1', 'agent-3', 'agent-2']);
+      expect(preferences().entityOrder).toEqual(['agent-1', 'agent-3', 'agent-2']);
+      expect(preferences().assignments).toEqual({});
+      expect(entityRow('agent-1')).not.toHaveAttribute('draggable', 'true');
+      first.unmount();
+
+      render(<WorkspaceWork {...props} />);
+      expect(entityIds()).toEqual(['agent-1', 'agent-3', 'agent-2']);
+      expect(surfaceMocks.pinAgentAction).not.toHaveBeenCalled();
+    });
+
+    it('opens collapsed Ungrouped after a group-header drop and persists its expanded state', () => {
+      render(<WorkspaceWork {...props}
+        initialGroupPreferences={{
+          groups: [{ id: 'team', name: 'Team' }], assignments: { 'agent-1': 'team' }, collapsed: { __ungrouped__: true },
+        }}
+      />);
+      const header = document.querySelector<HTMLElement>('[data-sidebar-group-id="__ungrouped__"] > div')!;
+      expect(within(header).getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+      expect(entityIds()).toEqual(['agent-1']);
+      drag(handle('agent-1'), header);
+      expect(within(header).getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+      expect(entityIds()).toEqual(['agent-1', 'agent-2', 'agent-3']);
+      expect(preferences().assignments).toEqual({});
+      expect(preferences().collapsed.__ungrouped__).toBe(false);
+    });
+
+    it('ignores group-header drags when the source agent has disappeared', () => {
+      const groupProps = {
+        ...props,
+        initialGroupPreferences: { groups: [{ id: 'team', name: 'Team' }], assignments: {}, collapsed: { team: true } },
+      };
+      const { rerender } = render(<WorkspaceWork {...groupProps} />);
+      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+      fireEvent.dragStart(handle('agent-1'), { dataTransfer });
+      rerender(<WorkspaceWork {...groupProps} agents={props.agents.filter((item) => item.id !== 'agent-1')} />);
+      const header = document.querySelector<HTMLElement>('[data-sidebar-group-id="team"] > div')!;
+      expect(fireEvent.dragOver(header, { dataTransfer })).toBe(true);
+      expect(header).not.toHaveClass('ring-brand/50');
+      fireEvent.drop(header, { dataTransfer });
+      expect(window.localStorage.getItem(storageKey)).toBeNull();
+      expect(within(header).getByRole('button', { name: 'Show Team' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('adopts the drop target group and position but keeps keyboard moves within the current group', () => {
+      render(<WorkspaceWork {...props}
+        agents={[...props.agents, { ...agent, id: 'agent-4', name: 'Ungrouped' }]}
+        initialGroupPreferences={{
+          groups: [{ id: 'first', name: 'First' }, { id: 'second', name: 'Second' }],
+          assignments: { 'agent-1': 'first', 'agent-2': 'second', 'agent-3': 'second' }, collapsed: {},
+        }}
+      />);
+      drag(handle('agent-1'), entityRow('agent-3'));
+      expect(entityIds()).toEqual(['agent-2', 'agent-1', 'agent-3', 'agent-4']);
+      expect(preferences().assignments['agent-1']).toBe('second');
+      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-1', 'agent-3', 'agent-4']);
+
+      drag(handle('agent-1'), entityRow('agent-4'), 'after');
+      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-4', 'agent-1']);
+      expect(preferences().assignments).not.toHaveProperty('agent-1');
+      const saved = window.localStorage.getItem(storageKey);
+      fireEvent.keyDown(handle('agent-4'), { altKey: true, key: 'ArrowUp' });
+      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowDown' });
+      expect(window.localStorage.getItem(storageKey)).toBe(saved);
+      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-4', 'agent-1']);
+      fireEvent.keyDown(handle('agent-1'), { altKey: true, key: 'ArrowUp' });
+      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1', 'agent-4']);
+      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-3', 'agent-1', 'agent-4']);
+      expect(preferences().assignments).toEqual({ 'agent-2': 'second', 'agent-3': 'second' });
+    });
+
+    it.each(['work-1', 'channel-1', 'chat-1'])('dims only the dragged %s row and clears it on drag end or drop', (id) => {
+      render(<WorkspaceWork {...props}
+        sessions={[session('work-1'), session('work-2')]}
+        conversations={[channel('channel-1'), channel('channel-2'), { id: 'chat-1', agentId: agent.id, title: 'Ordinary chat', source: null }]}
+      />);
+      const source = conversationRow(id);
+      const target = conversationRow(id === 'work-1' ? 'work-2' : 'channel-2');
+      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+      fireEvent.dragStart(source, { dataTransfer });
+      expect(source).toHaveClass('opacity-50');
+      expect(target).not.toHaveClass('opacity-50');
+      expect(entityRow(agent.id)).not.toHaveClass('opacity-50');
+      fireEvent.dragEnd(source);
+      expect(source).not.toHaveClass('opacity-50');
+      fireEvent.dragStart(source, { dataTransfer });
+      expect(source).toHaveClass('opacity-50');
+      fireEvent.drop(target, { dataTransfer });
+      expect(source).not.toHaveClass('opacity-50');
+    });
+
+    it('clears row insertion indicators on leave, drag end, and drop', () => {
+      render(<WorkspaceWork {...props} />);
+      const source = handle('agent-1');
+      const target = entityRow('agent-2');
+      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
+      const over = createEvent.dragOver(target, { dataTransfer });
+      Object.defineProperty(over, 'clientY', { value: -1 });
+      fireEvent.dragStart(source, { dataTransfer });
+      fireEvent(target, over);
+      expect(target).toHaveClass('relative', 'before:top-0');
+      fireEvent.dragLeave(target);
+      expect(target).not.toHaveClass('before:top-0');
+      fireEvent(target, over);
+      expect(target).toHaveClass('before:top-0');
+      fireEvent.dragEnd(source);
+      expect(target).not.toHaveClass('before:top-0');
+      fireEvent.dragStart(source, { dataTransfer });
+      fireEvent(target, over);
+      fireEvent.drop(target, { dataTransfer });
+      expect(target).not.toHaveClass('before:bg-brand');
+    });
+
+    it('keeps pinned agents first, rejects same-group pin crossings, and permits cross-group moves', () => {
+      render(<WorkspaceWork {...props}
+        agents={props.agents.map((item) => ({ ...item, pinned: item.id === 'agent-2' }))}
+        initialGroupPreferences={{
+          groups: [{ id: 'team', name: 'Team' }], assignments: { 'agent-2': 'team', 'agent-3': 'team' },
+          collapsed: {}, entityOrder: ['agent-3', 'agent-2', 'agent-1'],
+        }}
+      />);
+      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1']);
+      drag(handle('agent-3'), entityRow('agent-2'));
+      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
+      expect(window.localStorage.getItem(storageKey)).toBeNull();
+
+      drag(handle('agent-1'), entityRow('agent-2'));
+      expect(preferences().assignments['agent-1']).toBe('team');
+      expect(entityIds()).toEqual(['agent-2', 'agent-1', 'agent-3']);
+      const saved = window.localStorage.getItem(storageKey);
+      drag(handle('agent-2'), entityRow('agent-3'), 'after');
+      expect(window.localStorage.getItem(storageKey)).toBe(saved);
+      expect(surfaceMocks.pinAgentAction).not.toHaveBeenCalled();
+    });
+
+    it('sorts sessions and the shared channel/chat section separately and persists both drag and keyboard changes', () => {
+      const childProps = {
+        ...props,
+        sessions: [session('work-1'), session('work-2'), session('work-3')],
+        conversations: [channel('channel-1'), channel('channel-2'), { id: 'chat-1', agentId: agent.id, title: 'Ordinary chat', source: null }],
+        initialGroupPreferences: {
+          groups: [], assignments: {}, collapsed: {},
+          conversationOrder: { [agent.id]: ['work-3', 'channel-2', 'work-1', 'chat-1', 'work-2', 'channel-1'] },
+        },
+      };
+      const first = render(<WorkspaceWork {...childProps} />);
+      expect(conversationIds()).toEqual(['work-3', 'work-1', 'work-2', 'channel-2', 'chat-1', 'channel-1']);
+      drag(conversationRow('work-2'), conversationRow('work-3'));
+      drag(conversationRow('channel-1'), conversationRow('channel-2'));
+      const chatLink = within(conversationRow('chat-1')).getByRole('link');
+      fireEvent.keyDown(chatLink, { altKey: true, key: 'ArrowUp' });
+      fireEvent.keyDown(within(conversationRow('work-2')).getByRole('link'), { altKey: true, key: 'ArrowDown' });
+      expect(conversationIds()).toEqual(['work-3', 'work-2', 'work-1', 'channel-1', 'chat-1', 'channel-2']);
+      expect(preferences().conversationOrder[agent.id]).toEqual(['work-3', 'work-2', 'channel-1', 'chat-1', 'channel-2', 'work-1']);
+      expect(chatLink).toHaveAttribute('draggable', 'false');
+      expect(chatLink).toHaveAttribute('href', '/app/acme/work?agent=agent-1&c=chat-1');
+      expect(within(conversationRow('work-1')).getByRole('link')).toHaveAttribute('draggable', 'false');
+      expect(fireEvent.keyDown(chatLink, { key: 'ArrowDown' })).toBe(true);
+      expect(document.cookie).toContain(`toolplane_work_agent_group_preferences_workspace-1=${encodeURIComponent(JSON.stringify(preferences()))}`);
+      first.unmount();
+
+      render(<WorkspaceWork {...childProps} />);
+      expect(conversationIds()).toEqual(['work-3', 'work-2', 'work-1', 'channel-1', 'chat-1', 'channel-2']);
+    });
+
+    it('rejects child drops across owners, across sections, and onto agents or group headers', () => {
+      render(<WorkspaceWork {...props}
+        sessions={[session('work-1'), session('work-2', 'agent-2')]}
+        conversations={[channel('channel-1'), channel('channel-2', 'agent-2')]}
+        initialGroupPreferences={{ groups: [{ id: 'team', name: 'Team' }], assignments: {}, collapsed: {} }}
+      />);
+      const group = document.querySelector<HTMLElement>('[data-sidebar-group-id="team"] > div')!;
+      for (const [source, target] of [
+        [conversationRow('work-1'), conversationRow('work-2')],
+        [conversationRow('channel-1'), conversationRow('channel-2')],
+        [conversationRow('work-1'), conversationRow('channel-1')],
+        [conversationRow('channel-1'), conversationRow('work-1')],
+        [conversationRow('work-1'), entityRow('agent-2')],
+        [conversationRow('channel-1'), group],
+        [handle('agent-1'), conversationRow('work-2')],
+      ]) {
+        drag(source, target);
+        expect(window.localStorage.getItem(storageKey)).toBeNull();
+      }
+      fireEvent.keyDown(within(conversationRow('work-1')).getByRole('link'), { altKey: true, key: 'ArrowDown' });
+      fireEvent.keyDown(within(conversationRow('channel-1')).getByRole('link'), { altKey: true, key: 'ArrowUp' });
+      expect(window.localStorage.getItem(storageKey)).toBeNull();
+      expect(conversationIds()).toEqual(['work-1', 'channel-1']);
+      expect(conversationIds('agent-2')).toEqual(['work-2', 'channel-2']);
+    });
+
+    it('retains hidden session and conversation ordering when either section is reordered during search', () => {
+      render(<WorkspaceWork {...props}
+        sessions={[session('visible-work-1'), session('hidden-work'), session('visible-work-3')]}
+        conversations={[channel('visible-channel-1'), channel('hidden-channel'), channel('visible-channel-3')]}
+        initialGroupPreferences={{
+          groups: [], assignments: {}, collapsed: {},
+          conversationOrder: {
+            [agent.id]: ['hidden-work', 'visible-work-1', 'visible-work-3', 'hidden-channel', 'visible-channel-1', 'visible-channel-3'],
+            'agent-2': ['other-2', 'other-1'],
+          },
+        }}
+      />);
+      const search = screen.getByRole('textbox', { name: 'Search Agents and work sessions' });
+      fireEvent.change(search, { target: { value: 'visible' } });
+      expect(conversationRow('hidden-work')).toBeNull();
+      expect(conversationRow('hidden-channel')).toBeNull();
+      drag(conversationRow('visible-work-3'), conversationRow('visible-work-1'));
+      drag(conversationRow('visible-channel-3'), conversationRow('visible-channel-1'));
+      expect(preferences().conversationOrder).toEqual({
+        [agent.id]: ['hidden-work', 'visible-work-3', 'visible-work-1', 'hidden-channel', 'visible-channel-3', 'visible-channel-1'],
+        'agent-2': ['other-2', 'other-1'],
+      });
+      fireEvent.change(search, { target: { value: '' } });
+      expect(conversationIds()).toEqual(['hidden-work', 'visible-work-3', 'visible-work-1', 'hidden-channel', 'visible-channel-3', 'visible-channel-1']);
+    });
+
+    it('retains hidden agent order when moving visible agents during search', () => {
+      render(<WorkspaceWork {...props}
+        agents={props.agents.map((item) => ({ ...item, name: item.id === 'agent-2' ? 'Hidden' : `Visible ${item.id}` }))}
+        initialGroupPreferences={{ groups: [], assignments: {}, collapsed: {}, entityOrder: ['agent-2', 'agent-1', 'agent-3'] }}
+      />);
+      const search = screen.getByRole('textbox', { name: 'Search Agents and work sessions' });
+      fireEvent.change(search, { target: { value: 'visible' } });
+      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
+      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-3', 'agent-1']);
+      fireEvent.change(search, { target: { value: '' } });
+      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1']);
+    });
   });
 
   it('shows Cherry-style thinking effort control for Hermes Work', async () => {

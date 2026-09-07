@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { ContextMenu, Popover } from 'radix-ui';
 import { SidebarActionRail } from '@asharca/ui';
@@ -89,6 +89,11 @@ import {
 import {
   createSidebarGroupId,
   EMPTY_SIDEBAR_GROUP_PREFERENCES,
+  getSidebarDropEdge,
+  reorderSidebarItems,
+  sidebarDropIndicatorClassName,
+  sortSidebarItems,
+  type SidebarDropEdge,
   type SidebarGroupPreferences,
 } from '@/lib/sidebar-groups';
 import { usePersistentSidebarGroups } from '@/lib/use-persistent-sidebar-groups';
@@ -183,6 +188,10 @@ type WorkSidebarAgent = {
 type WorkSidebarEntry =
   | { kind: 'group'; id: string; name: string; editable: boolean; count: number }
   | { kind: 'agent'; groupId: string | null; item: WorkSidebarAgent };
+
+type WorkSidebarDragItem =
+  | { kind: 'agent'; id: string }
+  | { kind: 'session' | 'conversation'; id: string; agentId: string };
 
 type WorkTiming = {
   startedAt: number;
@@ -1023,9 +1032,10 @@ export function WorkspaceWork({
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(null);
   const [groupEditor, setGroupEditor] = useState<{ id: string | null; name: string } | null>(null);
-  const [draggingAgentId, setDraggingAgentId] = useState<string | null>(null);
-  const draggingAgentIdRef = useRef<string | null>(null);
+  const [draggingSidebarItem, setDraggingSidebarItem] = useState<WorkSidebarDragItem | null>(null);
+  const draggingSidebarItemRef = useRef<WorkSidebarDragItem | null>(null);
   const [dropGroupId, setDropGroupId] = useState<string | null>(null);
+  const [dropRow, setDropRow] = useState<{ kind: WorkSidebarDragItem['kind']; id: string; edge: SidebarDropEdge } | null>(null);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{ scope: string; items: ComposerReference[] }>({ scope: '', items: [] });
@@ -1155,9 +1165,10 @@ export function WorkspaceWork({
   };
   const visibleAgents = useMemo<WorkSidebarAgent[]>(() => {
     const query = sessionQuery.trim().toLocaleLowerCase();
-    return agents.flatMap((item) => {
-      const agentSessions = items.filter((session) => session.agentId === item.id);
-      const agentChannels = conversations.filter((conversation) => conversation.agentId === item.id).map((conversation) => {
+    return sortSidebarItems(agents, groupPreferences.entityOrder).flatMap((item) => {
+      const order = groupPreferences.conversationOrder?.[item.id];
+      const agentSessions = sortSidebarItems(items.filter((session) => session.agentId === item.id), order);
+      const agentChannels = sortSidebarItems(conversations.filter((conversation) => conversation.agentId === item.id), order).map((conversation) => {
         if (!conversation.source) return { ...conversation, label: conversation.title || tAgents('newChat') };
         const { platform, chatId } = conversation.source;
         const platformLabel = tChannels.has(`platforms.${platform}`) ? tChannels(`platforms.${platform}`) : platform;
@@ -1177,7 +1188,7 @@ export function WorkspaceWork({
         ? [{ agent: item, sessions: agentMatches ? agentSessions : matchingSessions, channels: agentMatches ? agentChannels : matchingChannels }]
         : [];
     });
-  }, [agents, items, conversations, sessionQuery, tChannels, tAgents]);
+  }, [agents, items, conversations, groupPreferences.entityOrder, groupPreferences.conversationOrder, sessionQuery, tChannels, tAgents]);
   const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
   const groupedAgents = useMemo(() => {
     const agentsByGroup = new Map<string, WorkSidebarAgent[]>(
@@ -1592,6 +1603,7 @@ export function WorkspaceWork({
   }
 
   function assignAgentToGroup(agentId: string, groupId: string | null) {
+    if (!agents.some((item) => item.id === agentId)) return;
     setGroupPreferences((current) => {
       const assignments = { ...current.assignments };
       if (groupId) assignments[agentId] = groupId;
@@ -1599,9 +1611,124 @@ export function WorkspaceWork({
       return {
         ...current,
         assignments,
-        ...(groupId ? { collapsed: { ...current.collapsed, [groupId]: false } } : {}),
+        collapsed: { ...current.collapsed, [groupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
       };
     });
+  }
+
+  function clearSidebarDrag() {
+    draggingSidebarItemRef.current = null;
+    setDraggingSidebarItem(null);
+    setDropGroupId(null);
+    setDropRow(null);
+  }
+
+  function startSidebarDrag(event: DragEvent<HTMLElement>, source: WorkSidebarDragItem) {
+    event.stopPropagation();
+    clearSidebarDrag();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(`application/x-toolplane-${source.kind}`, source.id);
+    draggingSidebarItemRef.current = source;
+    setDraggingSidebarItem(source);
+  }
+
+  function canReorderSidebarItem(source: WorkSidebarDragItem, target: WorkSidebarDragItem, preferences = groupPreferences) {
+    if (source.kind !== target.kind || source.id === target.id) return false;
+    if (source.kind === 'agent' && target.kind === 'agent') {
+      const sourceAgent = agents.find((item) => item.id === source.id);
+      const targetAgent = agents.find((item) => item.id === target.id);
+      return Boolean(sourceAgent && targetAgent && (
+        (preferences.assignments[source.id] ?? null) !== (preferences.assignments[target.id] ?? null)
+        || sourceAgent.pinned === targetAgent.pinned
+      ));
+    }
+    if (source.kind === 'agent' || target.kind === 'agent' || source.agentId !== target.agentId) return false;
+    const section = source.kind === 'session' ? items : conversations;
+    return section.some((item) => item.id === source.id && item.agentId === source.agentId)
+      && section.some((item) => item.id === target.id && item.agentId === target.agentId);
+  }
+
+  function moveSidebarItem(source: WorkSidebarDragItem, target: WorkSidebarDragItem, edge: SidebarDropEdge) {
+    setGroupPreferences((current) => {
+      if (!canReorderSidebarItem(source, target, current)) return current;
+      if (source.kind === 'agent' && target.kind === 'agent') {
+        const targetGroupId = current.assignments[target.id];
+        const assignments = { ...current.assignments };
+        if (targetGroupId) assignments[source.id] = targetGroupId;
+        else delete assignments[source.id];
+        return {
+          ...current,
+          assignments,
+          collapsed: { ...current.collapsed, [targetGroupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
+          entityOrder: reorderSidebarItems(sortSidebarItems(agents, current.entityOrder), source.id, target.id, edge),
+        };
+      }
+      if (source.kind === 'agent') return current;
+      // Keep both complete sections in the saved order, including search-hidden rows.
+      const agentItems = [...items, ...conversations].filter((item) => item.agentId === source.agentId);
+      return {
+        ...current,
+        conversationOrder: {
+          ...current.conversationOrder,
+          [source.agentId]: reorderSidebarItems(
+            sortSidebarItems(agentItems, current.conversationOrder?.[source.agentId]), source.id, target.id, edge,
+          ),
+        },
+      };
+    });
+  }
+
+  function sidebarRowDropProps(target: WorkSidebarDragItem) {
+    return {
+      onDragOver: (event: DragEvent<HTMLElement>) => {
+        event.stopPropagation();
+        setDropGroupId(null);
+        const source = draggingSidebarItemRef.current;
+        if (!source || !canReorderSidebarItem(source, target)) {
+          setDropRow(null);
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        setDropRow({ kind: target.kind, id: target.id, edge: getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()) });
+      },
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        event.stopPropagation();
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropRow(null);
+      },
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        event.stopPropagation();
+        const source = draggingSidebarItemRef.current;
+        if (source && canReorderSidebarItem(source, target)) {
+          event.preventDefault();
+          moveSidebarItem(source, target, getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()));
+        }
+        clearSidebarDrag();
+      },
+    };
+  }
+
+  function reorderSidebarWithKeyboard(event: KeyboardEvent<HTMLElement>, source: WorkSidebarDragItem) {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    let rows: WorkSidebarDragItem[];
+    if (source.kind === 'agent') {
+      rows = sidebarAgentEntries.flatMap((entry) => entry.kind === 'agent'
+        && (groupPreferences.assignments[entry.item.agent.id] ?? null) === (groupPreferences.assignments[source.id] ?? null)
+        && (!entry.groupId || sessionQuery.trim() || !groupPreferences.collapsed[entry.groupId])
+        ? [{ kind: 'agent' as const, id: entry.item.agent.id }] : []);
+    } else {
+      const agent = visibleAgents.find((item) => item.agent.id === source.agentId);
+      rows = (source.kind === 'session' ? agent?.sessions ?? [] : agent?.channels ?? [])
+        .map((item) => ({ kind: source.kind, id: item.id, agentId: source.agentId }));
+    }
+    const index = rows.findIndex((item) => item.id === source.id);
+    const target = rows[index + (event.key === 'ArrowUp' ? -1 : 1)];
+    if (target && canReorderSidebarItem(source, target)) {
+      moveSidebarItem(source, target, event.key === 'ArrowUp' ? 'before' : 'after');
+    }
+    clearSidebarDrag();
   }
 
   function renderAgentGroup(entry: Extract<WorkSidebarEntry, { kind: 'group' }>) {
@@ -1612,21 +1739,31 @@ export function WorkspaceWork({
       <li key={entry.id} data-sidebar-group-id={entry.id} className="py-1">
         <div
           onDragOver={(event) => {
-            const agentId = draggingAgentIdRef.current;
+            event.stopPropagation();
+            setDropRow(null);
+            const source = draggingSidebarItemRef.current;
+            const agentId = source?.kind === 'agent' ? source.id : null;
             const assignedGroupId = agentId ? groupPreferences.assignments[agentId] ?? null : null;
-            if (!agentId || assignedGroupId === targetGroupId) return;
+            if (!agentId || !agents.some((item) => item.id === agentId) || assignedGroupId === targetGroupId) {
+              setDropGroupId(null);
+              return;
+            }
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
             setDropGroupId(entry.id);
           }}
+          onDragLeave={(event) => {
+            event.stopPropagation();
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropGroupId(null);
+          }}
           onDrop={(event) => {
-            const agentId = draggingAgentIdRef.current;
-            if (!agentId) return;
-            event.preventDefault();
-            assignAgentToGroup(agentId, targetGroupId);
-            draggingAgentIdRef.current = null;
-            setDraggingAgentId(null);
-            setDropGroupId(null);
+            event.stopPropagation();
+            const source = draggingSidebarItemRef.current;
+            if (source?.kind === 'agent') {
+              event.preventDefault();
+              assignAgentToGroup(source.id, targetGroupId);
+            }
+            clearSidebarDrag();
           }}
           className={cx(
             'group/sidebar-group flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground',
@@ -1771,27 +1908,20 @@ export function WorkspaceWork({
               const expanded = Boolean(sessionQuery)
                 || (expandedAgents[itemAgent.id] ?? (itemAgent.id === activeAgentId || agentChannels.length > 0));
               const row = (
-                <div className={cx(
-                  'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
+                <div data-sidebar-entity-id={itemAgent.id} {...sidebarRowDropProps({ kind: 'agent', id: itemAgent.id })} className={cx(
+                  'group relative flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
                   itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
-                  draggingAgentId === itemAgent.id && 'opacity-50',
+                  draggingSidebarItem?.kind === 'agent' && draggingSidebarItem.id === itemAgent.id && 'opacity-50',
+                  sidebarDropIndicatorClassName(dropRow?.kind === 'agent' && dropRow.id === itemAgent.id ? dropRow.edge : undefined),
                 )}>
                   <button
                     type="button"
                     draggable
                     aria-label={t('moveToGroup')}
                     title={t('moveToGroup')}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = 'move';
-                      event.dataTransfer.setData('application/x-toolplane-agent', itemAgent.id);
-                      draggingAgentIdRef.current = itemAgent.id;
-                      setDraggingAgentId(itemAgent.id);
-                    }}
-                    onDragEnd={() => {
-                      draggingAgentIdRef.current = null;
-                      setDraggingAgentId(null);
-                      setDropGroupId(null);
-                    }}
+                    onDragStart={(event) => startSidebarDrag(event, { kind: 'agent', id: itemAgent.id })}
+                    onDragEnd={clearSidebarDrag}
+                    onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'agent', id: itemAgent.id })}
                     className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
                   >
                     <GripVertical className="size-3.5" />
@@ -1892,9 +2022,23 @@ export function WorkspaceWork({
                   {expanded ? (
                     <ul id={`agent-work-sessions-${itemAgent.id}`} className="ml-4 py-0.5 pl-1">
                       {agentSessions.length > 0 ? agentSessions.map((item) => (
-                        <li key={item.id} className="group/session relative py-0.5">
+                        <li
+                          key={item.id}
+                          data-sidebar-conversation-id={item.id}
+                          draggable
+                          onDragStart={(event) => startSidebarDrag(event, { kind: 'session', id: item.id, agentId: itemAgent.id })}
+                          onDragEnd={clearSidebarDrag}
+                          {...sidebarRowDropProps({ kind: 'session', id: item.id, agentId: itemAgent.id })}
+                          className={cx(
+                            'group/session relative py-0.5',
+                            draggingSidebarItem?.kind === 'session' && draggingSidebarItem.id === item.id && 'opacity-50',
+                            sidebarDropIndicatorClassName(dropRow?.kind === 'session' && dropRow.id === item.id ? dropRow.edge : undefined),
+                          )}
+                        >
                           <Link
                             href={workHref(slug, item.id)}
+                            draggable={false}
+                            onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'session', id: item.id, agentId: itemAgent.id })}
                             onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
                             aria-current={item.id === selected?.id ? 'page' : undefined}
                             title={`${statusLabels[item.status] ?? item.status} · ${item.sandbox?.name ?? t('sandboxUnavailable')}`}
@@ -1917,9 +2061,23 @@ export function WorkspaceWork({
                       ) : null}
                       {agentChannels.length > 0 && <li className="px-2 pb-1 pt-2 text-[11px] text-muted-foreground">{tAgents(agentChannels.every((item) => item.source) ? 'channels' : 'chat')}</li>}
                       {agentChannels.map((item) => (
-                        <li key={item.id} className="py-0.5">
+                        <li
+                          key={item.id}
+                          data-sidebar-conversation-id={item.id}
+                          draggable
+                          onDragStart={(event) => startSidebarDrag(event, { kind: 'conversation', id: item.id, agentId: itemAgent.id })}
+                          onDragEnd={clearSidebarDrag}
+                          {...sidebarRowDropProps({ kind: 'conversation', id: item.id, agentId: itemAgent.id })}
+                          className={cx(
+                            'relative py-0.5',
+                            draggingSidebarItem?.kind === 'conversation' && draggingSidebarItem.id === item.id && 'opacity-50',
+                            sidebarDropIndicatorClassName(dropRow?.kind === 'conversation' && dropRow.id === item.id ? dropRow.edge : undefined),
+                          )}
+                        >
                           <Link
                             href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(item.agentId)}&c=${encodeURIComponent(item.id)}`}
+                            draggable={false}
+                            onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'conversation', id: item.id, agentId: itemAgent.id })}
                             onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
                             scroll={false}
                             aria-current={item.id === conversation?.id ? 'page' : undefined}
