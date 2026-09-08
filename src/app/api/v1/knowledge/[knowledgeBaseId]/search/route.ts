@@ -1,8 +1,9 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { searchKnowledgeBases } from '@/lib/knowledge';
 
-export async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
+export const POST = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]/search", async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId } = await params;
@@ -12,7 +13,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ knowled
     return Response.json({ error: 'query is required' }, { status: 400 });
   }
   const base = await db.knowledgeBase.findFirst({
-    where: { id: knowledgeBaseId, workspace: { OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] } },
+    where: { id: knowledgeBaseId, workspace: { status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] } },
     select: { id: true, embeddingModel: true, topK: true, threshold: true, provider: { select: { format: true, baseUrl: true, apiKey: true } } },
   });
   if (!base) return Response.json({ error: 'Knowledge base not found' }, { status: 404 });
@@ -21,4 +22,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ knowled
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Search failed' }, { status: 502 });
   }
-}
+});

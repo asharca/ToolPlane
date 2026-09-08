@@ -1,6 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { generateToken, hashToken, tokenPrefix } from './token-format';
+import { writeAudit } from '@/lib/observability/audit';
 
 export { generateToken, hashToken, tokenPrefix } from './token-format';
 
@@ -10,7 +11,8 @@ export async function createApiToken(
   options: { toolkitId?: string } = {},
 ) {
   const token = generateToken();
-  const record = await db.apiToken.create({
+  const record = await db.$transaction(async (tx) => {
+    const record = await tx.apiToken.create({
     data: {
       userId,
       toolkitId: options.toolkitId,
@@ -18,6 +20,9 @@ export async function createApiToken(
       prefix: tokenPrefix(token),
       tokenHash: hashToken(token),
     },
+    });
+    await writeAudit(tx, { actorId: userId, action: 'credential.created', targetType: 'apiToken', targetId: record.id });
+    return record;
   });
   return { token, record };
 }
@@ -30,7 +35,10 @@ export function listApiTokens(userId: string) {
 }
 
 export async function revokeApiToken(userId: string, id: string): Promise<void> {
-  await db.apiToken.deleteMany({ where: { id, userId } });
+  await db.$transaction(async (tx) => {
+    const result = await tx.apiToken.deleteMany({ where: { id, userId } });
+    if (result.count) await writeAudit(tx, { actorId: userId, action: 'credential.revoked', targetType: 'apiToken', targetId: id });
+  });
 }
 
 export async function verifyApiTokenContext(authHeader: string | null) {

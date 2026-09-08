@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeAudit } from '@/lib/observability/audit';
 
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -161,6 +162,7 @@ async function assertPublisherAccess(
   const workspace = await tx.workspace.findFirst({
     where: {
       id: workspaceId,
+      status: 'active',
       OR: [
         { ownerId: userId },
         { members: { some: { userId, role: { in: ['owner', 'admin'] } } } },
@@ -192,7 +194,7 @@ async function assertInstallerAccess(
   const workspace = await tx.workspace.findFirst({
     where: {
       id: workspaceId,
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
     select: { id: true },
   });
@@ -554,6 +556,8 @@ export async function approveMarketRelease(input: {
         publishedAt,
       },
     });
+    await writeAudit(tx, { actorId: admin.id, action: 'market.release.approved', targetType: 'marketListing', targetId: release.listing.id,
+      changes: { releaseId: release.id, categoryIds, reviewNote: input.reviewNote ?? null } });
     return tx.marketListing.update({
       where: { id: release.listing.id },
       data: {
@@ -603,6 +607,8 @@ export async function rejectMarketRelease(input: {
         reviewNote: input.reviewNote?.trim().slice(0, 4_000) || null,
       },
     });
+    await writeAudit(tx, { actorId: admin.id, action: 'market.release.rejected', targetType: 'marketListing', targetId: release.listing.id,
+      changes: { releaseId: release.id, reviewNote: input.reviewNote ?? null } });
     return tx.marketListing.update({
       where: { id: release.listing.id },
       data: {

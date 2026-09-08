@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { replaceMock } = vi.hoisted(() => ({ replaceMock: vi.fn() }));
 
@@ -12,6 +12,22 @@ vi.mock('next/navigation', () => ({
 import { SettingsModal } from '@/components/dashboard/SettingsModal';
 
 describe('SettingsModal', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps unsaved settings open until the user confirms leaving', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<SettingsModal title="Settings" fallbackHref="/app/acme/chat"><form><input aria-label="Name" defaultValue="Saved" /></form></SettingsModal>);
+    await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), ' edit');
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(replaceMock).toHaveBeenCalledWith('/app/acme/mcp?__dashboardTab=tab-1');
+  });
+
   it('closes directly to the page that opened it', async () => {
     render(
       <SettingsModal title="Settings" fallbackHref="/app/acme/chat">

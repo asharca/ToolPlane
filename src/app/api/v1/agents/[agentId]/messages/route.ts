@@ -1,10 +1,11 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { runAgentMessage } from '@/lib/agents/message-service';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/messages", async function POST(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -21,4 +22,4 @@ export async function POST(
 
   const result = await runAgentMessage({ agentId, userId: user.id, rawBody });
   return Response.json(result.body, { status: result.status });
-}
+});

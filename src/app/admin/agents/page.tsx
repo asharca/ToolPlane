@@ -20,6 +20,7 @@ import {
   type AdminAgentListingStatus,
 } from '@/lib/admin/agent-market';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { adminHref } from '@/lib/admin/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 
 export const dynamic = 'force-dynamic';
@@ -94,7 +95,8 @@ export default async function AdminAgentsPage({
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <AdminSearchForm
+      <AdminSearchForm
+        hidden={{ status: status ?? '' }}
           defaultValue={q}
           placeholder={t('searchAgentListings')}
           label={t('searchAgentListings')}
@@ -156,7 +158,7 @@ export default async function AdminAgentsPage({
               <td className="px-4 py-3">
                 <AdminEntity
                   title={(
-                    <Link href={`/admin/agents/${listing.id}/edit`} className="hover:underline">
+                    <Link href={adminHref(`/admin/agents/${listing.id}/edit`, { returnTo: hrefForPage(result.page) })} className="hover:underline">
                       {listing.name}
                     </Link>
                   )}
@@ -200,7 +202,7 @@ export default async function AdminAgentsPage({
               </td>
               <td className="px-2 py-3">
                 <AdminTableLink
-                  href={`/admin/agents/${listing.id}/edit`}
+                  href={adminHref(`/admin/agents/${listing.id}/edit`, { returnTo: hrefForPage(result.page) })}
                   label={`${t('edit')}: ${listing.name}`}
                 />
               </td>

@@ -1,3 +1,4 @@
+import { systemLog } from '@/lib/observability/system';
 import 'server-only';
 import { db } from '@/lib/db';
 import { hashPassword } from './password';
@@ -62,7 +63,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
     });
   } catch (error) {
     await db.passwordResetToken.deleteMany({ where: { tokenHash } });
-    console.error(
+    systemLog('error',
       'Unable to send password-reset email',
       error instanceof Error ? error.message : 'Unknown error',
     );

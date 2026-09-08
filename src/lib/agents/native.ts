@@ -15,6 +15,8 @@ import {
 } from './model';
 import { resolveMaxSteps, type ReasoningEffort } from './constants';
 import type { AgentToolSet } from './agent-tool';
+import { observe, recordEvent } from '@/lib/observability/events';
+import { withLogContext } from '@/lib/observability/context';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -142,6 +144,11 @@ export type NativeRunOptions = {
 };
 
 export async function runNativeAgent(options: NativeRunOptions): Promise<string> {
+  return observe({ domain: 'agent', eventName: 'agent.run', model: options.modelId, providerId: options.provider.id,
+    secrets: [options.provider.apiKey] }, () => runNativeSteps(options));
+}
+
+async function runNativeSteps(options: NativeRunOptions): Promise<string> {
   const { models, model } = buildModel(options.provider, options.modelId);
   const reasoning = options.reasoningEffort && options.reasoningEffort !== 'default'
     ? options.reasoningEffort
@@ -167,6 +174,10 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
   let text = '';
 
   for (let step = 0; step < maxSteps; step += 1) {
+    const message = await withLogContext({}, async () => {
+    const modelStart = performance.now();
+    let firstOutputMs: number | undefined;
+    try {
     const stream = models.streamSimple(runtimeModel, context, {
       signal: options.signal,
       maxRetries: 0,
@@ -183,10 +194,26 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
         ),
       } : {}),
     });
-    for await (const event of stream) await options.onEvent?.(event);
+    for await (const event of stream) {
+      if (firstOutputMs === undefined && event.type === 'text_delta') firstOutputMs = Math.round(performance.now() - modelStart);
+      await options.onEvent?.(event);
+    }
     const message = await stream.result();
+    await recordEvent({ domain: 'agent', eventName: 'model.call', model: options.modelId,
+      durationMs: Math.round(performance.now() - modelStart),
+      outcome: message.stopReason === 'aborted' ? 'cancelled' : message.stopReason === 'error' ? 'error' : 'success',
+      error: message.stopReason === 'error' ? new Error(message.errorMessage || 'Model request failed') : undefined,
+      attributes: { step, firstOutputMs, stopReason: message.stopReason, inputTokens: message.usage.input,
+        outputTokens: message.usage.output, cacheReadTokens: message.usage.cacheRead, cacheWriteTokens: message.usage.cacheWrite },
+    });
+    return message;
+    } catch (error) {
+      await recordEvent({ domain: 'agent', eventName: 'model.call', error, durationMs: Math.round(performance.now() - modelStart), attributes: { step, firstOutputMs } });
+      throw error;
+    }
+    });
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-      throw new Error(message.errorMessage || 'Model request failed.');
+      throw message.stopReason === 'aborted' ? new DOMException(message.errorMessage || 'Model request aborted.', 'AbortError') : new Error(message.errorMessage || 'Model request failed.');
     }
     if (Number.isFinite(message.usage.totalTokens) && message.usage.totalTokens > 0) {
       await options.onContextUsage?.({
@@ -207,17 +234,27 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
     if (!toolCalls.length) return text;
 
     for (const toolCall of toolCalls) {
+      await withLogContext({}, async () => {
       if (options.signal?.aborted) throw new Error('Model request aborted.');
       const localTool = options.tools[toolCall.name];
       let output: unknown;
       let isError = false;
+      let toolError: unknown;
+      const toolStart = performance.now();
       try {
         if (!localTool) throw new Error(`Unknown tool: ${toolCall.name}`);
         output = await localTool.execute(validateToolCall(tools, toolCall) as Record<string, unknown>);
       } catch (error) {
         isError = true;
+        toolError = error;
         output = { error: error instanceof Error ? error.message : String(error) };
       }
+      const semanticError = output && typeof output === 'object' && ('isError' in output && output.isError === true || 'error' in output && Boolean(output.error));
+      await recordEvent({ domain: 'agent', eventName: 'tool.call', toolName: toolCall.name,
+        outcome: isError || semanticError ? 'error' : 'success',
+        error: toolError,
+        durationMs: Math.round(performance.now() - toolStart), attributes: { toolCallId: toolCall.id },
+        detail: { input: toolCall.arguments, output } });
       await options.onToolResult?.(toolCall, output, isError);
       context.messages.push({
         role: 'toolResult',
@@ -226,6 +263,7 @@ export async function runNativeAgent(options: NativeRunOptions): Promise<string>
         content: [{ type: 'text', text: toolResultText(output) }],
         isError,
         timestamp: Date.now(),
+      });
       });
     }
   }

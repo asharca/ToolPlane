@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { z } from 'zod';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getChatThreadForExecution } from '@/lib/chat/service';
@@ -23,7 +24,7 @@ async function requestThread(req: Request, threadId: string) {
   return getChatThreadForExecution(user.id, threadId);
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/chat/threads/[threadId]/composer", async function GET(
   req: Request,
   { params }: { params: Promise<{ threadId: string }> },
 ) {
@@ -63,9 +64,9 @@ export async function GET(
   } catch {
     return Response.json({ error: 'MCP resources are unavailable.' }, { status: 502 });
   }
-}
+});
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/composer", async function POST(
   req: Request,
   { params }: { params: Promise<{ threadId: string }> },
 ) {
@@ -96,4 +97,4 @@ export async function POST(
     }
     return Response.json({ error: 'MCP resource is unavailable.' }, { status: 502 });
   }
-}
+});

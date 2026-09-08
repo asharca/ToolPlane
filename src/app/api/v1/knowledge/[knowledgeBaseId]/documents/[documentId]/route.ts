@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { mcpRpc } from '@/lib/process/mcp-client';
@@ -8,7 +9,7 @@ async function documentForUser(documentId: string, knowledgeBaseId: string, user
     where: {
       id: documentId,
       knowledgeBaseId,
-      knowledgeBase: { workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } },
+      knowledgeBase: { workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] } },
     },
     include: { sandbox: { select: { deploymentId: true } } },
   });
@@ -22,7 +23,7 @@ function resultText(result: Record<string, unknown> | null) {
     : null;
 }
 
-export async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string; documentId: string }> }) {
+export const POST = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]/documents/[documentId]", async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string; documentId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId, documentId } = await params;
@@ -44,9 +45,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ knowled
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Reindex failed' }, { status: 502 });
   }
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string; documentId: string }> }) {
+export const DELETE = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]/documents/[documentId]", async function DELETE(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string; documentId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId, documentId } = await params;
@@ -54,4 +55,4 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ knowl
   if (!document) return Response.json({ error: 'Document not found' }, { status: 404 });
   await db.knowledgeDocument.delete({ where: { id: document.id } });
   return new Response(null, { status: 204 });
-}
+});

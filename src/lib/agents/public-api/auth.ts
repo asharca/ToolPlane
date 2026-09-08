@@ -3,6 +3,7 @@ import 'server-only';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { decodeJwt, SignJWT, jwtVerify } from 'jose';
 import { db } from '@/lib/db';
+import { writeAudit } from '@/lib/observability/audit';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { normalizedOrigin } from './cors';
 import {
@@ -58,6 +59,7 @@ export type AgentApiPrincipal = {
 };
 
 export type CreateAgentApiKeyInput = {
+  actorId?: string;
   clientId: string;
   endpointPublicId: string;
   workspaceId: string;
@@ -85,6 +87,7 @@ export type ListAgentApiKeysInput = {
 };
 
 export type RevokeAgentApiKeyInput = {
+  actorId?: string;
   keyId: string;
   endpointPublicId: string;
   workspaceId: string;
@@ -269,7 +272,8 @@ export async function createAgentApiKey(
   if (!client) throw new Error('Agent API client not found');
 
   const token = generateAgentApiKey();
-  const record = await db.agentApiKey.create({
+  const record = await db.$transaction(async (tx) => {
+    const key = await tx.agentApiKey.create({
     data: {
       clientId: client.id,
       name,
@@ -278,6 +282,10 @@ export async function createAgentApiKey(
       expiresAt: input.expiresAt ?? null,
     },
     select: safeKeySelect,
+    });
+    await writeAudit(tx, { actorId: input.actorId ?? 'system', workspaceId: input.workspaceId, action: 'agentApiKey.created', targetType: 'agentApiKey', targetId: key.id,
+      changes: { clientId: client.id, name, expiresAt: input.expiresAt ?? null } });
+    return key;
   });
   return { token, record };
 }
@@ -300,7 +308,8 @@ export function listAgentApiKeys(input: ListAgentApiKeysInput): Promise<AgentApi
 }
 
 export async function revokeAgentApiKey(input: RevokeAgentApiKeyInput): Promise<boolean> {
-  const result = await db.agentApiKey.updateMany({
+  return db.$transaction(async (tx) => {
+    const result = await tx.agentApiKey.updateMany({
     where: {
       id: input.keyId,
       revokedAt: null,
@@ -314,8 +323,11 @@ export async function revokeAgentApiKey(input: RevokeAgentApiKeyInput): Promise<
       },
     },
     data: { revokedAt: input.now ?? new Date() },
+    });
+    if (result.count === 1) await writeAudit(tx, { actorId: input.actorId ?? 'system', workspaceId: input.workspaceId,
+      action: 'agentApiKey.revoked', targetType: 'agentApiKey', targetId: input.keyId });
+    return result.count === 1;
   });
-  return result.count === 1;
 }
 
 async function apiKeyPrincipal(

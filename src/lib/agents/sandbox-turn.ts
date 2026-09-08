@@ -1,3 +1,4 @@
+import { observe, recordEvent } from '@/lib/observability/events';
 import 'server-only';
 import { db } from '@/lib/db';
 import {
@@ -44,6 +45,8 @@ export async function runDedicatedSandboxTurn(input: {
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
 }): Promise<string> {
+  return observe({ domain: 'agent', eventName: 'sandbox.run', workspaceId: input.agent.workspaceId, agentId: input.agent.id,
+    model: input.agent.model ?? undefined, providerId: input.agent.provider?.id, secrets: [input.agent.provider?.apiKey ?? ''] }, async () => {
   const runtimeKind = input.agent.runtimeKind;
   if (runtimeKind !== 'pi' && runtimeKind !== 'claude-code' && runtimeKind !== 'dsh') {
     throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
@@ -111,9 +114,16 @@ export async function runDedicatedSandboxTurn(input: {
     command: input.command,
     signal: input.signal,
     onTextDelta: input.onTextDelta,
-    onActivity: input.onActivity,
+    onActivity: async (activity) => {
+      if (activity.type === 'tool') await recordEvent({ domain: 'agent', eventName: 'sandbox.tool',
+        toolName: activity.toolName, outcome: activity.status === 'failed' ? 'error' : 'success',
+        attributes: { status: activity.status, toolCallId: activity.toolCallId } });
+      await input.onActivity?.(activity);
+    },
     onContextUsage: input.onContextUsage,
     onCommands: input.onCommands,
     onUsage: input.onUsage,
+  });
+
   });
 }

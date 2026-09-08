@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
   updateMany: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
-  db: { server: mocks },
+  db: { server: mocks, $transaction: (run: (tx: unknown) => unknown) => run({ server: mocks, auditEvent: { create: mocks.audit } }) },
 }));
 
 import { setServerVerified } from '@/lib/admin/market';

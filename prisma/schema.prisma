@@ -167,6 +167,7 @@ model Workspace {
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
+  status                 String                   @default("active")
   defaultModelProviderId String?
   defaultModel           String?
   titleModelProviderId   String?
@@ -174,9 +175,9 @@ model Workspace {
   ownerId                String
   owner                  User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members                Membership[]
+  invitations            WorkspaceInvitation[]
   deployments            Deployment[]
   installedSkills        InstalledSkill[]
-  requestLogs            RequestLog[]
   sandboxes              Sandbox[]
   toolkits               Toolkit[]
   modelProviders         ModelProvider[]
@@ -210,6 +211,19 @@ model Membership {
   createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, userId])
+}
+
+model WorkspaceInvitation {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email       String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, email])
+  @@index([expiresAt])
 }
 
 model Deployment {
@@ -321,21 +335,79 @@ model InstalledSkill {
   @@unique([workspaceId, skillId])
 }
 
-model RequestLog {
-  id           String    @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  deploymentId String?
-  method       String
-  path         String
-  statusCode   Int
-  durationMs   Int
-  requestBody  String?
-  responseBody String?
-  createdAt    DateTime  @default(now())
+// Diagnostic identities are snapshots, not cascading business relations.
+model LogEvent {
+  id             String     @id @default(cuid())
+  createdAt      DateTime   @default(now())
+  occurredAt     DateTime   @default(now())
+  level          String     @default("info")
+  domain         String
+  eventName      String
+  message        String
+  outcome        String     @default("success")
+  requestId      String?
+  traceId        String
+  spanId         String
+  parentSpanId   String?
+  actorId        String?
+  workspaceId    String?
+  deploymentId   String?
+  agentId        String?
+  runId          String?
+  conversationId String?
+  channelId      String?
+  providerId     String?
+  model          String?
+  method         String?
+  path           String?
+  httpStatus     Int?
+  rpcMethod      String?
+  toolName       String?
+  durationMs     Int?
+  errorType      String?
+  errorCode      String?
+  attributes     Json?
+  detail         LogDetail?
 
-  @@index([workspaceId, createdAt])
-  @@index([workspaceId, deploymentId, createdAt])
+  @@index([createdAt, id])
+  @@index([workspaceId, createdAt, id])
+  @@index([workspaceId, deploymentId, createdAt, id])
+  @@index([traceId, createdAt, id])
+  @@index([requestId])
+  @@index([domain, level, createdAt])
+  @@index([agentId, createdAt])
+  @@index([runId, createdAt])
+  @@index([channelId, createdAt])
+}
+
+model LogDetail {
+  eventId   String   @id
+  event     LogEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  data      Json
+  truncated Boolean  @default(false)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+// Append-only through application APIs; deletion is retention maintenance only.
+model AuditEvent {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  actorId     String
+  workspaceId String?
+  action      String
+  targetType  String
+  targetId    String
+  outcome     String   @default("success")
+  traceId     String
+  requestId   String?
+  changes     Json?
+
+  @@index([createdAt, id])
+  @@index([workspaceId, createdAt, id])
+  @@index([actorId, createdAt])
+  @@index([traceId])
 }
 
 model Toolkit {

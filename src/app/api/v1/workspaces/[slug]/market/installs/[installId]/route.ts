@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { z } from 'zod';
 import { deleteManagedAgent } from '@/lib/agents/deletion';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
@@ -27,7 +28,7 @@ async function context(req: Request, slug: string) {
   return workspace ? { user, workspace } : null;
 }
 
-export async function PATCH(
+export const PATCH = withRequestLogging("/api/v1/workspaces/[slug]/market/installs/[installId]", async function PATCH(
   req: Request,
   { params }: { params: Promise<{ slug: string; installId: string }> },
 ) {
@@ -57,9 +58,9 @@ export async function PATCH(
   } catch (error) {
     return marketErrorResponse(error);
   }
-}
+});
 
-export async function DELETE(
+export const DELETE = withRequestLogging("/api/v1/workspaces/[slug]/market/installs/[installId]", async function DELETE(
   req: Request,
   { params }: { params: Promise<{ slug: string; installId: string }> },
 ) {
@@ -109,4 +110,4 @@ export async function DELETE(
     }
     return marketErrorResponse(error);
   }
-}
+});

@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveLiveDeployment } from '@/lib/process/deployment-gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function DELETE(
+export const DELETE = withRequestLogging("/api/v1/mcp/[deploymentId]/terminal/[sessionId]", async function DELETE(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string; sessionId: string }> },
 ) {
@@ -19,4 +20,4 @@ export async function DELETE(
     status: upstream.status,
     headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
   });
-}
+});

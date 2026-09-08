@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
 vi.mock('@/lib/work/sessions', () => ({ getWorkSessionForUser: mocks.getWorkSessionForUser }));
+vi.mock('@/lib/workspace/access-stream', () => ({ workspaceAccessStream: (body: ReadableStream) => body }));
 
 import { GET } from '@/app/api/v1/work-sessions/[workSessionId]/events/route';
 import {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { assistantReleaseChecksum } from '@/lib/market/assistant-manifest';
 import { skillReleaseChecksum } from '@/lib/market/skill-manifest';
 
@@ -14,12 +14,17 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next-intl/server', () => ({
-  getTranslations: vi.fn().mockResolvedValue((key: string) => key),
+  getTranslations: vi.fn().mockResolvedValue(Object.assign((key: string) => key, { has: () => true })),
 }));
 vi.mock('@/lib/auth/admin', () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock('@/lib/db', () => ({
-  db: { marketListing: { count: mocks.count, findMany: mocks.findMany } },
+  db: { marketRelease: { findFirst: async (query: { select?: unknown }) => {
+    if (query.select) return null;
+    const [listing] = await mocks.findMany();
+    return { ...listing.pendingRelease, createdAt: new Date(), reviewStatus: 'pending', listing: { ...listing, pendingReleaseId: listing.pendingRelease.id, latestRelease: null, releases: [] } };
+  } } },
 }));
+vi.mock('@/components/admin/ReleaseChanges', () => ({ ReleaseChanges: () => null }));
 vi.mock('@/lib/admin/categories', () => ({
   listCategories: vi.fn().mockResolvedValue([{ id: 'category-1', slug: 'research', name: 'Research' }]),
 }));
@@ -35,7 +40,7 @@ vi.mock('@/lib/market/resources', () => ({
   parseMcpMarketManifest: vi.fn((value) => value),
   parseToolkitMarketManifest: vi.fn((value) => value),
 }));
-import AdminMarketPage from '@/app/admin/market/page';
+import AdminMarketReviewPage from '@/app/admin/reviews/market/[id]/page';
 import {
   approveMarketReleaseAction,
   rejectMarketReleaseAction,
@@ -85,10 +90,10 @@ describe('admin market release review', () => {
       },
     }]);
 
-    render(await AdminMarketPage());
+    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-1' }), searchParams: Promise.resolve({ releaseId: 'release-1' }) }));
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(screen.getByText('Writer')).toBeInTheDocument();
+    expect(screen.getAllByText('Writer').length).toBeGreaterThan(0);
     expect(screen.getByText('Safer defaults')).toBeInTheDocument();
     expect(screen.getByText(/"fileCount": 2/)).toBeInTheDocument();
     expect(screen.getByText(skillReleaseChecksum(manifest))).toBeInTheDocument();
@@ -138,7 +143,7 @@ describe('admin market release review', () => {
       },
     }]);
 
-    render(await AdminMarketPage());
+    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-assistant' }), searchParams: Promise.resolve({ releaseId: 'release-assistant' }) }));
 
     expect(screen.getByText('Verify every source.')).toBeInTheDocument();
     expect(screen.getByText('gpt-5.6')).toBeInTheDocument();
@@ -147,9 +152,9 @@ describe('admin market release review', () => {
     expect(screen.queryByText('errorInvalidMarketRelease')).not.toBeInTheDocument();
   });
 
-  it('paginates pending manifests and previews MCP and toolkit resources', async () => {
+  it('previews MCP and toolkit resources on their own review pages', async () => {
     mocks.count.mockResolvedValue(12);
-    mocks.findMany.mockResolvedValue([
+    const listings = [
       {
         id: 'listing-mcp', kind: 'mcp', namespace: 'acme', slug: 'search', publisherKind: 'workspace', name: 'Search MCP',
         categories: [{ id: 'category-1' }], publisherWorkspace: { name: 'Acme' }, publishedBy: null,
@@ -177,16 +182,18 @@ describe('admin market release review', () => {
           },
         },
       },
-    ]);
+    ];
+    mocks.findMany.mockResolvedValue([listings[0]]);
 
-    render(await AdminMarketPage({ searchParams: Promise.resolve({ pendingPage: '2' }) }));
+    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-mcp' }), searchParams: Promise.resolve({ releaseId: 'release-mcp' }) }));
 
-    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 5, take: 5 }));
     expect(screen.getAllByText('@acme/search', { exact: false }).length).toBeGreaterThan(0);
     expect(screen.getByText('SEARCH_KEY')).toBeInTheDocument();
+    cleanup();
+    mocks.findMany.mockResolvedValue([listings[1]]);
+    render(await AdminMarketReviewPage({ params: Promise.resolve({ id: 'listing-toolkit' }), searchParams: Promise.resolve({ releaseId: 'release-toolkit' }) }));
     expect(screen.getByText('Filesystem')).toBeInTheDocument();
     expect(screen.getByText('Writer')).toBeInTheDocument();
-    expect(screen.getByText('page 2 / 3', { exact: false })).toBeInTheDocument();
   });
 
   it('requires an admin and explicit confirmation for approval only', async () => {

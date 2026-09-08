@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveRequestUser } from '@/lib/auth/request-user';
@@ -22,7 +23,7 @@ async function requestThread(threadId: string, req: Request) {
   return getChatThreadForExecution(user.id, threadId);
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/chat/threads/[threadId]/prompts", async function GET(
   req: Request,
   { params }: { params: Promise<{ threadId: string }> },
 ) {
@@ -35,9 +36,9 @@ export async function GET(
     signal: req.signal,
   });
   return NextResponse.json({ prompts });
-}
+});
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/prompts", async function POST(
   req: Request,
   { params }: { params: Promise<{ threadId: string }> },
 ) {
@@ -67,4 +68,4 @@ export async function POST(
     }
     return NextResponse.json({ error: 'MCP prompt is unavailable.' }, { status: 502 });
   }
-}
+});

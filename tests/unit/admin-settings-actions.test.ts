@@ -87,7 +87,7 @@ describe('updateHermesArchiveUploadLimitAction', () => {
     await expect(updateHermesArchiveUploadLimitAction({}, settingsForm('24'))).resolves.toEqual({ ok: true });
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateHermesArchiveSettings).toHaveBeenCalledWith(24);
+    expect(mocks.updateHermesArchiveSettings).toHaveBeenCalledWith(24, 'admin-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 
@@ -117,7 +117,7 @@ describe('updateMcpStartupTimeoutSettingsAction', () => {
     await expect(updateMcpStartupTimeoutSettingsAction({}, mcpTimeoutsForm('300', '900'))).resolves.toEqual({ ok: true });
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateMcpStartupTimeoutSettings).toHaveBeenCalledWith(300_000, 900_000);
+    expect(mocks.updateMcpStartupTimeoutSettings).toHaveBeenCalledWith(300_000, 900_000, 'admin-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 
@@ -155,7 +155,7 @@ describe('updateSkillImportLimitAction', () => {
     await expect(updateSkillImportLimitAction({}, skillImportForm('80'))).resolves.toEqual({ ok: true });
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateSkillImportSettings).toHaveBeenCalledWith(80);
+    expect(mocks.updateSkillImportSettings).toHaveBeenCalledWith(80, 'admin-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 
@@ -187,7 +187,7 @@ describe('updateRemoteMcpPrivateHostsSettingsAction', () => {
     )).resolves.toEqual({ ok: true });
 
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.updateRemoteMcpPrivateHostsSettings).toHaveBeenCalledWith('*.rhzy.ai\n10.0.10.42');
+    expect(mocks.updateRemoteMcpPrivateHostsSettings).toHaveBeenCalledWith('*.rhzy.ai\n10.0.10.42', 'admin-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 

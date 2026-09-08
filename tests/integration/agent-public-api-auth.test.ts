@@ -89,6 +89,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await db.auditEvent.deleteMany({ where: { workspaceId } });
   await db.workspace.delete({ where: { id: workspaceId } });
   await db.user.delete({ where: { id: userId } });
   await db.$disconnect();

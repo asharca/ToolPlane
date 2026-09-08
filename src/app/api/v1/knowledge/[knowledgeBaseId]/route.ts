@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 
 async function baseForUser(id: string, userId: string) {
   return db.knowledgeBase.findFirst({
-    where: { id, workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] } },
+    where: { id, workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] } },
     select: { id: true, workspaceId: true },
   });
 }
@@ -13,7 +14,7 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
+export const PATCH = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]", async function PATCH(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId } = await params;
@@ -40,9 +41,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ knowle
     },
   });
   return Response.json(updated);
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
+export const DELETE = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]", async function DELETE(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId } = await params;
@@ -50,4 +51,4 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ knowl
   if (!base) return Response.json({ error: 'Knowledge base not found' }, { status: 404 });
   await db.knowledgeBase.delete({ where: { id: base.id } });
   return new Response(null, { status: 204 });
-}
+});

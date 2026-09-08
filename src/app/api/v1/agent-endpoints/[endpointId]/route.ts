@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAgentApiPrincipal } from '@/lib/agents/public-api/auth';
 import { db } from '@/lib/db';
 import { AgentApiError, asAgentApiError, errorResponse, publicErrorMessage } from '@/lib/agents/public-api/errors';
@@ -10,12 +11,12 @@ export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ endpointId: string }> };
 
-export async function OPTIONS(request: Request, context: RouteContext) {
+export const OPTIONS = withRequestLogging("/api/v1/agent-endpoints/[endpointId]", async function OPTIONS(request: Request, context: RouteContext) {
   const { endpointId } = await context.params;
   return agentApiPreflight(request, endpointId);
-}
+});
 
-export async function GET(request: Request, context: RouteContext) {
+export const GET = withRequestLogging("/api/v1/agent-endpoints/[endpointId]", async function GET(request: Request, context: RouteContext) {
   const { endpointId } = await context.params;
   const requestId = createAgentRequestId();
   let headers = new Headers({ 'x-request-id': requestId });
@@ -78,4 +79,4 @@ export async function GET(request: Request, context: RouteContext) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});

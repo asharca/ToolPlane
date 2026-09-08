@@ -32,7 +32,6 @@ import {
   storedRequiredEnvironment,
 } from '@/lib/workspace/server-recipe';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 import { encryptSecretText } from '@/lib/security/secrets';
 import {
   parseRuntimeTextFiles,
@@ -46,9 +45,6 @@ import { mcpHeaderSecrets, redactMcpResult } from '@/lib/process/mcp-result-reda
 import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
 
-export type WorkspaceInviteState = { error?: string; message?: string };
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_DEPLOYMENT_ENV_VARS = 100;
 const MAX_DEPLOYMENT_ENV_VALUE_LENGTH = 16_000;
@@ -1137,104 +1133,4 @@ export async function uninstallSkillAction(formData: FormData) {
   for (const skill of installed) {
     if (skill.skill?.slug) revalidatePath(`/app/${slug}/market/skills/${skill.skill.slug}`);
   }
-}
-
-export async function renameWorkspaceAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  const name = String(formData.get('name') ?? '').trim();
-  if (!slug || !name) return;
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return;
-
-  await db.workspace.update({ where: { id: ctx.ws.id }, data: { name } });
-  revalidatePath(`/app/${slug}`, 'layout');
-}
-
-export async function deleteWorkspaceAction(formData: FormData) {
-  const slug = String(formData.get('workspace') ?? '');
-  if (!slug) return;
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx || ctx.ws.ownerId !== ctx.user.id) return;
-
-  await killWorkspaceProcesses(ctx.ws.id);
-
-  await db.workspace.delete({ where: { id: ctx.ws.id } });
-  redirect('/app');
-}
-
-export async function inviteWorkspaceMemberAction(
-  _prev: WorkspaceInviteState,
-  formData: FormData,
-): Promise<WorkspaceInviteState> {
-  const slug = String(formData.get('workspace') ?? '');
-  const email = String(formData.get('email') ?? '').trim().toLowerCase();
-  if (!slug) return { error: 'Workspace is missing.' };
-  if (!EMAIL_RE.test(email)) return { error: 'Enter a valid email address.' };
-
-  const ctx = await authorizedWorkspace(slug);
-  if (!ctx) return { error: 'You do not have access to this workspace.' };
-  if (ctx.ws.ownerId !== ctx.user.id) {
-    return { error: 'Only the workspace owner can invite members.' };
-  }
-
-  const invitee = await db.user.findUnique({
-    where: { email },
-    select: { id: true, email: true },
-  });
-  if (!invitee) return { error: 'No user with that email exists yet.' };
-
-  const existing = await db.membership.findUnique({
-    where: {
-      workspaceId_userId: {
-        workspaceId: ctx.ws.id,
-        userId: invitee.id,
-      },
-    },
-    select: { id: true },
-  });
-  if (existing || invitee.id === ctx.ws.ownerId) {
-    return { message: `${invitee.email} is already a member.` };
-  }
-
-  await db.membership.create({
-    data: {
-      workspaceId: ctx.ws.id,
-      userId: invitee.id,
-      role: 'member',
-    },
-  });
-
-  revalidatePath(`/app/${slug}/members`);
-  revalidatePath(`/app/${slug}`, 'layout');
-  return { message: `${invitee.email} joined this workspace.` };
-}
-
-function slugifyName(input: string): string {
-  const base = input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return base || 'workspace';
-}
-
-export async function createWorkspaceAction(formData: FormData) {
-  const user = await getCurrentUser();
-  if (!user) return;
-  const name = String(formData.get('name') ?? '').trim() || 'New workspace';
-
-  const base = slugifyName(name);
-  let slug = base;
-  for (let i = 1; await db.workspace.findUnique({ where: { slug } }); i += 1) {
-    slug = `${base}-${i}`;
-  }
-
-  const ws = await db.workspace.create({
-    data: {
-      slug,
-      name,
-      ownerId: user.id,
-      members: { create: { userId: user.id, role: 'owner' } },
-    },
-  });
-  redirect(`/app/${ws.slug}/mcp`);
 }

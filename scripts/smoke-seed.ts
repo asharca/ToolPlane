@@ -1346,7 +1346,7 @@ async function main(): Promise<void> {
   // chart, per-server rollup, status colors, and expandable payloads all have
   // something to show immediately after seeding.
   const seededNow = Date.now();
-  await db.requestLog.createMany({
+  await db.logEvent.createMany({
     data: [
       ...Array.from({ length: 48 }, (_, index) => {
         const deployment = deployments[index % deployments.length];
@@ -1358,24 +1358,16 @@ async function main(): Promise<void> {
             : index % 7 === 0
               ? 400
               : 200;
-        const request = {
-          jsonrpc: '2.0',
-          id: index + 1,
-          method: 'tools/call',
-          params: { name: toolName, arguments: { query: `seed-${index}` } },
-        };
-        const response = statusCode >= 400
-          ? { error: statusCode === 503 ? 'deployment not running' : 'seeded request error' }
-          : { result: { content: [{ type: 'text', text: `seed response ${index}` }] } };
         return {
           workspaceId: ws.id,
           deploymentId: deployment.id,
           method: 'POST',
-          path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
-          statusCode,
+          path: `/mcp/${deployment.id}/rpc`, rpcMethod: 'tools/call', toolName,
+          httpStatus: statusCode, outcome: statusCode >= 400 ? 'error' : 'success',
+          level: statusCode >= 400 ? 'error' : 'info', domain: 'mcp', eventName: 'gateway.request',
+          message: statusCode >= 400 ? 'Seeded request failure' : toolName,
+          traceId: `seed-${seededNow}-${index}`, spanId: `seed-${index}`,
           durationMs: 28 + ((index * 37) % 520),
-          requestBody: JSON.stringify(request),
-          responseBody: JSON.stringify(response),
           createdAt: new Date(seededNow - index * 28 * 60 * 1000),
         };
       }),
@@ -1383,10 +1375,10 @@ async function main(): Promise<void> {
         workspaceId: ws.id,
         method: 'GET',
         path: index % 2 === 0 ? `/workspaces/${ws.slug}/manifest` : '/skills/code-review/skill.md',
-        statusCode: index === 3 ? 404 : 200,
+        httpStatus: index === 3 ? 404 : 200, outcome: index === 3 ? 'error' : 'success',
+        level: index === 3 ? 'error' : 'info', domain: 'mcp', eventName: 'gateway.request',
+        message: 'Seed workspace request', traceId: `seed-api-${seededNow}-${index}`, spanId: `seed-api-${index}`,
         durationMs: 18 + index * 11,
-        requestBody: null,
-        responseBody: JSON.stringify(index === 3 ? { error: 'seeded not found' } : { ok: true }),
         createdAt: new Date(seededNow - (index * 5 + 2) * 60 * 60 * 1000),
       })),
     ],

@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import {
   AGENT_API_SSE_HEADERS,
@@ -11,6 +12,7 @@ import {
   type WorkOutputSnapshot,
 } from '@/lib/work/run-control';
 import { getWorkSessionForUser } from '@/lib/work/sessions';
+import { workspaceAccessStream } from '@/lib/workspace/access-stream';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -102,7 +104,7 @@ function outputData(snapshot: WorkOutputSnapshot, delta?: string, activity?: Wor
   };
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/work-sessions/[workSessionId]/events", async function GET(
   req: Request,
   { params }: { params: Promise<{ workSessionId: string }> },
 ) {
@@ -178,5 +180,5 @@ export async function GET(
       cleanup();
     },
   });
-  return new Response(stream, { headers: AGENT_API_SSE_HEADERS });
-}
+  return new Response(workspaceAccessStream(stream, work.workspaceId, user.id, req.signal), { headers: AGENT_API_SSE_HEADERS });
+});

@@ -1,14 +1,15 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 
 async function workspaceForUser(slug: string, userId: string) {
   return db.workspace.findFirst({
-    where: { slug, OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+    where: { slug, status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     select: { id: true },
   });
 }
 
-export async function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/knowledge", async function GET(req: Request) {
   const user = await resolveRequestUser(req);
   const slug = new URL(req.url).searchParams.get('workspace')?.trim();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -24,9 +25,9 @@ export async function GET(req: Request) {
       agentLinks: { include: { agent: { select: { id: true, name: true } } } },
     },
   }));
-}
+});
 
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/knowledge", async function POST(req: Request) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let body: { workspace?: unknown; name?: unknown; providerId?: unknown; embeddingModel?: unknown; chunkSize?: unknown; chunkOverlap?: unknown; topK?: unknown; threshold?: unknown };
@@ -57,4 +58,4 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: 'A knowledge base with this name already exists' }, { status: 409 });
   }
-}
+});

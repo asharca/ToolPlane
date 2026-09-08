@@ -20,7 +20,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const admin = await requireAdmin();
   const messages = await getMessages();
   return (
-    <NextIntlClientProvider messages={{ common: messages.common, admin: messages.admin }}>
+    <NextIntlClientProvider messages={{ common: messages.common, admin: messages.admin, adminOps: messages.adminOps }}>
       <UserTimeZoneProvider
         detectedTimeZone={admin.detectedTimeZone}
         timeZoneOverride={admin.timeZoneOverride}

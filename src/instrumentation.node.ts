@@ -1,3 +1,4 @@
+import { systemLog } from '@/lib/observability/system';
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -7,9 +8,22 @@ export async function registerNode() {
     __mcpReconciled?: boolean;
     __agentApiMaintenanceTimer?: ReturnType<typeof setInterval>;
     __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __logMaintenanceTimer?: ReturnType<typeof setInterval>;
   };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
+  if (!g.__logMaintenanceTimer) {
+    let running = false;
+    const maintain = async () => {
+      if (running) return;
+      running = true;
+      try { await (await import('@/lib/observability/maintenance')).maintainLogs(); }
+      catch (error) { (await import('@/lib/observability/system')).systemLog('error', 'Log retention maintenance failed', error); }
+      finally { running = false; }
+    };
+    g.__logMaintenanceTimer = setInterval(() => { void maintain(); }, 5 * 60_000);
+    g.__logMaintenanceTimer.unref?.();
+  }
   const helpersCreatedBefore = new Date();
   // A materializer normally lives for only a few seconds. Unlike the broader
   // sandbox interruption pass, give a just-created stopped helper a grace
@@ -25,10 +39,10 @@ export async function registerNode() {
         deploymentConfigHelpersCreatedBefore,
       );
       if (removed > 0) {
-        console.warn(`[mcp] cleaned ${removed} stale deployment configuration materializer helper(s)`);
+        systemLog('warn', `[mcp] cleaned ${removed} stale deployment configuration materializer helper(s)`);
       }
     } catch (error) {
-      console.error(`[mcp] deployment configuration helper reconcile attempt ${attempt} failed`, error);
+      systemLog('error', `[mcp] deployment configuration helper reconcile attempt ${attempt} failed`, error);
       if (attempt < 3) {
         const retry = setTimeout(() => {
           void reconcileDeploymentConfigHelpers(attempt + 1);
@@ -43,7 +57,7 @@ export async function registerNode() {
       const { reconcileSandboxVolumeCopies } = await import('@/lib/sandboxes/reconcile');
       const copies = await reconcileSandboxVolumeCopies({ helpersCreatedBefore });
       if (Object.values(copies).some((count) => count > 0)) {
-        console.warn(
+        systemLog('warn',
           `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s) and `
           + `${copies.hermesArchiveHelpersRemoved} stale Hermes import helper(s); `
           + `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), `
@@ -51,7 +65,7 @@ export async function registerNode() {
         );
       }
     } catch (error) {
-      console.error(`[mcp] sandbox volume reconcile attempt ${attempt} failed`, error);
+      systemLog('error', `[mcp] sandbox volume reconcile attempt ${attempt} failed`, error);
       if (attempt < 3) {
         const retry = setTimeout(() => {
           void reconcileSandboxCopies(attempt + 1);
@@ -64,9 +78,9 @@ export async function registerNode() {
   try {
     const { reconcileAgentChannelRunners } = await import('@/lib/agents/channel-runtime');
     const restored = await reconcileAgentChannelRunners();
-    if (restored > 0) console.log(`[agent-channels] restored ${restored} channel(s) on startup`);
+    if (restored > 0) systemLog('info', `[agent-channels] restored ${restored} channel(s) on startup`);
   } catch (error) {
-    console.error('[agent-channels] startup reconcile failed', error);
+    systemLog('error', '[agent-channels] startup reconcile failed', error);
   }
 
   try {
@@ -82,16 +96,16 @@ export async function registerNode() {
     await reconcileSandboxCopies();
     const { reconcileDeployments } = await import('@/lib/process/reconcile');
     const n = await reconcileDeployments();
-    if (n > 0) console.log(`[mcp] reconciled ${n} deployment(s) on startup`);
+    if (n > 0) systemLog('info', `[mcp] reconciled ${n} deployment(s) on startup`);
   } catch (error) {
-    console.error('[mcp] startup reconcile failed', error);
+    systemLog('error', '[mcp] startup reconcile failed', error);
   }
 
   try {
     const { startWorkCoordinator } = await import('@/lib/work/coordinator');
     await startWorkCoordinator();
   } catch (error) {
-    console.error('[work] startup reconcile failed', error);
+    systemLog('error', '[work] startup reconcile failed', error);
   }
 
   if (!g.__agentApiMaintenanceTimer) {
@@ -103,14 +117,14 @@ export async function registerNode() {
         const { runAgentApiMaintenance } = await import('@/lib/agents/public-api/maintenance');
         const result = await runAgentApiMaintenance();
         if (Object.values(result).some((count) => count > 0)) {
-          console.log(
+          systemLog('info',
             `[agent-api] retained-data cleanup removed ${result.conversations} conversation(s), `
             + `${result.runs} response(s), ${result.runtimes} runtime(s), and `
             + `${result.usageBuckets} usage bucket(s)`,
           );
         }
       } catch (error) {
-        console.error('[agent-api] retained-data cleanup failed', error);
+        systemLog('error', '[agent-api] retained-data cleanup failed', error);
       } finally {
         running = false;
       }
@@ -131,10 +145,10 @@ export async function registerNode() {
         );
         const stopped = await runAgentApiIdleRuntimeMaintenance();
         if (stopped > 0) {
-          console.log(`[agent-api] stopped ${stopped} idle public runtime(s)`);
+          systemLog('info', `[agent-api] stopped ${stopped} idle public runtime(s)`);
         }
       } catch (error) {
-        console.error('[agent-api] idle runtime cleanup failed', error);
+        systemLog('error', '[agent-api] idle runtime cleanup failed', error);
       } finally {
         idleRunning = false;
       }

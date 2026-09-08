@@ -86,6 +86,8 @@ function errorKey(error: unknown) {
 }
 
 function revalidateMarket() {
+  revalidatePath('/admin/reviews', 'layout');
+  revalidatePath('/admin');
   revalidatePath('/admin/market');
   revalidatePath('/app/[workspace]/market', 'layout');
   revalidatePath('/categories');
@@ -96,7 +98,7 @@ export async function updateMarketListingAdminAction(
   _previous: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = value(formData, 'listingId');
   const requestedStatus = value(formData, 'status');
@@ -110,7 +112,7 @@ export async function updateMarketListingAdminAction(
       curated: formData.get('curated') === 'on',
       isFeatured: formData.get('isFeatured') === 'on',
       categoryIds: categoryIds(formData),
-    });
+    }, admin.id);
   } catch (error) {
     return { error: t(errorKey(error)) };
   }
@@ -122,7 +124,7 @@ export async function updatePublicToolkitAdminAction(
   _previous: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = value(formData, 'toolkitId');
   if (!id) return { error: t('errorMarketResourceNotFound') };
@@ -131,7 +133,7 @@ export async function updatePublicToolkitAdminAction(
       id,
       enabled: formData.get('enabled') === 'on',
       categoryIds: categoryIds(formData),
-    });
+    }, admin.id);
   } catch (error) {
     return { error: t(errorKey(error)) };
   }
@@ -188,12 +190,12 @@ export async function deleteAssistantTemplateAdminAction(
   _previous: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = value(formData, 'id');
   if (!id) return { error: t('errorMarketResourceNotFound') };
   try {
-    await deleteAdminAssistantTemplate(id);
+    await deleteAdminAssistantTemplate(id, admin.id);
   } catch (error) {
     return { error: t(errorKey(error)) };
   }

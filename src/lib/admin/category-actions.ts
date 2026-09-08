@@ -16,13 +16,13 @@ function revalidateCategories() {
 }
 
 export async function createCategoryAction(_prev: AdminActionState, formData: FormData): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const name = String(formData.get('name') ?? '').trim();
   const slug = String(formData.get('slug') ?? '').trim().toLowerCase();
   if (!name || !SLUG_RE.test(slug)) return { error: t('errorInvalidCategory') };
   try {
-    await createCategory(slug, name);
+    await createCategory(slug, name, admin.id);
   } catch {
     return { error: t('errorCategoryExists') };
   }
@@ -31,13 +31,13 @@ export async function createCategoryAction(_prev: AdminActionState, formData: Fo
 }
 
 export async function updateCategoryAction(_prev: AdminActionState, formData: FormData): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = String(formData.get('categoryId') ?? '').trim();
   const name = String(formData.get('name') ?? '').trim().slice(0, 120);
   if (!id || !name) return { error: t('errorInvalidCategoryName') };
   try {
-    await updateCategory(id, name);
+    await updateCategory(id, name, admin.id);
   } catch {
     return { error: t('errorActionFailed') };
   }
@@ -46,10 +46,10 @@ export async function updateCategoryAction(_prev: AdminActionState, formData: Fo
 }
 
 export async function deleteCategoryAction(_prev: AdminActionState, formData: FormData): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   try {
-    await deleteCategory(String(formData.get('categoryId') ?? ''));
+    await deleteCategory(String(formData.get('categoryId') ?? ''), admin.id);
   } catch (e) {
     return { error: e instanceof Error && /not empty/i.test(e.message) ? t('errorCategoryNotEmpty') : t('errorActionFailed') };
   }

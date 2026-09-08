@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -7,7 +8,7 @@ import { createConnectorScreenSession } from '@/lib/sandboxes/connector-broker';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/sandboxes/[sandboxId]/screen/sessions", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string; sandboxId: string }> },
 ) {
@@ -21,7 +22,7 @@ export async function POST(
       kind: 'connector',
       workspace: {
         slug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true, config: true },
@@ -48,4 +49,4 @@ export async function POST(
       headers: { 'cache-control': 'private, no-store' },
     });
   }
-}
+});

@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import {
   ensureHermesDashboardBroker,
   hermesDashboardBrokerPublicUrl,
@@ -97,26 +98,26 @@ async function redirectToDashboardBroker(req: Request, params: RouteParams): Pro
   }
 }
 
-export async function GET(req: Request, { params }: { params: RouteParams }) {
+export const GET = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function GET(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});
 
-export async function HEAD(req: Request, { params }: { params: RouteParams }) {
+export const HEAD = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function HEAD(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});
 
-export async function POST(req: Request, { params }: { params: RouteParams }) {
+export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function POST(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});
 
-export async function PUT(req: Request, { params }: { params: RouteParams }) {
+export const PUT = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function PUT(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});
 
-export async function PATCH(req: Request, { params }: { params: RouteParams }) {
+export const PATCH = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function PATCH(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: RouteParams }) {
+export const DELETE = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/dashboard/[accessToken]/[[...path]]", async function DELETE(req: Request, { params }: { params: RouteParams }) {
   return redirectToDashboardBroker(req, params);
-}
+});

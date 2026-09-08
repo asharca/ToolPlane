@@ -51,6 +51,7 @@ describe('sandbox screen routes', () => {
         kind: 'connector',
         workspace: {
           slug: 'acme',
+          status: 'active',
           OR: [{ ownerId: 'user-1' }, { members: { some: { userId: 'user-1' } } }],
         },
       },

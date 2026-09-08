@@ -14,6 +14,7 @@ import { DashboardLogo } from './DashboardLogo';
 import { DashboardRuntimeConfigProvider } from './DashboardRuntimeConfig';
 import { usePersistentBoolean } from '@/lib/use-persistent-boolean';
 import { dashboardSidebarCookieName } from '@/lib/sidebar-preferences';
+import { hasUnsavedWorkspaceChanges, lastWorkspaceCookieName } from '@/lib/workspace/navigation';
 import {
   DashboardTabBar,
   DashboardTabContent,
@@ -24,6 +25,7 @@ type Workspace = { id: string; slug: string; name: string };
 
 export function DashboardChrome({
   slug,
+  userId,
   workspaceId,
   workspaceName,
   userLabel,
@@ -34,6 +36,7 @@ export function DashboardChrome({
   children,
 }: {
   slug: string;
+  userId?: string;
   workspaceId: string;
   workspaceName: string;
   userLabel: string;
@@ -51,6 +54,39 @@ export function DashboardChrome({
   );
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const t = useTranslations('console.sidebar');
+  const workspaceT = useTranslations('console.workspaces');
+
+  useEffect(() => {
+    const confirm = () => window.confirm(workspaceT('unsavedChanges'));
+    const click = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest('a') : null;
+      if (!link || link.target === '_blank' || link.hasAttribute('download')) return;
+      const target = new URL(link.href, location.href);
+      if (target.origin === location.origin && target.pathname.startsWith(`/app/${slug}/`)) return;
+      if (hasUnsavedWorkspaceChanges() && !confirm()) { event.preventDefault(); event.stopPropagation(); }
+    };
+    const submit = (event: SubmitEvent) => {
+      if (!(event.target instanceof HTMLFormElement) || !event.target.hasAttribute('data-workspace-navigation')) return;
+      if (hasUnsavedWorkspaceChanges(document, event.target) && !confirm()) { event.preventDefault(); event.stopPropagation(); }
+    };
+    const unload = (event: BeforeUnloadEvent) => {
+      if (hasUnsavedWorkspaceChanges()) { event.preventDefault(); event.returnValue = ''; }
+    };
+    document.addEventListener('click', click, true);
+    document.addEventListener('submit', submit, true);
+    window.addEventListener('beforeunload', unload);
+    return () => {
+      document.removeEventListener('click', click, true);
+      document.removeEventListener('submit', submit, true);
+      window.removeEventListener('beforeunload', unload);
+    };
+  }, [slug, workspaceT]);
+
+  useEffect(() => {
+    if (!userId) return;
+    document.cookie = `${lastWorkspaceCookieName(userId)}=${encodeURIComponent(slug)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+  }, [slug, userId]);
 
   const closeMenu = useCallback(() => {
     setOpen(false);

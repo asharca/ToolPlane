@@ -16,6 +16,7 @@ vi.mock('@/lib/agents/hermes/runtime', () => ({
   ensureHermesDashboardReady: mocks.ensureReady,
 }));
 vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort }));
+vi.mock('@/lib/workspace/access-stream', () => ({ workspaceAccessStream: (body: ReadableStream) => body }));
 
 import {
   DELETE,

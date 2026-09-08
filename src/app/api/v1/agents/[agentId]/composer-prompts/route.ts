@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { resolveRequestUser } from '@/lib/auth/request-user';
@@ -15,13 +16,13 @@ async function authorized(req: Request, params: Params['params']) {
   return user ? getAgentForRequest((await params).agentId, user.id) : null;
 }
 
-export async function GET(req: Request, { params }: Params) {
+export const GET = withRequestLogging("/api/v1/agents/[agentId]/composer-prompts", async function GET(req: Request, { params }: Params) {
   const agent = await authorized(req, params);
   if (!agent) return Response.json({ error: 'Not found' }, { status: 404 });
   return Response.json({ prompts: await db.agentComposerPrompt.findMany({ where: { agentId: agent.id }, orderBy: { updatedAt: 'desc' } }) });
-}
+});
 
-export async function POST(req: Request, { params }: Params) {
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/composer-prompts", async function POST(req: Request, { params }: Params) {
   const agent = await authorized(req, params);
   if (!agent) return Response.json({ error: 'Not found' }, { status: 404 });
   const input = PromptSchema.safeParse(await req.json().catch(() => null));
@@ -36,4 +37,4 @@ export async function POST(req: Request, { params }: Params) {
     return Response.json({ ok: result.count === 1 }, { status: result.count ? 200 : 404 });
   }
   return Response.json(await db.agentComposerPrompt.create({ data: { agentId: agent.id, title: data.title, content: data.content } }), { status: 201 });
-}
+});

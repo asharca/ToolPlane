@@ -17,6 +17,7 @@ export default async function ChannelsPage({ params }: { params: Promise<{ works
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
   const t = await getTranslations('console.settings');
+  if (workspace.ownerId !== user.id) redirect(`/app/${slug}/settings`);
   const connections = await listAgentChannelConnections(workspace.id);
   return (
     <SettingsModal title={t('title')} fallbackHref={`/app/${slug}/chat`}>

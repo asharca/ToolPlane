@@ -10,11 +10,13 @@ beforeAll(async () => {
   const ws = await db.workspace.create({
     data: { slug: `ov-${stamp}`, name: 'OV', ownerId: u.id, members: { create: { userId: u.id, role: 'owner' } } },
   });
-  await db.requestLog.create({
-    data: { workspaceId: ws.id, method: 'POST', path: '/x', statusCode: 200, durationMs: 10 },
+  await db.logEvent.create({
+    data: { workspaceId: ws.id, method: 'POST', path: '/x', httpStatus: 200, durationMs: 10,
+      domain: 'mcp', eventName: 'gateway.request', message: 'success', traceId: `overview-${stamp}`, spanId: 'a' },
   });
-  await db.requestLog.create({
-    data: { workspaceId: ws.id, method: 'POST', path: '/x', statusCode: 500, durationMs: 20 },
+  await db.logEvent.create({
+    data: { workspaceId: ws.id, method: 'POST', path: '/x', httpStatus: 200, durationMs: 20,
+      domain: 'mcp', eventName: 'gateway.request', message: 'semantic failure', outcome: 'error', traceId: `overview-${stamp}`, spanId: 'b' },
   });
 });
 

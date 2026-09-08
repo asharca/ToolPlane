@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { livePort } from '@/lib/process/supervisor';
@@ -15,7 +16,7 @@ async function resolveTarget(req: Request, workSessionId: string) {
   const work = await db.workSession.findFirst({
     where: {
       id: workSessionId,
-      workspace: { OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
       sandboxId: { not: null },
     },
     select: {
@@ -86,6 +87,6 @@ async function proxy(req: Request, params: Params) {
   }
 }
 
-export async function GET(req: Request, { params }: { params: Params }) { return proxy(req, params); }
-export async function POST(req: Request, { params }: { params: Params }) { return proxy(req, params); }
-export async function DELETE(req: Request, { params }: { params: Params }) { return proxy(req, params); }
+export const GET = withRequestLogging("/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]", async function GET(req: Request, { params }: { params: Params }) { return proxy(req, params); });
+export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]", async function POST(req: Request, { params }: { params: Params }) { return proxy(req, params); });
+export const DELETE = withRequestLogging("/api/v1/work-sessions/[workSessionId]/sandbox/[[...path]]", async function DELETE(req: Request, { params }: { params: Params }) { return proxy(req, params); });

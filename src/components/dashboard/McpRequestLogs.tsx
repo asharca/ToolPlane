@@ -35,6 +35,10 @@ export type McpRequestLogView = {
   requestBody: string | null;
   responseBody: string | null;
   time: string;
+  rpcMethod?: string | null;
+  toolName?: string | null;
+  outcome?: string;
+  errorSummary?: string | null;
 };
 
 type Filter = 'all' | 'failed' | 'slow';

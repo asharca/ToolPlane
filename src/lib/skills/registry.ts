@@ -1,6 +1,8 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { fetchGithubSkillBundle } from './bundle';
 import { slugify } from './custom-skill';
+import { writeAudit } from '@/lib/observability/audit';
+import { redactText } from '@/lib/observability/redaction';
 
 export type GithubSkillRegistrySource = {
   owner: string;
@@ -216,16 +218,22 @@ function errorMessage(error: unknown): string {
 export async function syncGithubSkillRegistry(
   db: PrismaClient,
   rawSource: GithubSkillRegistrySource,
+  options: { paths?: string[]; actorId?: string } = {},
 ): Promise<SkillRegistrySyncResult> {
   const source = normalizeSource(rawSource);
   const registry = registryKey(source);
   const commitSha = await fetchCommitSha(source).catch(() => null);
   const entries = await listSkillDirectories(source);
+  const paths = options.paths ? new Set(options.paths) : null;
+  if (paths && (!paths.size || paths.size > 1000 || [...paths].some((path) => !entries.some((entry) => entry.path === path)))) {
+    throw new Error('Retry paths must belong to the selected registry.');
+  }
   let created = 0;
   let updated = 0;
   const failed: SkillRegistrySyncResult['failed'] = [];
 
   for (const [index, entry] of entries.entries()) {
+    if (paths && !paths.has(entry.path)) continue;
     try {
       const bundle = await fetchGithubSkillBundle(rawGithubTreeUrl(source, entry.path));
       const slug = slugify(`${source.slugPrefix}${entry.slug || bundle.slugHint}`);
@@ -234,43 +242,47 @@ export async function syncGithubSkillRegistry(
       const files = bundle.files.length ? (bundle.files as unknown as Prisma.InputJsonValue) : Prisma.JsonNull;
       const score = entry.score ?? 7_000 - index;
 
-      await db.skill.upsert({
-        where: { slug },
-        update: {
-          name: bundle.name,
-          author: bundle.author,
-          description: bundle.description,
-          githubSource: bundle.source.normalized,
-          sourceRegistry: registry,
-          sourcePath: entry.path,
-          sourceSha: commitSha,
-          content: bundle.content,
-          files,
-          score,
-          curated: entry.curated !== false,
-          categories: { set: categories },
-        },
-        create: {
-          slug,
-          name: bundle.name,
-          author: bundle.author,
-          description: bundle.description,
-          githubSource: bundle.source.normalized,
-          sourceRegistry: registry,
-          sourcePath: entry.path,
-          sourceSha: commitSha,
-          content: bundle.content,
-          files,
-          score,
-          curated: entry.curated !== false,
-          categories: { connect: categories },
-        },
+      await db.$transaction(async (tx) => {
+        const skill = await tx.skill.upsert({
+          where: { slug },
+          update: {
+            name: bundle.name,
+            author: bundle.author,
+            description: bundle.description,
+            githubSource: bundle.source.normalized,
+            sourceRegistry: registry,
+            sourcePath: entry.path,
+            sourceSha: commitSha,
+            content: bundle.content,
+            files,
+            score,
+            curated: entry.curated !== false,
+            categories: { set: categories },
+          },
+          create: {
+            slug,
+            name: bundle.name,
+            author: bundle.author,
+            description: bundle.description,
+            githubSource: bundle.source.normalized,
+            sourceRegistry: registry,
+            sourcePath: entry.path,
+            sourceSha: commitSha,
+            content: bundle.content,
+            files,
+            score,
+            curated: entry.curated !== false,
+            categories: { connect: categories },
+          },
+        });
+        await writeAudit(tx, { actorId: options.actorId ?? 'system', action: 'catalog.skill.synced', targetType: 'skill', targetId: skill.id,
+          changes: { registry, path: entry.path, created: !existing, commitSha } });
       });
 
       if (existing) updated += 1;
       else created += 1;
     } catch (error) {
-      failed.push({ path: entry.path, error: errorMessage(error) });
+      failed.push({ path: entry.path, error: redactText(errorMessage(error), [process.env.GITHUB_TOKEN ?? '', process.env.TOOLPLANE_GITHUB_TOKEN ?? '']).slice(0, 2000) });
     }
   }
 
@@ -279,7 +291,7 @@ export async function syncGithubSkillRegistry(
     ref: source.ref,
     rootPath: source.rootPath,
     commitSha,
-    found: entries.length,
+    found: paths?.size ?? entries.length,
     created,
     updated,
     failed,

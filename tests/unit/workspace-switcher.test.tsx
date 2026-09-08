@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('@/lib/workspace/actions', () => ({
+vi.mock('@/lib/workspace/management-actions', () => ({
   createWorkspaceAction: vi.fn(),
+  removeWorkspaceMemberAction: vi.fn(), leaveWorkspaceAction: vi.fn(), revokeWorkspaceInvitationAction: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/actions', () => ({
@@ -73,7 +74,7 @@ describe('WorkspaceSwitcher', () => {
     );
     await user.click(screen.getByRole('button', { name: /Acme/ }));
     await user.click(screen.getByRole('button', { name: /create workspace/i }));
-    const input = screen.getByPlaceholderText(/workspace name/i);
+    const input = screen.getByRole('textbox', { name: 'Workspace name' });
     expect(input).toBeInTheDocument();
     expect(input).toHaveFocus();
 
@@ -82,7 +83,7 @@ describe('WorkspaceSwitcher', () => {
 
     expect(input).toHaveFocus();
     expect(input).toHaveValue('New workspace');
-    expect(screen.getByRole('button', { name: 'Create' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create workspace' })).toBeInTheDocument();
   });
 
   it('closes on Escape and restores focus to the trigger', async () => {
@@ -126,7 +127,7 @@ describe('WorkspaceSwitcher', () => {
     expect(outside).toHaveFocus();
   });
 
-  it('shows a sign out action in the account menu', async () => {
+  it('exposes workspace management and keeps personal actions out of the workspace picker', async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -139,6 +140,7 @@ describe('WorkspaceSwitcher', () => {
 
     await user.click(screen.getByRole('button', { name: /Acme/ }));
 
-    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Manage workspaces' })).toHaveAttribute('href', '/app?view=workspaces');
+    expect(screen.queryByRole('button', { name: /sign out/i })).toBeNull();
   });
 });

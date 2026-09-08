@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  systemLog: vi.fn(),
   getCurrentUser: vi.fn(),
   getWorkspaceForUser: vi.fn(),
   revalidatePath: vi.fn(),
@@ -43,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 
+vi.mock('@/lib/observability/system', () => ({ systemLog: mocks.systemLog }));
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
@@ -169,7 +171,7 @@ function runtimeForm() {
 
 function mockAuthorizedAgent() {
   mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-  mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+  mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
   mocks.agentFindFirst.mockResolvedValue({
     publicRuntimeAllocation: null,
     runtimeKind: 'hermes',
@@ -351,7 +353,7 @@ describe('createAgentAction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.getProvider.mockResolvedValue({ id: 'provider-1', models: ['model-1'] });
     mocks.createConfiguredAgent.mockResolvedValue({ id: 'agent-1' });
     mocks.agentFindFirst.mockResolvedValue(createdRuntimeAgent());
@@ -448,16 +450,15 @@ describe('createAgentAction', () => {
     form.set('providerId', 'provider-1');
     mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent('hermes', false));
     mocks.syncHermesRuntime.mockResolvedValueOnce({ status: 'error', error: 'Docker unavailable' });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(createAgentAction(form)).resolves.toBeUndefined();
 
-    expect(consoleError).toHaveBeenCalledWith(
+    expect(mocks.systemLog).toHaveBeenCalledWith(
+      'error',
       'Failed to start runtime sandbox for Agent agent-1.',
       expect.objectContaining({ message: 'Docker unavailable' }),
     );
     expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-1');
-    consoleError.mockRestore();
   });
 
   it('does not create an agent without a runnable model configuration', async () => {
@@ -537,7 +538,7 @@ describe('installAgentFromMarketAction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.materializeAgentRelease.mockResolvedValue({ agent: { id: 'agent-1' } });
     mocks.agentFindFirst.mockResolvedValue(createdRuntimeAgent());
     mocks.resolveSpawnSpec.mockReturnValue({ kind: 'sandbox' });
@@ -564,7 +565,7 @@ describe('cloneAgentAction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.agentFindFirst.mockResolvedValue(createdRuntimeAgent('hermes', false));
     mocks.cloneAgent.mockResolvedValue({ id: 'agent-copy', runtimeKind: 'hermes' });
     mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
@@ -679,7 +680,7 @@ describe('Hermes profile and provider actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.supportsHermesProfileChat.mockResolvedValue(true);
     mocks.ensureHermesProfileProjection.mockResolvedValue(undefined);
     mocks.bindHermesAgentModelProvider.mockResolvedValue('toolplane-provider-1');
@@ -858,8 +859,22 @@ describe('workspace model preferences', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.getProvider.mockResolvedValue({ id: 'provider-1', models: ['gpt-5'] });
+  });
+
+  it('rejects members changing workspace defaults or provider credentials', async () => {
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'someone-else' });
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('preference', 'default');
+    form.set('providerId', 'provider-1');
+    form.set('name', 'Provider');
+    form.set('baseUrl', 'https://provider.test/v1');
+    expect(await updateWorkspaceModelPreferenceAction({}, form)).toEqual({ error: 'Not authorized.' });
+    expect(await updateProviderAction({}, form)).toEqual({ error: 'Not authorized.' });
+    expect(mocks.workspaceUpdate).not.toHaveBeenCalled();
+    expect(mocks.updateProvider).not.toHaveBeenCalled();
   });
 
   it('saves only a model exposed by a provider in the current workspace', async () => {

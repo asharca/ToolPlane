@@ -1,8 +1,9 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { listMarketListings } from '@/lib/market/listings';
 
 export const runtime = 'nodejs';
 
-export async function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/market/listings", async function GET(req: Request) {
   const query = new URL(req.url).searchParams;
   const requestedSort = query.get('sort');
   const result = await listMarketListings({
@@ -15,4 +16,4 @@ export async function GET(req: Request) {
     pageSize: Number(query.get('pageSize')),
   });
   return Response.json(result);
-}
+});

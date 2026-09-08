@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { writeAudit } from '@/lib/observability/audit';
 
 export function listCategories() {
   return db.category.findMany({
@@ -37,33 +38,45 @@ export function listCategories() {
   }));
 }
 
-export async function createCategory(slug: string, name: string) {
-  return db.category.create({ data: { slug, name } });
+export async function createCategory(slug: string, name: string, actorId = 'system') {
+  return db.$transaction(async (tx) => {
+    const category = await tx.category.create({ data: { slug, name } });
+    await writeAudit(tx, { actorId, action: 'category.created', targetType: 'category', targetId: category.id, changes: { slug, name } });
+    return category;
+  });
 }
 
-export async function updateCategory(id: string, name: string) {
-  return db.category.update({ where: { id }, data: { name } });
+export async function updateCategory(id: string, name: string, actorId = 'system') {
+  return db.$transaction(async (tx) => {
+    const before = await tx.category.findUniqueOrThrow({ where: { id }, select: { name: true } });
+    const category = await tx.category.update({ where: { id }, data: { name } });
+    await writeAudit(tx, { actorId, action: 'category.updated', targetType: 'category', targetId: id, changes: { before, after: { name } } });
+    return category;
+  });
 }
 
-export async function deleteCategory(id: string) {
-  const c = await db.category.findUnique({
-    where: { id },
-    select: {
-      _count: {
-        select: {
-          servers: true,
-          skills: true,
-          clients: true,
-          agentListings: true,
-          marketListings: true,
-          toolkits: true,
+export async function deleteCategory(id: string, actorId = 'system') {
+  return db.$transaction(async (tx) => {
+    const c = await tx.category.findUnique({
+      where: { id },
+      select: {
+        _count: {
+          select: {
+            servers: true,
+            skills: true,
+            clients: true,
+            agentListings: true,
+            marketListings: true,
+            toolkits: true,
+          },
         },
       },
-    },
-  });
-  if (!c) throw new Error('Category not found.');
-  if (Object.values(c._count).some((count) => count > 0)) {
-    throw new Error('Category is not empty.');
-  }
-  await db.category.delete({ where: { id } });
+    });
+    if (!c) throw new Error('Category not found.');
+    if (Object.values(c._count).some((count) => count > 0)) {
+      throw new Error('Category is not empty.');
+    }
+    await tx.category.delete({ where: { id } });
+    await writeAudit(tx, { actorId, action: 'category.deleted', targetType: 'category', targetId: id });
+  }, { isolationLevel: 'Serializable' });
 }

@@ -327,6 +327,7 @@ export async function createAgentApiClientAction(
     select: { id: true },
   });
   const key = await createAgentApiKey({
+    actorId: ctx.user.id,
     clientId: client.id,
     endpointPublicId: publicId,
     workspaceId: ctx.workspace.id,
@@ -350,6 +351,7 @@ export async function revokeAgentApiKeyAction(formData: FormData): Promise<void>
   const ctx = await managementContext(slug);
   if (!ctx) return;
   await revokeAgentApiKey({
+    actorId: ctx.user.id,
     keyId,
     endpointPublicId: publicId,
     workspaceId: ctx.workspace.id,
@@ -385,6 +387,7 @@ export async function createAgentApiKeyAction(
   if (!client) return { error: 'API client not found.' };
   try {
     const key = await createAgentApiKey({
+      actorId: ctx.user.id,
       clientId: client.id,
       endpointPublicId: publicId,
       workspaceId: ctx.workspace.id,

@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { UpdateChatAssistantSchema } from '@/lib/chat/schemas';
 import {
@@ -15,7 +16,7 @@ function failure(error: unknown) {
     : Response.json({ error: 'Chat request failed' }, { status: 500 });
 }
 
-export async function GET(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
+export const GET = withRequestLogging("/api/v1/chat/assistants/[assistantId]", async function GET(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { assistantId } = await params;
@@ -23,9 +24,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ assistan
   return assistant
     ? Response.json({ assistant })
     : Response.json({ error: 'Chat assistant not found' }, { status: 404 });
-}
+});
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
+export const PATCH = withRequestLogging("/api/v1/chat/assistants/[assistantId]", async function PATCH(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
@@ -38,9 +39,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ assist
   } catch (error) {
     return failure(error);
   }
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
+export const DELETE = withRequestLogging("/api/v1/chat/assistants/[assistantId]", async function DELETE(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   try {
@@ -50,4 +51,4 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ assis
   } catch (error) {
     return failure(error);
   }
-}
+});

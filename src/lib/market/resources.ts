@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeAudit } from '@/lib/observability/audit';
 
 import { Prisma, type Deployment, type MarketInstall, type Toolkit } from '@prisma/client';
 import { z } from 'zod';
@@ -463,6 +464,7 @@ async function assertPublisherAccess(tx: Prisma.TransactionClient, workspaceId: 
   const workspace = await tx.workspace.findFirst({
     where: {
       id: workspaceId,
+      status: 'active',
       OR: [
         { ownerId: userId },
         { members: { some: { userId, role: { in: ['owner', 'admin'] } } } },
@@ -476,7 +478,7 @@ async function assertPublisherAccess(tx: Prisma.TransactionClient, workspaceId: 
 
 async function assertInstallerAccess(tx: Prisma.TransactionClient, workspaceId: string, userId: string) {
   const workspace = await tx.workspace.findFirst({
-    where: { id: workspaceId, OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+    where: { id: workspaceId, status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     select: { id: true },
   });
   if (!workspace) throw new MarketError('not_authorized', 'Workspace access was denied.');
@@ -1035,6 +1037,8 @@ export async function approveResourceMarketRelease(input: ReviewInput) {
         publishedAt,
       },
     });
+    await writeAudit(tx, { actorId: admin.id, action: 'market.release.approved', targetType: 'marketListing', targetId: release.listing.id,
+      changes: { releaseId: release.id, reviewNote: input.reviewNote ?? null } });
     return tx.marketListing.update({
       where: { id: release.listing.id },
       data: {

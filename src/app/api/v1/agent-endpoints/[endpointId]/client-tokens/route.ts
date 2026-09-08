@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import {
   hasAgentApiScope,
   mintAgentClientToken,
@@ -15,12 +16,12 @@ export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ endpointId: string }> };
 
-export async function OPTIONS(request: Request, context: RouteContext) {
+export const OPTIONS = withRequestLogging("/api/v1/agent-endpoints/[endpointId]/client-tokens", async function OPTIONS(request: Request, context: RouteContext) {
   const { endpointId } = await context.params;
   return agentApiPreflight(request, endpointId);
-}
+});
 
-export async function POST(request: Request, context: RouteContext) {
+export const POST = withRequestLogging("/api/v1/agent-endpoints/[endpointId]/client-tokens", async function POST(request: Request, context: RouteContext) {
   const { endpointId } = await context.params;
   const requestId = createAgentRequestId();
   let headers = new Headers({ 'x-request-id': requestId });
@@ -70,4 +71,4 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});

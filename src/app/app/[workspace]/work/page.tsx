@@ -12,6 +12,7 @@ import {
 } from '@/lib/work/sessions';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
+import { WorkspaceWelcome } from '@/components/dashboard/WorkspaceWelcome';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { resolveModelContext } from '@/lib/agents/model';
 import { isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
@@ -98,9 +99,9 @@ export default async function WorkspaceWorkPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ w?: string; agent?: string; c?: string }>;
+  searchParams: Promise<{ w?: string; agent?: string; c?: string; welcome?: string }>;
 }) {
-  const [{ workspace: slug }, { w, c, agent: requestedAgentId }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
+  const [{ workspace: slug }, { w, c, agent: requestedAgentId, welcome }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
   if (!user) redirect('/app/login');
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
@@ -130,6 +131,7 @@ export default async function WorkspaceWorkPage({
   return (
     <>
       <DashboardHeader title={t('title')} />
+      {welcome === '1' ? <WorkspaceWelcome slug={slug} name={workspace.name} isOwner={workspace.ownerId === user.id} /> : null}
       <WorkspaceWork
         slug={slug}
         workspaceId={workspace.id}

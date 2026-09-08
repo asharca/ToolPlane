@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
 import { AgentConfigurationError, type HermesConversationSelection } from '@/lib/agents/mutations';
@@ -16,7 +17,7 @@ import {
 
 export const runtime = 'nodejs';
 
-export async function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/work-sessions", async function GET(req: Request) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const agentId = new URL(req.url).searchParams.get('agentId')?.trim();
@@ -24,9 +25,9 @@ export async function GET(req: Request) {
   const agent = await getAgentForRequest(agentId, user.id);
   if (!agent) return Response.json({ error: 'Agent not found' }, { status: 404 });
   return Response.json(await listWorkSessions(agent.workspaceId, agent.id));
-}
+});
 
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/work-sessions", async function POST(req: Request) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let body: {
@@ -159,4 +160,4 @@ export async function POST(req: Request) {
     { workSessionId: work.id, conversationId: work.conversationId, status: work.status },
     { status: 202 },
   );
-}
+});

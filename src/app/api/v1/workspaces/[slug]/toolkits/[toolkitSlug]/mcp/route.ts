@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -25,7 +26,7 @@ function err(id: unknown, code: number, message: string, status = 200) {
   return NextResponse.json({ jsonrpc: '2.0', id: id ?? null, error: { code, message } }, { status });
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/mcp", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string; toolkitSlug: string }> },
 ) {
@@ -40,7 +41,7 @@ export async function POST(
       slug: toolkitSlug,
       workspace: {
         slug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: {
@@ -73,7 +74,6 @@ export async function POST(
   let logDeploymentId: string | null = null;
   let logTool = '';
   let reqBody: string | null = null;
-  let resBody: string | null = null;
 
   let response: NextResponse;
   if (method === 'initialize') {
@@ -127,7 +127,6 @@ export async function POST(
       response = result
         ? NextResponse.json({ jsonrpc: '2.0', id, result })
         : err(id, -32000, 'tool deployment is unreachable');
-      resBody = JSON.stringify(result ?? null).slice(0, 16000);
     }
   } else if (id === undefined || id === null) {
     return new NextResponse(null, { status: 202 });
@@ -140,14 +139,14 @@ export async function POST(
     deploymentId: logDeploymentId,
     method: 'POST',
     path: `/workspaces/${slug}/toolkits/${toolkitSlug}/mcp${method ? `#${method}` : ''}${logTool ? `:${logTool}` : ''}`,
-    statusCode: 200,
+    statusCode: response.status,
     durationMs: Date.now() - start,
     requestBody: reqBody,
-    responseBody: resBody,
+    responseBody: await response.clone().text(),
   });
 
   return response;
-}
+});
 
 // The Streamable HTTP transport may GET for a server→client SSE stream. This
 // gateway is request/response only, so signal "no stream" with 405.

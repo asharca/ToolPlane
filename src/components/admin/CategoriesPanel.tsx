@@ -33,7 +33,8 @@ function CategoryRow({ category }: { category: Row }) {
 
   return (
     <li className="px-5 py-4">
-      <form action={action} className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center">
+      <div className="flex min-w-0 flex-col items-start gap-3 2xl:flex-row">
+      <form action={action} className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
         <input type="hidden" name="categoryId" value={category.id} />
         <label className="min-w-0 flex-1">
           <span className="sr-only">{t('categoryNameLabel', { slug: category.slug })}</span>
@@ -52,6 +53,7 @@ function CategoryRow({ category }: { category: Row }) {
           <AdminBadge tone="neutral">{t('agents')} {category._count.agentListings}</AdminBadge>
           <AdminBadge tone="neutral">{t('assistants')} {category._count.assistants}</AdminBadge>
           <AdminBadge tone="neutral">{t('toolkits')} {category._count.toolkits}</AdminBadge>
+          <AdminBadge tone="neutral">{t('clients')} {category._count.clients}</AdminBadge>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <SubmitButton
@@ -63,6 +65,8 @@ function CategoryRow({ category }: { category: Row }) {
             <Save className="size-4" />
             {t('saveChanges')}
           </SubmitButton>
+        </div>
+      </form>
           <ConfirmDialog
             label={t('delete')}
             ariaLabel={t('deleteCategoryLabel', { name: category.name })}
@@ -72,8 +76,7 @@ function CategoryRow({ category }: { category: Row }) {
             pendingLabel={t('deleting')}
             tone="danger"
           />
-        </div>
-      </form>
+      </div>
       {state.error ? <p className="mt-2 text-sm text-destructive-text" role="alert">{state.error}</p> : null}
     </li>
   );

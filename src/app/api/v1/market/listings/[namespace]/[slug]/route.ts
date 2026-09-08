@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { getMarketListing } from '@/lib/market/listings';
 import { getAgentMarketListingByDirectorySlug } from '@/lib/agents/market';
 
 export const runtime = 'nodejs';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/market/listings/[namespace]/[slug]", async function GET(
   _req: Request,
   { params }: { params: Promise<{ namespace: string; slug: string }> },
 ) {
@@ -35,4 +36,4 @@ export async function GET(
       manifest: agent.manifest,
     },
   });
-}
+});

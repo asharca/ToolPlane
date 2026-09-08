@@ -1,10 +1,11 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { CreateChatThreadSchema } from '@/lib/chat/schemas';
 import { ChatServiceError, createChatThread } from '@/lib/chat/service';
 
 export const runtime = 'nodejs';
 
-export async function POST(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
+export const POST = withRequestLogging("/api/v1/chat/assistants/[assistantId]/threads", async function POST(req: Request, { params }: { params: Promise<{ assistantId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown = {};
@@ -25,4 +26,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ assista
       ? Response.json({ error: error.message }, { status: error.status })
       : Response.json({ error: 'Chat request failed' }, { status: 500 });
   }
-}
+});

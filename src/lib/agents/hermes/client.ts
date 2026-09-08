@@ -1,3 +1,4 @@
+import { observe, recordEvent } from '@/lib/observability/events';
 import 'server-only';
 import type { FileUIPart, UIMessage } from 'ai';
 import type { ReasoningEffort } from '../constants';
@@ -415,6 +416,7 @@ export async function writeHermesChatStream(params: {
   signal?: AbortSignal;
   writer: import('ai').UIMessageStreamWriter<HermesUIMessage>;
 }): Promise<{ runtimeSessionId: string }> {
+  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
   const runtimeSessionId = params.runtimeSessionId || params.conversationId;
   const projectedMessages = uiMessagesToHermes(params.messages);
   const { baseUrl, response, sessionEvents } = await hermesProfileChatStream({
@@ -531,6 +533,12 @@ export async function writeHermesChatStream(params: {
     }
     const item = sessionStreamEvent(block);
     if (!item) return;
+    if (['tool.started', 'tool.completed', 'tool.failed', 'run.completed', 'error'].includes(item.event)) {
+      void recordEvent({ domain: 'agent', eventName: `hermes.${item.event}`,
+        toolName: typeof item.data.tool_name === 'string' ? item.data.tool_name : undefined,
+        outcome: item.event === 'error' || item.event === 'tool.failed' ? 'error' : 'success',
+        attributes: { runtimeSessionId: effectiveSessionId } });
+    }
     if (item.event === 'assistant.delta') {
       const delta = typeof item.data.delta === 'string' ? item.data.delta : '';
       if (delta) {
@@ -599,6 +607,8 @@ export async function writeHermesChatStream(params: {
     });
   }
   return { runtimeSessionId: safeSessionId };
+
+  });
 }
 
 export async function runHermesText(params: {
@@ -610,6 +620,7 @@ export async function runHermesText(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<string> {
+  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
   const { response } = await hermesFetch({
     agent: params.agent,
     messages: uiMessagesToHermes(params.messages),
@@ -630,6 +641,8 @@ export async function runHermesText(params: {
     return content.map((part) => part.type === 'text' ? part.text ?? '' : '').join('');
   }
   return '';
+
+  });
 }
 
 export class HermesResponseTooLargeError extends Error {
@@ -692,6 +705,7 @@ export async function runHermesTextStream(params: {
   maxOutputCharacters?: number;
   onDelta: (delta: string) => void | Promise<void>;
 }): Promise<string> {
+  return observe({ domain: 'agent', eventName: 'hermes.run', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
   const { response } = await hermesFetch({
     agent: params.agent,
     messages: uiMessagesToHermes(params.messages),
@@ -747,4 +761,6 @@ export async function runHermesTextStream(params: {
   } finally {
     reader.releaseLock();
   }
+
+  });
 }

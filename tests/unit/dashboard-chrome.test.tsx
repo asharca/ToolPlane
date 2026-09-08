@@ -9,7 +9,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
-vi.mock('@/lib/workspace/actions', () => ({ createWorkspaceAction: vi.fn() }));
+vi.mock('@/lib/workspace/management-actions', () => ({ createWorkspaceAction: vi.fn(), removeWorkspaceMemberAction: vi.fn(), leaveWorkspaceAction: vi.fn(), revokeWorkspaceInvitationAction: vi.fn() }));
 vi.mock('@/lib/auth/actions', () => ({ logoutAction: vi.fn() }));
 
 const workspaces = [
@@ -120,7 +120,7 @@ describe('DashboardChrome sidebar', () => {
     renderChrome(true);
 
     expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Smoke Workspace.*smoke@example\.com/ }));
+    await user.click(screen.getByRole('button', { name: /Personal settings: smoke@example\.com/ }));
     expect(await screen.findByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
   });
 
@@ -128,7 +128,7 @@ describe('DashboardChrome sidebar', () => {
     const user = userEvent.setup();
     renderChrome();
 
-    await user.click(screen.getByRole('button', { name: /Smoke Workspace.*smoke@example\.com/ }));
+    await user.click(screen.getByRole('button', { name: /Personal settings: smoke@example\.com/ }));
     expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
   });
 

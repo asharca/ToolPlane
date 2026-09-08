@@ -4,6 +4,8 @@ import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser, getWorkspaceMembers } from '@/lib/workspace/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { WorkspaceInviteForm } from '@/components/dashboard/WorkspaceInviteForm';
+import { WorkspaceMemberAction } from '@/components/dashboard/WorkspaceForms';
+import { db } from '@/lib/db';
 import {
   DashboardPage,
   DashboardSection,
@@ -38,6 +40,8 @@ export default async function MembersPage({
   if (!ws) redirect('/app');
   const members = await getWorkspaceMembers(ws.id);
   const canInvite = ws.ownerId === user.id;
+  const management = await getTranslations('console.workspaces');
+  const invitations = canInvite ? await db.workspaceInvitation.findMany({ where: { workspaceId: ws.id }, orderBy: { createdAt: 'desc' }, select: { id: true, email: true, expiresAt: true } }) : [];
 
   return (
     <>
@@ -46,7 +50,7 @@ export default async function MembersPage({
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
           <div className="space-y-3">
             <p className="max-w-2xl text-sm text-muted-foreground">
-              {t('membersDescription')}
+              {management('sharedHint')}
             </p>
             <DashboardSection title={t('currentMembers')} count={members.length}>
               <DashboardTable
@@ -54,6 +58,7 @@ export default async function MembersPage({
                   { label: t('member') },
                   { label: t('role') },
                   { label: t('joined') },
+                  { label: management('actions') },
                 ]}
                 minWidth="34rem"
               >
@@ -81,16 +86,24 @@ export default async function MembersPage({
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
-                        {m.role === 'owner' ? t('ownerRole') : t('memberRole')}
+                        {m.userId === ws.ownerId ? t('ownerRole') : t('memberRole')}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {fmt(m.createdAt, timeZone, locale)}
                     </td>
+                    <td className="px-4 py-3 align-top">
+                      {m.userId !== ws.ownerId && (canInvite || m.userId === user.id) ? <WorkspaceMemberAction slug={slug} memberId={m.userId} kind={m.userId === user.id ? 'leave' : 'remove'} /> : null}
+                    </td>
                   </tr>
                 ))}
               </DashboardTable>
             </DashboardSection>
+            {canInvite && invitations.length > 0 ? <DashboardSection title={management('pendingInvitations')} count={invitations.length}>
+              <ul className="divide-y divide-border rounded-lg border border-border">
+                {invitations.map((invitation) => <li key={invitation.id} className="flex flex-wrap items-start justify-between gap-3 p-4"><div className="min-w-0"><p className="break-all text-sm">{invitation.email}</p><p className="mt-1 text-xs text-muted-foreground">{invitation.expiresAt <= new Date() ? management('expired') : management('expires', { date: fmt(invitation.expiresAt, timeZone, locale) })}</p></div><WorkspaceMemberAction slug={slug} invitationId={invitation.id} kind="revoke" /></li>)}
+              </ul>
+            </DashboardSection> : null}
           </div>
 
           <WorkspaceInviteForm workspaceSlug={slug} canInvite={canInvite} />

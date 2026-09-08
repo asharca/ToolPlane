@@ -1,3 +1,6 @@
+import { withRequestLogging } from '@/lib/observability/http';
+import { workspaceAccessResponse } from '@/lib/workspace/access-stream';
+import { enrichLogContext } from '@/lib/observability/context';
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -28,7 +31,7 @@ import { buildKeylessWebSearchToolSet } from '@/lib/chat/keyless-web-search';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function POST(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/turns", async function POST(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
@@ -39,6 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
   const { threadId } = await params;
   const thread = await getChatThreadForExecution(user.id, threadId);
   if (!thread) return Response.json({ error: 'Chat thread not found' }, { status: 404 });
+  enrichLogContext({ workspaceId: thread.workspaceId, conversationId: threadId });
   const { assistant } = thread;
   if (!assistant.modelProvider || !assistant.model) {
     return Response.json({ error: 'This chat assistant has no model configured' }, { status: 400 });
@@ -182,8 +186,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
     },
   });
 
-  return createUIMessageStreamResponse({
+  return workspaceAccessResponse(createUIMessageStreamResponse({
     stream,
     headers: { 'X-Chat-Turn-Id': turn.id },
-  });
-}
+  }), thread.workspaceId, user.id, req.signal);
+});

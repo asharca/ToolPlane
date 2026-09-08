@@ -1,10 +1,11 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
 import { createConversation } from '@/lib/agents/mutations';
 
 export const runtime = 'nodejs';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/conversations", async function POST(
   _req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -19,4 +20,4 @@ export async function POST(
   if (!conversation) return Response.json({ error: 'Conversation not found' }, { status: 404 });
 
   return Response.json({ conversationId: conversation.id });
-}
+});

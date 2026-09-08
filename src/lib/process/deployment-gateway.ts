@@ -14,7 +14,7 @@ export async function resolveLiveDeployment(req: Request, deploymentId: string) 
     where: {
       id: deploymentId,
       workspace: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true, workspaceId: true },
@@ -28,5 +28,5 @@ export async function resolveLiveDeployment(req: Request, deploymentId: string) 
     return { response: NextResponse.json({ error: 'deployment not running' }, { status: 503 }) };
   }
 
-  return { dep, port };
+  return { dep, port, userId: user.id };
 }

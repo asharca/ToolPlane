@@ -16,6 +16,7 @@ import { SkillRegistrySync } from '@/components/admin/SkillRegistrySync';
 import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listDirectorySkills } from '@/lib/admin/market';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { adminHref } from '@/lib/admin/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { defaultTpSkillsSource } from '@/lib/skills/registry';
 
@@ -119,7 +120,7 @@ export default async function AdminSkillsPage({
                   <AdminEntity
                     title={
                       <Link
-                        href={`/admin/skills/${skill.id}/edit`}
+                        href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                         className="hover:underline"
                       >
                         {skill.name}
@@ -147,7 +148,7 @@ export default async function AdminSkillsPage({
                 </td>
                 <td className="px-2 py-3">
                   <AdminTableLink
-                    href={`/admin/skills/${skill.id}/edit`}
+                    href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                     label={`${t('edit')}: ${skill.name}`}
                   />
                 </td>

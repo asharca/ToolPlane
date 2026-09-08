@@ -21,6 +21,10 @@ export type McpLogInput = {
   path: string;
   statusCode: number;
   responseBody?: string | null;
+  rpcMethod?: string | null;
+  toolName?: string | null;
+  outcome?: string;
+  errorSummary?: string | null;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -102,7 +106,7 @@ function parseOperation(path: string): Pick<McpLogInspection, 'operation' | 'rpc
 }
 
 /**
- * Converts the legacy path-based RequestLog shape into the pieces a person
+ * Parses wire requests at ingestion; stored events supply structured fields a person
  * needs to scan an MCP request: operation, tool name, and semantic outcome.
  * Historical rows do not have structured RPC columns, so this deliberately
  * keeps the parsing compatible with every existing gateway path.
@@ -110,13 +114,15 @@ function parseOperation(path: string): Pick<McpLogInspection, 'operation' | 'rpc
 export function inspectMcpLog(input: McpLogInput): McpLogInspection {
   const parsedResponse = parseJson(input.responseBody);
   const errorSummary = responseErrorSummary(parsedResponse);
-  const outcome: McpLogOutcome = input.statusCode >= 400 || errorSummary
+  const outcome: McpLogOutcome = input.outcome
+    ? input.outcome === 'success' || input.outcome === 'cancelled' ? 'success' : 'error'
+    : input.statusCode >= 400 || errorSummary
     ? 'error'
     : 'success';
 
   return {
-    ...parseOperation(input.path),
+    ...parseOperation(input.rpcMethod ? `#${input.rpcMethod}${input.toolName ? `:${input.toolName}` : ''}` : input.path),
     outcome,
-    errorSummary: errorSummary ?? (input.statusCode >= 400 ? `HTTP ${input.statusCode}` : null),
+    errorSummary: input.errorSummary ?? errorSummary ?? (input.statusCode >= 400 ? `HTTP ${input.statusCode}` : null),
   };
 }

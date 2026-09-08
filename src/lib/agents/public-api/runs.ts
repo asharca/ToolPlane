@@ -1,4 +1,6 @@
 import 'server-only';
+import { recordEvent } from '@/lib/observability/events';
+import { enrichLogContext, withLogContext } from '@/lib/observability/context';
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
@@ -766,6 +768,10 @@ export async function executePreparedAgentResponse(
   prepared: PreparedAgentResponse,
   options: ExecuteAgentResponseOptions = {},
 ): Promise<AgentApiResponseView> {
+  return withLogContext({ runId: prepared.runId, requestId: prepared.requestId, suppressPayload: true }, () => executeObservedResponse(prepared, options));
+}
+
+async function executeObservedResponse(prepared: PreparedAgentResponse, options: ExecuteAgentResponseOptions): Promise<AgentApiResponseView> {
   if (prepared.replay) {
     const replay = await getAgentResponseForPrincipal({
       endpointPublicId: prepared.endpointPublicId,
@@ -857,6 +863,8 @@ export async function executePreparedAgentResponse(
     if (!agent?.runtime || agent.runtime.kind !== 'hermes') {
       throw new AgentApiError('runtime_unavailable', publicErrorMessage('runtime_unavailable'), 503, 5);
     }
+    enrichLogContext({ workspaceId: agent.workspaceId, agentId: agent.id, conversationId: conversation.id });
+    await recordEvent({ domain: 'agent', eventName: 'public.run.started' });
     lease = acquireHermesRuntimeWriteLease(agent.workspaceId, agent.id);
     if (!lease) {
       throw new AgentApiError('runtime_maintenance', publicErrorMessage('runtime_maintenance'), 503, 3);
@@ -967,8 +975,11 @@ export async function executePreparedAgentResponse(
     if (!completed) {
       throw new AgentApiError('cancelled', publicErrorMessage('cancelled'), 409);
     }
+    await recordEvent({ domain: 'agent', eventName: 'public.run.completed', durationMs: Date.now() - startedAt });
   } catch (error) {
     if (error instanceof HermesResponseTooLargeError) outputLimitExceeded = true;
+    await recordEvent({ domain: 'agent', eventName: 'public.run.failed', runId: prepared.runId, error,
+      outcome: timedOut ? 'timeout' : controller.signal.aborted ? 'cancelled' : 'error', durationMs: Date.now() - startedAt });
     const mapped = outputLimitExceeded
       ? new AgentApiError(
           'response_too_large',

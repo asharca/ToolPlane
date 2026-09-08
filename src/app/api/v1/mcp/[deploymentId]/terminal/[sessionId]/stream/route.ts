@@ -1,9 +1,11 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveLiveDeployment } from '@/lib/process/deployment-gateway';
+import { workspaceAccessStream } from '@/lib/workspace/access-stream';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/mcp/[deploymentId]/terminal/[sessionId]/stream", async function GET(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string; sessionId: string }> },
 ) {
@@ -25,7 +27,7 @@ export async function GET(
     });
   }
 
-  return new Response(upstream.body, {
+  return new Response(workspaceAccessStream(upstream.body, resolved.dep.workspaceId, resolved.userId, req.signal), {
     status: upstream.status,
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -34,4 +36,4 @@ export async function GET(
       'x-accel-buffering': 'no',
     },
   });
-}
+});

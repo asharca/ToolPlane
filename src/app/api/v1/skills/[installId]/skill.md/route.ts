@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { logRequest } from '@/lib/observability/log';
@@ -7,7 +8,7 @@ import { skillLabel } from '@/lib/workspace/skill-label';
 // Compatibility alias for installed-skill downloads. Like /download, this
 // accepts either the dashboard session or a Bearer API token and scopes the
 // install to a workspace owned by (or shared with) the caller.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/skills/[installId]/skill.md", async function GET(
   req: Request,
   { params }: { params: Promise<{ installId: string }> },
 ) {
@@ -26,7 +27,7 @@ export async function GET(
     where: {
       id: installId,
       workspace: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     include: {
@@ -70,4 +71,4 @@ export async function GET(
       'x-content-type-options': 'nosniff',
     },
   });
-}
+});

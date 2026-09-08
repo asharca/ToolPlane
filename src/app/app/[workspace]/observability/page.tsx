@@ -1,9 +1,11 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
+import { ChevronRight } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { getObservability } from '@/lib/observability/log';
+import { logFilterSchema } from '@/lib/observability/queries';
 import { getPluginTelemetry } from '@/lib/observability/plugin-telemetry';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
@@ -59,14 +61,14 @@ export default async function ObservabilityPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ tab?: string; deploymentId?: string }>;
+  searchParams: Promise<{ tab?: string; deploymentId?: string; q?: string; cursor?: string; until?: string }>;
 }) {
   const [t, locale] = await Promise.all([
     getTranslations('console.observability'),
     getLocale(),
   ]);
   const { workspace: slug } = await params;
-  const { tab, deploymentId } = await searchParams;
+  const { tab, deploymentId, q, cursor, until } = await searchParams;
   const selectedDeploymentId = deploymentId?.trim() || undefined;
   const tabs = [
     { key: 'usage', label: t('usage') },
@@ -80,8 +82,11 @@ export default async function ObservabilityPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  if (!logFilterSchema.safeParse({ q, cursor, until, since: until ? new Date(new Date(until).getTime() - 86_400_000) : undefined }).success) {
+    redirect(`/app/${slug}/observability`);
+  }
 
-  const o = await getObservability(ws.id, timeZone, 24, selectedDeploymentId);
+  const o = await getObservability(ws.id, timeZone, 24, selectedDeploymentId, { userId: user.id, q, cursor, until });
   const pt = current === 'plugin' ? await getPluginTelemetry(ws.id) : null;
   const max = Math.max(1, ...o.series.map((s) => s.total));
   const errorRate = o.total ? (Math.round((o.errors / o.total) * 1000) / 10) : 0;
@@ -101,6 +106,7 @@ export default async function ObservabilityPage({
             actions={(
               <form action={base} method="get" className="flex flex-wrap items-center gap-2">
                 {current !== 'usage' ? <input type="hidden" name="tab" value={current} /> : null}
+                <input name="q" defaultValue={q} aria-label={t('searchLogs')} placeholder={t('searchLogs')} className="ui-input h-9 w-48" />
                 <label htmlFor="observability-deployment" className="sr-only">
                   {t('filterByServer')}
                 </label>
@@ -312,6 +318,7 @@ export default async function ObservabilityPage({
                 }))}
               />
             )}
+            {o.nextCursor ? <Link className="ui-button-secondary mt-4" href={`${base}?${new URLSearchParams({ tab: 'audit', cursor: o.nextCursor, until: o.until, ...(q ? { q } : {}), ...(selectedDeploymentId ? { deploymentId: selectedDeploymentId } : {}) })}`}>{t('olderLogs')}<ChevronRight className="size-4" /></Link> : null}
           </DashboardPanel>
         ) : pt ? (
           <div className="space-y-6">

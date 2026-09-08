@@ -14,6 +14,7 @@ async function publisherListing(
       publisherWorkspaceId: input.workspaceId,
       publisherWorkspace: {
         is: {
+          status: 'active',
           OR: [
             { ownerId: input.actorId },
             { members: { some: { userId: input.actorId, role: { in: ['owner', 'admin'] } } } },

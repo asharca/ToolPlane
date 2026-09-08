@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { verifyApiToken } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
 import { originFromRequest } from '@/lib/http/origin';
@@ -9,7 +10,7 @@ export const runtime = 'nodejs';
 // Claude Code plugin (MCP tools + auto-syncing skills). Auth via `?token=` (so
 // it works as a single curl URL) or the Authorization header; the validated
 // plaintext token is embedded into the plugin's .mcp.json for the gateway.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/install", async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string; toolkitSlug: string }> },
 ) {
@@ -32,7 +33,7 @@ export async function GET(
       slug: toolkitSlug,
       workspace: {
         slug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true },
@@ -53,4 +54,4 @@ export async function GET(
     status: 200,
     headers: { 'content-type': 'text/x-shellscript; charset=utf-8' },
   });
-}
+});

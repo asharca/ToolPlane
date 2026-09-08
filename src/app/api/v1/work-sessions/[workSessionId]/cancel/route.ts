@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import {
   cancelWorkSession,
@@ -6,7 +7,7 @@ import {
 } from '@/lib/work/sessions';
 import { abortWorkRun, finishWorkOutput } from '@/lib/work/run-control';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/cancel", async function POST(
   req: Request,
   { params }: { params: Promise<{ workSessionId: string }> },
 ) {
@@ -31,4 +32,4 @@ export async function POST(
   }
   if (!active) finishWorkOutput(work.id);
   return Response.json({ status: result.status });
-}
+});

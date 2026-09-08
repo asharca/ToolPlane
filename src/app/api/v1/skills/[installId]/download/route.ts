@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { buildInstalledSkillMarkdown } from '@/lib/skills/artifact';
@@ -7,7 +8,7 @@ import { logRequest } from '@/lib/observability/log';
 // Serve a real, downloadable SKILL.md for an installed skill. Auth via the
 // dashboard session or a Bearer API token; access is scoped to the caller's
 // workspaces.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/skills/[installId]/download", async function GET(
   req: Request,
   { params }: { params: Promise<{ installId: string }> },
 ) {
@@ -29,7 +30,7 @@ export async function GET(
     where: {
       id: installId,
       workspace: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     include: {
@@ -67,4 +68,4 @@ export async function GET(
       'x-content-type-options': 'nosniff',
     },
   });
-}
+});

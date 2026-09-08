@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -7,7 +8,7 @@ import { connectorFromConfig } from '@/lib/sandboxes/connector';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/sandboxes/[sandboxId]/connector-status", async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string; sandboxId: string }> },
 ) {
@@ -21,7 +22,7 @@ export async function GET(
       kind: 'connector',
       workspace: {
         slug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true, config: true },
@@ -35,4 +36,4 @@ export async function GET(
     configured: Boolean(connector),
     expectedRoot: connector?.remoteRoot ?? null,
   });
-}
+});

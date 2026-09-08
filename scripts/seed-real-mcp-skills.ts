@@ -241,7 +241,7 @@ async function clearMcpAndSkillData() {
   await db.$transaction([
     db.skillInvocation.deleteMany(),
     db.syncEvent.deleteMany(),
-    db.requestLog.deleteMany(),
+    db.logEvent.deleteMany(),
     db.toolkitInstallLink.deleteMany(),
     db.apiToken.deleteMany({ where: { name: { startsWith: 'ToolPlane plugin - ' } } }),
     db.agentServer.deleteMany(),

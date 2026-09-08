@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  systemLog: vi.fn(),
   queued: true,
   workFindFirst: vi.fn(),
   workFindUnique: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   generateWorkSessionTitle: vi.fn(),
 }));
 
+vi.mock('@/lib/observability/system', () => ({ systemLog: mocks.systemLog }));
 vi.mock('@/lib/db', () => ({
   db: {
     workSession: {
@@ -250,7 +252,6 @@ describe('Work coordinator', () => {
   });
 
   it('finishes Work when automatic title generation fails', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     mocks.generateWorkSessionTitle.mockRejectedValueOnce(new Error('Naming unavailable'));
 
     const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
@@ -264,11 +265,11 @@ describe('Work coordinator', () => {
     const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
     expect(snapshot.done).toBe(true);
     unsubscribe();
-    expect(warning).toHaveBeenCalledWith(
+    expect(mocks.systemLog).toHaveBeenCalledWith(
+      'warn',
       '[work] work-1 title generation failed',
       expect.any(Error),
     );
-    warning.mockRestore();
   });
 
   it('labels Hermes MCP tools with the workspace deployment and original name', async () => {

@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { requireAdmin } from '@/lib/auth/admin';
 import { setUserRole, setUserStatus, deleteManagedUser } from '@/lib/admin/users';
+import { db } from '@/lib/db';
 
 export type AdminActionState = { error?: string; ok?: boolean };
 
@@ -12,7 +13,8 @@ export async function setUserRoleAction(_prev: AdminActionState, formData: FormD
   const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const userId = String(formData.get('userId') ?? '');
-  const role = String(formData.get('role') ?? '') === 'admin' ? 'admin' : 'user';
+  const role = String(formData.get('role') ?? '');
+  if (role !== 'admin' && role !== 'user') return { error: t('errorActionFailed') };
   try {
     await setUserRole(admin.id, userId, role);
   } catch (e) {
@@ -27,7 +29,8 @@ export async function setUserStatusAction(_prev: AdminActionState, formData: For
   const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const userId = String(formData.get('userId') ?? '');
-  const status = String(formData.get('status') ?? '') === 'suspended' ? 'suspended' : 'active';
+  const status = String(formData.get('status') ?? '');
+  if (status !== 'suspended' && status !== 'active') return { error: t('errorActionFailed') };
   try {
     await setUserStatus(admin.id, userId, status);
   } catch (e) {
@@ -43,8 +46,8 @@ export async function deleteUserAction(_prev: AdminActionState, formData: FormDa
   const t = await getTranslations('admin');
   const userId = String(formData.get('userId') ?? '');
   const confirm = String(formData.get('confirm') ?? '');
-  const email = String(formData.get('email') ?? '');
-  if (confirm !== email) return { error: t('errorTypeEmail') };
+  const user = await db.user.findUnique({ where: { id: userId }, select: { email: true } });
+  if (!user || confirm !== user.email) return { error: t('errorTypeEmail') };
   try {
     await deleteManagedUser(admin.id, userId);
   } catch (e) {

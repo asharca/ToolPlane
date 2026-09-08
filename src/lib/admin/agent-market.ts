@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeAudit } from '@/lib/observability/audit';
 
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
@@ -214,6 +215,8 @@ export function getDirectoryAgentListing(id: string) {
           version: true,
           reviewStatus: true,
           reviewedAt: true,
+          reviewNote: true,
+          reviewedBy: { select: { name: true, email: true } },
           publishedAt: true,
           checksum: true,
           _count: { select: { installs: true } },
@@ -337,6 +340,8 @@ export async function createDirectoryAgentTemplate(
           publishedAt: input.status === 'published' ? release.publishedAt : null,
         },
       });
+      await writeAudit(tx, { actorId: reviewedById, action: 'market.agent.created', targetType: 'agentListing', targetId: listing.id,
+        changes: { releaseId: release.id, status: input.status, categoryIds } });
       return { id: listing.id, releaseId: release.id };
     }, { isolationLevel: 'Serializable' });
   } catch (error) {
@@ -460,6 +465,8 @@ export async function updateDirectoryAgentListing(
         },
         select: { id: true, directorySlug: true, status: true },
       });
+      await writeAudit(tx, { actorId: reviewedById, action: 'market.agent.updated', targetType: 'agentListing', targetId: id,
+        changes: { name: input.name, status: input.status, curated: input.curated, isFeatured: input.isFeatured, categoryIds, releaseId } });
       return updated;
     }, { isolationLevel: 'Serializable' });
   } catch (error) {
@@ -547,6 +554,8 @@ export async function approvePendingAgentRelease(input: {
         reviewNote: input.reviewNote?.trim() || null,
       },
     });
+    await writeAudit(tx, { actorId: input.reviewedById, action: 'market.agent.approved', targetType: 'agentListing', targetId: listing.id,
+      changes: { releaseId: release.id, categoryIds, reviewNote: input.reviewNote ?? null } });
     return tx.agentListing.update({
       where: { id: listing.id },
       data: {
@@ -600,6 +609,8 @@ export async function rejectPendingAgentRelease(input: {
         reviewNote: input.reviewNote?.trim() || null,
       },
     });
+    await writeAudit(tx, { actorId: input.reviewedById, action: 'market.agent.rejected', targetType: 'agentListing', targetId: listing.id,
+      changes: { releaseId: release.id, reviewNote: input.reviewNote ?? null } });
     return tx.agentListing.update({
       where: { id: listing.id },
       data: {
@@ -614,6 +625,7 @@ export async function rejectPendingAgentRelease(input: {
 export async function setDirectoryAgentListingStatus(
   id: string,
   status: 'published' | 'disabled',
+  actorId = 'system',
 ) {
   return db.$transaction(async (tx) => {
     const listing = await tx.agentListing.findUnique({
@@ -645,6 +657,7 @@ export async function setDirectoryAgentListingStatus(
         'An agent listing needs at least one category before it can be published.',
       );
     }
+    await writeAudit(tx, { actorId, action: 'market.agent.status_changed', targetType: 'agentListing', targetId: id, changes: { status } });
     return tx.agentListing.update({
       where: { id },
       data: {
@@ -656,7 +669,7 @@ export async function setDirectoryAgentListingStatus(
   });
 }
 
-export async function deleteDirectoryAgentListing(id: string) {
+export async function deleteDirectoryAgentListing(id: string, actorId = 'system') {
   try {
     return await db.$transaction(async (tx) => {
       const listing = await tx.agentListing.findUnique({
@@ -675,6 +688,7 @@ export async function deleteDirectoryAgentListing(id: string) {
         );
       }
       await tx.agentListing.delete({ where: { id } });
+      await writeAudit(tx, { actorId, action: 'market.agent.deleted', targetType: 'agentListing', targetId: id });
     });
   } catch (error) {
     if (error instanceof AdminAgentMarketError) throw error;

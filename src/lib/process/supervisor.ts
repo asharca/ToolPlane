@@ -1,4 +1,5 @@
 import 'server-only';
+import { recordEvent } from '@/lib/observability/events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
@@ -463,10 +464,15 @@ function syncRuntimeRegistry(entry: Entry): void {
 function updateRuntime(entry: Entry, update: Partial<Pick<RuntimeRecord,
   'status' | 'phase' | 'containerName' | 'containerState' | 'imageState'
 >>, activity = false): void {
+  const changed = Object.entries(update).some(([key, value]) => entry.runtime[key as keyof RuntimeRecord] !== value);
   Object.assign(entry.runtime, update);
   touchRuntime(entry.runtime, activity);
   writeRuntimeRecord(entry.runtime);
   syncRuntimeRegistry(entry);
+  if (changed) void recordEvent({ domain: 'runtime', eventName: 'runtime.state', deploymentId: entry.runtime.deploymentId,
+    outcome: entry.runtime.status === 'error' ? 'error' : 'success',
+    attributes: { generation: entry.runtime.generation, phase: entry.runtime.phase, status: entry.runtime.status,
+      imageState: entry.runtime.imageState, containerState: entry.runtime.containerState } });
 }
 
 function updateDetachedRuntime(
@@ -618,7 +624,9 @@ function appendRuntimeLog(entry: Entry, value: string): string {
 
 function recordRuntimeStderr(entry: Entry, value: string): void {
   const redacted = appendRuntimeLog(entry, value);
-  if (redacted) console.error(`[mcp-supervisor:${entry.runtime.deploymentId}] ${redacted.trimEnd()}`);
+  if (redacted) void recordEvent({ domain: 'runtime', eventName: 'runtime.stderr', deploymentId: entry.runtime.deploymentId,
+    level: 'info', message: redacted.trimEnd(), secrets: entry.redactionValues,
+    attributes: { generation: entry.runtime.generation, stream: 'stderr' }, detail: { output: redacted } });
 }
 
 function completeStderrLines(value: string, terminal: boolean): { lines: string[]; tail: string } {
@@ -1281,6 +1289,7 @@ async function launchProcess(
   workspaceId?: string,
 ): Promise<LaunchResult> {
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
+  if (workspaceId && !await db.workspace.findFirst({ where: { id: workspaceId, status: 'active' }, select: { id: true } })) return { ready: null };
   const s = store();
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) {
@@ -1537,7 +1546,9 @@ async function launchProcess(
     setTimeout(resolve, READY_TIMEOUT_MS);
   });
 
-  child.on('exit', (code) => {
+  child.on('exit', (code, signal) => {
+    void recordEvent({ domain: 'runtime', eventName: 'runtime.exit', deploymentId,
+      outcome: entry.stopping || code === 0 ? 'success' : 'error', attributes: { code, signal, generation: entry.runtime.generation } });
     entry.status = entry.stopping ? 'stopped' : code === 0 ? 'stopped' : 'error';
     if (child.pid) deleteRegistry(deploymentId, child.pid);
     if (entry.stopping || store().get(deploymentId) !== entry) return;

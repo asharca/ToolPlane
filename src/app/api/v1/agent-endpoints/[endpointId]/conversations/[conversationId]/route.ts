@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAgentApiPrincipal } from '@/lib/agents/public-api/auth';
 import {
   deleteAgentConversationForPrincipal,
@@ -14,12 +15,12 @@ export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ endpointId: string; conversationId: string }> };
 
-export async function OPTIONS(request: Request, context: RouteContext) {
+export const OPTIONS = withRequestLogging("/api/v1/agent-endpoints/[endpointId]/conversations/[conversationId]", async function OPTIONS(request: Request, context: RouteContext) {
   const { endpointId } = await context.params;
   return agentApiPreflight(request, endpointId);
-}
+});
 
-export async function GET(request: Request, context: RouteContext) {
+export const GET = withRequestLogging("/api/v1/agent-endpoints/[endpointId]/conversations/[conversationId]", async function GET(request: Request, context: RouteContext) {
   const { endpointId, conversationId } = await context.params;
   const requestId = createAgentRequestId();
   let headers = new Headers({ 'x-request-id': requestId });
@@ -47,9 +48,9 @@ export async function GET(request: Request, context: RouteContext) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});
 
-export async function DELETE(request: Request, context: RouteContext) {
+export const DELETE = withRequestLogging("/api/v1/agent-endpoints/[endpointId]/conversations/[conversationId]", async function DELETE(request: Request, context: RouteContext) {
   const { endpointId, conversationId } = await context.params;
   const requestId = createAgentRequestId();
   let headers = new Headers({ 'x-request-id': requestId });
@@ -68,4 +69,4 @@ export async function DELETE(request: Request, context: RouteContext) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});

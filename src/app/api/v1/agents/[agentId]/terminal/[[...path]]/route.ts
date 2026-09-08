@@ -1,8 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getHermesTerminalForRequest } from '@/lib/agents/queries';
 import { ensureHermesDashboardReady } from '@/lib/agents/hermes/runtime';
 import { livePort } from '@/lib/process/supervisor';
+import { workspaceAccessStream } from '@/lib/workspace/access-stream';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +14,7 @@ const MAX_TERMINAL_BODY = 1_000_000;
 const SESSION_ID = /^[A-Za-z0-9-]{1,100}$/;
 
 type RouteParams = Promise<{ agentId: string; path?: string[] }>;
-type ResolvedTerminal = { response: Response } | { port: number };
+type ResolvedTerminal = { response: Response } | { port: number; workspaceId: string; userId: string };
 
 function error(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -34,7 +36,7 @@ async function resolveTerminal(req: Request, agentId: string): Promise<ResolvedT
     }
     port = ready.port;
   }
-  return { port };
+  return { port, workspaceId: agent.workspaceId, userId: user.id };
 }
 
 async function requestBody(req: Request): Promise<string | Response> {
@@ -93,15 +95,15 @@ async function proxyJson(
   });
 }
 
-export async function POST(req: Request, { params }: { params: RouteParams }) {
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/terminal/[[...path]]", async function POST(req: Request, { params }: { params: RouteParams }) {
   return proxyJson(req, params, 'POST');
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: RouteParams }) {
+export const DELETE = withRequestLogging("/api/v1/agents/[agentId]/terminal/[[...path]]", async function DELETE(req: Request, { params }: { params: RouteParams }) {
   return proxyJson(req, params, 'DELETE');
-}
+});
 
-export async function GET(req: Request, { params }: { params: RouteParams }) {
+export const GET = withRequestLogging("/api/v1/agents/[agentId]/terminal/[[...path]]", async function GET(req: Request, { params }: { params: RouteParams }) {
   const { agentId, path = [] } = await params;
   if (
     path.length !== 2
@@ -127,7 +129,7 @@ export async function GET(req: Request, { params }: { params: RouteParams }) {
     return error('Hermes terminal stream is unreachable', 502);
   }
   if (!upstream.body) return error('Hermes terminal stream is unavailable', 502);
-  return new Response(upstream.body, {
+  return new Response(workspaceAccessStream(upstream.body, resolved.workspaceId, resolved.userId, req.signal), {
     status: upstream.status,
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -136,4 +138,4 @@ export async function GET(req: Request, { params }: { params: RouteParams }) {
       'x-accel-buffering': 'no',
     },
   });
-}
+});

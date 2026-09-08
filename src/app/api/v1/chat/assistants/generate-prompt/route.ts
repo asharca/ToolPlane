@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { runNativeAgent } from '@/lib/agents/native';
 import { GenerateChatAssistantPromptSchema } from '@/lib/chat/schemas';
@@ -17,7 +18,7 @@ function failure(error: unknown) {
     : Response.json({ error: 'Prompt generation failed' }, { status: 502 });
 }
 
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/chat/assistants/generate-prompt", async function POST(req: Request) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
@@ -50,4 +51,4 @@ export async function POST(req: Request) {
   } catch (error) {
     return failure(error);
   }
-}
+});

@@ -1,23 +1,29 @@
 import 'server-only';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { verifyApiToken, verifyApiTokenContext } from '@/lib/auth/tokens';
+import { enrichLogContext } from '@/lib/observability/context';
+
+function identify<T extends { id: string }>(user: T | null) {
+  if (user) enrichLogContext({ actorId: user.id });
+  return user;
+}
 
 // Resolve the caller from a Bearer API token (for external clients) or fall
 // back to the dashboard session cookie. Shared by gateway API routes.
 export async function resolveRequestUser(req: Request) {
   const viaToken = await verifyApiToken(req.headers.get('authorization'));
-  if (viaToken) return viaToken;
-  return getCurrentUser();
+  if (viaToken) return identify(viaToken);
+  return identify(await getCurrentUser());
 }
 
 // Account-level routes accept dashboard sessions and personal API tokens, but
 // toolkit install tokens must stay scoped to their toolkit.
 export async function resolveAccountRequestUser(req: Request) {
   const authorization = req.headers.get('authorization');
-  if (!authorization) return getCurrentUser();
+  if (!authorization) return identify(await getCurrentUser());
   const context = await verifyApiTokenContext(authorization);
   if (!context || context.token.toolkitId) return null;
-  return context.user;
+  return identify(context.user);
 }
 
 // Agent-control calls can create resources and invoke tools, so they require an
@@ -28,5 +34,5 @@ export async function resolveAgentControlRequestUser(req: Request) {
   if (!authorization) return null;
   const context = await verifyApiTokenContext(authorization);
   if (!context || context.token.toolkitId) return null;
-  return context.user;
+  return identify(context.user);
 }

@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -38,7 +39,7 @@ function expectedGithubRef(ref: string): string {
 //   Content type: application/json
 //   Secret: TP_SKILLS_WEBHOOK_SECRET
 //   Events: push
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/skill-registries/tp-skills/webhook", async function POST(req: Request) {
   const secret = process.env.TP_SKILLS_WEBHOOK_SECRET;
   if (!secret) return json({ error: 'tp-skills webhook is not configured' }, 503);
 
@@ -80,4 +81,4 @@ export async function POST(req: Request) {
     commitSha: result.commitSha,
     failures: result.failed,
   });
-}
+});

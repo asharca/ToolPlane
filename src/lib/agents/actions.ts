@@ -1,5 +1,6 @@
 'use server';
 
+import { systemLog } from '@/lib/observability/system';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -89,11 +90,11 @@ import { deleteManagedAgent } from '@/lib/agents/deletion';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { startProcess } from '@/lib/process/supervisor';
 
-async function authorizedWorkspace(slug: string) {
+async function authorizedWorkspace(slug: string, ownerOnly = false) {
   const user = await getCurrentUser();
   if (!user) return null;
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) return null;
+  if (!ws || (ownerOnly && ws.ownerId !== user.id)) return null;
   return { user, ws };
 }
 
@@ -241,13 +242,13 @@ async function startCreatedAgentRuntime(workspaceId: string, agentId: string) {
       workspaceId,
     });
   } catch (error) {
-    console.error(`Failed to start runtime sandbox for Agent ${agentId}.`, error);
+    systemLog('error', `Failed to start runtime sandbox for Agent ${agentId}.`, error);
     if (deploymentId) {
       await db.deployment.updateMany({
         where: { id: deploymentId, workspaceId },
         data: { status: 'error' },
       }).catch((statusError) => {
-        console.error(`Failed to record runtime startup error for Agent ${agentId}.`, statusError);
+        systemLog('error', `Failed to record runtime startup error for Agent ${agentId}.`, statusError);
       });
     }
   }
@@ -284,11 +285,11 @@ export async function createProviderAction(
   if (!name || (!providerPreset(format)?.format.startsWith('pi:') && (!baseUrl || !apiKey))) {
     return { error: 'Name, base URL and API key are required for custom providers.' };
   }
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   let provider: { id: string };
   try {
-    provider = await createProvider(ctx.ws.id, { name, format, baseUrl, apiKey });
+    provider = await createProvider(ctx.ws.id, { name, format, baseUrl, apiKey }, ctx.user.id);
   } catch {
     return { error: 'A provider with that name already exists.' };
   }
@@ -316,7 +317,7 @@ export async function updateProviderAction(
   if (!providerId || !name || (!providerPreset(format)?.format.startsWith('pi:') && !baseUrl)) {
     return { error: 'Provider, name and base URL are required for custom providers.' };
   }
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const existing = await getProvider(ctx.ws.id, providerId);
   if (!existing) return { error: 'Provider not found.' };
@@ -328,7 +329,7 @@ export async function updateProviderAction(
       format,
       baseUrl,
       ...(apiKey ? { apiKey } : {}),
-    });
+    }, ctx.user.id);
   } catch {
     return { error: 'A provider with that name already exists.' };
   }
@@ -353,9 +354,9 @@ export async function updateProviderAction(
 export async function deleteProviderAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const providerId = String(formData.get('providerId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
-  const hermesAgents = await deleteProvider(ctx.ws.id, providerId);
+  const hermesAgents = await deleteProvider(ctx.ws.id, providerId, ctx.user.id);
   const warning = await syncHermesAgents(ctx.ws.id, hermesAgents);
   revalidateProviderViews(slug);
   if (warning) throw new Error(warning);
@@ -367,7 +368,7 @@ export async function refreshModelsAction(
 ): Promise<ActionState> {
   const slug = String(formData.get('workspace') ?? '');
   const providerId = String(formData.get('providerId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const provider = await getProvider(ctx.ws.id, providerId);
   if (!provider) return { error: 'Provider not found.' };
@@ -435,7 +436,7 @@ export async function addProviderModelAction(
   }
   const base = providerModelValues(formData, modelIds[0]!);
   if (!base) return { error: 'Check the model classification and token limits.' };
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const models = modelIds.length === 1
     ? [base]
@@ -471,7 +472,7 @@ export async function updateProviderModelAction(
   if (!providerId || !modelId || modelId.length > 200 || !model) {
     return { error: 'Check the model fields and token limits.' };
   }
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   try {
     await updateProviderModel(ctx.ws.id, providerId, model);
@@ -489,7 +490,7 @@ export async function deleteProviderModelAction(
   const slug = String(formData.get('workspace') ?? '');
   const providerId = String(formData.get('providerId') ?? '');
   const modelId = String(formData.get('modelId') ?? '').trim();
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
   try {
@@ -517,7 +518,7 @@ export async function testProviderModelAction(
   const providerId = String(formData.get('providerId') ?? '');
   const modelId = String(formData.get('model') ?? '').trim();
   if (!modelId) return { error: 'Model is required.' };
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const provider = await getProvider(ctx.ws.id, providerId);
   if (!provider) return { error: 'Provider not found.' };
@@ -549,7 +550,7 @@ export async function updateWorkspaceModelPreferenceAction(
   const providerId = String(formData.get('providerId') ?? '');
   const model = String(formData.get('model') ?? '').trim();
   if (preference !== 'default' && preference !== 'title') return { error: 'Invalid model preference.' };
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
 
   if (providerId || model) {
@@ -1188,7 +1189,7 @@ export async function createAgentChannelConnectionAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const platformSlug = String(formData.get('platform') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   if (!await isManageableAgent(ctx.ws.id, agentId)) return;
   const platform = getMessagingPlatform(platformSlug);
@@ -1218,7 +1219,7 @@ export async function updateAgentChannelConnectionCredentialsAction(formData: Fo
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
   const platformSlug = String(formData.get('platform') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   const platform = getMessagingPlatform(platformSlug);
   if (!platform) return;
@@ -1241,7 +1242,7 @@ export async function requestAgentChannelPairingAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   await requestAgentChannelPairing(ctx.ws.id, connectionId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -1251,7 +1252,7 @@ export async function checkAgentChannelPairingAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   await checkAgentChannelPairing(ctx.ws.id, connectionId);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -1262,7 +1263,7 @@ export async function applyAgentChannelPairingAction(formData: FormData) {
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
   const allowedUserIds = String(formData.get('allowedUserIds') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   await applyAgentChannelPairing(ctx.ws.id, connectionId, allowedUserIds);
   revalidatePath(`/app/${slug}/agents/${agentId}`);
@@ -1272,7 +1273,7 @@ export async function deleteAgentChannelConnectionAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   const { stopAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
   await stopAgentChannelRunner(ctx.ws.id, connectionId);
@@ -1284,7 +1285,7 @@ export async function startAgentChannelConnectionAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   const { startAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
   await startAgentChannelRunner(ctx.ws.id, connectionId);
@@ -1295,7 +1296,7 @@ export async function stopAgentChannelConnectionAction(formData: FormData) {
   const slug = String(formData.get('workspace') ?? '');
   const agentId = String(formData.get('agentId') ?? '');
   const connectionId = String(formData.get('connectionId') ?? '');
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return;
   const { stopAgentChannelRunner } = await import('@/lib/agents/channel-runtime');
   await stopAgentChannelRunner(ctx.ws.id, connectionId);

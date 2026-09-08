@@ -1,7 +1,11 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getAgentMarketListingByDirectorySlug } from '@/lib/agents/market';
-import { getOrCreateDefaultWorkspace } from '@/lib/workspace/queries';
+import { getDefaultWorkspace, getWorkspaceForUser, listWorkspacesForUser } from '@/lib/workspace/queries';
+import { WorkspaceAccountPage } from '@/components/dashboard/WorkspaceAccountPage';
+import { WorkspaceInvitationPage } from '@/components/dashboard/WorkspaceInvitationPage';
+import { lastWorkspaceCookieName } from '@/lib/workspace/navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +23,9 @@ export default async function AppIndexPage({
     agent?: string | string[];
     market?: string | string[];
     q?: string | string[];
+    view?: string;
+    workspace?: string;
+    notice?: string;
   }>;
 }) {
   const query = await searchParams;
@@ -42,8 +49,20 @@ export default async function AppIndexPage({
         ? `/app?agent=${encodeURIComponent(agent)}`
         : marketIntent ?? '/app';
   const user = await getCurrentUser();
-  if (!user) redirect(`/app/login?next=${encodeURIComponent(intent)}`);
-  const ws = await getOrCreateDefaultWorkspace(user.id, user.email);
+  if (query.view === 'invitation') return <WorkspaceInvitationPage signedIn={Boolean(user)} />;
+  if (!user) redirect(`/app/login?next=${encodeURIComponent(['account', 'workspaces'].includes(query.view ?? '') ? `/app?view=${query.view}` : intent)}`);
+  if (query.view === 'account') return <WorkspaceAccountPage user={user} view="account" />;
+  if (query.view === 'workspaces') return <WorkspaceAccountPage user={user} notice={query.notice} />;
+  const selectedSlug = intentSlug(query.workspace);
+  if (intent !== '/app' && !selectedSlug) {
+    const workspaces = (await listWorkspacesForUser(user.id)).filter((workspace) => workspace.status === 'active');
+    if (workspaces.length !== 1) return <WorkspaceAccountPage user={user} intent={intent} />;
+  }
+  const cookieStore = await cookies();
+  const ws = selectedSlug
+    ? await getWorkspaceForUser(selectedSlug, user.id)
+    : await getDefaultWorkspace(user.id, cookieStore.get(lastWorkspaceCookieName(user.id))?.value);
+  if (!ws) return <WorkspaceAccountPage user={user} intent={intent !== '/app' ? intent : ''} notice={selectedSlug ? 'unavailable' : ''} />;
   if (server) {
     redirect(`/app/${encodeURIComponent(ws.slug)}/market/mcp/${encodeURIComponent(server)}`);
   }

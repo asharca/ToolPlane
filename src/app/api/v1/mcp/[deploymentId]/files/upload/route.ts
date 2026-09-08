@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import {
@@ -31,7 +32,7 @@ function contentLength(req: Request): number | null {
   return Number.isSafeInteger(parsed) ? parsed : Number.NaN;
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/mcp/[deploymentId]/files/upload", async function POST(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
@@ -44,7 +45,7 @@ export async function POST(
       id: deploymentId,
       sandbox: { isNot: null },
       workspace: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true },
@@ -97,4 +98,4 @@ export async function POST(
         : 'Sandbox file storage is unreachable.',
     }, { status: 502 });
   }
-}
+});

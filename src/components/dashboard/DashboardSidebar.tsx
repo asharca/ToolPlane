@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { AccountMenu } from './AccountMenu';
 import { DashboardLogo } from './DashboardLogo';
 import { useDashboardTabs } from './DashboardTabs';
 
@@ -198,6 +199,10 @@ export function DashboardSidebar({
         </div>
       </div>
 
+      <div className={`shrink-0 px-3 pb-3 ${collapsed ? 'lg:px-2' : ''}`}>
+        <WorkspaceSwitcher slug={slug} workspaceName={workspaceName} userLabel={userLabel} workspaces={workspaces} compact={collapsed} />
+      </div>
+
       <nav aria-label={t('navigation')} className={`min-h-0 flex-1 overflow-y-auto px-3 py-2 transition-[padding] duration-200 ease-out ${
         collapsed ? 'lg:px-2' : 'lg:px-3'
       }`}>
@@ -239,14 +244,6 @@ export function DashboardSidebar({
       <div className={`flex shrink-0 flex-col items-stretch gap-1 px-3 py-3 transition-[padding] duration-200 ease-out ${
         collapsed ? 'lg:items-center lg:px-2' : 'lg:px-3'
       }`}>
-        <WorkspaceSwitcher
-          slug={slug}
-          workspaceName={workspaceName}
-          userLabel={userLabel}
-          workspaces={workspaces}
-          isAdmin={isAdmin}
-          compact={collapsed}
-        />
         <Link
           href={`${base}/settings?returnTo=${encodeURIComponent(pathname)}`}
           onClick={onClose}
@@ -261,6 +258,7 @@ export function DashboardSidebar({
             collapsed ? 'lg:max-w-0 lg:translate-x-1 lg:opacity-0' : 'lg:max-w-40 lg:translate-x-0 lg:opacity-100'
           }`}>{t('settings')}</span>
         </Link>
+        <AccountMenu userLabel={userLabel} isAdmin={isAdmin} compact={collapsed} />
       </div>
     </aside>
   );

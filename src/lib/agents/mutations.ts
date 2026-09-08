@@ -1,6 +1,7 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
+import { writeAudit } from '@/lib/observability/audit';
 import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
 import { defaultProviderModel, type ProviderModelValues } from '@/lib/agents/model-catalog';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
@@ -1569,8 +1570,14 @@ export async function deleteAgent(workspaceId: string, agentId: string) {
 export async function createProvider(
   workspaceId: string,
   data: { name: string; format: string; baseUrl: string; apiKey: string },
+  actorId = 'system',
 ) {
-  return db.modelProvider.create({ data: { workspaceId, ...data } });
+  return db.$transaction(async (tx) => {
+    const provider = await tx.modelProvider.create({ data: { workspaceId, ...data } });
+    await writeAudit(tx, { actorId, workspaceId, action: 'provider.created', targetType: 'modelProvider', targetId: provider.id,
+      changes: { name: data.name, format: data.format, baseUrl: data.baseUrl, credentialChanged: true } });
+    return provider;
+  });
 }
 
 function hermesProviderAliases(providerIds: string[]): string[] {
@@ -1584,14 +1591,18 @@ export async function updateProvider(
   workspaceId: string,
   providerId: string,
   data: { name: string; format: string; baseUrl: string; apiKey?: string },
+  actorId = 'system',
 ) {
-  await db.modelProvider.updateMany({
-    where: { id: providerId, workspaceId },
-    data,
+  await db.$transaction(async (tx) => {
+    if (!await lockProvider(tx, workspaceId, providerId)) return;
+    const before = await tx.modelProvider.findFirst({ where: { id: providerId, workspaceId }, select: { name: true, format: true, baseUrl: true } });
+    await tx.modelProvider.updateMany({ where: { id: providerId, workspaceId }, data });
+    await writeAudit(tx, { actorId, workspaceId, action: 'provider.changed', targetType: 'modelProvider', targetId: providerId,
+      changes: { before, after: { name: data.name, format: data.format, baseUrl: data.baseUrl }, credentialChanged: data.apiKey !== undefined } });
   });
 }
 
-export async function deleteProvider(workspaceId: string, providerId: string) {
+export async function deleteProvider(workspaceId: string, providerId: string, actorId = 'system') {
   return db.$transaction(async (tx) => {
     if (!await lockProvider(tx, workspaceId, providerId)) return [];
 
@@ -1624,6 +1635,7 @@ export async function deleteProvider(workspaceId: string, providerId: string) {
       data: { hermesProvider: null, hermesModel: null },
     });
     await tx.modelProvider.deleteMany({ where: { id: providerId, workspaceId } });
+    await writeAudit(tx, { actorId, workspaceId, action: 'provider.deleted', targetType: 'modelProvider', targetId: providerId });
     return hermesAgents.flatMap(({ id, runtime }) => (
       runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : []
     ));

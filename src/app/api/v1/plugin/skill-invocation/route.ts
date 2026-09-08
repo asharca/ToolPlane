@@ -1,6 +1,8 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { scopeToolkitForToken, json, slug } from '@/lib/plugin/telemetry';
+import { recordEvent } from '@/lib/observability/events';
 
 export const runtime = 'nodejs';
 
@@ -17,7 +19,7 @@ const Body = z.object({
 // The plugin's PostToolUse/PostToolUseFailure hook (matcher "Skill") POSTs here
 // each time a synced skill runs. Skills never traverse the MCP gateway, so this
 // is the only record of skill usage in observability.
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/plugin/skill-invocation", async function POST(req: Request) {
   let body: z.infer<typeof Body>;
   try {
     body = Body.parse(await req.json());
@@ -44,5 +46,7 @@ export async function POST(req: Request) {
     },
   });
 
+  await recordEvent({ domain: 'plugin', eventName: 'plugin.skill.invoked', workspaceId: scope.workspaceId,
+    outcome: body.outcome, errorCode: body.errorClass, attributes: { reportedBy: 'client', skill: body.skillSlug, source: body.source, toolkitId: scope.toolkitId } });
   return json({ ok: true });
-}
+});

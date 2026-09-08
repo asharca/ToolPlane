@@ -49,7 +49,7 @@ describe('admin runtime settings action', () => {
 
     expect(result).toEqual({ ok: true });
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
-    expect(mocks.setLimit).toHaveBeenCalledWith(250_000_000);
+    expect(mocks.setLimit).toHaveBeenCalledWith(250_000_000, 'admin-1');
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/admin/settings');
   });
 

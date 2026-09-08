@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -6,7 +7,7 @@ import { captureConnectorScreen } from '@/lib/sandboxes/connector-broker';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/sandboxes/[sandboxId]/screen/frame", async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string; sandboxId: string }> },
 ) {
@@ -24,7 +25,7 @@ export async function GET(
       kind: 'connector',
       workspace: {
         slug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true },
@@ -47,4 +48,4 @@ export async function GET(
       headers: { 'cache-control': 'private, no-store' },
     });
   }
-}
+});

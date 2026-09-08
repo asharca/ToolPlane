@@ -65,10 +65,10 @@ function NewTokenReveal({ token }: { token: string }) {
 
 export function TokenManager({
   tokens,
-  workspaceSlug,
+  workspaceSlug = '',
 }: {
   tokens: TokenView[];
-  workspaceSlug: string;
+  workspaceSlug?: string;
 }) {
   const t = useTranslations('console.tokens');
   const [state, formAction] = useActionState<TokenState, FormData>(

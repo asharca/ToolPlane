@@ -13,17 +13,20 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
   deleteMany: vi.fn(),
+  auditCreate: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => ({
-  db: {
+vi.mock('@/lib/db', () => {
+  const tx = {
     systemSetting: {
       findUnique: mocks.findUnique,
       upsert: mocks.upsert,
       deleteMany: mocks.deleteMany,
     },
-  },
-}));
+    auditEvent: { create: mocks.auditCreate },
+  };
+  return { db: { ...tx, $transaction: (run: (client: typeof tx) => unknown) => run(tx) } };
+});
 
 import {
   getHermesArchiveSettings,
@@ -45,6 +48,7 @@ import {
 describe('system settings storage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findUnique.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -77,6 +81,7 @@ describe('system settings storage', () => {
       },
       update: { value: String(MAX_HERMES_ARCHIVE_MAX_UPLOAD_MIB) },
     });
+    expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'setting.changed', actorId: 'system' }) }));
   });
 
   it('falls back to the safe default while the shared settings table is unavailable', async () => {

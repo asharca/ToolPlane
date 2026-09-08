@@ -21,6 +21,7 @@ vi.mock('ai', () => ({
   createUIMessageStreamResponse: mocks.createResponse,
 }));
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveUser }));
+vi.mock('@/lib/workspace/access-stream', () => ({ workspaceAccessResponse: (response: Response) => response }));
 vi.mock('@/lib/agents/tools', () => ({ buildToolSet: mocks.buildTools }));
 vi.mock('@/lib/chat/keyless-web-search', () => ({
   buildKeylessWebSearchToolSet: mocks.buildKeylessWebSearch,

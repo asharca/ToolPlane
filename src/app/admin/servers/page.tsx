@@ -15,6 +15,7 @@ import {
 import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listDirectoryServers } from '@/lib/admin/market';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { adminHref } from '@/lib/admin/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -108,7 +109,7 @@ export default async function AdminServersPage({
                 <AdminEntity
                   title={
                     <Link
-                      href={`/admin/servers/${server.id}/edit`}
+                      href={adminHref(`/admin/servers/${server.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                       className="hover:underline"
                     >
                       {server.name}
@@ -161,7 +162,7 @@ export default async function AdminServersPage({
               </td>
               <td className="px-2 py-3">
                 <AdminTableLink
-                  href={`/admin/servers/${server.id}/edit`}
+                  href={adminHref(`/admin/servers/${server.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('edit')}: ${server.name}`}
                 />
               </td>

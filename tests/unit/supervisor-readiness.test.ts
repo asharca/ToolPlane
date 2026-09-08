@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   updateDeployment: vi.fn(),
+  findWorkspace: vi.fn(),
   ensureConnectorBroker: vi.fn(),
   materializeDeploymentConfigVolume: vi.fn(),
   removeDeploymentContainer: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 vi.mock('@/lib/db', () => ({
-  db: { deployment: { update: mocks.updateDeployment } },
+  db: { deployment: { update: mocks.updateDeployment }, workspace: { findFirst: mocks.findWorkspace } },
 }));
 
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
@@ -125,6 +126,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   mocks.spawn.mockReset();
   mocks.updateDeployment.mockReset().mockResolvedValue({});
+  mocks.findWorkspace.mockReset().mockResolvedValue({ id: 'workspace-active' });
   mocks.ensureConnectorBroker.mockReset().mockResolvedValue({
     port: 9322,
     internalUrl: 'http://127.0.0.1:9322',
@@ -594,6 +596,13 @@ describe('supervisor readiness races', () => {
     });
 
     expect(mocks.updateDeployment.mock.calls.at(-1)?.[0].data.status).toBe('deleting');
+  });
+
+  it('blocks a durably closed workspace even without an in-memory tombstone', async () => {
+    mocks.findWorkspace.mockResolvedValue(null);
+    await supervisor.startProcess('closed-after-restart', { kind: 'builtin', name: 'Closed' }, { awaitReady: false, workspaceId: 'workspace-closed' });
+    expect(mocks.findWorkspace).toHaveBeenCalledWith({ where: { id: 'workspace-closed', status: 'active' }, select: { id: true } });
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('blocks new deployment ids after workspace teardown begins', async () => {

@@ -2,6 +2,7 @@ import { AlertTriangle, Download, FileLock2 } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 import { AgentReleaseReviewActions } from '@/components/admin/AgentReleaseReviewActions';
+import { LogTimestamp } from '@/components/admin/LogUI';
 
 type PendingRelease = {
   id: string;
@@ -13,6 +14,10 @@ type PendingRelease = {
   checksum: string;
   publishedAt: string;
   categoryIds: string[];
+  reviewStatus: string;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  reviewedBy: { name: string | null; email: string } | null;
   manifest: {
     rootAgentKey: string;
     agents: Array<{
@@ -31,29 +36,35 @@ export async function AgentReleaseReview({
   listingId,
   release,
   categories,
+  canReview = true,
 }: {
   listingId: string;
   release: PendingRelease;
   categories: Array<{ id: string; name: string }>;
+  canReview?: boolean;
 }) {
   const t = await getTranslations('admin');
+  const ops = await getTranslations('adminOps');
   const rootAgent = release.manifest.agents.find(({ key }) => key === release.manifest.rootAgentKey);
 
   return (
     <AdminPanel
-      title={t('agentPendingRelease', { version: release.version })}
-      description={t('agentPendingReleaseDescription')}
-      tone="danger"
-      actions={<AdminBadge tone="warning" dot>{t('agentReviewPending')}</AdminBadge>}
+      title={canReview ? t('agentPendingRelease', { version: release.version }) : `${ops('review')} v${release.version}`}
+      description={canReview ? t('agentPendingReleaseDescription') : undefined}
+      actions={<AdminBadge tone={release.reviewStatus === 'approved' ? 'success' : release.reviewStatus === 'pending' ? 'warning' : 'danger'} dot>{ops.has(release.reviewStatus) ? ops(release.reviewStatus) : release.reviewStatus}</AdminBadge>}
     >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
         <div className="min-w-0 space-y-5">
-          <div className="flex items-start gap-3 rounded-md bg-amber-500/10 p-4 text-sm leading-6 text-amber-800 dark:text-amber-200">
+          {canReview ? <div className="flex items-start gap-3 rounded-md bg-amber-500/10 p-4 text-sm leading-6 text-amber-800 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <p>{t('agentReviewSafetyNotice')}</p>
-          </div>
+          </div> : null}
 
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs font-medium text-muted-foreground">{ops('submittedAt')}</dt>
+              <dd className="mt-1"><LogTimestamp date={new Date(release.publishedAt)} /></dd>
+            </div>
             <div>
               <dt className="text-xs font-medium text-muted-foreground">{t('name')}</dt>
               <dd className="mt-1 font-semibold text-foreground">{release.name}</dd>
@@ -153,12 +164,15 @@ export async function AgentReleaseReview({
           </div>
         </div>
 
-        <AgentReleaseReviewActions
+        {canReview ? <AgentReleaseReviewActions
           listingId={listingId}
           releaseId={release.id}
           categories={categories}
           selectedCategoryIds={release.categoryIds}
-        />
+        /> : <dl className="min-w-0 space-y-4 text-sm">
+          <div><dt className="text-muted-foreground">{ops('reviewer')}</dt><dd className="mt-1 break-words">{release.reviewedBy?.name ?? release.reviewedBy?.email ?? '-'}</dd>{release.reviewedAt ? <dd className="mt-1"><LogTimestamp date={new Date(release.reviewedAt)} /></dd> : null}</div>
+          <div><dt className="text-muted-foreground">{ops('reviewNote')}</dt><dd className="mt-1 whitespace-pre-wrap break-words">{release.reviewNote ?? '-'}</dd></div>
+        </dl>}
       </div>
     </AdminPanel>
   );

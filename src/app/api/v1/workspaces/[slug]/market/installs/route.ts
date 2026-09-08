@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
@@ -35,7 +36,7 @@ async function context(req: Request, slug: string) {
   return workspace ? { user, workspace } : null;
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/market/installs", async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -153,7 +154,7 @@ export async function GET(
       }),
     ],
   });
-}
+});
 
 function installErrorResponse(error: unknown) {
   if (error instanceof ChatServiceError) {
@@ -172,7 +173,7 @@ function installErrorResponse(error: unknown) {
   return marketErrorResponse(error);
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/market/installs", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -261,4 +262,4 @@ export async function POST(
   } catch (error) {
     return installErrorResponse(error);
   }
-}
+});

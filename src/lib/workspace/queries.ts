@@ -10,53 +10,41 @@ import {
   readMcpToolCatalog,
 } from '@/lib/process/mcp-tool-catalog';
 
-function slugifyEmail(email: string): string {
-  const handle = email
-    .split('@')[0]
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return handle || 'workspace';
-}
-
-export async function getOrCreateDefaultWorkspace(userId: string, email: string) {
-  const existing = await db.workspace.findFirst({
-    where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
-    orderBy: { createdAt: 'asc' },
-  });
-  if (existing) return existing;
-
-  const base = slugifyEmail(email);
-  let slug = base;
-  for (let i = 1; await db.workspace.findUnique({ where: { slug } }); i += 1) {
-    slug = `${base}-${i}`;
+export async function getDefaultWorkspace(userId: string, lastSlug?: string) {
+  if (lastSlug) {
+    const last = await getWorkspaceForUser(lastSlug, userId);
+    if (last) return last;
   }
-
-  return db.workspace.create({
-    data: {
-      slug,
-      name: `${base}'s workspace`,
-      ownerId: userId,
-      members: { create: { userId, role: 'owner' } },
-    },
+  return db.workspace.findFirst({
+    where: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+    orderBy: { createdAt: 'asc' },
   });
 }
 
 export async function getWorkspaceForUser(slug: string, userId: string) {
-  return db.workspace.findFirst({
+  const workspace = await db.workspace.findFirst({
     where: {
       slug,
+      status: 'active',
       OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
   });
+  if (workspace) {
+    const { enrichLogContext } = await import('@/lib/observability/context');
+    enrichLogContext({ workspaceId: workspace.id, actorId: userId });
+  }
+  return workspace;
 }
 
 export async function listWorkspacesForUser(userId: string) {
-  return db.workspace.findMany({
+  const workspaces = await db.workspace.findMany({
     where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, slug: true, name: true },
+    select: { id: true, slug: true, name: true, ownerId: true, status: true, _count: { select: { members: true } } },
   });
+  return workspaces.map(({ ownerId, _count, ...workspace }) => ({
+    ...workspace, role: ownerId === userId ? 'owner' as const : 'member' as const, memberCount: _count.members,
+  }));
 }
 
 export async function getDeployments(workspaceId: string) {
