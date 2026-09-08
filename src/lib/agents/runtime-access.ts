@@ -1,6 +1,7 @@
 import 'server-only';
 import { SignJWT, jwtVerify } from 'jose';
 import { runtimeEnv } from '@/lib/runtime-env';
+import { getLogContext, enrichLogContext } from '@/lib/observability/context';
 
 export const AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS = 60 * 60;
 export const AGENT_RUNTIME_TOKEN_HEADER = 'x-toolplane-runtime-token';
@@ -12,6 +13,8 @@ export type AgentRuntimeTokenPayload = {
   providerId: string;
   deploymentIds: string[];
   exp: number;
+  traceId?: string;
+  parentSpanId?: string;
 };
 
 const TOKEN_ISSUER = 'toolplane';
@@ -58,6 +61,8 @@ export async function createAgentRuntimeToken(
     sandboxId: payload.sandboxId,
     providerId: payload.providerId,
     deploymentIds: [...new Set(payload.deploymentIds)],
+    traceId: getLogContext()?.traceId,
+    parentSpanId: getLogContext()?.spanId,
   })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuer(TOKEN_ISSUER)
@@ -91,6 +96,8 @@ export async function verifyAgentRuntimeToken(
       || typeof expiresAt !== 'number'
       || issuedAt > Math.floor(now / 1000) + 60
       || expiresAt - issuedAt > AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS
+      || (payload.traceId !== undefined && (typeof payload.traceId !== 'string' || !/^[a-f0-9]{32}$/.test(payload.traceId)))
+      || (payload.parentSpanId !== undefined && (typeof payload.parentSpanId !== 'string' || !/^[a-f0-9]{16}$/.test(payload.parentSpanId)))
     ) return null;
 
     return {
@@ -100,10 +107,17 @@ export async function verifyAgentRuntimeToken(
       providerId: payload.providerId,
       deploymentIds: [...new Set(payload.deploymentIds)],
       exp: expiresAt,
+      ...(typeof payload.traceId === 'string' ? { traceId: payload.traceId } : {}),
+      ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),
     };
   } catch {
     return null;
   }
+}
+
+export function bindRuntimeLogContext(payload: AgentRuntimeTokenPayload) {
+  enrichLogContext({ workspaceId: payload.workspaceId, agentId: payload.agentId, providerId: payload.providerId,
+    ...(payload.traceId ? { traceId: payload.traceId, parentSpanId: payload.parentSpanId } : {}) });
 }
 
 export async function agentRuntimeTokenFromRequest(

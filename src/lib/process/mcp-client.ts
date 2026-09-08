@@ -2,6 +2,8 @@ import 'server-only';
 import { liveMcpRuntimeSnapshot, livePort } from './supervisor';
 import { parseMcpToolCatalogResult, type McpToolDefinition } from './mcp-tool-catalog';
 import { persistDeploymentMcpToolCatalog } from './mcp-tool-catalog-store';
+import { recordEvent } from '@/lib/observability/events';
+import { withLogContext } from '@/lib/observability/context';
 
 export type McpTool = McpToolDefinition;
 
@@ -167,6 +169,8 @@ async function mcpRpcAtPort(
   timeoutMs = 30000,
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
+  const start = performance.now();
+  let httpStatus: number | undefined;
   try {
     const body = JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params });
     if (options.maxRequestBytes && new TextEncoder().encode(body).byteLength > options.maxRequestBytes) {
@@ -180,11 +184,25 @@ async function mcpRpcAtPort(
       signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
       cache: 'no-store',
     });
+    httpStatus = res.status;
     const json = await readJsonResponse(res, options.maxResponseBytes, options.onResponseBytes) as {
       result?: Record<string, unknown>;
+      error?: { code?: number; message?: string };
     } | null;
+    if (!res.ok || json?.error) {
+      const error = new Error(json?.error?.message ?? `MCP upstream HTTP ${res.status}`);
+      Object.assign(error, { code: json?.error?.code ?? `HTTP_${res.status}` });
+      throw error;
+    }
+    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
+      toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
+      outcome: json?.result?.isError === true ? 'error' : 'success',
+      durationMs: Math.round(performance.now() - start), detail: { request: params, response: json?.result } });
     return json?.result ?? null;
   } catch (error) {
+    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
+      toolName: typeof params?.name === 'string' ? params.name : undefined, httpStatus,
+      error, durationMs: Math.round(performance.now() - start) });
     if (error instanceof McpPayloadTooLargeError) throw error;
     return null;
   }
@@ -198,7 +216,12 @@ export async function mcpRpc(
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
   const port = livePort(deploymentId);
-  return port ? mcpRpcAtPort(port, method, params, timeoutMs, options) : null;
+  return withLogContext({ deploymentId, secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues }, async () => {
+    if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
+    await recordEvent({ domain: 'mcp', eventName: 'mcp.rpc', rpcMethod: method,
+      error: new Error('MCP deployment is not running'), errorCode: 'deployment_unavailable', httpStatus: 503 });
+    return null;
+  });
 }
 
 export async function listMcpTools(
@@ -228,7 +251,7 @@ export async function listMcpTools(
     let result: Record<string, unknown> | null;
     let responseBytes = 0;
     try {
-      result = await mcpRpcAtPort(
+      result = await withLogContext({ deploymentId, secrets: [...requestRedactionValues] }, () => mcpRpcAtPort(
         before.port,
         'tools/list',
         cursor ? { cursor } : undefined,
@@ -244,7 +267,7 @@ export async function listMcpTools(
             options.onResponseBytes?.(bytes);
           },
         },
-      );
+      ));
     } catch (error) {
       if (error instanceof McpPayloadTooLargeError) return [];
       throw error;

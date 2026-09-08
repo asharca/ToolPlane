@@ -27,7 +27,7 @@ export default async function WorkspaceLayout({
   const user = await getCurrentUser();
   if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) redirect('/app');
+  if (!ws) redirect('/app?view=workspaces&notice=unavailable');
   const [workspaces, messages, cookieStore] = await Promise.all([
     listWorkspacesForUser(user.id),
     getMessages(),
@@ -50,10 +50,11 @@ export default async function WorkspaceLayout({
       >
         <DashboardChrome
           slug={ws.slug}
+          userId={user.id}
           workspaceId={ws.id}
           workspaceName={ws.name}
           userLabel={user.name ?? user.email}
-          workspaces={workspaces}
+          workspaces={workspaces.filter((workspace) => workspace.status === 'active')}
           supportEmail={runtimeSupportEmail()}
           isAdmin={user.role === 'admin'}
           initialSidebarCollapsed={initialSidebarCollapsed}

@@ -1,3 +1,4 @@
+import { observe, recordEvent } from '@/lib/observability/events';
 import 'server-only';
 import { posix } from 'node:path';
 import type { ReasoningEffort } from '@/lib/agents/constants';
@@ -315,6 +316,7 @@ function result(terminal: HermesWorkRunTerminal, streamedText: string): HermesWo
 }
 
 export async function runHermesWork(params: RunHermesWorkParams): Promise<HermesWorkRunResult> {
+  return observe({ domain: 'agent', eventName: 'hermes.work', workspaceId: params.agent.workspaceId, agentId: params.agent.id }, async () => {
   if (!params.agent.runtime || params.agent.runtime.kind !== 'hermes') {
     throw new Error('Hermes runtime is not configured.');
   }
@@ -392,6 +394,14 @@ export async function runHermesWork(params: RunHermesWorkParams): Promise<Hermes
     await readSse(events, async (raw) => {
       const event = string(raw.event);
       const timestamp = number(raw.timestamp);
+      if (['tool.started', 'tool.completed', 'subagent.start', 'subagent.complete', 'run.completed', 'run.failed', 'run.cancelled'].includes(event)) {
+        await recordEvent({ domain: 'agent', eventName: `hermes.${event}`, runId,
+          toolName: typeof raw.tool === 'string' ? raw.tool : undefined,
+          outcome: event === 'run.cancelled' ? 'cancelled' : event === 'run.failed' || raw.error === true ? 'error' : 'success',
+          error: event === 'run.failed' ? new Error(string(raw.error)) : undefined,
+          attributes: { duration: raw.duration, childRunId: raw.subagent_id, inputTokens: raw.input_tokens, outputTokens: raw.output_tokens },
+        });
+      }
       if (event === 'message.delta') {
         const delta = string(raw.delta);
         text += delta;
@@ -502,6 +512,8 @@ export async function runHermesWork(params: RunHermesWorkParams): Promise<Hermes
     }
     throw error;
   }
+
+  });
 }
 
 /** Best-effort cleanup for reconciliation; Hermes' stop endpoint needs API auth only. */

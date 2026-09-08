@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import {
   archiveWorkSession,
@@ -10,7 +11,7 @@ import { isWorkSessionTitlePending } from '@/lib/work/coordinator';
 
 type Params = { params: Promise<{ workSessionId: string }> };
 
-export async function GET(req: Request, { params }: Params) {
+export const GET = withRequestLogging("/api/v1/work-sessions/[workSessionId]", async function GET(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { workSessionId } = await params;
@@ -35,9 +36,9 @@ export async function GET(req: Request, { params }: Params) {
       running: effectiveStatus(sandbox.deploymentId, sandbox.deployment.status) === 'running',
     } : null,
   });
-}
+});
 
-export async function DELETE(req: Request, { params }: Params) {
+export const DELETE = withRequestLogging("/api/v1/work-sessions/[workSessionId]", async function DELETE(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { workSessionId } = await params;
@@ -46,4 +47,4 @@ export async function DELETE(req: Request, { params }: Params) {
   return await archiveWorkSession(work.workspaceId, work.id)
     ? new Response(null, { status: 204 })
     : Response.json({ error: 'Only finished work can be archived' }, { status: 409 });
-}
+});

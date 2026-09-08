@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest, listProviders } from '@/lib/agents/queries';
 import { hermesProviderName } from '@/lib/agents/hermes/config';
@@ -10,7 +11,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/agents/[agentId]/hermes/models", async function GET(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -60,4 +61,4 @@ export async function GET(
     }
     return Response.json({ error: 'Hermes models are unavailable.' }, { status: 502 });
   }
-}
+});

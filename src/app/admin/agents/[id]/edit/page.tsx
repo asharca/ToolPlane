@@ -1,4 +1,8 @@
 import { History } from 'lucide-react';
+import Link from 'next/link';
+import { ReleaseChanges } from '@/components/admin/ReleaseChanges';
+import { LogTimestamp } from '@/components/admin/LogUI';
+import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
 import { getTranslations } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { AgentListingForm, type AgentListingFormInitial } from '@/components/admin/AgentListingForm';
@@ -24,6 +28,7 @@ import {
 } from '@/lib/admin/agent-market-actions';
 import { listCategories } from '@/lib/admin/categories';
 import { requireAdmin } from '@/lib/auth/admin';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +41,10 @@ function releaseStatusTone(status: string): 'success' | 'warning' | 'danger' | '
 
 export default async function EditAgentListingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string; releaseId?: string }>;
 }) {
   const { id } = await params;
   await requireAdmin();
@@ -48,6 +55,21 @@ export default async function EditAgentListingPage({
     listCatalogAgentResources(),
   ]);
   if (!listing) notFound();
+  const ops = await getTranslations('adminOps');
+  const query = await searchParams;
+  const backHref = adminReturnHref(query.returnTo, '/admin/agents');
+  const detailHref = adminHref(`/admin/agents/${id}/edit`, { releaseId: query.releaseId, returnTo: backHref });
+  const selectedRelease = query.releaseId ? await db.agentRelease.findFirst({
+    where: { id: query.releaseId, listingId: id },
+    include: { reviewedBy: { select: { name: true, email: true } } },
+  }) : null;
+  if (query.releaseId && !selectedRelease) notFound();
+  const reviewRelease = selectedRelease ?? listing.pendingRelease;
+  const canReview = reviewRelease?.reviewStatus === 'pending' && reviewRelease.id === listing.pendingRelease?.id;
+  const previousRelease = reviewRelease ? await db.agentRelease.findFirst({
+    where: { listingId: id, version: { lt: reviewRelease.version }, reviewStatus: 'approved' },
+    orderBy: { version: 'desc' }, select: { manifest: true },
+  }) : null;
 
   const configurationRelease = listing.latestRelease ?? listing.pendingRelease;
   let manifest: ReturnType<typeof readAgentReleaseManifest> | null = null;
@@ -97,73 +119,51 @@ export default async function EditAgentListingPage({
     skillIds: selectedSkillIds,
   };
 
-  const pendingRelease = listing.pendingRelease && manifest && configurationRelease?.id === listing.pendingRelease.id
-    ? {
-        id: listing.pendingRelease.id,
-        version: listing.pendingRelease.version,
-        name: listing.pendingRelease.name,
-        summary: listing.pendingRelease.summary,
-        iconUrl: listing.pendingRelease.iconUrl,
-        tags: listing.pendingRelease.tags,
-        checksum: listing.pendingRelease.checksum,
-        publishedAt: listing.pendingRelease.publishedAt.toISOString(),
-        categoryIds: listing.pendingRelease.categoryIds,
-        manifest,
-      }
-    : listing.pendingRelease
-      ? (() => {
-          try {
-            return {
-              id: listing.pendingRelease.id,
-              version: listing.pendingRelease.version,
-              name: listing.pendingRelease.name,
-              summary: listing.pendingRelease.summary,
-              iconUrl: listing.pendingRelease.iconUrl,
-              tags: listing.pendingRelease.tags,
-              checksum: listing.pendingRelease.checksum,
-              publishedAt: listing.pendingRelease.publishedAt.toISOString(),
-              categoryIds: listing.pendingRelease.categoryIds,
-              manifest: readAgentReleaseManifest(
-                listing.pendingRelease.manifest,
-                listing.pendingRelease.checksum,
-              ),
-            };
-          } catch {
-            return null;
-          }
-        })()
-      : null;
+  let reviewManifest: ReturnType<typeof readAgentReleaseManifest> | null = null;
+  if (reviewRelease) {
+    try {
+      reviewManifest = readAgentReleaseManifest(reviewRelease.manifest, reviewRelease.checksum);
+    } catch {
+      reviewManifest = null;
+    }
+  }
 
   return (
     <AdminPage className="max-w-6xl">
       <AdminPageHeader
         title={`${t('edit')} ${listing.name}`}
         meta={<AdminBadge tone="neutral">/{listing.directorySlug}</AdminBadge>}
-        backHref="/admin/agents"
+        backHref={backHref}
         backLabel={t('directoryAgents')}
+        actions={<Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'agentListing', targetId: id, returnTo: detailHref })} className="ui-button-secondary"><History className="size-4" />{ops('audit')}</Link>}
       />
 
-      {pendingRelease ? (
-        <AgentReleaseReview listingId={listing.id} release={pendingRelease} categories={categories} />
-      ) : listing.pendingRelease ? (
+      {reviewRelease && reviewManifest ? (
+        <AgentReleaseReview listingId={listing.id} release={{
+          ...reviewRelease, manifest: reviewManifest, publishedAt: reviewRelease.publishedAt.toISOString(),
+          reviewedAt: reviewRelease.reviewedAt?.toISOString() ?? null,
+        }} categories={categories} canReview={canReview} />
+      ) : reviewRelease ? (
         <AdminPanel
-          title={t('agentPendingRelease', { version: listing.pendingRelease.version })}
+          title={`${ops('review')} v${reviewRelease.version}`}
           description={t('agentInvalidPendingRelease')}
           tone="danger"
         >
           <div className="space-y-4">
             <p className="text-sm text-destructive-text">{t('agentInvalidPendingReleaseDescription')}</p>
-            <ConfirmDialog
+            {canReview ? <ConfirmDialog
               label={t('agentRejectRelease')}
               prompt={t('agentRejectReleaseDescription')}
               action={rejectAgentReleaseAction}
-              hidden={{ listingId: listing.id, releaseId: listing.pendingRelease.id }}
+              hidden={{ listingId: listing.id, releaseId: reviewRelease.id }}
               pendingLabel={t('agentRejectingRelease')}
               tone="danger"
-            />
+            /> : <p className="whitespace-pre-wrap break-words text-sm">{ops.has(reviewRelease.reviewStatus) ? ops(reviewRelease.reviewStatus) : reviewRelease.reviewStatus}: {reviewRelease.reviewNote ?? '-'}</p>}
           </div>
         </AdminPanel>
       ) : null}
+
+      {reviewRelease ? <ReleaseChanges before={previousRelease?.manifest ?? null} after={reviewRelease.manifest} /> : null}
 
       <AgentListingForm
         action={updateAgentListingAction}
@@ -188,6 +188,8 @@ export default async function EditAgentListingPage({
             headers={[
               { label: t('agentVersionColumn') },
               { label: t('statusColumn') },
+              { label: ops('reviewer') },
+              { label: ops('reviewNote') },
               { label: t('agentReleaseChecksum'), className: 'w-full' },
               { label: t('installsColumn'), align: 'right' },
             ]}
@@ -195,13 +197,15 @@ export default async function EditAgentListingPage({
             {listing.releases.map((release) => (
               <tr key={release.id}>
                 <td className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums text-foreground">
-                  v{release.version}
+                  <Link href={adminHref(`/admin/agents/${id}/edit`, { releaseId: release.id, returnTo: backHref })} className="hover:underline" aria-current={release.id === reviewRelease?.id ? 'page' : undefined}>v{release.version}</Link>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <AdminBadge tone={releaseStatusTone(release.reviewStatus)} dot>
-                    {release.reviewStatus}
+                    {ops.has(release.reviewStatus) ? ops(release.reviewStatus) : release.reviewStatus}
                   </AdminBadge>
                 </td>
+                <td className="px-4 py-3 text-sm"><span className="block">{release.reviewedBy?.name ?? release.reviewedBy?.email ?? '-'}</span>{release.reviewedAt ? <LogTimestamp date={release.reviewedAt} /> : null}</td>
+                <td className="max-w-64 whitespace-pre-wrap break-words px-4 py-3 text-xs">{release.reviewNote ?? '-'}</td>
                 <td className="px-4 py-3">
                   <code className="block max-w-xl truncate font-mono text-xs text-muted-foreground">
                     sha256:{release.checksum}

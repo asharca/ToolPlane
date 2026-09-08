@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getAgent } from '@/lib/agents/queries';
@@ -6,6 +7,8 @@ import { verifyHermesRuntimeToken } from '@/lib/agents/hermes/token';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, McpPayloadTooLargeError, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
+import { inspectMcpLog } from '@/lib/observability/mcp-log-entry';
+import { enrichLogContext } from '@/lib/observability/context';
 import {
   filterMcpToolsForAi,
   isMcpToolExposedToAi,
@@ -64,7 +67,7 @@ function bearerToken(req: Request): string {
   return /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization')?.trim() ?? '')?.[1] ?? '';
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp", async function POST(
   req: Request,
   { params }: { params: Promise<{ runtimeId: string }> },
 ) {
@@ -87,6 +90,7 @@ export async function POST(
     return errorResponse(null, -32004, 'agent runtime not found', 404);
   }
   const publicAllocation = agent.publicRuntimeAllocation;
+  enrichLogContext({ workspaceId: runtimeRow.workspaceId, agentId: runtimeRow.agentId, suppressPayload: Boolean(publicAllocation) });
   if (
     isAgentEndpointRuntimeSandboxConfig(agent.runtime.sandbox.config)
     && !publicAllocation
@@ -135,7 +139,6 @@ export async function POST(
   let logDeploymentId: string | null = null;
   let logTool = '';
   let requestBody: string | null = null;
-  let responseBody: string | null = null;
   let response: NextResponse;
 
   if (method === 'initialize') {
@@ -240,9 +243,6 @@ export async function POST(
         response = result
           ? NextResponse.json({ jsonrpc: '2.0', id, result })
           : errorResponse(id, -32000, 'tool deployment is unreachable');
-        if (!publicAllocation) {
-          responseBody = JSON.stringify(result ?? null).slice(0, 16_000);
-        }
       } catch (error) {
         response = error instanceof McpPayloadTooLargeError
           ? errorResponse(id, -32002, 'public MCP tool payload is too large', 502)
@@ -255,6 +255,7 @@ export async function POST(
     response = errorResponse(id, -32601, `Method not found: ${method ?? ''}`);
   }
 
+  const observedBody = await response.clone().text();
   await logRequest({
     workspaceId: runtimeRow.workspaceId,
     deploymentId: logDeploymentId,
@@ -263,10 +264,11 @@ export async function POST(
     statusCode: response.status,
     durationMs: Date.now() - startedAt,
     requestBody,
-    responseBody,
+    responseBody: publicAllocation ? null : observedBody,
+    outcome: inspectMcpLog({ path: '', statusCode: response.status, responseBody: observedBody }).outcome,
   });
   return response;
-}
+});
 
 export function GET() {
   return NextResponse.json({ error: 'Use POST for MCP JSON-RPC.' }, { status: 405 });

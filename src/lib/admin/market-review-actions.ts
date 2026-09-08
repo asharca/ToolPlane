@@ -52,6 +52,8 @@ async function reviewMarketRelease(
   }
 
   revalidatePath('/admin/market');
+  revalidatePath('/admin/reviews', 'layout');
+  revalidatePath('/admin');
   revalidatePath('/app/[workspace]/market', 'layout');
   revalidatePath('/categories');
   revalidatePath('/categories/[slug]', 'page');

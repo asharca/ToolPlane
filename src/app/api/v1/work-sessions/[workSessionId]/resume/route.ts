@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getWorkSessionForUser, resumeWorkSession } from '@/lib/work/sessions';
 import { kickWorkCoordinator } from '@/lib/work/coordinator';
 import { startWorkOutput } from '@/lib/work/run-control';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/resume", async function POST(
   req: Request,
   { params }: { params: Promise<{ workSessionId: string }> },
 ) {
@@ -22,4 +23,4 @@ export async function POST(
   startWorkOutput(work.id);
   kickWorkCoordinator();
   return Response.json({ status: result.status }, { status: 202 });
-}
+});

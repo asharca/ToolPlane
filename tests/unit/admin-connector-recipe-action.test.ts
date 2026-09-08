@@ -64,6 +64,6 @@ describe('admin connector recipe action', () => {
         'X-API-Key': 'MCP_API_KEY',
         'X-Tenant-ID': 'MCP_TENANT_ID',
       },
-    });
+    }, 'admin-1');
   });
 });

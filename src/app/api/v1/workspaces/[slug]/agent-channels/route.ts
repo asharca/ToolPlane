@@ -1,3 +1,5 @@
+import { systemLog } from '@/lib/observability/system';
+import { withRequestLogging } from '@/lib/observability/http';
 import { z } from 'zod';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -10,7 +12,7 @@ import {
 import { getChannelSandbox, listChannelSandboxes } from '@/lib/agents/channel-sandboxes';
 import { toAgentChannelConnectionClientView } from '@/lib/agents/channel-connection-client';
 import { liveAgentChannelStatus, startAgentChannelRunner, stopAgentChannelRunner } from '@/lib/agents/channel-runtime';
-import { clearAgentChannelLogs, getAgentChannelLogs } from '@/lib/agents/channel-runtime-logs';
+import { clearAgentChannelLogs, getPersistedAgentChannelLogs } from '@/lib/agents/channel-runtime-logs';
 import { applyAgentChannelPairing, checkAgentChannelPairing, requestAgentChannelPairing } from '@/lib/agents/channel-pairing';
 import { getMessagingPlatform } from '@/lib/agents/platforms';
 import { hostedRunnerSpec } from '@/lib/agents/platform-runner';
@@ -48,7 +50,7 @@ async function channelList(workspaceId: string, agentId?: string, sandboxId?: st
   }));
 }
 
-export async function GET(req: Request, { params }: { params: Promise<{ slug: string }> }) {
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/agent-channels", async function GET(req: Request, { params }: { params: Promise<{ slug: string }> }) {
   const workspace = await authorize(req, (await params).slug);
   if (workspace instanceof Response) return workspace;
   const query = new URL(req.url).searchParams;
@@ -61,7 +63,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     if (!await getAgentChannelConnection(workspace.id, logId)) {
       return Response.json({ error: 'Channel not found' }, { status: 404 });
     }
-    return Response.json({ logs: getAgentChannelLogs(logId) }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ logs: await getPersistedAgentChannelLogs(workspace.id, logId) }, { headers: { 'Cache-Control': 'no-store' } });
   }
   const [connections, agents, sandboxes] = await Promise.all([
     channelList(workspace.id, query.get('agentId') || undefined, sandboxId),
@@ -72,9 +74,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     listChannelSandboxes(workspace.id),
   ]);
   return Response.json({ connections, agents, sandboxes }, { headers: { 'Cache-Control': 'no-store' } });
-}
+});
 
-export async function POST(req: Request, { params }: { params: Promise<{ slug: string }> }) {
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/agent-channels", async function POST(req: Request, { params }: { params: Promise<{ slug: string }> }) {
   const workspace = await authorize(req, (await params).slug);
   if (workspace instanceof Response) return workspace;
   if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
@@ -145,9 +147,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ slug: s
   commands.set(key, operation);
   try { return await operation; }
   catch (error) {
-    console.error('[agent-channels] operation failed', error);
+    systemLog('error', '[agent-channels] operation failed', error);
     return Response.json({ error: 'Channel operation failed' }, { status: 500 });
   } finally {
     if (commands.get(key) === operation) commands.delete(key);
   }
-}
+});

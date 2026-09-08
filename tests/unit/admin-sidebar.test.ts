@@ -18,6 +18,7 @@ describe('admin navigation', () => {
     expect(getAdminPageLabelKey('/admin/settings')).toBe('adminNavSettings');
   });
   it('maps market review routes to the release review label', () => {
-    expect(getAdminPageLabelKey('/admin/market')).toBe('adminNavMarketReviews');
+    expect(getAdminPageLabelKey('/admin/market')).toBe('adminNavCatalog');
+    expect(getAdminPageLabelKey('/admin/reviews/market/listing-1')).toBe('adminNavMarketReviews');
   });
 });

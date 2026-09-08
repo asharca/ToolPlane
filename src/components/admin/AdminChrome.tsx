@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Menu } from 'lucide-react';
+import { ChevronRight, Menu, ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { usePathname } from 'next/navigation';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
@@ -49,7 +50,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex h-dvh min-h-dvh overflow-hidden bg-shell text-foreground">
+    <div className="flex h-dvh min-h-dvh overflow-hidden bg-background text-foreground">
       {mobileOpen ? (
         <button
           type="button"
@@ -62,7 +63,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
       <AdminSidebar mobileOpen={mobileOpen} onClose={closeMenu} />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 bg-shell px-4 lg:px-5">
+        <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <div className="shrink-0 lg:hidden">
               <button
@@ -78,12 +79,11 @@ export function AdminChrome({ children }: { children: ReactNode }) {
               </button>
             </div>
             <p className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="hidden shrink-0 text-muted-foreground sm:inline">
+              <Link href="/admin" className="hidden shrink-0 items-center gap-2 text-muted-foreground hover:text-foreground sm:inline-flex">
+                <ShieldCheck className="size-4" aria-hidden="true" />
                 {t('adminConsoleTitle')}
-              </span>
-              <span aria-hidden="true" className="hidden text-border sm:inline">
-                /
-              </span>
+              </Link>
+              <ChevronRight aria-hidden="true" className="hidden size-3.5 shrink-0 text-muted-foreground sm:inline" />
               <span className="truncate font-semibold text-foreground">
                 {pageLabel}
               </span>
@@ -96,7 +96,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <div className="m-2 mt-0 min-h-0 flex-1 overflow-auto rounded-[14px] border border-border/80 bg-background shadow-[0_1px_2px_hsl(var(--foreground)_/_0.03)] lg:ml-0">
+        <div id="admin-content" inert={mobileOpen} className="min-h-0 flex-1 overflow-auto overscroll-contain">
           {children}
         </div>
       </div>

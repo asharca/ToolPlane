@@ -15,6 +15,7 @@ import {
 import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listUsers } from '@/lib/admin/users';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { adminHref } from '@/lib/admin/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -23,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export default async function AdminUsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; role?: string; status?: string }>;
 }) {
   const [t, locale, admin, params] = await Promise.all([
     getTranslations('admin'),
@@ -34,6 +35,9 @@ export default async function AdminUsersPage({
   const { page = '1' } = params;
   const rawQuery = params.q ?? '';
   const q = rawQuery.trim();
+  const ops = await getTranslations('adminOps');
+  const role = ['admin', 'user'].includes(params.role ?? '') ? params.role! : '';
+  const status = ['active', 'suspended'].includes(params.status ?? '') ? params.status! : '';
   const rawPage = Number(page);
   const requestedPage = normalizeAdminPage(rawPage);
   const timeZone = resolveUserTimeZone(admin);
@@ -42,11 +46,13 @@ export default async function AdminUsersPage({
     total,
     page: currentPage,
     pageSize,
-  } = await listUsers({ page: requestedPage, q });
+  } = await listUsers({ page: requestedPage, q, role, status });
 
   const hrefForPage = (targetPage: number) => {
     const query = new URLSearchParams({ page: String(targetPage) });
     if (q) query.set('q', q);
+    if (role) query.set('role', role);
+    if (status) query.set('status', status);
     return `/admin/users?${query.toString()}`;
   };
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -69,7 +75,14 @@ export default async function AdminUsersPage({
         searchLabel={t('search')}
         clearLabel={t('clear')}
         clearHref="/admin/users"
-      />
+      >
+        <select name="role" aria-label={t('roleColumn')} defaultValue={role} className="ui-input h-11 w-auto sm:h-9">
+          <option value="">{ops('allRoles')}</option><option value="user">{t('user')}</option><option value="admin">{t('administrator')}</option>
+        </select>
+        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
+          <option value="">{ops('allStatuses')}</option><option value="active">{t('active')}</option><option value="suspended">{t('suspended')}</option>
+        </select>
+      </AdminSearchForm>
 
       {items.length === 0 ? (
         <AdminEmptyState
@@ -98,7 +111,7 @@ export default async function AdminUsersPage({
                 <AdminEntity
                   title={
                     <Link
-                      href={`/admin/users/${user.id}`}
+                      href={adminHref(`/admin/users/${user.id}`, { returnTo: hrefForPage(currentPage) })}
                       className="hover:underline"
                     >
                       {user.name ?? user.email}
@@ -139,7 +152,7 @@ export default async function AdminUsersPage({
               </td>
               <td className="px-2 py-3">
                 <AdminTableLink
-                  href={`/admin/users/${user.id}`}
+                  href={adminHref(`/admin/users/${user.id}`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('viewDetails')}: ${user.name ?? user.email}`}
                 />
               </td>

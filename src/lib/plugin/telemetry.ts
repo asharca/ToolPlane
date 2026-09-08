@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import { verifyApiToken } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
+import { enrichLogContext } from '@/lib/observability/context';
 
 // Slugs are lowercase, 2+ chars, dash-separated — same shape the install/sync
 // scripts validate before they ever POST, so anything else is malformed.
@@ -36,12 +37,13 @@ export async function scopeToolkitForToken(
       slug: toolkitSlug,
       workspace: {
         slug: workspaceSlug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true, workspaceId: true },
   });
   if (!toolkit) return { ok: false, status: 404, error: 'toolkit not found' };
+  enrichLogContext({ workspaceId: toolkit.workspaceId, actorId: user.id });
 
   return { ok: true, workspaceId: toolkit.workspaceId, toolkitId: toolkit.id };
 }

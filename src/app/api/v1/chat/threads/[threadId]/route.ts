@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { UpdateChatThreadSchema } from '@/lib/chat/schemas';
 import {
@@ -15,7 +16,7 @@ function failure(error: unknown) {
     : Response.json({ error: 'Chat request failed' }, { status: 500 });
 }
 
-export async function GET(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const GET = withRequestLogging("/api/v1/chat/threads/[threadId]", async function GET(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { threadId } = await params;
@@ -23,9 +24,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ threadId
   return thread
     ? Response.json({ thread })
     : Response.json({ error: 'Chat thread not found' }, { status: 404 });
-}
+});
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const PATCH = withRequestLogging("/api/v1/chat/threads/[threadId]", async function PATCH(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
@@ -38,9 +39,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ thread
   } catch (error) {
     return failure(error);
   }
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const DELETE = withRequestLogging("/api/v1/chat/threads/[threadId]", async function DELETE(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   try {
@@ -50,4 +51,4 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ threa
   } catch (error) {
     return failure(error);
   }
-}
+});

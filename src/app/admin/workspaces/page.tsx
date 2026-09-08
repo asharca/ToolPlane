@@ -3,6 +3,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
+  AdminBadge,
   AdminEmptyState,
   AdminEntity,
   AdminPage,
@@ -14,6 +15,7 @@ import {
 import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import { listWorkspaces } from '@/lib/admin/workspaces';
 import { normalizeAdminPage } from '@/lib/admin/pagination';
+import { adminHref } from '@/lib/admin/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -22,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export default async function AdminWorkspacesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; owner?: string; status?: string }>;
 }) {
   const [t, locale, admin, params] = await Promise.all([
     getTranslations('admin'),
@@ -33,6 +35,9 @@ export default async function AdminWorkspacesPage({
   const { page = '1' } = params;
   const rawQuery = params.q ?? '';
   const q = rawQuery.trim();
+  const ops = await getTranslations('adminOps');
+  const owner = params.owner?.trim() ?? '';
+  const status = ['active', 'deleting', 'delete_failed'].includes(params.status ?? '') ? params.status! : '';
   const rawPage = Number(page);
   const requestedPage = normalizeAdminPage(rawPage);
   const timeZone = resolveUserTimeZone(admin);
@@ -41,11 +46,13 @@ export default async function AdminWorkspacesPage({
     total,
     page: currentPage,
     pageSize,
-  } = await listWorkspaces({ page: requestedPage, q });
+  } = await listWorkspaces({ page: requestedPage, q, owner, status });
 
   const hrefForPage = (targetPage: number) => {
     const query = new URLSearchParams({ page: String(targetPage) });
     if (q) query.set('q', q);
+    if (owner) query.set('owner', owner);
+    if (status) query.set('status', status);
     return `/admin/workspaces?${query.toString()}`;
   };
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -68,7 +75,12 @@ export default async function AdminWorkspacesPage({
         searchLabel={t('search')}
         clearLabel={t('clear')}
         clearHref="/admin/workspaces"
-      />
+      >
+        <input name="owner" defaultValue={owner} aria-label={ops('ownerFilter')} placeholder={ops('ownerFilter')} maxLength={200} className="ui-input h-11 w-full sm:h-9 sm:w-56" />
+        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
+          <option value="">{ops('allStatuses')}</option>{(['active', 'deleting', 'delete_failed'] as const).map((value) => <option key={value} value={value}>{ops(value)}</option>)}
+        </select>
+      </AdminSearchForm>
 
       {items.length === 0 ? (
         <AdminEmptyState
@@ -83,6 +95,7 @@ export default async function AdminWorkspacesPage({
           headers={[
             { label: t('workspaceColumn'), className: 'w-full' },
             { label: t('ownerColumn') },
+            { label: t('statusColumn') },
             { label: t('membersColumn'), align: 'right' },
             { label: t('agentsColumn'), align: 'right' },
             { label: t('deploymentsColumn'), align: 'right' },
@@ -96,7 +109,7 @@ export default async function AdminWorkspacesPage({
                 <AdminEntity
                   title={
                     <Link
-                      href={`/admin/workspaces/${workspace.id}`}
+                      href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: hrefForPage(currentPage) })}
                       className="hover:underline"
                     >
                       {workspace.name}
@@ -108,12 +121,13 @@ export default async function AdminWorkspacesPage({
               </td>
               <td className="whitespace-nowrap px-4 py-3">
                 <Link
-                  href={`/admin/users/${workspace.owner.id}`}
+                  href={adminHref(`/admin/users/${workspace.owner.id}`, { returnTo: hrefForPage(currentPage) })}
                   className="text-sm font-medium text-foreground hover:underline"
                 >
                   {workspace.owner.email}
                 </Link>
               </td>
+              <td className="whitespace-nowrap px-4 py-3"><AdminBadge tone={workspace.status === 'active' ? 'success' : workspace.status === 'deleting' ? 'warning' : 'danger'}>{ops.has(workspace.status) ? ops(workspace.status) : workspace.status}</AdminBadge></td>
               <td className="px-4 py-3 text-right tabular-nums text-foreground">
                 {workspace._count.members}
               </td>
@@ -132,7 +146,7 @@ export default async function AdminWorkspacesPage({
               </td>
               <td className="px-2 py-3">
                 <AdminTableLink
-                  href={`/admin/workspaces/${workspace.id}`}
+                  href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('viewDetails')}: ${workspace.name}`}
                 />
               </td>

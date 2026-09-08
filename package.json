@@ -19,7 +19,7 @@
     "db:studio": "prisma studio",
     "db:seed:real": "tsx scripts/seed-real-mcp-skills.ts",
     "account:reset-password": "tsx scripts/reset-user-password.ts",
-    "skills:sync:tp": "tsx scripts/sync-tp-skills.ts",
+    "skills:sync:tp": "node --conditions=react-server --import tsx scripts/sync-tp-skills.ts",
     "skills:import:anthropic": "tsx scripts/import-anthropic-skills.ts",
     "mcp:import:common": "tsx scripts/import-common-mcp-servers.ts",
     "connector:dev": "node packages/connector/bin/connector.mjs"
@@ -60,6 +60,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "remark-breaks": "^4.0.0",
+    "server-only": "0.0.1",
     "streamdown": "^2.5.0",
     "telegram-markdown-v2": "0.0.4",
     "undici": "^7.28.0",

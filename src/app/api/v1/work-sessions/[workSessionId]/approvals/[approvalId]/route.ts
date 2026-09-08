@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { db } from '@/lib/db';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getWorkSessionForUser } from '@/lib/work/sessions';
 import { isWorkRunActive } from '@/lib/work/run-control';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/approvals/[approvalId]", async function POST(
   req: Request,
   { params }: { params: Promise<{ workSessionId: string; approvalId: string }> },
 ) {
@@ -50,4 +51,4 @@ export async function POST(
     });
   }
   return Response.json({ status });
-}
+});

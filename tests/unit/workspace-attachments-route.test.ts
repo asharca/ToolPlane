@@ -96,6 +96,7 @@ describe('workspace attachment routes', () => {
     expect(mocks.workspaceFindFirst).toHaveBeenCalledWith({
       where: {
         id: 'workspace-1',
+        status: 'active',
         OR: [{ ownerId: 'user-1' }, { members: { some: { userId: 'user-1' } } }],
       },
       select: { id: true },

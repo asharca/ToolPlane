@@ -1,3 +1,4 @@
+import { systemLog } from '@/lib/observability/system';
 import 'server-only';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -1243,7 +1244,7 @@ export async function ensureHermesDashboardBroker(): Promise<{
     s.starting = undefined;
   }
 
-  console.log(`[hermes-dashboard] broker listening on ${s.bind}:${s.port}`);
+  systemLog('info', `[hermes-dashboard] broker listening on ${s.bind}:${s.port}`);
   return { bind: s.bind, port: s.port };
 }
 

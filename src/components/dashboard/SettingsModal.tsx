@@ -3,6 +3,8 @@
 import type { ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { X } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { hasUnsavedWorkspaceChanges } from '@/lib/workspace/navigation';
 import {
   Dialog,
   DialogClose,
@@ -24,11 +26,16 @@ export function SettingsModal({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const t = useTranslations('console.common');
+  const workspaceT = useTranslations('console.workspaces');
   const returnTo = useSearchParams().get('returnTo');
-  const closeHref = returnTo?.startsWith('/app/') && !returnTo.includes('/settings')
+  const closeHref = (returnTo === '/app?view=workspaces' || returnTo?.startsWith('/app/')) && !returnTo.includes('/settings')
     ? returnTo
     : fallbackHref;
-  const close = () => router.replace(closeHref);
+  const close = () => {
+    if (hasUnsavedWorkspaceChanges() && !window.confirm(workspaceT('unsavedChanges'))) return;
+    router.replace(closeHref);
+  };
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
@@ -43,7 +50,7 @@ export function SettingsModal({
           <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
             <DialogTitle className="text-sm">{title}</DialogTitle>
             <DialogClose asChild>
-              <button type="button" aria-label="Close" className="ui-button-ghost ui-icon-button">
+              <button type="button" aria-label={t('close')} className="ui-button-ghost ui-icon-button">
                 <X className="size-4" />
               </button>
             </DialogClose>

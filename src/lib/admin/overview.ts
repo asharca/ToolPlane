@@ -1,5 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { aggregateLogs, logFilterSchema } from '@/lib/observability/queries';
+import { effectiveStatuses } from '@/lib/process/supervisor';
 
 export async function getSystemOverview() {
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -9,7 +11,7 @@ export async function getSystemOverview() {
     users, admins, suspended, newUsers7d,
     workspaces, memberships, agents, toolkits, installedSkills, providers,
     servers, skills, clients, agentListings, categories,
-    deploymentGroups, logs, recentUsers,
+    deploymentRows, logs, recentUsers, pendingMarket, pendingAgents, recentFailures, unavailableWorkspaces,
   ] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { role: 'admin' } }),
@@ -26,26 +28,31 @@ export async function getSystemOverview() {
     db.client.count(),
     db.agentListing.count(),
     db.category.count(),
-    db.deployment.groupBy({ by: ['status'], _count: { _all: true } }),
-    db.requestLog.findMany({
-      where: { createdAt: { gte: since24h } },
-      select: { statusCode: true, durationMs: true },
-    }),
+    db.deployment.findMany({ select: { id: true, name: true, status: true, workspaceId: true, workspace: { select: { name: true } } } }),
+    aggregateLogs(logFilterSchema.parse({ domain: 'mcp', eventName: 'gateway.request', since: since24h })),
     db.user.findMany({
       orderBy: { createdAt: 'desc' },
       take: 8,
       select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
     }),
+    db.marketListing.count({ where: { pendingRelease: { is: { reviewStatus: 'pending' } } } }),
+    db.agentListing.count({ where: { pendingRelease: { is: { reviewStatus: 'pending' } } } }),
+    db.logEvent.findMany({ where: { createdAt: { gte: since24h }, outcome: { in: ['error', 'timeout'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 8,
+      select: { id: true, message: true, eventName: true, createdAt: true, domain: true, outcome: true, workspaceId: true } }),
+    db.workspace.count({ where: { status: 'delete_failed' } }),
   ]);
 
-  const total = logs.length;
-  const errors = logs.filter((l) => l.statusCode >= 400).length;
-  const avgMs = total === 0 ? 0 : Math.round(logs.reduce((a, l) => a + l.durationMs, 0) / total);
-  const sortedMs = logs.map((l) => l.durationMs).sort((a, b) => a - b);
-  const p95Ms = total === 0 ? 0 : sortedMs[Math.min(total - 1, Math.ceil(total * 0.95) - 1)];
+  const { total, errors, avgMs, p95Ms } = logs;
 
   const deployments: Record<string, number> = {};
-  for (const g of deploymentGroups) deployments[g.status] = g._count._all;
+  const statuses = effectiveStatuses(deploymentRows);
+  const abnormalDeployments = deploymentRows.flatMap((row) => {
+    const status = statuses.get(row.id) ?? row.status;
+    deployments[status] = (deployments[status] ?? 0) + 1;
+    return ['failed', 'error'].includes(status) || (['running', 'provisioning'].includes(row.status) && status === 'stopped')
+      ? [{ ...row, status }] : [];
+  });
 
   return {
     counts: {
@@ -55,5 +62,7 @@ export async function getSystemOverview() {
     },
     requests: { total, errors, avgMs, p95Ms },
     recentUsers,
+    attention: { pendingReviews: pendingMarket + pendingAgents, abnormalCount: abnormalDeployments.length,
+      abnormalDeployments: abnormalDeployments.slice(0, 8), recentFailures, unavailableWorkspaces },
   };
 }

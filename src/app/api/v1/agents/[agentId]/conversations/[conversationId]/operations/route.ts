@@ -1,3 +1,5 @@
+import { systemLog } from '@/lib/observability/system';
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getAgentForRequest } from '@/lib/agents/queries';
 import { ConversationOperationError, operateConversation } from '@/lib/agents/conversation-operations';
@@ -7,7 +9,7 @@ import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
 export const runtime = 'nodejs';
 export const maxDuration = 900;
 
-export async function POST(req: Request, { params }: { params: Promise<{ agentId: string; conversationId: string }> }) {
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/conversations/[conversationId]/operations", async function POST(req: Request, { params }: { params: Promise<{ agentId: string; conversationId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { agentId, conversationId } = await params;
@@ -26,7 +28,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ agentId
   } catch (error) {
     if (error instanceof RuntimeCommandError) return Response.json({ error: error.message }, { status: error.status });
     if (error instanceof ConversationOperationError) return Response.json({ error: error.code }, { status: error.status });
-    console.error('[conversation] operation failed', error);
+    systemLog('error', '[conversation] operation failed', error);
     return Response.json({ error: 'failed' }, { status: 502 });
   }
-}
+});

@@ -30,17 +30,17 @@ beforeAll(async () => {
   deploymentId = deployment.id;
 
   const now = Date.now();
-  await db.requestLog.createMany({
+  await db.logEvent.createMany({
     data: [
       ...Array.from({ length: 55 }, (_, index) => ({
         workspaceId,
         deploymentId,
         method: 'POST',
         path: `/mcp/${deploymentId}/rpc#tools/call:echo`,
-        statusCode: index % 10 === 0 ? 500 : 200,
+        httpStatus: index % 10 === 0 ? 500 : 200,
+        outcome: index % 10 === 0 ? 'error' : 'success',
+        domain: 'mcp', eventName: 'gateway.request', message: 'echo', traceId: `obs-${stamp}`, spanId: `span-${index}`,
         durationMs: 20 + index,
-        requestBody: JSON.stringify({ id: index }),
-        responseBody: JSON.stringify({ ok: index % 10 !== 0 }),
         createdAt: new Date(now - index * 10 * 60 * 1000),
       })),
       {
@@ -48,19 +48,18 @@ beforeAll(async () => {
         deploymentId,
         method: 'POST',
         path: `/mcp/${deploymentId}/rpc#tools/call:semantic_failure`,
-        statusCode: 200,
+        httpStatus: 200, outcome: 'error',
+        domain: 'mcp', eventName: 'gateway.request', message: 'tool failed', traceId: `obs-${stamp}`, spanId: 'semantic',
         durationMs: 31,
-        requestBody: JSON.stringify({ id: 'semantic-failure' }),
-        responseBody: JSON.stringify({ result: { isError: true, content: [{ type: 'text', text: 'tool failed' }] } }),
         createdAt: new Date(now - 56 * 10 * 60 * 1000),
       },
       {
         workspaceId,
         method: 'GET',
         path: '/workspaces/test/manifest',
-        statusCode: 200,
+        httpStatus: 200,
+        domain: 'mcp', eventName: 'gateway.request', message: 'manifest', traceId: `obs-${stamp}`, spanId: 'api',
         durationMs: 12,
-        responseBody: JSON.stringify({ ok: true }),
         createdAt: new Date(now - 60 * 60 * 1000),
       },
     ],
@@ -79,21 +78,23 @@ beforeAll(async () => {
     },
   });
   foreignWorkspaceId = foreignWorkspace.id;
-  // Deployment IDs are not foreign-keyed on RequestLog. This row verifies the
+  // Deployment IDs are snapshots on LogEvent. This row verifies the
   // reader cannot leak a malformed/cross-workspace record by deployment ID.
-  await db.requestLog.create({
+  await db.logEvent.create({
     data: {
       workspaceId: foreignWorkspaceId,
       deploymentId,
       method: 'POST',
       path: '/foreign/rpc#tools/call:should_not_leak',
-      statusCode: 200,
+      httpStatus: 200,
+      domain: 'mcp', eventName: 'gateway.request', message: 'foreign', traceId: `obs-${stamp}`, spanId: 'foreign',
       durationMs: 1,
     },
   });
 });
 
 afterAll(async () => {
+  await db.logEvent.deleteMany({ where: { workspaceId: { in: [workspaceId, foreignWorkspaceId] } } });
   await db.workspace.delete({ where: { id: foreignWorkspaceId } });
   await db.user.delete({ where: { id: foreignUserId } });
   await db.workspace.delete({ where: { id: workspaceId } });
@@ -103,7 +104,7 @@ afterAll(async () => {
 
 describe('getObservability', () => {
   it('returns bounded recent details, hourly buckets, and deployment rollups', async () => {
-    const result = await getObservability(workspaceId, 'Asia/Shanghai');
+    const result = await getObservability(workspaceId, 'Asia/Shanghai', 24, undefined, { userId });
 
     expect(result.total).toBe(57);
     expect(result.errors).toBe(7);
@@ -112,8 +113,8 @@ describe('getObservability', () => {
     expect(result.recent[0]).toMatchObject({
       deploymentId,
       deploymentName: 'Seed MCP',
-      requestBody: expect.any(String),
-      responseBody: expect.any(String),
+      requestBody: null,
+      responseBody: null,
     });
     expect(result.deploymentUsage).toContainEqual(expect.objectContaining({
       id: deploymentId,
@@ -129,7 +130,7 @@ describe('getObservability', () => {
   });
 
   it('scopes deployment filters to the workspace', async () => {
-    const result = await getObservability(workspaceId, 'UTC', 24, deploymentId);
+    const result = await getObservability(workspaceId, 'UTC', 24, deploymentId, { userId });
 
     expect(result.selectedDeployment).toBe('Seed MCP');
     expect(result.total).toBe(56);
@@ -138,7 +139,7 @@ describe('getObservability', () => {
   });
 
   it('keeps deployment request logs within the requested workspace', async () => {
-    const logs = await getDeploymentLogs(workspaceId, deploymentId);
+    const logs = await getDeploymentLogs(workspaceId, deploymentId, 100, userId);
 
     expect(logs).toHaveLength(56);
     expect(logs.some((log) => log.path.includes('should_not_leak'))).toBe(false);

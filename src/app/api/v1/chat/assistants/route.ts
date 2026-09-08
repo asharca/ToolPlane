@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAccountRequestUser } from '@/lib/auth/request-user';
 import { CreateChatAssistantSchema } from '@/lib/chat/schemas';
 import {
@@ -14,7 +15,7 @@ function failure(error: unknown) {
     : Response.json({ error: 'Chat request failed' }, { status: 500 });
 }
 
-export async function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/chat/assistants", async function GET(req: Request) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const workspaceId = new URL(req.url).searchParams.get('workspaceId')?.trim();
@@ -24,9 +25,9 @@ export async function GET(req: Request) {
   } catch (error) {
     return failure(error);
   }
-}
+});
 
-export async function POST(req: Request) {
+export const POST = withRequestLogging("/api/v1/chat/assistants", async function POST(req: Request) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   let raw: unknown;
@@ -39,4 +40,4 @@ export async function POST(req: Request) {
   } catch (error) {
     return failure(error);
   }
-}
+});

@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { basename } from 'node:path';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -21,7 +22,7 @@ function resultText(result: Record<string, unknown> | null) {
     : null;
 }
 
-export async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
+export const POST = withRequestLogging("/api/v1/knowledge/[knowledgeBaseId]/documents", async function POST(req: Request, { params }: { params: Promise<{ knowledgeBaseId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const { knowledgeBaseId } = await params;
@@ -36,7 +37,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ knowled
   const base = await db.knowledgeBase.findFirst({
     where: {
       id: knowledgeBaseId,
-      workspace: { OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
     },
     select: { id: true, workspaceId: true },
   });
@@ -74,4 +75,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ knowled
   }
   const updated = await db.knowledgeDocument.findUnique({ where: { id: document.id } });
   return Response.json(updated, { status: 201 });
-}
+});

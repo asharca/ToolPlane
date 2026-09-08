@@ -5,28 +5,11 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
 import { Popover } from 'radix-ui';
-import { Check, ChevronsUpDown, LogOut, Plus, Shield } from 'lucide-react';
-import { logoutAction } from '@/lib/auth/actions';
-import { createWorkspaceAction } from '@/lib/workspace/actions';
+import { Check, ChevronsUpDown, Layers3, Plus } from 'lucide-react';
+import { CreateWorkspaceForm } from './WorkspaceForms';
+import { WORKSPACE_MANAGER_HREF, workspaceInitials, workspaceSwitchHref, type WorkspaceSummary } from '@/lib/workspace/navigation';
 
-type Workspace = { id: string; slug: string; name: string };
 const WIDE_VIEWPORT_QUERY = '(min-width: 1024px)';
-const WORKSPACE_SECTIONS = new Set([
-  'agents',
-  'chat',
-  'knowledge',
-  'market',
-  'mcp',
-  'members',
-  'observability',
-  'providers',
-  'sandboxes',
-  'seller',
-  'settings',
-  'skills',
-  'toolkits',
-  'work',
-]);
 
 function subscribeToWideViewport(onChange: () => void) {
   const media = window.matchMedia?.(WIDE_VIEWPORT_QUERY);
@@ -39,33 +22,22 @@ function getWideViewportSnapshot() {
   return window.matchMedia?.(WIDE_VIEWPORT_QUERY).matches ?? false;
 }
 
-function initialsOf(name: string): string {
-  return (name.match(/\b\w/g) ?? ['W']).slice(0, 2).join('').toUpperCase();
-}
-
-function currentWorkspaceSection(slug: string, pathname: string): string {
-  const prefix = `/app/${slug}/`;
-  const section = pathname.startsWith(prefix) ? pathname.slice(prefix.length).split('/')[0] : '';
-  return section && WORKSPACE_SECTIONS.has(section) ? section : 'chat';
-}
-
 export function WorkspaceSwitcher({
   slug,
   workspaceName,
   userLabel,
   workspaces,
-  isAdmin = false,
   compact = false,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
-  workspaces: Workspace[];
+  workspaces: WorkspaceSummary[];
   isAdmin?: boolean;
   compact?: boolean;
 }) {
   const t = useTranslations('console.workspaceSwitcher');
-  const sidebarT = useTranslations('console.sidebar');
+  const managementT = useTranslations('console.workspaces');
   const pathname = usePathname() ?? '';
   const [creating, setCreating] = useState(false);
   const wideViewport = useSyncExternalStore(
@@ -74,7 +46,7 @@ export function WorkspaceSwitcher({
     () => false,
   );
   const compactDesktop = compact && wideViewport;
-  const targetSection = currentWorkspaceSection(slug, pathname);
+  const current = workspaces.find((workspace) => workspace.slug === slug);
 
   return (
     <Popover.Root onOpenChange={(nextOpen) => !nextOpen && setCreating(false)}>
@@ -86,14 +58,14 @@ export function WorkspaceSwitcher({
           className={`flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/70 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
         >
           <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-brand-foreground shadow-sm ring-1 ring-brand/20">
-            {initialsOf(workspaceName)}
+            {workspaceInitials(workspaceName)}
           </span>
           <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
             <span className="block truncate text-sm font-medium text-foreground">
               {workspaceName}
             </span>
             <span className="block truncate text-xs text-muted-foreground">
-              {userLabel}
+              {managementT(current?.role ?? 'member')}
             </span>
           </span>
           <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
@@ -102,13 +74,13 @@ export function WorkspaceSwitcher({
 
       <Popover.Portal>
         <Popover.Content
-          side={compactDesktop ? 'right' : 'top'}
-          align={compactDesktop ? 'end' : 'start'}
+          side={compactDesktop ? 'right' : 'bottom'}
+          align="start"
           sideOffset={8}
           collisionPadding={8}
           aria-label={t('workspaces')}
           className={`z-50 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl lg:z-20 ${
-            compactDesktop ? 'w-64' : 'w-[var(--radix-popover-trigger-width)]'
+            compactDesktop ? 'w-72 max-w-[calc(100vw-2rem)]' : 'w-72 max-w-[calc(100vw-2rem)]'
           }`}
         >
           <div className="max-h-64 overflow-y-auto py-1">
@@ -120,14 +92,15 @@ export function WorkspaceSwitcher({
               return (
                 <Popover.Close key={w.id} asChild>
                   <Link
-                    href={`/app/${w.slug}/${targetSection}`}
+                    href={workspaceSwitchHref(slug, w.slug, pathname)}
+                    onClick={(event) => { if (active) event.preventDefault(); }}
                     aria-current={active ? 'page' : undefined}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
                   >
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[10px] font-semibold text-foreground ring-1 ring-brand/10">
-                      {initialsOf(w.name)}
+                      {workspaceInitials(w.name)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{w.name}</span>
+                    <span className="min-w-0 flex-1"><span className="block truncate">{w.name}</span><span className="block text-xs text-muted-foreground">{managementT(w.role ?? 'member')}</span></span>
                     {active ? (
                       <Check className="size-4 shrink-0 text-brand" />
                     ) : null}
@@ -139,22 +112,7 @@ export function WorkspaceSwitcher({
 
           <div className="border-t border-border p-1">
             {creating ? (
-              <form action={createWorkspaceAction} className="flex gap-1.5 p-1.5">
-                <input
-                  name="name"
-                  autoFocus
-                  required
-                  maxLength={40}
-                  placeholder={t('workspaceName')}
-                  className="ui-input h-8 min-w-0 flex-1"
-                />
-                <button
-                  type="submit"
-                  className="ui-button-primary h-8 shrink-0 px-3 text-xs"
-                >
-                  {t('create')}
-                </button>
-              </form>
+              <div className="p-3"><CreateWorkspaceForm autoFocus /></div>
             ) : (
               <button
                 type="button"
@@ -165,26 +123,7 @@ export function WorkspaceSwitcher({
                 {t('createWorkspace')}
               </button>
             )}
-            {isAdmin ? (
-              <Popover.Close asChild>
-                <Link
-                  href="/admin"
-                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
-                >
-                  <Shield className="size-4 shrink-0" />
-                  {sidebarT('adminConsole')}
-                </Link>
-              </Popover.Close>
-            ) : null}
-            <form action={logoutAction} className="mt-1 border-t border-border pt-1">
-              <button
-                type="submit"
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
-              >
-                <LogOut className="size-4 shrink-0" />
-                {t('signOut')}
-              </button>
-            </form>
+            <Popover.Close asChild><Link href={WORKSPACE_MANAGER_HREF} className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-accent"><Layers3 className="size-4" />{managementT('manage')}</Link></Popover.Close>
           </div>
         </Popover.Content>
       </Popover.Portal>

@@ -20,7 +20,7 @@ export async function deleteManagedAgent(input: {
     db.workspace.findFirst({
       where: {
         id: input.workspaceId,
-        OR: [{ ownerId: input.actorId }, { members: { some: { userId: input.actorId } } }],
+        status: 'active', OR: [{ ownerId: input.actorId }, { members: { some: { userId: input.actorId } } }],
       },
       select: {
         ownerId: true,

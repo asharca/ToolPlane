@@ -152,7 +152,9 @@ describe('Agent Control MCP protocol', () => {
       },
     });
     expect(mocks.logRequest).toHaveBeenLastCalledWith(expect.objectContaining({
-      statusCode: 404,
+      statusCode: 200,
+      outcome: 'error',
+      error: expect.objectContaining({ code: 'not_found' }),
     }));
   });
 

@@ -326,6 +326,7 @@ export function AgentSettingsForm({
   return (
     <form
       ref={formRef}
+      data-unsaved-changes={saveStatus === 'dirty' || isPending || state.error ? 'true' : 'false'}
       action={formAction}
       onBlur={flushAutoSave}
       onChange={scheduleAutoSave}

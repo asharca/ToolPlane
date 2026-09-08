@@ -57,7 +57,7 @@ describe('admin marketplace catalog actions', () => {
       curated: true,
       isFeatured: true,
       categoryIds: ['category-1'],
-    });
+    }, 'admin-1');
   });
 
   it('requires an admin before updating a public toolkit', async () => {
@@ -72,7 +72,7 @@ describe('admin marketplace catalog actions', () => {
       id: 'toolkit-1',
       enabled: true,
       categoryIds: ['category-2'],
-    });
+    }, 'admin-1');
   });
 
   it('creates a reviewed assistant template from validated form fields', async () => {
@@ -146,6 +146,6 @@ describe('admin marketplace catalog actions', () => {
     const deleteData = new FormData();
     deleteData.set('id', 'assistant-listing-1');
     await deleteAssistantTemplateAdminAction({}, deleteData);
-    expect(mocks.deleteAssistant).toHaveBeenCalledWith('assistant-listing-1');
+    expect(mocks.deleteAssistant).toHaveBeenCalledWith('assistant-listing-1', 'admin-1');
   });
 });

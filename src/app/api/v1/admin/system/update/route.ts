@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { adminGate } from '@/lib/auth/admin-policy';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -18,7 +19,7 @@ async function requireApiAdmin() {
   return null;
 }
 
-export async function GET(request: Request) {
+export const GET = withRequestLogging("/api/v1/admin/system/update", async function GET(request: Request) {
   if (!(await getCurrentUser())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -31,9 +32,9 @@ export async function GET(request: Request) {
   return NextResponse.json(await getSystemUpdateStatus(), {
     headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
   });
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withRequestLogging("/api/v1/admin/system/update", async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
@@ -54,4 +55,4 @@ export async function POST(request: Request) {
   return NextResponse.json(result, {
     status,
   });
-}
+});

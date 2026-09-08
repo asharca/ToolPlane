@@ -91,6 +91,7 @@ describe('managed public runtime Agent visibility', () => {
         publicRuntimeAllocation: {
           is: { id: 'allocation-1', status: 'ready' },
         },
+        workspace: { status: 'active' },
       },
     }));
   });

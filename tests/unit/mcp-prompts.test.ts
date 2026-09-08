@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
-vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort }));
+vi.mock('@/lib/process/supervisor', () => ({ livePort: mocks.livePort, liveMcpRuntimeSnapshot: vi.fn(() => null) }));
 
 import { getMcpPrompt, listMcpPrompts } from '@/lib/process/mcp-client';
 

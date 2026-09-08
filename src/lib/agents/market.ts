@@ -1207,6 +1207,7 @@ async function assertPublisherAccess(
   const workspace = await tx.workspace.findFirst({
     where: {
       id: workspaceId,
+      status: 'active',
       OR: [
         { ownerId: userId },
         { members: { some: { userId, role: { in: ['owner', 'admin'] } } } },
@@ -1871,7 +1872,7 @@ async function assertInstallerAccess(
   const workspace = await tx.workspace.findFirst({
     where: {
       id: workspaceId,
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
     select: { id: true },
   });

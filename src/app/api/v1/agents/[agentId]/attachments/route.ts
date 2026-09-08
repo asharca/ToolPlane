@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
@@ -25,7 +26,7 @@ function safeFilename(value: string): string {
   return clean || 'attachment';
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/attachments", async function POST(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -143,4 +144,4 @@ export async function POST(
   } finally {
     writeLease.release();
   }
-}
+});

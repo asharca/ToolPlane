@@ -1,3 +1,5 @@
+import { systemLog } from '@/lib/observability/system';
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import {
@@ -16,7 +18,7 @@ async function authorizedAttachment(req: Request, attachmentId: string) {
   const attachment = await db.workspaceAttachment.findFirst({
     where: {
       id: attachmentId,
-      workspace: { OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }] },
     },
     select: {
       id: true,
@@ -44,7 +46,7 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-export async function GET(req: Request, { params }: { params: Params }) {
+export const GET = withRequestLogging("/api/v1/attachments/[attachmentId]", async function GET(req: Request, { params }: { params: Params }) {
   const { attachmentId } = await params;
   const { user, attachment } = await authorizedAttachment(req, attachmentId);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -67,9 +69,9 @@ export async function GET(req: Request, { params }: { params: Params }) {
   } catch {
     return Response.json({ error: 'Attachment storage is unavailable' }, { status: 502 });
   }
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Params }) {
+export const DELETE = withRequestLogging("/api/v1/attachments/[attachmentId]", async function DELETE(req: Request, { params }: { params: Params }) {
   const { attachmentId } = await params;
   const { user, attachment } = await authorizedAttachment(req, attachmentId);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -95,11 +97,11 @@ export async function DELETE(req: Request, { params }: { params: Params }) {
   try {
     await deleteWorkspaceAttachmentFile(attachment.workspaceId, attachment.storagePath);
   } catch (error) {
-    console.error('[workspace-attachment] file cleanup failed', {
+    systemLog('error', '[workspace-attachment] file cleanup failed', {
       attachmentId: attachment.id,
       workspaceId: attachment.workspaceId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
   return new Response(null, { status: 204 });
-}
+});

@@ -1,9 +1,10 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveLiveDeployment } from '@/lib/process/deployment-gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/mcp/[deploymentId]/terminal", async function POST(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
@@ -22,4 +23,4 @@ export async function POST(
     status: upstream.status,
     headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
   });
-}
+});

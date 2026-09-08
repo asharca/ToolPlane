@@ -242,7 +242,7 @@ export default async function DeploymentInspectorPage({
         ? readMcpToolCatalog(refreshedConfig?.installCfg)
         : savedTools
     : savedTools;
-  const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId) : [];
+  const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId, 100, user.id) : [];
   const runtimeSnapshot = current === 'logs'
     ? getDeploymentRuntimeSnapshot(deploymentId)
     : null;

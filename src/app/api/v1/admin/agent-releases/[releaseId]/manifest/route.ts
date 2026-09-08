@@ -1,10 +1,11 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { db } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth/admin';
 import { parseAgentReleaseManifest } from '@/lib/agents/market';
 
 export const runtime = 'nodejs';
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/admin/agent-releases/[releaseId]/manifest", async function GET(
   _request: Request,
   { params }: { params: Promise<{ releaseId: string }> },
 ) {
@@ -43,4 +44,4 @@ export async function GET(
       'x-content-type-options': 'nosniff',
     },
   });
-}
+});

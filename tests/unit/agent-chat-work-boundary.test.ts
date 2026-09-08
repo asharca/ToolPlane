@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
+vi.mock('@/lib/workspace/access-stream', () => ({ workspaceAccessResponse: (response: Response) => response }));
 vi.mock('@/lib/agents/queries', () => ({ getAgentForRequest: mocks.getAgentForRequest }));
 vi.mock('@/lib/db', () => ({
   db: {

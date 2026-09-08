@@ -1,7 +1,8 @@
 'use client';
 
 import { useActionState } from 'react';
-import { Save } from 'lucide-react';
+import { ClipboardCheck, History, Save } from 'lucide-react';
+import { adminHref } from '@/lib/admin/navigation';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
@@ -159,6 +160,7 @@ function CategoryChecklist({
 
 function ListingForm({ listing, categories }: { listing: ListingRow; categories: CategoryOption[] }) {
   const t = useTranslations('admin');
+  const ops = useTranslations('adminOps');
   const [state, action] = useActionState<AdminActionState, FormData>(updateMarketListingAdminAction, {});
   const statusTone = listing.status === 'published' ? 'success' : listing.status === 'disabled' ? 'danger' : 'neutral';
   return (
@@ -209,15 +211,17 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
             </Link>
           ) : null}
           {listing.pendingRelease ? (
-            <span className="text-xs text-amber-700 dark:text-amber-300">
+            <Link href={adminHref(`/admin/reviews/market/${listing.id}`, { returnTo: '/admin/market' })} className="ui-button-secondary text-xs">
+              <ClipboardCheck className="size-4" />
               {t('marketCatalogPendingRelease', { version: listing.pendingRelease.version })}
-            </span>
+            </Link>
           ) : null}
           {listing.latestRelease ? (
             <span className="text-xs text-muted-foreground">
               {t('marketCatalogLatestReleaseStatus', { status: listing.latestRelease.reviewStatus })}
             </span>
           ) : null}
+          <Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'marketListing', targetId: listing.id, returnTo: '/admin/market' })} className="ui-button-ghost text-xs"><History className="size-4" />{ops('audit')}</Link>
           {state.error ? <p role="alert" className="text-sm text-destructive-text">{state.error}</p> : null}
         </div>
       </form>

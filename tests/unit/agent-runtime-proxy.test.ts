@@ -114,6 +114,7 @@ describe('Agent runtime proxy boundaries', () => {
       where: {
         id: 'agent-1',
         workspaceId: 'workspace-1',
+        workspace: { status: 'active' },
         OR: [
           { providerId: 'provider-1' },
           { modelProviders: { some: { providerId: 'provider-1' } } },

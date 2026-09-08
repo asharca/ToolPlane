@@ -96,6 +96,8 @@ function actionErrorKey(error: unknown):
 }
 
 function revalidateAgentDirectory(id?: string) {
+  revalidatePath('/admin/reviews', 'layout');
+  revalidatePath('/admin');
   revalidatePath('/admin/agents');
   if (id) revalidatePath(`/admin/agents/${id}/edit`);
   revalidatePath('/app/[workspace]/market/agents', 'page');
@@ -230,12 +232,12 @@ export async function setAgentListingStatusAction(
   _previous: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = str(formData, 'id');
   const status = str(formData, 'status') === 'published' ? 'published' : 'disabled';
   try {
-    await setDirectoryAgentListingStatus(id, status);
+    await setDirectoryAgentListingStatus(id, status, admin.id);
   } catch (error) {
     return { error: t(actionErrorKey(error)) };
   }
@@ -247,11 +249,11 @@ export async function deleteAgentListingAction(
   _previous: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const id = str(formData, 'id');
   try {
-    await deleteDirectoryAgentListing(id);
+    await deleteDirectoryAgentListing(id, admin.id);
   } catch (error) {
     const key = actionErrorKey(error);
     if (key === 'errorAgentListingInstalled' && error instanceof AdminAgentMarketError) {

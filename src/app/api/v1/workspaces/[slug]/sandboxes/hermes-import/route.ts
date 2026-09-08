@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -68,7 +69,7 @@ function isImportId(value: string | null): value is string {
   return value !== null && /^[a-zA-Z0-9][a-zA-Z0-9_-]{15,127}$/.test(value);
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/sandboxes/hermes-import", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -177,4 +178,4 @@ export async function POST(
     if (staged) await staged.cleanup().catch(() => undefined);
     if (importLock) await importLock.release().catch(() => undefined);
   }
-}
+});

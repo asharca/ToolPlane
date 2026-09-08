@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { findAgentChannelByInboundToken } from '@/lib/agents/channel-connections';
 import { runAgentChannelMessage } from '@/lib/agents/message-service';
 import {
@@ -22,7 +23,7 @@ async function resolveConnection(req: Request, connectionId: string) {
   return findAgentChannelByInboundToken(connectionId, token);
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/agent-channels/[connectionId]/events", async function GET(
   req: Request,
   { params }: { params: Promise<{ connectionId: string }> },
 ) {
@@ -42,9 +43,9 @@ export async function GET(
     platform: platform.slug,
     mode: platform.publicEndpointRequired ? 'callback' : 'hosted-runner',
   });
-}
+});
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agent-channels/[connectionId]/events", async function POST(
   req: Request,
   { params }: { params: Promise<{ connectionId: string }> },
 ) {
@@ -77,4 +78,4 @@ export async function POST(
     rawBody: normalizedBody,
   });
   return Response.json({ ...result.body, connectionId, platform: platform.slug }, { status: result.status });
-}
+});

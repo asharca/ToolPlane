@@ -45,12 +45,12 @@ export async function updateAgentAttachmentLimitAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
 
   try {
     if (String(formData.get('intent') ?? '') === 'reset') {
-      await resetAgentAttachmentLimit();
+      await resetAgentAttachmentLimit(admin.id);
     } else {
       const megabytes = parseWholeNumber(formData, 'maxAttachmentSizeMb');
       if (
@@ -63,7 +63,7 @@ export async function updateAgentAttachmentLimitAction(
           max: MAX_ADMIN_ATTACHMENT_MEGABYTES,
         }) };
       }
-      await setAgentAttachmentLimitBytes(megabytes * 1_000_000);
+      await setAgentAttachmentLimitBytes(megabytes * 1_000_000, admin.id);
     }
   } catch {
     return { error: t('errorActionFailed') };
@@ -77,7 +77,7 @@ export async function updateHermesArchiveUploadLimitAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const hermesArchiveMaxUploadMiB = parseWholeNumber(formData, 'hermesArchiveMaxUploadMiB');
   if (!isValidHermesArchiveMaxUploadMiB(hermesArchiveMaxUploadMiB)) {
@@ -90,7 +90,7 @@ export async function updateHermesArchiveUploadLimitAction(
   }
 
   try {
-    await updateHermesArchiveSettings(hermesArchiveMaxUploadMiB);
+    await updateHermesArchiveSettings(hermesArchiveMaxUploadMiB, admin.id);
   } catch {
     return { error: t('errorActionFailed') };
   }
@@ -103,7 +103,7 @@ export async function updateSkillImportLimitAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
   const maxSkills = parseWholeNumber(formData, 'skillImportMaxSkills');
   if (!isValidSkillImportMaxSkills(maxSkills)) {
@@ -116,7 +116,7 @@ export async function updateSkillImportLimitAction(
   }
 
   try {
-    await updateSkillImportSettings(maxSkills);
+    await updateSkillImportSettings(maxSkills, admin.id);
   } catch {
     return { error: t('errorActionFailed') };
   }
@@ -129,12 +129,12 @@ export async function updateMcpStartupTimeoutSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
 
   try {
     if (String(formData.get('intent') ?? '') === 'reset') {
-      await resetMcpStartupTimeoutSettings();
+      await resetMcpStartupTimeoutSettings(admin.id);
     } else {
       const idleSeconds = parseWholeNumber(formData, 'mcpStartupIdleTimeoutSeconds');
       const maxSeconds = parseWholeNumber(formData, 'mcpStartupMaxTimeoutSeconds');
@@ -152,7 +152,7 @@ export async function updateMcpStartupTimeoutSettingsAction(
           }),
         };
       }
-      await updateMcpStartupTimeoutSettings(idleTimeoutMs, maxTimeoutMs);
+      await updateMcpStartupTimeoutSettings(idleTimeoutMs, maxTimeoutMs, admin.id);
     }
   } catch {
     return { error: t('errorActionFailed') };
@@ -166,18 +166,18 @@ export async function updateRemoteMcpPrivateHostsSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const t = await getTranslations('admin');
 
   try {
     if (String(formData.get('intent') ?? '') === 'reset') {
-      await resetRemoteMcpPrivateHostsSettings();
+      await resetRemoteMcpPrivateHostsSettings(admin.id);
     } else {
       const value = formData.get('remoteMcpPrivateHosts');
       if (typeof value !== 'string' || !parseRemoteMcpPrivateHosts(value)) {
         return { error: t('errorRemoteMcpPrivateHosts') };
       }
-      await updateRemoteMcpPrivateHostsSettings(value);
+      await updateRemoteMcpPrivateHostsSettings(value, admin.id);
     }
   } catch {
     return { error: t('errorActionFailed') };

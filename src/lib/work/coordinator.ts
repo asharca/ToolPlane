@@ -1,4 +1,7 @@
+import { systemLog } from '@/lib/observability/system';
 import 'server-only';
+import { withLogContext, enrichLogContext } from '@/lib/observability/context';
+import { recordEvent } from '@/lib/observability/events';
 import { posix } from 'node:path';
 import type { Prisma } from '@prisma/client';
 import { Type, type ToolCall } from '@earendil-works/pi-ai';
@@ -475,6 +478,7 @@ async function executeWork(workSessionId: string) {
     finishWorkOutput(workSessionId);
     return;
   }
+  enrichLogContext({ workspaceId: work.workspaceId, agentId: work.agentId, runId: work.id, conversationId: work.conversationId });
   if (work.status === 'cancelling') {
     await db.workSession.updateMany({
       where: { id: work.id, workspaceId: work.workspaceId, status: 'cancelling' },
@@ -993,7 +997,7 @@ async function executeWork(workSessionId: string) {
     if (!executedCommand && !pendingTitles.has(work.id)) {
       pendingTitles.add(work.id);
       void generateWorkSessionTitle(work.workspaceId, work.agentId, work.conversationId)
-        .catch((error) => console.warn(`[work] ${work.id} title generation failed`, error))
+        .catch((error) => systemLog('warn', `[work] ${work.id} title generation failed`, error))
         .finally(() => pendingTitles.delete(work.id));
     }
     if (finalOutcome.kind === 'complete') {
@@ -1027,6 +1031,8 @@ async function executeWork(workSessionId: string) {
     }
   } catch (error) {
     runtimeStatus = controller.signal.aborted ? 'cancelled' : 'failed';
+    await recordEvent({ domain: 'agent', eventName: 'work.run.failed', runId: work.id,
+      outcome: controller.signal.aborted ? 'cancelled' : 'error', error, durationMs: Date.now() - runStartedAt });
     finishReasoning();
     settleUnfinishedTools(runtimeStatus);
     publishWorkActivity(work.id, {
@@ -1040,7 +1046,7 @@ async function executeWork(workSessionId: string) {
         await appendAssistantResult(work.conversationId, '', traceParts(), contextUsage, turnTiming(), runtimeMetadata());
         tracePersisted = true;
       } catch (traceError) {
-        console.error(`[work] ${work.id} activity persistence failed`, traceError);
+        systemLog('error', `[work] ${work.id} activity persistence failed`, traceError);
       }
     }
     if (!controller.signal.aborted) {
@@ -1068,9 +1074,9 @@ async function executeWork(workSessionId: string) {
 
 async function runClaimedWork(workSessionId: string) {
   try {
-    await executeWork(workSessionId);
+    await withLogContext({ runId: workSessionId }, () => executeWork(workSessionId), true);
   } catch (error) {
-    console.error(`[work] ${workSessionId} execution failed`, error);
+    systemLog('error', `[work] ${workSessionId} execution failed`, error);
   } finally {
     state.active.delete(workSessionId);
     kickWorkCoordinator();
@@ -1107,7 +1113,7 @@ async function drainWorkQueue() {
       if (!workSessionId) break;
       state.active.add(workSessionId);
       void runClaimedWork(workSessionId)
-        .catch((error) => console.error(`[work] ${workSessionId} finalization failed`, error));
+        .catch((error) => systemLog('error', `[work] ${workSessionId} finalization failed`, error));
     }
   } finally {
     state.draining = false;
@@ -1115,7 +1121,7 @@ async function drainWorkQueue() {
 }
 
 export function kickWorkCoordinator() {
-  void drainWorkQueue().catch((error) => console.error('[work] queue drain failed', error));
+  void drainWorkQueue().catch((error) => systemLog('error', '[work] queue drain failed', error));
 }
 
 async function stopInterruptedHermesRuns() {

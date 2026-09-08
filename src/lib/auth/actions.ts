@@ -1,5 +1,6 @@
 'use server';
 
+import { systemLog } from '@/lib/observability/system';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { cookies, headers } from 'next/headers';
@@ -137,7 +138,7 @@ export async function forgotPasswordAction(
         try {
           await requestPasswordReset(email);
         } catch (error) {
-          console.error(
+          systemLog('error',
             'Unable to process password-reset request',
             error instanceof Error ? error.message : 'Unknown error',
           );
@@ -243,7 +244,9 @@ export async function createTokenAction(
 
   const name = String(formData.get('name') ?? '').trim();
   const { token } = await createApiToken(userId, name);
-  revalidatePath(`/app/${String(formData.get('workspace') ?? '')}/settings/tokens`);
+  revalidatePath('/app');
+  const workspace = String(formData.get('workspace') ?? '');
+  if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
   return { token };
 }
 
@@ -252,5 +255,7 @@ export async function revokeTokenAction(formData: FormData): Promise<void> {
   if (!userId) return;
   const id = String(formData.get('id') ?? '');
   if (id) await revokeApiToken(userId, id);
-  revalidatePath(`/app/${String(formData.get('workspace') ?? '')}/settings/tokens`);
+  revalidatePath('/app');
+  const workspace = String(formData.get('workspace') ?? '');
+  if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
 }

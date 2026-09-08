@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeAudit } from '@/lib/observability/audit';
 
 import { Prisma } from '@prisma/client';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
@@ -262,6 +263,8 @@ export async function createAdminAssistantTemplate(
         where: { id: listing.id },
         data: { latestVersion: 1, latestReleaseId: release.id },
       });
+      await writeAudit(tx, { actorId: reviewedById, action: 'market.assistant.created', targetType: 'marketListing', targetId: listing.id,
+        changes: { releaseId: release.id, status: input.status, categoryIds } });
       return { id: listing.id, releaseId: release.id };
     }, { isolationLevel: 'Serializable' });
   } catch (error) {
@@ -354,7 +357,7 @@ export async function updateAdminAssistantTemplate(
     if (listing.pendingReleaseId) {
       await tx.marketRelease.updateMany({
         where: { id: listing.pendingReleaseId, reviewStatus: 'pending' },
-        data: { reviewStatus: 'rejected', reviewedAt: new Date(), reviewNote: 'Replaced by an administrator.' },
+        data: { reviewStatus: 'rejected', reviewedById, reviewedAt: new Date(), reviewNote: 'Replaced by an administrator.' },
       });
     }
     const releaseSummary = {
@@ -381,6 +384,8 @@ export async function updateAdminAssistantTemplate(
         publishedAt,
       },
     });
+    await writeAudit(tx, { actorId: reviewedById, action: 'market.assistant.updated', targetType: 'marketListing', targetId: listing.id,
+      changes: { releaseId: release.id, status: input.status, categoryIds, isFeatured: input.isFeatured } });
     return tx.marketListing.update({
       where: { id: listing.id },
       data: {
@@ -402,11 +407,14 @@ export async function updateAdminAssistantTemplate(
   }, { isolationLevel: 'Serializable', maxWait: 10_000, timeout: 30_000 });
 }
 
-export async function deleteAdminAssistantTemplate(id: string) {
-  const deleted = await db.marketListing.deleteMany({
+export async function deleteAdminAssistantTemplate(id: string, actorId = 'system') {
+  await db.$transaction(async (tx) => {
+  const deleted = await tx.marketListing.deleteMany({
     where: { id, kind: 'assistant', publisherKind: 'platform' },
   });
   if (deleted.count !== 1) throw new AdminMarketCatalogError('not_found');
+  await writeAudit(tx, { actorId, action: 'market.assistant.deleted', targetType: 'marketListing', targetId: id });
+  });
 }
 
 export async function updateAdminMarketListing(input: {
@@ -415,7 +423,7 @@ export async function updateAdminMarketListing(input: {
   curated: boolean;
   isFeatured: boolean;
   categoryIds: string[];
-}) {
+}, actorId = 'system') {
   if (!ADMIN_MARKET_LISTING_STATUSES.includes(input.status)) {
     throw new AdminMarketCatalogError('invalid_status');
   }
@@ -425,6 +433,7 @@ export async function updateAdminMarketListing(input: {
       select: {
         id: true,
         kind: true,
+        status: true, curated: true, isFeatured: true, categories: { select: { id: true } },
         sourceServerId: true,
         sourceToolkitId: true,
         sourceServer: { select: { verifiedAt: true, verifiedTools: true, installCfg: true } },
@@ -469,6 +478,8 @@ export async function updateAdminMarketListing(input: {
         },
       });
     }
+    await writeAudit(tx, { actorId, action: 'market.listing.updated', targetType: 'marketListing', targetId: input.id,
+      changes: { before: { status: listing.status, curated: listing.curated, isFeatured: listing.isFeatured, categoryIds: listing.categories.map(({ id }) => id) }, after: input } });
     return updated;
   });
 }
@@ -477,20 +488,23 @@ export async function updateAdminPublicToolkit(input: {
   id: string;
   enabled: boolean;
   categoryIds: string[];
-}) {
+}, actorId = 'system') {
   return db.$transaction(async (tx) => {
     const toolkit = await tx.toolkit.findFirst({
       where: { id: input.id, visibility: 'public' },
-      select: { id: true },
+      select: { id: true, enabled: true, workspaceId: true, categories: { select: { id: true } } },
     });
     if (!toolkit) throw new AdminMarketCatalogError('not_found');
     const categoryIds = await assertCategories(tx, input.categoryIds);
-    return tx.toolkit.update({
+    const updated = await tx.toolkit.update({
       where: { id: toolkit.id },
       data: {
         enabled: input.enabled,
         categories: { set: categoryIds.map((id) => ({ id })) },
       },
     });
+    await writeAudit(tx, { actorId, workspaceId: toolkit.workspaceId, action: 'market.toolkit.updated', targetType: 'toolkit', targetId: input.id,
+      changes: { before: { enabled: toolkit.enabled, categoryIds: toolkit.categories.map(({ id }) => id) }, after: input } });
+    return updated;
   });
 }

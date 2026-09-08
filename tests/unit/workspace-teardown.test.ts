@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   deploymentFindMany: vi.fn(),
+  workSessionFindMany: vi.fn(),
+  cancelWorkSession: vi.fn(),
+  abortWorkRun: vi.fn(),
   deploymentUpdateMany: vi.fn(),
   sandboxFindMany: vi.fn(),
   killMany: vi.fn(),
@@ -17,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({
   db: {
+    workSession: { findMany: mocks.workSessionFindMany },
     deployment: {
       findMany: mocks.deploymentFindMany,
       updateMany: mocks.deploymentUpdateMany,
@@ -28,6 +32,8 @@ vi.mock('@/lib/process/supervisor', () => ({
   killMany: mocks.killMany,
   preventWorkspaceStarts: mocks.preventWorkspaceStarts,
 }));
+vi.mock('@/lib/work/sessions', () => ({ cancelWorkSession: mocks.cancelWorkSession }));
+vi.mock('@/lib/work/run-control', () => ({ abortWorkRun: mocks.abortWorkRun }));
 vi.mock('@/lib/sandboxes/runtime', () => ({
   removeDockerSandboxRuntimeStrict: mocks.removeDockerSandboxRuntimeStrict,
   removeDockerVolumeStrict: mocks.removeDockerVolumeStrict,
@@ -53,6 +59,7 @@ import { killWorkspaceProcesses } from '@/lib/workspace/teardown';
 describe('workspace process teardown', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.workSessionFindMany.mockResolvedValue([]);
     mocks.killMany.mockResolvedValue(undefined);
     mocks.deploymentUpdateMany.mockResolvedValue({ count: 2 });
     mocks.removeDockerSandboxRuntimeStrict.mockResolvedValue(undefined);
@@ -64,6 +71,7 @@ describe('workspace process teardown', () => {
   });
 
   it('disconnects connectors and strictly removes snapshots before the Docker runtime', async () => {
+    mocks.workSessionFindMany.mockResolvedValue([{ id: 'work-1' }]);
     // The first deployment query takes the workspace-wide process snapshot;
     // the second finds bridge deployments whose config volumes must be removed.
     mocks.deploymentFindMany
@@ -87,6 +95,8 @@ describe('workspace process teardown', () => {
     ]);
 
     await killWorkspaceProcesses('ws1');
+    expect(mocks.cancelWorkSession).toHaveBeenCalledWith('ws1', 'work-1');
+    expect(mocks.abortWorkRun).toHaveBeenCalledWith('work-1');
 
     expect(mocks.preventWorkspaceStarts).toHaveBeenCalledWith('ws1');
     expect(mocks.preventWorkspaceStarts.mock.invocationCallOrder[0]).toBeLessThan(

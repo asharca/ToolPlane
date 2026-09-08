@@ -1,5 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
+import { withLogContext } from '@/lib/observability/context';
 import { Type } from '@earendil-works/pi-ai';
 import { AGENT_MAX_DEPTH, resolveMaxSteps } from './constants';
 import { agentTool, type AgentToolSet } from './agent-tool';
@@ -124,6 +125,7 @@ export async function runAgentTurn(
 
   const agent = await deps.loadAgent(agentId, ctx.workspaceId);
   if (!agent) return `Sub-agent ${agentId} not found in this workspace.`;
+  return withLogContext({ workspaceId: ctx.workspaceId, agentId }, async () => {
   const runtimeKind = implementedAgentRuntimeKind(agent.runtimeKind);
   if (!runtimeKind) return `Sub-agent runtime "${agent.runtimeKind}" is not available.`;
   const isHermes = runtimeKind === 'hermes';
@@ -192,4 +194,5 @@ export async function runAgentTurn(
   const model = agent.provider;
 
   return deps.runModel({ model, modelId: agent.model, system, prompt, tools, maxSteps: agent.maxSteps });
+  });
 }

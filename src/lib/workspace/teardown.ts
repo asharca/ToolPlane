@@ -11,6 +11,8 @@ import { disconnectConnector } from '@/lib/sandboxes/connector-broker';
 import { removeDeploymentConfigVolume } from '@/lib/process/deployment-config-volume';
 import { removeWorkspaceAttachmentVolume } from '@/lib/attachments/storage';
 import { closeWorkspaceOperations } from './operation-gate';
+import { cancelWorkSession } from '@/lib/work/sessions';
+import { abortWorkRun } from '@/lib/work/run-control';
 
 export async function workspaceDeploymentIds(workspaceId: string): Promise<string[]> {
   const rows = await db.deployment.findMany({ where: { workspaceId }, select: { id: true } });
@@ -24,6 +26,14 @@ export async function killWorkspaceProcesses(workspaceId: string): Promise<void>
   // creates in this server process cannot start an ID absent from the snapshot.
   preventWorkspaceStarts(workspaceId);
   await closeWorkspaceOperations(workspaceId);
+  const activeWork = await db.workSession.findMany({
+    where: { workspaceId, status: { in: ['queued', 'running', 'waiting_approval', 'waiting_user', 'cancelling'] } },
+    select: { id: true },
+  });
+  for (const work of activeWork) {
+    await cancelWorkSession(workspaceId, work.id);
+    abortWorkRun(work.id);
+  }
   const [deploymentIds, sandboxes, configVolumeDeployments] = await Promise.all([
     workspaceDeploymentIds(workspaceId),
     db.sandbox.findMany({

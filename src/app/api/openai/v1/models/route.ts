@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAgentApiPrincipalForAnyEndpoint } from '@/lib/agents/public-api/auth';
 import { AgentApiError, asAgentApiError, errorResponse, publicErrorMessage } from '@/lib/agents/public-api/errors';
 import { agentApiHeaders, agentApiJson } from '@/lib/agents/public-api/http';
@@ -11,7 +12,7 @@ export async function OPTIONS() {
   return new Response(null, { status: 403, headers: { 'cache-control': 'private, no-store' } });
 }
 
-export async function GET(request: Request) {
+export const GET = withRequestLogging("/api/openai/v1/models", async function GET(request: Request) {
   const requestId = createAgentRequestId();
   let headers = new Headers({ 'x-request-id': requestId });
   try {
@@ -33,4 +34,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});

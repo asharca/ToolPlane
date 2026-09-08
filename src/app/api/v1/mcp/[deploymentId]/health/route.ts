@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -6,7 +7,7 @@ import { logRequest } from '@/lib/observability/log';
 
 // Gateway health proxy: forwards to the live stub process for a deployment
 // and records the request for observability.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/mcp/[deploymentId]/health", async function GET(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
@@ -21,7 +22,7 @@ export async function GET(
     where: {
       id: deploymentId,
       workspace: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: { id: true, status: true, workspaceId: true },
@@ -58,4 +59,4 @@ export async function GET(
   });
 
   return NextResponse.json(payload, { status: statusCode });
-}
+});

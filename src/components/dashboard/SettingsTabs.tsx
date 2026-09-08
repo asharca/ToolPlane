@@ -1,10 +1,8 @@
 'use client';
 
 import {
-  CreditCard,
-  KeyRound,
   Radio,
-  Plug,
+  Users,
   Settings,
   type LucideIcon,
 } from 'lucide-react';
@@ -16,18 +14,15 @@ export function SettingsTabs({ slug }: { slug: string }) {
   const pathname = usePathname();
   const returnTo = useSearchParams().get('returnTo');
   const t = useTranslations('console.settings');
+  const management = useTranslations('console.workspaces');
   const base = `/app/${slug}/settings`;
   const withReturnTo = (href: string) => returnTo
     ? `${href}?returnTo=${encodeURIComponent(returnTo)}`
     : href;
   const tabs: { label: string; href: string; icon: LucideIcon }[] = [
     { label: t('general'), href: withReturnTo(base), icon: Settings },
-    { label: t('tokens'), href: withReturnTo(`${base}/tokens`), icon: KeyRound },
+    { label: management('members'), href: `/app/${slug}/members`, icon: Users },
     { label: t('channels'), href: withReturnTo(`${base}/channels`), icon: Radio },
-  ];
-  const muted: { label: string; icon: LucideIcon }[] = [
-    { label: t('integrations'), icon: Plug },
-    { label: t('billing'), icon: CreditCard },
   ];
 
   return (
@@ -51,12 +46,6 @@ export function SettingsTabs({ slug }: { slug: string }) {
             </Link>
           );
         })}
-        {muted.map(({ label, icon: Icon }) => (
-          <span key={label} aria-disabled="true" className="flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm text-muted-foreground/45">
-            <Icon className="size-4" />
-            {label}
-          </span>
-        ))}
       </nav>
     </aside>
   );

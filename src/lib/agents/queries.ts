@@ -418,14 +418,19 @@ export async function getAgent(workspaceId: string, agentId: string) {
 // Used by the chat route: resolves an agent the user may access (owner or member)
 // in one query, with provider + tool relations loaded.
 export async function getAgentForRequest(agentId: string, userId: string) {
-  return db.agent.findFirst({
+  const agent = await db.agent.findFirst({
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: { provider: true, ...TOOL_INCLUDE },
   });
+  if (agent) {
+    const { enrichLogContext } = await import('@/lib/observability/context');
+    enrichLogContext({ workspaceId: agent.workspaceId, agentId, actorId: userId });
+  }
+  return agent;
 }
 
 export async function getHermesTerminalForRequest(agentId: string, userId: string) {
@@ -433,7 +438,7 @@ export async function getHermesTerminalForRequest(agentId: string, userId: strin
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       runtime: { is: { kind: 'hermes' } },
     },
     select: {
@@ -457,6 +462,7 @@ export async function getAgentForRun(agentId: string, workspaceId: string) {
     where: {
       id: agentId,
       workspaceId,
+      workspace: { status: 'active' },
       ...ORDINARY_AGENT_FILTER,
     },
     include: { provider: true, ...TOOL_INCLUDE },
@@ -475,6 +481,7 @@ export async function getAgentEndpointRuntimeForExecution(
     where: {
       id: agentId,
       workspaceId,
+      workspace: { status: 'active' },
       publicRuntimeAllocation: {
         is: { id: allocationId, status: 'ready' },
       },

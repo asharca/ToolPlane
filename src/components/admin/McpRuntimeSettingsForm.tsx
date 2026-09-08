@@ -114,7 +114,7 @@ export function McpRuntimeSettingsForm({
         </div>
 
         {state.error ? <p className="text-sm text-destructive-text" role="alert">{state.error}</p> : null}
-        {state.ok ? <p className="text-sm text-accent-foreground" aria-live="polite">{t('runtimeSettingsSaved')}</p> : null}
+        {state.ok ? <p className="text-sm text-accent-foreground" aria-live="polite">{t('saved')}</p> : null}
       </form>
     </AdminPanel>
   );

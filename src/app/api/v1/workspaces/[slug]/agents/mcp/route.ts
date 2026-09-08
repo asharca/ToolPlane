@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { Buffer } from 'node:buffer';
 import { resolveAgentControlRequestUser } from '@/lib/auth/request-user';
@@ -87,7 +88,7 @@ function initializeProtocolVersion(params: unknown): string | null {
   return protocolVersion;
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/agents/mcp", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -139,6 +140,7 @@ export async function POST(
   let toolName = '';
   let response: NextResponse;
   let auditStatus = 200;
+  let upstreamError: unknown;
 
   if (method === 'notifications/initialized' || method === 'initialized') {
     return new NextResponse(null, { status: 202 });
@@ -184,6 +186,7 @@ export async function POST(
         );
         response = toolResult(id, result);
       } catch (error) {
+        upstreamError = error;
         if (error instanceof AgentControlError) {
           response = toolError(id, error.code, error.message);
           auditStatus = error.code === 'not_found'
@@ -206,15 +209,16 @@ export async function POST(
     workspaceId: workspace.id,
     method: 'POST',
     path: `/workspaces/${slug}/agents/mcp#${method}${toolName ? `:${toolName}` : ''}`,
-    // Tool errors stay HTTP 200 per MCP, while observability records their
-    // semantic status so failures are visible in workspace error metrics.
-    statusCode: auditStatus,
+    statusCode: response.status,
+    outcome: auditStatus >= 400 ? 'error' : 'success',
+    error: upstreamError,
+    responseBody: await response.clone().text(),
     durationMs: Date.now() - startedAt,
   });
   return response;
-}
+});
 
-export function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/agents/mcp", function GET(req: Request) {
   if (req.headers.get('origin') && !isSameOriginRequest(req)) {
     return NextResponse.json({ error: 'invalid origin' }, { status: 403 });
   }
@@ -222,4 +226,4 @@ export function GET(req: Request) {
     { error: 'Use POST for MCP JSON-RPC. Create a personal API token in workspace settings.' },
     { status: 405 },
   );
-}
+});

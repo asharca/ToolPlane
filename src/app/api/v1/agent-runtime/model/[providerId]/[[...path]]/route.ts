@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
-import { agentRuntimeTokenFromRequest, runtimeProviderUrl } from '@/lib/agents/runtime-access';
+import { agentRuntimeTokenFromRequest, bindRuntimeLogContext, runtimeProviderUrl } from '@/lib/agents/runtime-access';
+import { enrichLogContext } from '@/lib/observability/context';
+import { recordEvent } from '@/lib/observability/events';
+import { withRequestLogging } from '@/lib/observability/http';
 import { isAgentRuntimeGrantCurrent } from '@/lib/agents/runtime-grant';
 import { handleAnthropicCountTokens, handleAnthropicMessages } from '@/lib/agents/anthropic-gateway';
 import { db } from '@/lib/db';
@@ -71,6 +74,8 @@ async function proxyProviderRequest(
     select: { name: true, format: true, baseUrl: true, apiKey: true },
   });
   if (!provider) return NextResponse.json({ error: 'provider not found' }, { status: 404 });
+  bindRuntimeLogContext(token);
+  enrichLogContext({ secrets: [provider.apiKey] });
 
   const routePath = path.join('/');
   if (req.method === 'POST' && provider.format !== 'anthropic') {
@@ -107,14 +112,16 @@ async function proxyProviderRequest(
       statusText: upstream.statusText,
       headers: downstreamResponseHeaders(upstream),
     });
-  } catch {
+  } catch (error) {
+    await recordEvent({ domain: 'agent', eventName: 'provider.request.failed', error, httpStatus: 502 });
     return NextResponse.json({ error: 'provider is unreachable' }, { status: 502 });
   }
 }
 
-export const GET = proxyProviderRequest;
-export const HEAD = proxyProviderRequest;
-export const POST = proxyProviderRequest;
-export const PUT = proxyProviderRequest;
-export const PATCH = proxyProviderRequest;
-export const DELETE = proxyProviderRequest;
+const observedProviderRequest = withRequestLogging('/api/v1/agent-runtime/model/[providerId]/[[...path]]', proxyProviderRequest);
+export const GET = observedProviderRequest;
+export const HEAD = observedProviderRequest;
+export const POST = observedProviderRequest;
+export const PUT = observedProviderRequest;
+export const PATCH = observedProviderRequest;
+export const DELETE = observedProviderRequest;

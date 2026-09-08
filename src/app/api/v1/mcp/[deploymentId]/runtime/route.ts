@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
@@ -20,7 +21,7 @@ function nonNegativeInteger(value: string | null, fallback: number): number {
 
 // Runtime progress is intentionally separate from the RPC gateway: a deployment
 // can be provisioning (and have useful stderr output) before it has a live port.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/mcp/[deploymentId]/runtime", async function GET(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
@@ -34,6 +35,7 @@ export async function GET(
     where: {
       id: deploymentId,
       workspace: {
+        status: 'active',
         OR: [
           { ownerId: user.id },
           { members: { some: { userId: user.id } } },
@@ -65,4 +67,4 @@ export async function GET(
     { snapshot, logs },
     { headers: NO_STORE },
   );
-}
+});

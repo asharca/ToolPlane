@@ -1,4 +1,5 @@
 import 'server-only';
+import { saveAuditedSetting } from '@/lib/admin/audited-setting';
 import { db } from '@/lib/db';
 
 export const DEFAULT_MAX_AGENT_ATTACHMENT_BYTES = 1_000_000_000;
@@ -42,17 +43,13 @@ export async function maxAgentAttachmentBytes(): Promise<number> {
   return (await resolveAgentAttachmentLimit()).bytes;
 }
 
-export async function setAgentAttachmentLimitBytes(bytes: number): Promise<void> {
+export async function setAgentAttachmentLimitBytes(bytes: number, actorId = 'system'): Promise<void> {
   if (!positiveSafeInteger(bytes)) throw new Error('Invalid attachment limit.');
-  await db.systemSetting.upsert({
-    where: { key: AGENT_ATTACHMENT_LIMIT_SETTING_KEY },
-    create: { key: AGENT_ATTACHMENT_LIMIT_SETTING_KEY, value: String(bytes) },
-    update: { value: String(bytes) },
-  });
+  await saveAuditedSetting(AGENT_ATTACHMENT_LIMIT_SETTING_KEY, String(bytes), actorId);
 }
 
-export async function resetAgentAttachmentLimit(): Promise<void> {
-  await db.systemSetting.deleteMany({ where: { key: AGENT_ATTACHMENT_LIMIT_SETTING_KEY } });
+export async function resetAgentAttachmentLimit(actorId = 'system'): Promise<void> {
+  await saveAuditedSetting(AGENT_ATTACHMENT_LIMIT_SETTING_KEY, null, actorId);
 }
 
 export function formatAttachmentByteLimit(bytes: number): string {

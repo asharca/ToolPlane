@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { createHash } from 'node:crypto';
 import { verifyApiToken } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
@@ -25,7 +26,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-export async function GET(req: Request) {
+export const GET = withRequestLogging("/api/v1/plugin/baseline", async function GET(req: Request) {
   const start = Date.now();
   const url = new URL(req.url);
   const workspaceSlug = url.searchParams.get('workspace') ?? '';
@@ -43,7 +44,7 @@ export async function GET(req: Request) {
       slug: toolkitSlug,
       workspace: {
         slug: workspaceSlug,
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
     },
     select: {
@@ -104,4 +105,4 @@ export async function GET(req: Request) {
   });
 
   return json({ data: { skills } });
-}
+});

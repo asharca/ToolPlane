@@ -1,228 +1,90 @@
 import 'server-only';
+import { Prisma, type LogEvent } from '@prisma/client';
 import { db } from '@/lib/db';
 import { formatInTimeZone } from '@/lib/timezone';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
-import { inspectMcpLog } from '@/lib/observability/mcp-log-entry';
+import { inspectMcpLog } from './mcp-log-entry';
+import { recordEvent, type LogOutcome } from './events';
+import { enrichLogContext } from './context';
+import { aggregateLogs, authorizeLogs, cursorWhere, logCursor, logFilterSchema, logSqlWhere, logWhere } from './queries';
 
 export async function logRequest(entry: {
-  workspaceId: string;
-  deploymentId?: string | null;
-  method: string;
-  path: string;
-  statusCode: number;
-  durationMs: number;
-  requestBody?: string | null;
-  responseBody?: string | null;
+  workspaceId: string; deploymentId?: string | null;
+  method: string; path: string; statusCode: number; durationMs: number;
+  requestBody?: string | null; responseBody?: string | null;
+  outcome?: LogOutcome; error?: unknown;
 }): Promise<void> {
-  try {
-    await db.requestLog.create({ data: entry });
-  } catch {
-    // never let logging break a request
-  }
+  enrichLogContext({ workspaceId: entry.workspaceId });
+  const inspection = inspectMcpLog(entry);
+  const parse = (text?: string | null) => { try { return text ? JSON.parse(text) : null; } catch { return '[INVALID OR TRUNCATED JSON]'; } };
+  await recordEvent({
+    domain: 'mcp', eventName: 'gateway.request', workspaceId: entry.workspaceId,
+    deploymentId: entry.deploymentId ?? undefined, method: entry.method,
+    path: entry.path.split('#')[0], rpcMethod: inspection.rpcMethod ?? undefined, toolName: inspection.toolName ?? undefined,
+    httpStatus: entry.statusCode, durationMs: entry.durationMs,
+    outcome: entry.outcome ?? inspection.outcome,
+    message: inspection.errorSummary ?? inspection.toolName ?? inspection.rpcMethod ?? entry.path,
+    error: entry.error,
+    detail: { request: parse(entry.requestBody), response: parse(entry.responseBody) },
+  });
 }
 
-export async function getDeploymentLogs(workspaceId: string, deploymentId: string, limit = 100) {
-  return db.requestLog.findMany({
-    where: { workspaceId, deploymentId },
-    orderBy: { createdAt: 'desc' },
-    take: limit,
-    select: {
-      id: true,
-      method: true,
-      path: true,
-      statusCode: true,
-      durationMs: true,
-      requestBody: true,
-      responseBody: true,
-      createdAt: true,
-    },
-  });
+function view(log: LogEvent) {
+  return { ...log, method: log.method ?? '', path: log.path ?? '', statusCode: log.httpStatus ?? 0,
+    durationMs: log.durationMs ?? 0, requestBody: null, responseBody: null,
+    errorSummary: log.outcome !== 'success' ? log.message : null };
+}
+
+export async function getDeploymentLogs(workspaceId: string, deploymentId: string, limit = 100, userId?: string) {
+  if (!userId) throw new Error('An authenticated log reader is required');
+  await authorizeLogs({ workspaceId, userId });
+  const logs = await db.logEvent.findMany({ where: { workspaceId, deploymentId, eventName: 'gateway.request' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: Math.min(100, Math.max(1, limit)) });
+  return logs.map(view);
 }
 
 export type HourBucket = { hour: string; total: number; errors: number };
+export type ObservabilityLog = ReturnType<typeof view> & { deploymentName: string };
+export type DeploymentUsage = { id: string | null; name: string; total: number; errors: number; avgMs: number };
 
-export type ObservabilityLog = {
-  id: string;
-  deploymentId: string | null;
-  deploymentName: string;
-  method: string;
-  path: string;
-  statusCode: number;
-  durationMs: number;
-  requestBody: string | null;
-  responseBody: string | null;
-  createdAt: Date;
-};
-
-export type DeploymentUsage = {
-  id: string | null;
-  name: string;
-  total: number;
-  errors: number;
-  avgMs: number;
-};
-
-type ObservabilityRow = {
-  deploymentId: string | null;
-  path: string;
-  statusCode: number;
-  responseBody?: string | null;
-};
-
-function hasObservabilityError(log: ObservabilityRow): boolean {
-  // Workspace API rows have no MCP JSON-RPC semantics. For a deployment row,
-  // inspect the response too: MCP tool errors commonly use HTTP 200.
-  return log.deploymentId
-    ? inspectMcpLog(log).outcome === 'error'
-    : log.statusCode >= 400;
-}
-
-const HOUR_MS = 60 * 60 * 1000;
-const RECENT_LOG_LIMIT = 50;
-
-export async function getObservability(
-  workspaceId: string,
-  timeZone: string,
-  hours = 24,
-  deploymentId?: string,
-) {
-  const now = new Date();
-  const since = new Date(now.getTime() - hours * HOUR_MS);
-  const [logs, deploymentRows] = await Promise.all([
-    db.requestLog.findMany({
-      where: {
-        workspaceId,
-        createdAt: { gte: since },
-        ...(deploymentId ? { deploymentId } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        deploymentId: true,
-        method: true,
-        path: true,
-        statusCode: true,
-        durationMs: true,
-        responseBody: true,
-        createdAt: true,
-      },
-    }),
-    db.deployment.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        serverId: true,
-        name: true,
-        source: true,
-        sourceRef: true,
-        server: { select: { name: true } },
-      },
-    }),
+export async function getObservability(workspaceId: string, timeZone: string, hours = 24, deploymentId?: string,
+  options: { userId: string; q?: string; cursor?: string; until?: string; outcome?: string } = { userId: '' }) {
+  await authorizeLogs({ workspaceId, userId: options.userId });
+  hours = Math.min(744, Math.max(1, Math.floor(hours)));
+  const now = options.until ? new Date(options.until) : new Date();
+  const filters = logFilterSchema.parse({ workspaceId, deploymentId, eventName: 'gateway.request', q: options.q,
+    outcome: options.outcome, cursor: options.cursor, since: new Date(now.getTime() - hours * 3_600_000), until: now });
+  const where = logSqlWhere(filters);
+  const [stats, logs, deploymentRows, buckets, usage] = await Promise.all([
+    aggregateLogs(filters),
+    db.logEvent.findMany({ where: { AND: [logWhere(filters), cursorWhere(filters.cursor)] }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 51 }),
+    db.deployment.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' }, select: { id: true, serverId: true, name: true, source: true, sourceRef: true, server: { select: { name: true } } } }),
+    db.$queryRaw<Array<{ bucket: Date; total: number; errors: number }>>(Prisma.sql`
+      SELECT date_trunc('hour', "createdAt") AS bucket, count(*)::int AS total,
+      count(*) FILTER (WHERE outcome NOT IN ('success', 'cancelled'))::int AS errors
+      FROM "LogEvent" WHERE ${where} GROUP BY bucket ORDER BY bucket`),
+    db.$queryRaw<Array<{ id: string | null; total: number; errors: number; avgMs: number }>>(Prisma.sql`
+      SELECT "deploymentId" AS id, count(*)::int AS total,
+      count(*) FILTER (WHERE outcome NOT IN ('success', 'cancelled'))::int AS errors,
+      coalesce(round(avg("durationMs")), 0)::int AS "avgMs"
+      FROM "LogEvent" WHERE ${where} GROUP BY "deploymentId"`),
   ]);
-
-  const recentIds = logs.slice(0, RECENT_LOG_LIMIT).map((log) => log.id);
-  const recentDetails = recentIds.length
-    ? await db.requestLog.findMany({
-        where: { id: { in: recentIds } },
-        select: { id: true, requestBody: true, responseBody: true },
-      })
-    : [];
-  const detailById = new Map(recentDetails.map((log) => [log.id, log]));
-  const deploymentNames = new Map(
-    deploymentRows.map((deployment) => [
-      deployment.id,
-      deploymentLabel(deployment).name,
-    ]),
-  );
-
-  const total = logs.length;
-  const errors = logs.filter(hasObservabilityError).length;
-  const avgMs =
-    total === 0
-      ? 0
-      : Math.round(logs.reduce((a, l) => a + l.durationMs, 0) / total);
-
-  const buckets = new Map<number, { total: number; errors: number }>();
-  const lastBucket = Math.floor(now.getTime() / HOUR_MS) * HOUR_MS;
-  const firstBucket = lastBucket - Math.max(0, hours - 1) * HOUR_MS;
-  for (let bucket = firstBucket; bucket <= lastBucket; bucket += HOUR_MS) {
-    buckets.set(bucket, { total: 0, errors: 0 });
-  }
-  for (const l of logs) {
-    const bucket = buckets.get(Math.floor(l.createdAt.getTime() / HOUR_MS) * HOUR_MS);
-    if (bucket) {
-      bucket.total += 1;
-      if (hasObservabilityError(l)) bucket.errors += 1;
-    }
-  }
-  const series: HourBucket[] = [...buckets.entries()].map(([t, v]) => ({
-    hour: formatInTimeZone(t, timeZone, { hour: 'numeric' }, 'en-US'),
-    total: v.total,
-    errors: v.errors,
-  }));
-
-  const sortedMs = logs.map((l) => l.durationMs).sort((a, b) => a - b);
-  const p95Ms =
-    total === 0 ? 0 : sortedMs[Math.min(total - 1, Math.ceil(total * 0.95) - 1)];
-
-  const usage = new Map<string | null, { total: number; errors: number; durationMs: number }>();
-  for (const log of logs) {
-    const current = usage.get(log.deploymentId) ?? { total: 0, errors: 0, durationMs: 0 };
-    current.total += 1;
-    current.durationMs += log.durationMs;
-    if (hasObservabilityError(log)) current.errors += 1;
-    usage.set(log.deploymentId, current);
-  }
-  const deploymentUsage: DeploymentUsage[] = deploymentRows
-    .filter((deployment) => !deploymentId || deployment.id === deploymentId)
-    .map((deployment) => {
-      const value = usage.get(deployment.id) ?? { total: 0, errors: 0, durationMs: 0 };
-      return {
-        id: deployment.id,
-        name: deploymentNames.get(deployment.id) ?? 'Untitled server',
-        total: value.total,
-        errors: value.errors,
-        avgMs: value.total ? Math.round(value.durationMs / value.total) : 0,
-      };
-    });
-  const workspaceApiUsage = usage.get(null);
-  if (workspaceApiUsage) {
-    deploymentUsage.push({
-      id: null,
-      name: 'Workspace API',
-      total: workspaceApiUsage.total,
-      errors: workspaceApiUsage.errors,
-      avgMs: Math.round(workspaceApiUsage.durationMs / workspaceApiUsage.total),
-    });
-  }
-
-  const recent: ObservabilityLog[] = logs.slice(0, RECENT_LOG_LIMIT).map((log) => {
-    const details = detailById.get(log.id);
-    return {
-      ...log,
-      deploymentName: log.deploymentId
-        ? deploymentNames.get(log.deploymentId) ?? 'Unknown deployment'
-        : 'Workspace API',
-      requestBody: details?.requestBody ?? null,
-      responseBody: details?.responseBody ?? null,
-    };
+  const names = new Map(deploymentRows.map((row) => [row.id, deploymentLabel(row).name]));
+  const bucketMap = new Map(buckets.map((row) => [row.bucket.getTime(), row]));
+  const series = Array.from({ length: hours }, (_, i) => {
+    const time = Math.floor(now.getTime() / 3_600_000) * 3_600_000 - (hours - 1 - i) * 3_600_000;
+    const row = bucketMap.get(time);
+    return { hour: formatInTimeZone(time, timeZone, { hour: 'numeric' }, 'en-US'), total: row?.total ?? 0, errors: row?.errors ?? 0 };
   });
-
-  return {
-    total,
-    errors,
-    avgMs,
-    p95Ms,
-    series,
-    recent,
-    deployments: deploymentRows.map((deployment) => ({
-      id: deployment.id,
-      name: deploymentNames.get(deployment.id) ?? 'Untitled server',
-    })),
-    deploymentUsage,
-    selectedDeployment: deploymentId
-      ? deploymentNames.get(deploymentId) ?? 'Unknown deployment'
-      : null,
+  const deploymentUsage: DeploymentUsage[] = deploymentRows.filter((row) => !deploymentId || row.id === deploymentId).map((row) => ({
+    id: row.id, name: names.get(row.id)!, total: 0, errors: 0, avgMs: 0, ...usage.find((item) => item.id === row.id),
+  }));
+  const api = usage.find((row) => row.id === null);
+  if (api) deploymentUsage.push({ ...api, name: 'Workspace API' });
+  return { ...stats, series, deploymentUsage,
+    recent: logs.slice(0, 50).map((row) => ({ ...view(row), deploymentName: row.deploymentId ? names.get(row.deploymentId) ?? 'Deleted deployment' : 'Workspace API' })),
+    nextCursor: logs.length > 50 ? logCursor(logs[49]) : null, until: now.toISOString(),
+    deployments: deploymentRows.map((row) => ({ id: row.id, name: names.get(row.id)! })),
+    selectedDeployment: deploymentId ? names.get(deploymentId) ?? 'Unknown deployment' : null,
   };
 }

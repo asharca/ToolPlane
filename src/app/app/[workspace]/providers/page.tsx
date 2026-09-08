@@ -25,6 +25,10 @@ export default async function ProvidersPage({
 
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  if (ws.ownerId !== user.id) {
+    const management = await getTranslations('console.workspaces');
+    return <><DashboardHeader title={t('modelProviders')} /><p className="p-6 text-sm text-muted-foreground">{management('ownerOnly')}</p></>;
+  }
 
   const timeZone = resolveUserTimeZone(user);
   const providers = await listProviders(ws.id);

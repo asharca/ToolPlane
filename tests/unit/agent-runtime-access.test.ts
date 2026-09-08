@@ -4,6 +4,7 @@ import {
   AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS,
   AGENT_RUNTIME_TOKEN_HEADER,
   agentRuntimeTokenFromRequest,
+  bindRuntimeLogContext,
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
@@ -11,6 +12,7 @@ import {
   sandboxRuntimeOrigin,
   verifyAgentRuntimeToken,
 } from '@/lib/agents/runtime-access';
+import { getLogContext, withLogContext } from '@/lib/observability/context';
 
 describe('Agent runtime access grants', () => {
   const originalSecret = process.env.AUTH_SECRET;
@@ -56,6 +58,19 @@ describe('Agent runtime access grants', () => {
       ...payload,
       exp: Math.floor(now / 1000) + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS + 1,
     }, now)).rejects.toThrow('payload is invalid');
+  });
+
+  it('propagates the signed trace across sandbox callbacks without replacing the callback span', async () => {
+    const grant = await withLogContext({}, async () => ({
+      context: { ...getLogContext()! }, token: await createAgentRuntimeToken(payload, now),
+    }));
+    const verified = await verifyAgentRuntimeToken(grant.token, now);
+    expect(verified?.traceId).toBe(grant.context.traceId);
+    await withLogContext({}, async () => {
+      const span = getLogContext()!.spanId;
+      bindRuntimeLogContext(verified!);
+      expect(getLogContext()).toMatchObject({ traceId: grant.context.traceId, parentSpanId: grant.context.spanId, spanId: span, agentId: payload.agentId });
+    });
   });
 
   it('accepts the dedicated header, Bearer, and Claude-compatible x-api-key', async () => {

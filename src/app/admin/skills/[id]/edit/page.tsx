@@ -1,4 +1,7 @@
 import { getTranslations } from 'next-intl/server';
+import Link from 'next/link';
+import { History } from 'lucide-react';
+import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getDirectorySkill } from '@/lib/admin/market';
@@ -10,20 +13,23 @@ import { AdminBadge, AdminPage, AdminPageHeader, AdminPanel } from '@/components
 
 export const dynamic = 'force-dynamic';
 
-export default async function EditSkillPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EditSkillPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ returnTo?: string }> }) {
   const t = await getTranslations('admin');
   await requireAdmin();
   const { id } = await params;
   const [skill, categories] = await Promise.all([getDirectorySkill(id), listCategories()]);
   if (!skill) notFound();
+  const ops = await getTranslations('adminOps');
+  const backHref = adminReturnHref((await searchParams).returnTo, '/admin/skills');
 
   return (
     <AdminPage className="max-w-4xl">
       <AdminPageHeader
         title={`${t('edit')} ${skill.name}`}
         meta={<AdminBadge tone="neutral">/{skill.slug}</AdminBadge>}
-        backHref="/admin/skills"
+        backHref={backHref}
         backLabel={t('skillsMarket')}
+        actions={<Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'skill', targetId: id, returnTo: adminHref(`/admin/skills/${id}/edit`, { returnTo: backHref }) })} className="ui-button-secondary"><History className="size-4" />{ops('audit')}</Link>}
       />
       <section className="border-t border-border pt-6" aria-label={`${t('edit')} ${skill.name}`}>
         <SkillForm

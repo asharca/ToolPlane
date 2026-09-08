@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveAgentApiPrincipalForAnyEndpoint } from '@/lib/agents/public-api/auth';
 import { openAIInput, parseOpenAIChatRequest } from '@/lib/agents/public-api/body';
 import {
@@ -56,7 +57,7 @@ export async function OPTIONS() {
   return new Response(null, { status: 403, headers: { 'cache-control': 'private, no-store' } });
 }
 
-export async function POST(request: Request) {
+export const POST = withRequestLogging("/api/openai/v1/chat/completions", async function POST(request: Request) {
   const provisionalRequestId = createAgentRequestId();
   let requestId = provisionalRequestId;
   let headers = new Headers({ 'x-request-id': provisionalRequestId });
@@ -198,4 +199,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return errorResponse(asAgentApiError(error), requestId, headers);
   }
-}
+});

@@ -457,7 +457,7 @@ export async function getWorkSessionForUser(userId: string, workSessionId: strin
   return db.workSession.findFirst({
     where: {
       id: workSessionId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: workSessionClientInclude,
   });

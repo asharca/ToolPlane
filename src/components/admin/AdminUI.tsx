@@ -10,14 +10,14 @@ import {
   Page,
   PageHeader,
   Pagination,
-  Panel,
+  Section,
   type FeedbackTone,
 } from '@asharca/ui';
 
 type Icon = ComponentType<{ className?: string }>;
 
 export function AdminPage({ children, className }: { children: ReactNode; className?: string }) {
-  return <Page className={`max-w-[100rem] space-y-6 ${className ?? ''}`.trim()}>{children}</Page>;
+  return <Page className={`min-w-0 space-y-6 ${className ?? 'max-w-[100rem]'}`.trim()}>{children}</Page>;
 }
 
 export function AdminPageHeader({
@@ -45,7 +45,7 @@ export function AdminPageHeader({
     </Link>
   ) : undefined;
 
-  return <PageHeader title={title} description={description} meta={meta} actions={actions} back={back} />;
+  return <PageHeader title={title} description={description} meta={meta} actions={actions} back={back} className="border-b border-border pb-5 [&_h1]:break-words [&_h1]:[overflow-wrap:anywhere]" />;
 }
 
 export function AdminSearchForm({
@@ -55,6 +55,8 @@ export function AdminSearchForm({
   searchLabel,
   clearLabel,
   clearHref,
+  hidden = {},
+  children,
 }: {
   defaultValue?: string;
   placeholder: string;
@@ -62,12 +64,15 @@ export function AdminSearchForm({
   searchLabel: string;
   clearLabel: string;
   clearHref: string;
+  hidden?: Record<string, string>;
+  children?: ReactNode;
 }) {
   const hasQuery = Boolean(defaultValue?.trim());
 
   return (
-    <form className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-      <div className="relative w-full sm:w-80">
+    <form className="flex w-full flex-wrap items-center gap-2">
+      {Object.entries(hidden).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
+      <div className="relative min-w-0 flex-1 sm:max-w-md">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           name="q"
@@ -77,14 +82,13 @@ export function AdminSearchForm({
           className="ui-input-icon h-11 w-full sm:h-9"
         />
       </div>
-      <Button type="submit" variant="secondary">
+      {children}
+      <Button type="submit" variant="secondary" className="h-11 sm:h-9" aria-label={searchLabel} title={searchLabel}>
         <Search aria-hidden="true" className="size-4" />
-        {searchLabel}
       </Button>
       {hasQuery ? (
-        <Link href={clearHref} className="ui-button-ghost">
+        <Link href={clearHref} className="ui-button-ghost ui-icon-button" aria-label={clearLabel} title={clearLabel}>
           <X aria-hidden="true" className="size-4" />
-          {clearLabel}
         </Link>
       ) : null}
     </form>
@@ -126,7 +130,7 @@ export function AdminEntity({
 
 export function AdminTableLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} aria-label={label} className="ui-button-ghost ui-icon-button ml-auto">
+    <Link href={href} aria-label={label} title={label} className="ui-button-ghost ui-icon-button ml-auto">
       <ChevronRight aria-hidden="true" className="size-4" />
     </Link>
   );
@@ -206,16 +210,30 @@ export function AdminPanel({
   className?: string;
 }) {
   return (
-    <Panel
-      title={title}
-      description={description}
+    <Section
+      title={<span className={tone === 'danger' ? 'text-destructive-text' : undefined}>{title}</span>}
       actions={actions}
-      tone={tone}
-      headerPresentation="bordered"
-      padded={padded}
-      className={className}
+      className={`min-w-0 border-t pt-5 [&>div:first-child]:flex-wrap ${tone === 'danger' ? 'border-destructive/30' : 'border-border'} ${className ?? ''}`}
     >
-      {children}
-    </Panel>
+      {description ? <p className="mb-4 max-w-3xl text-sm text-muted-foreground">{description}</p> : null}
+      <div className={padded ? 'py-1' : undefined}>{children}</div>
+    </Section>
   );
+}
+
+export function AdminMetric({ label, value, note, icon: Icon, href, valueClassName }: {
+  label: string;
+  value: ReactNode;
+  note: ReactNode;
+  icon: Icon;
+  href?: string;
+  valueClassName?: string;
+}) {
+  const content = <>
+    <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><Icon className="size-4 shrink-0" />{label}</span>
+    <strong className={`mt-3 block break-words text-2xl font-semibold tabular-nums ${valueClassName ?? 'text-foreground'}`}>{value}</strong>
+    <span className="mt-1.5 block text-xs text-muted-foreground">{note}</span>
+  </>;
+  const className = 'min-w-0 bg-background px-4 py-5 sm:px-5';
+  return href ? <Link href={href} className={`${className} transition-colors hover:bg-muted/40`}>{content}</Link> : <div className={className}>{content}</div>;
 }

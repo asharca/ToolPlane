@@ -7,6 +7,7 @@ import {
   type RunDeps,
 } from '@/lib/agents/run';
 import { AGENT_MAX_DEPTH } from '@/lib/agents/constants';
+import { getLogContext, withLogContext } from '@/lib/observability/context';
 
 function fakeAgent(over: Partial<RunAgent> = {}): RunAgent {
   return {
@@ -115,6 +116,17 @@ describe('runAgentTurn guards', () => {
   it('runs a normal one-level delegate and returns the model text', async () => {
     const out = await runAgentTurn('b', 'hello', base, deps());
     expect(out).toBe('FAKE_REPLY');
+  });
+
+  it('attributes delegated execution to the child without changing its parent context', async () => {
+    await withLogContext({ agentId: 'parent', workspaceId: 'w' }, async () => {
+      const parent = { ...getLogContext()! };
+      await runAgentTurn('child', 'hello', base, deps({ runSandboxModel: async () => {
+        expect(getLogContext()).toMatchObject({ agentId: 'child', traceId: parent.traceId, parentSpanId: parent.spanId });
+        return 'done';
+      } }));
+      expect(getLogContext()).toMatchObject(parent);
+    });
   });
 
   it('reports a sub-agent that has no model configured', async () => {

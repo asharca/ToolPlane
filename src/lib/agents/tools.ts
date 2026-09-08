@@ -22,16 +22,7 @@ export function toolKey(deploymentId: string, toolName: string): string {
   return `d_${dep}__${name}_${toolHash}`;
 }
 
-type LogEntry = {
-  workspaceId: string;
-  deploymentId?: string | null;
-  method: string;
-  path: string;
-  statusCode: number;
-  durationMs: number;
-  requestBody?: string | null;
-  responseBody?: string | null;
-};
+type LogEntry = Parameters<typeof logRequest>[0];
 
 export type ToolDeps = {
   liveStatus: (id: string) => string | null;
@@ -84,14 +75,15 @@ export async function buildToolSet(
             .get(deploymentId);
           if (!isMcpToolExposedToAi(currentPolicy, t.name)) {
             const denied = { error: `MCP tool ${t.name} is not exposed to AI.` };
-            void deps.logRequest({
+            await deps.logRequest({
               workspaceId,
               deploymentId,
               method: 'POST',
               path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
               statusCode: 403,
+              outcome: 'denied',
               durationMs: Date.now() - start,
-              requestBody: JSON.stringify({ name: t.name, arguments: args }).slice(0, 16000),
+              requestBody: JSON.stringify({ name: t.name, arguments: args }),
               responseBody: JSON.stringify(denied),
             }).catch(() => {});
             return denied;
@@ -100,16 +92,17 @@ export async function buildToolSet(
             name: t.name,
             arguments: args,
           });
-          void deps
+          await deps
             .logRequest({
               workspaceId,
               deploymentId,
               method: 'POST',
               path: `/mcp/${deploymentId}/rpc#tools/call:${t.name}`,
               statusCode: result ? 200 : 502,
+              outcome: !result || result.isError === true || Boolean(result.error) ? 'error' : 'success',
               durationMs: Date.now() - start,
-              requestBody: JSON.stringify({ name: t.name, arguments: args }).slice(0, 16000),
-              responseBody: JSON.stringify(result ?? { error: 'unreachable' }).slice(0, 16000),
+              requestBody: JSON.stringify({ name: t.name, arguments: args }),
+              responseBody: JSON.stringify(result ?? { error: 'unreachable' }),
             })
             .catch(() => {});
           return result ?? { error: `MCP deployment ${deploymentId} is not reachable.` };

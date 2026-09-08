@@ -42,6 +42,7 @@ export async function proxyMcpRpcRequest(
   const port = livePort(deploymentId);
   let statusCode = 200;
   let payload: unknown = { error: 'deployment not running' };
+  let upstreamError: unknown;
   const policy = mcpToolPolicyFromStored(deployment);
 
   if (isBatch) {
@@ -92,7 +93,8 @@ export async function proxyMcpRpcRequest(
           }
         }
       }
-    } catch {
+    } catch (error) {
+      upstreamError = error;
       statusCode = 502;
       payload = { error: 'upstream unreachable' };
     }
@@ -105,8 +107,9 @@ export async function proxyMcpRpcRequest(
     path: `/mcp/${deploymentId}/rpc${rpcMethod ? `#${rpcMethod}${toolName ? `:${toolName}` : ''}` : ''}`,
     statusCode,
     durationMs: Date.now() - start,
-    requestBody: (body || '').slice(0, 16000) || null,
-    responseBody: JSON.stringify(payload).slice(0, 16000),
+    error: upstreamError,
+    requestBody: body || null,
+    responseBody: JSON.stringify(payload),
   });
 
   return NextResponse.json(payload, { status: statusCode });

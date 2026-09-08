@@ -1,3 +1,4 @@
+import { systemLog } from '@/lib/observability/system';
 import 'server-only';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -677,7 +678,7 @@ export async function ensureConnectorBroker(): Promise<{
     });
   });
 
-  console.log(`[connector] WebSocket broker listening on ${s.bind}:${s.port}`);
+  systemLog('info', `[connector] WebSocket broker listening on ${s.bind}:${s.port}`);
   return {
     port: s.port,
     internalUrl: `http://127.0.0.1:${s.port}`,

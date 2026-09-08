@@ -117,7 +117,7 @@ async function requireWorkspace(userId: string, workspaceId: string) {
   const workspace = await db.workspace.findFirst({
     where: {
       id: workspaceId,
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+      status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }],
     },
     select: { id: true },
   });
@@ -208,7 +208,7 @@ export async function getChatAssistantForUser(userId: string, assistantId: strin
   return db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: {
       modelProvider: providerForClient,
@@ -371,7 +371,7 @@ export async function updateChatAssistant(
   const assistant = await db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     select: { id: true, workspaceId: true },
   });
@@ -427,7 +427,7 @@ export async function deleteChatAssistant(userId: string, assistantId: string) {
     const assistant = await tx.chatAssistant.findFirst({
       where: {
         id: assistantId,
-        workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       },
       select: { id: true, marketTemplateRelease: { select: { listingId: true } } },
     });
@@ -450,7 +450,7 @@ export async function createChatThread(
   const assistant = await db.chatAssistant.findFirst({
     where: {
       id: assistantId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     select: { id: true, workspaceId: true },
   });
@@ -483,7 +483,7 @@ export async function getChatThreadForUser(userId: string, threadId: string) {
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: {
       assistant: {
@@ -501,7 +501,7 @@ export async function updateChatThread(userId: string, threadId: string, input: 
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       },
       select: { id: true },
     });
@@ -554,7 +554,7 @@ export async function reserveChatBranch(userId: string, threadId: string, anchor
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       },
       select: { id: true },
     });
@@ -622,7 +622,7 @@ export async function deleteReservedChatBranch(userId: string, threadId: string,
     const authorized = await tx.chatThread.findFirst({
       where: {
         id: threadId,
-        workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+        workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
       },
       select: { id: true },
     });
@@ -668,7 +668,7 @@ export async function deleteChatThread(userId: string, threadId: string) {
   const result = await db.chatThread.deleteMany({
     where: {
       id: threadId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
   });
   if (!result.count) throw new ChatServiceError(404, 'Chat thread not found');
@@ -678,7 +678,7 @@ export async function getChatThreadForExecution(userId: string, threadId: string
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     include: {
       assistant: {
@@ -949,7 +949,7 @@ export async function getChatHistoryForExecution(userId: string, threadId: strin
   const thread = await db.chatThread.findFirst({
     where: {
       id: threadId,
-      workspace: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      workspace: { status: 'active', OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
     },
     select: {
       messages: {

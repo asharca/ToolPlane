@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import {
@@ -30,7 +31,7 @@ function announcedContentLength(req: Request): number | null {
   return Number.isSafeInteger(parsed) ? parsed : Number.NaN;
 }
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/workspaces/[slug]/attachments", async function POST(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -41,7 +42,7 @@ export async function POST(
   const workspace = await db.workspace.findFirst({
     where: {
       id: workspaceId,
-      OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+      status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
     },
     select: { id: true },
   });
@@ -113,4 +114,4 @@ export async function POST(
     await deleteWorkspaceAttachmentFile(workspace.id, stored.storagePath).catch(() => undefined);
     return Response.json({ error: 'Could not save attachment metadata.' }, { status: 500 });
   }
-}
+});

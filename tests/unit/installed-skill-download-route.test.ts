@@ -68,6 +68,7 @@ describe('installed skill.md download boundary', () => {
       where: {
         id: 'install-1',
         workspace: {
+          status: 'active',
           OR: [
             { ownerId: 'user-1' },
             { members: { some: { userId: 'user-1' } } },

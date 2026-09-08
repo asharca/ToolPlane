@@ -1,4 +1,5 @@
 import 'server-only';
+import { saveAuditedSetting } from './audited-setting';
 
 import { db } from '@/lib/db';
 import {
@@ -139,16 +140,10 @@ export async function getHermesArchiveSettings(): Promise<SystemSettings> {
 
 export async function updateHermesArchiveSettings(
   hermesArchiveMaxUploadMiB: number,
+  actorId = 'system',
 ): Promise<SystemSettings> {
   const value = normalizeHermesArchiveMaxUploadMiB(hermesArchiveMaxUploadMiB);
-  await db.systemSetting.upsert({
-    where: { key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY },
-    create: {
-      key: HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY,
-      value: String(value),
-    },
-    update: { value: String(value) },
-  });
+  await saveAuditedSetting(HERMES_ARCHIVE_MAX_UPLOAD_MIB_SETTING_KEY, String(value), actorId);
   return toSystemSettings(String(value));
 }
 
@@ -172,15 +167,11 @@ export async function getSkillImportSettings(): Promise<SkillImportSettings> {
   }
 }
 
-export async function updateSkillImportSettings(maxSkills: number): Promise<SkillImportSettings> {
+export async function updateSkillImportSettings(maxSkills: number, actorId = 'system'): Promise<SkillImportSettings> {
   if (!isValidSkillImportMaxSkills(maxSkills)) {
     throw new Error('Invalid skill import maximum.');
   }
-  await db.systemSetting.upsert({
-    where: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY },
-    create: { key: SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, value: String(maxSkills) },
-    update: { value: String(maxSkills) },
-  });
+  await saveAuditedSetting(SKILL_IMPORT_MAX_SKILLS_SETTING_KEY, String(maxSkills), actorId);
   return { maxSkills };
 }
 
@@ -203,21 +194,18 @@ export async function resolveMcpStartupTimeoutSettings(): Promise<McpStartupTime
 export async function updateMcpStartupTimeoutSettings(
   idleTimeoutMs: number,
   maxTimeoutMs: number,
+  actorId = 'system',
 ): Promise<McpStartupTimeoutSettings> {
   if (!isValidMcpStartupTimeouts(idleTimeoutMs, maxTimeoutMs)) {
     throw new Error('Invalid MCP startup timeouts.');
   }
   const value = JSON.stringify({ idleTimeoutMs, maxTimeoutMs });
-  await db.systemSetting.upsert({
-    where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY },
-    create: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY, value },
-    update: { value },
-  });
+  await saveAuditedSetting(MCP_STARTUP_TIMEOUTS_SETTING_KEY, value, actorId);
   return { idleTimeoutMs, maxTimeoutMs, source: 'database' };
 }
 
-export async function resetMcpStartupTimeoutSettings(): Promise<void> {
-  await db.systemSetting.deleteMany({ where: { key: MCP_STARTUP_TIMEOUTS_SETTING_KEY } });
+export async function resetMcpStartupTimeoutSettings(actorId = 'system'): Promise<void> {
+  await saveAuditedSetting(MCP_STARTUP_TIMEOUTS_SETTING_KEY, null, actorId);
 }
 
 function environmentRemoteMcpPrivateHostsSettings(): RemoteMcpPrivateHostsSettings {
@@ -249,17 +237,14 @@ export async function resolveRemoteMcpPrivateHostsSettings(): Promise<RemoteMcpP
 
 export async function updateRemoteMcpPrivateHostsSettings(
   value: string,
+  actorId = 'system',
 ): Promise<RemoteMcpPrivateHostsSettings> {
   const parsed = parseRemoteMcpPrivateHosts(value);
   if (!parsed) throw new Error('Invalid Remote MCP private host allowlist.');
-  await db.systemSetting.upsert({
-    where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY },
-    create: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, value: parsed.value },
-    update: { value: parsed.value },
-  });
+  await saveAuditedSetting(REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, parsed.value, actorId);
   return { value: parsed.value, source: 'database' };
 }
 
-export async function resetRemoteMcpPrivateHostsSettings(): Promise<void> {
-  await db.systemSetting.deleteMany({ where: { key: REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY } });
+export async function resetRemoteMcpPrivateHostsSettings(actorId = 'system'): Promise<void> {
+  await saveAuditedSetting(REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY, null, actorId);
 }

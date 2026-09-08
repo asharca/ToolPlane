@@ -10,6 +10,7 @@ export async function isAgentRuntimeGrantCurrent(
     where: {
       id: token.agentId,
       workspaceId: token.workspaceId,
+      workspace: { status: 'active' },
       OR: [
         { providerId: token.providerId },
         { modelProviders: { some: { providerId: token.providerId } } },

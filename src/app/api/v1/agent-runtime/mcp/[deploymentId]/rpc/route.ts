@@ -1,5 +1,6 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
-import { agentRuntimeTokenFromRequest } from '@/lib/agents/runtime-access';
+import { agentRuntimeTokenFromRequest, bindRuntimeLogContext } from '@/lib/agents/runtime-access';
 import { isAgentRuntimeGrantCurrent } from '@/lib/agents/runtime-grant';
 import { db } from '@/lib/db';
 import { proxyMcpRpcRequest } from '@/lib/process/mcp-gateway';
@@ -7,7 +8,7 @@ import { proxyMcpRpcRequest } from '@/lib/process/mcp-gateway';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agent-runtime/mcp/[deploymentId]/rpc", async function POST(
   req: Request,
   { params }: { params: Promise<{ deploymentId: string }> },
 ) {
@@ -32,5 +33,6 @@ export async function POST(
     },
   });
   if (!deployment) return NextResponse.json({ error: 'deployment not found' }, { status: 404 });
+  bindRuntimeLogContext(token);
   return proxyMcpRpcRequest(req, deployment);
-}
+});

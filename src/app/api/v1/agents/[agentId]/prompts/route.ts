@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveRequestUser } from '@/lib/auth/request-user';
@@ -24,7 +25,7 @@ async function requestAgent(agentId: string, req: Request) {
   return agent;
 }
 
-export async function GET(
+export const GET = withRequestLogging("/api/v1/agents/[agentId]/prompts", async function GET(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -38,9 +39,9 @@ export async function GET(
     signal: req.signal,
   });
   return NextResponse.json({ prompts });
-}
+});
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/prompts", async function POST(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -71,4 +72,4 @@ export async function POST(
     }
     return NextResponse.json({ error: 'MCP prompt is unavailable.' }, { status: 502 });
   }
-}
+});

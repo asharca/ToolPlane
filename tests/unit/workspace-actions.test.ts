@@ -99,7 +99,6 @@ import {
   deployServerAction,
   deployCustomServerAction,
   cloneDeploymentAction,
-  inviteWorkspaceMemberAction,
   removeDeploymentAction,
   removeDeploymentsAction,
   renameDeploymentAction,
@@ -130,12 +129,6 @@ function batchFormData(deploymentIds: string[]): FormData {
   return fd;
 }
 
-function inviteFormData(email: string): FormData {
-  const fd = new FormData();
-  fd.set('workspace', 'mine');
-  fd.set('email', email);
-  return fd;
-}
 
 function configFormData(deploymentId: string, config: unknown): FormData {
   const fd = formData(deploymentId);
@@ -1250,50 +1243,6 @@ describe('revealMcpJsonConfigAction', () => {
   });
 });
 
-describe('inviteWorkspaceMemberAction', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'owner1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'owner1' });
-  });
-
-  it('adds an existing user to the current workspace as a member', async () => {
-    mocks.userFindUnique.mockResolvedValue({ id: 'user2', email: 'teammate@example.com' });
-    mocks.membershipFindUnique.mockResolvedValue(null);
-
-    const result = await inviteWorkspaceMemberAction({}, inviteFormData('Teammate@Example.com'));
-
-    expect(result.error).toBeUndefined();
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({
-      where: { email: 'teammate@example.com' },
-      select: { id: true, email: true },
-    });
-    expect(mocks.membershipCreate).toHaveBeenCalledWith({
-      data: { workspaceId: 'ws1', userId: 'user2', role: 'member' },
-    });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/mine/members');
-  });
-
-  it('requires the current user to own the workspace', async () => {
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'ws1', ownerId: 'owner2' });
-
-    const result = await inviteWorkspaceMemberAction({}, inviteFormData('teammate@example.com'));
-
-    expect(result.error).toBe('Only the workspace owner can invite members.');
-    expect(mocks.userFindUnique).not.toHaveBeenCalled();
-    expect(mocks.membershipCreate).not.toHaveBeenCalled();
-  });
-
-  it('does not create a duplicate membership', async () => {
-    mocks.userFindUnique.mockResolvedValue({ id: 'user2', email: 'teammate@example.com' });
-    mocks.membershipFindUnique.mockResolvedValue({ id: 'membership1' });
-
-    const result = await inviteWorkspaceMemberAction({}, inviteFormData('teammate@example.com'));
-
-    expect(result.message).toBe('teammate@example.com is already a member.');
-    expect(mocks.membershipCreate).not.toHaveBeenCalled();
-  });
-});
 
 describe('updateMcpJsonConfigAction', () => {
   beforeEach(() => {

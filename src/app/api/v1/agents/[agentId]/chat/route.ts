@@ -1,3 +1,6 @@
+import { withRequestLogging } from '@/lib/observability/http';
+import { workspaceAccessResponse } from '@/lib/workspace/access-stream';
+import { enrichLogContext } from '@/lib/observability/context';
 import { randomUUID } from 'node:crypto';
 import {
   createUIMessageStream,
@@ -46,7 +49,7 @@ import {
 export const runtime = 'nodejs';
 export const maxDuration = 900;
 
-export async function POST(
+export const POST = withRequestLogging("/api/v1/agents/[agentId]/chat", async function POST(
   req: Request,
   { params }: { params: Promise<{ agentId: string }> },
 ) {
@@ -130,6 +133,7 @@ export async function POST(
     if (conversation?.publicApiConversation || conversation?.title?.startsWith('msg:')) {
       return new Response('This conversation is read-only in the console', { status: 400 });
     }
+    if (conversationId) enrichLogContext({ conversationId });
     if (conversationId) {
       releaseConversation = acquireConversationOperation(conversationId);
       if (!releaseConversation) return new Response('This conversation is busy.', { status: 409 });
@@ -263,11 +267,11 @@ export async function POST(
         },
       });
       streamOwnsHermesWriteLease = true;
-      return new Response(body, {
+      return workspaceAccessResponse(new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
-      });
+      }), agent.workspaceId, user.id, req.signal);
     }
 
     if (!agent.provider || !agent.model) {
@@ -375,9 +379,9 @@ export async function POST(
       },
     });
     streamOwnsConversation = true;
-    return createUIMessageStreamResponse({ stream });
+    return workspaceAccessResponse(createUIMessageStreamResponse({ stream }), agent.workspaceId, user.id, req.signal);
   } finally {
     if (!streamOwnsConversation) releaseConversation?.();
     if (!streamOwnsHermesWriteLease) releaseHermesWriteLease();
   }
-}
+});

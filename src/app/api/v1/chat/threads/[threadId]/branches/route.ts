@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { ChatBranchMutationSchema } from '@/lib/chat/schemas';
 import {
@@ -22,7 +23,7 @@ async function input(req: Request) {
   }
 }
 
-export async function POST(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/branches", async function POST(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const parsed = await input(req);
@@ -33,9 +34,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ threadI
   } catch (error) {
     return failure(error);
   }
-}
+});
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+export const DELETE = withRequestLogging("/api/v1/chat/threads/[threadId]/branches", async function DELETE(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   const parsed = await input(req);
@@ -46,4 +47,4 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ threa
   } catch (error) {
     return failure(error);
   }
-}
+});

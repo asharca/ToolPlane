@@ -1,3 +1,4 @@
+import { withRequestLogging } from '@/lib/observability/http';
 import { resolveRequestUser } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
 import { effectiveStatus } from '@/lib/process/supervisor';
@@ -8,7 +9,7 @@ import { skillLabel } from '@/lib/workspace/skill-label';
 // Export a workspace "toolkit" manifest: every deployed MCP server (with its
 // gateway endpoint) and installed skill, as a single JSON document an agent
 // config can consume.
-export async function GET(
+export const GET = withRequestLogging("/api/v1/workspaces/[slug]/manifest", async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
@@ -26,7 +27,7 @@ export async function GET(
   const ws = await db.workspace.findFirst({
     where: {
       slug,
-      OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+      status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
     },
     include: {
       deployments: { include: { server: { select: { name: true, slug: true } } } },
@@ -80,4 +81,4 @@ export async function GET(
       'content-disposition': `attachment; filename="${slug}.toolkit.json"`,
     },
   });
-}
+});

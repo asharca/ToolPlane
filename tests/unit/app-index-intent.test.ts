@@ -2,15 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
-  getOrCreateDefaultWorkspace: vi.fn(),
+  getDefaultWorkspace: vi.fn(),
+  getWorkspaceForUser: vi.fn(),
+  listWorkspacesForUser: vi.fn(),
   getAgentMarketListingByDirectorySlug: vi.fn(),
   redirect: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock('@/lib/workspace/queries', () => ({
-  getOrCreateDefaultWorkspace: mocks.getOrCreateDefaultWorkspace,
+  getDefaultWorkspace: mocks.getDefaultWorkspace,
+  getWorkspaceForUser: mocks.getWorkspaceForUser,
+  listWorkspacesForUser: mocks.listWorkspacesForUser,
 }));
+vi.mock('@/components/dashboard/WorkspaceAccountPage', () => ({ WorkspaceAccountPage: () => null }));
+vi.mock('next/headers', () => ({ cookies: async () => ({ get: () => ({ value: 'last-space' }) }) }));
 vi.mock('@/lib/agents/market', () => ({
   getAgentMarketListingByDirectorySlug: mocks.getAgentMarketListingByDirectorySlug,
 }));
@@ -30,7 +36,8 @@ describe('workspace handoff intents', () => {
     mocks.redirect.mockImplementation((url: string) => {
       throw new RedirectSignal(url);
     });
-    mocks.getOrCreateDefaultWorkspace.mockResolvedValue({ slug: 'smoke' });
+    mocks.getDefaultWorkspace.mockResolvedValue({ slug: 'smoke' });
+    mocks.listWorkspacesForUser.mockResolvedValue([{ slug: 'smoke', status: 'active' }]);
     mocks.getAgentMarketListingByDirectorySlug.mockResolvedValue(null);
   });
 
@@ -53,9 +60,9 @@ describe('workspace handoff intents', () => {
       url: '/app/smoke/market/skills?q=research%20helper',
     });
 
-    expect(mocks.getOrCreateDefaultWorkspace).toHaveBeenCalledWith(
+    expect(mocks.getDefaultWorkspace).toHaveBeenCalledWith(
       'user-1',
-      'smoke@example.com',
+      'last-space',
     );
   });
 
@@ -116,5 +123,25 @@ describe('workspace handoff intents', () => {
     });
 
     expect(mocks.getAgentMarketListingByDirectorySlug).not.toHaveBeenCalled();
+  });
+
+  it('shows a chooser for a multi-workspace install without selecting a destination silently', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.listWorkspacesForUser.mockResolvedValue([{ slug: 'one', status: 'active' }, { slug: 'two', status: 'active' }]);
+    const page = await AppIndexPage({ searchParams: Promise.resolve({ server: 'example' }) });
+    expect(page.props.intent).toBe('/app?server=example');
+    expect(mocks.getDefaultWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('validates an explicitly selected workspace and shows an empty state when none is accessible', async () => {
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    const denied = await AppIndexPage({ searchParams: Promise.resolve({ server: 'example', workspace: 'private' }) });
+    expect(denied.props.notice).toBe('unavailable');
+    expect(mocks.getWorkspaceForUser).toHaveBeenCalledWith('private', 'user-1');
+    mocks.getDefaultWorkspace.mockResolvedValue(null);
+    const empty = await AppIndexPage({ searchParams: Promise.resolve({}) });
+    expect(empty.props.user.id).toBe('user-1');
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });
