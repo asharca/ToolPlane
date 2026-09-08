@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CLAUDE_RUNTIME_USER,
   SANDBOX_RUNTIME_PACKAGES,
+  buildClaudeRuntimeArgs,
+  buildClaudeSkillPluginManifest,
   buildSandboxSkillBundles,
   buildClaudeMcpConfig,
   buildDshPatch,
@@ -273,7 +275,7 @@ describe('sandbox Agent runtime helpers', () => {
     expect(wrapper).toContain("trap 'rm -f -- \"$pid_file\"' EXIT");
   });
 
-  it('projects complete skill directories and scopes Claude MCP credentials to the generated config', () => {
+  it('projects complete skill directories and explicitly loads ToolPlane skills in Claude bare mode', () => {
     const bundles = buildSandboxSkillBundles([{
       skillId: null,
       slug: 'Deploy Tool',
@@ -301,6 +303,20 @@ describe('sandbox Agent runtime helpers', () => {
     expect(sandboxSkillBundleDigest(bundles)).not.toBe(sandboxSkillBundleDigest([
       { ...bundles[0]!, markdown: `${bundles[0]!.markdown}\nChanged` },
       bundles[1]!,
+    ]));
+    expect(JSON.parse(buildClaudeSkillPluginManifest())).toMatchObject({
+      name: 'toolplane-agent',
+      skills: './skills/',
+    });
+    expect(buildClaudeRuntimeArgs({
+      modelId: 'model-1',
+      systemPrompt: '',
+      disabledBuiltinTools: [],
+      skillPluginRoot: '/workspace/.toolplane/runtimes/claude-code/agents/agent-1/skills',
+    })).toEqual(expect.arrayContaining([
+      '--bare',
+      '--plugin-dir',
+      '/workspace/.toolplane/runtimes/claude-code/agents/agent-1/skills',
     ]));
     const config = JSON.parse(buildClaudeMcpConfig([
       { deploymentId: 'dep-1', url: 'https://runtime.example/mcp/dep-1/rpc' },
