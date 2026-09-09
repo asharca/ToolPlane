@@ -60,6 +60,23 @@ describe('ToolPlayground', () => {
     expect(screen.getByText('Echo back the provided message.')).toBeInTheDocument();
   });
 
+  it('bounds the argument editor without dropping large tool inputs', async () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`field_${index}`, { type: 'string' }]),
+    );
+    render(<ToolPlayground workspace="acme" deploymentId="dep1" defaultRuntime tools={[
+      { name: 'large_input', inputSchema: { properties } },
+      ...tools,
+    ]} />);
+
+    const editor = screen.getByRole('textbox');
+    expect(editor).toHaveAttribute('rows', '12');
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toHaveProperty('field_39', '');
+    await userEvent.click(screen.getByRole('button', { name: 'echo' }));
+    expect(editor).toHaveAttribute('rows', '5');
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toEqual({ message: '' });
+  });
+
   it('runs a tool through the workspace-scoped console action and shows the result', async () => {
     mocks.runMcpInspectorToolAction.mockResolvedValue({
       result: { content: [{ type: 'text', text: 'HELLO' }] },

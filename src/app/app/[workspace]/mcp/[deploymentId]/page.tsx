@@ -306,7 +306,7 @@ export default async function DeploymentInspectorPage({
           { label: dep.server?.slug ?? label.name },
         ]}
       />
-      <DashboardPage className="space-y-6">
+      <DashboardPage className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
         <section className="ui-panel overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-5 px-5 py-5 sm:px-6">
             <div className="flex min-w-0 items-start gap-3">
@@ -378,10 +378,10 @@ export default async function DeploymentInspectorPage({
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3 sm:px-6">
-            <div className="min-w-0">
+            <div className="min-w-0 max-w-full">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('endpoint')}</p>
               <div className="mt-1 flex min-w-0 items-center gap-2">
-                <code className="max-w-[min(42rem,70vw)] truncate font-mono text-xs text-foreground">{endpoint}</code>
+                <code title={endpoint} className="min-w-0 max-w-[42rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
                 <CopyButton text={endpoint} label={t('copyEndpointUrl')} />
               </div>
             </div>
@@ -536,8 +536,8 @@ export default async function DeploymentInspectorPage({
                 <dl className="divide-y divide-border text-sm">
                   <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
                     <dt className="text-muted-foreground">{t('endpoint')}</dt>
-                    <dd className="flex max-w-full items-center gap-2">
-                      <code className="max-w-[20rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
+                    <dd className="flex min-w-0 items-center gap-2">
+                      <code title={endpoint} className="min-w-0 max-w-[20rem] truncate font-mono text-xs text-foreground">{endpoint}</code>
                       <CopyButton text={endpoint} />
                     </dd>
                   </div>

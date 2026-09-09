@@ -329,7 +329,7 @@ export function ToolPlayground({
         <p className="text-sm text-muted-foreground">{t('noToolsAvailable')}</p>
       ) : (
       <div className="grid min-w-0 gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
-      <nav aria-label={t('inspectorTools')} className="min-w-0 space-y-1">
+      <nav aria-label={t('inspectorTools')} className="max-h-[min(24rem,50dvh)] min-w-0 space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:top-4 lg:self-start">
         <p className="mb-2 text-xs font-medium text-muted-foreground">{t('inspectorTools')}</p>
         {availableTools.map((tool) => (
           <button
@@ -337,6 +337,7 @@ export function ToolPlayground({
             type="button"
             onClick={() => onSelect(tool.name)}
             aria-pressed={selected === tool.name}
+            title={tool.title ? `${tool.title} (${tool.name})` : tool.name}
             className={`flex min-h-9 w-full min-w-0 items-center rounded-md px-2.5 py-1.5 text-left font-mono text-xs transition-colors ${
               selected === tool.name
                 ? 'bg-muted font-semibold text-foreground'
@@ -361,7 +362,7 @@ export function ToolPlayground({
               </span>
             ) : null}
           </div>
-          {current?.description ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{current.description}</p> : null}
+          {current?.description ? <p className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-6 text-muted-foreground">{current.description}</p> : null}
         </div>
 
         <div className="grid min-w-0 gap-4 xl:grid-cols-2">
@@ -390,8 +391,8 @@ export function ToolPlayground({
             value={args}
             onChange={(e) => setArgs(e.target.value)}
             spellCheck={false}
-            rows={Math.max(5, args.split('\n').length)}
-            className="ui-input h-auto p-3 font-mono text-xs"
+            rows={Math.min(12, Math.max(5, args.split('\n').length))}
+            className="ui-input h-auto max-h-[50dvh] resize-y overflow-auto overscroll-contain p-3 font-mono text-xs"
           />
         </div>
 

@@ -457,7 +457,7 @@ export function RuntimeFilesEditor({
                 spellCheck={false}
                 aria-invalid={Boolean(error)}
                 aria-describedby={error ? 'runtime-file-error' : undefined}
-                className="min-h-64 w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:cursor-wait disabled:opacity-70"
+                className="h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh] w-full resize-y overflow-auto overscroll-contain rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:cursor-wait disabled:opacity-70"
               />
             </label>
           </div>

@@ -48,6 +48,10 @@ describe('McpToolCatalog', () => {
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(container.querySelector('details[open] summary')).toHaveTextContent('search_products');
     expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
+    for (const summary of screen.getAllByText('JSON schema', { selector: 'summary' })) {
+      expect(summary.closest('details')).not.toHaveAttribute('open');
+    }
+    expect(screen.getByRole('region', { name: 'Input schema' })).toHaveAttribute('tabindex', '0');
     expect(screen.getByText('No arguments.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'search_products' })).toHaveAttribute(
       'href',
