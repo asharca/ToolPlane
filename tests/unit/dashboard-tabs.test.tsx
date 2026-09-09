@@ -82,6 +82,7 @@ describe('DashboardTabsProvider', () => {
     renderTabs();
 
     expect(screen.getByRole('main').className).not.toContain('dashboard-enter');
+    expect(screen.getByRole('main')).toHaveClass('min-h-0', 'min-w-0', 'overflow-auto', 'overscroll-contain');
   });
 
   it.each([
@@ -171,18 +172,30 @@ describe('DashboardTabsProvider', () => {
 
   it('moves a tab into a new browser window', async () => {
     const user = userEvent.setup();
-    const openedWindow = { opener: null } as Window;
+    const replace = vi.fn();
+    const openedWindow = { opener: window, location: { replace } } as unknown as Window;
     const open = vi.spyOn(window, 'open').mockReturnValue(openedWindow);
     renderTabs();
 
     await user.click(screen.getByRole('button', { name: 'Open Agents in new window' }));
 
-    expect(open).toHaveBeenCalledWith(
+    expect(open).toHaveBeenCalledWith('about:blank', '_blank', 'popup');
+    expect(openedWindow.opener).toBeNull();
+    expect(replace).toHaveBeenCalledWith(
       '/app/smoke/agents?__dashboardTab=initial&__dashboardDetached=1',
-      '_blank',
-      'popup,noopener',
     );
     await waitFor(() => expect(activeTab()).toHaveTextContent('Assistants'));
+  });
+
+  it('keeps the current tab when the browser blocks the new window', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    renderTabs();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Agents in new window' }));
+
+    expect(activeTab()).toHaveTextContent('Agents');
+    expect(openTabs()).toHaveLength(1);
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 
   it('drops saved overview tabs', () => {

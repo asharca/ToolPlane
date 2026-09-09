@@ -55,7 +55,7 @@ export function McpToolCatalog({
 }) {
   if (compact) {
     return (
-      <section className="ui-panel overflow-hidden">
+      <section className="min-w-0 max-w-full overflow-hidden">
         <header className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
           <div className="flex min-w-0 items-start gap-2.5">
             <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -66,7 +66,7 @@ export function McpToolCatalog({
           </div>
           <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{labels.count}</span>
         </header>
-        <div className="space-y-1 px-3 pb-3 sm:px-5 sm:pb-5">
+        <div className="divide-y divide-border px-3 pb-3 sm:px-5 sm:pb-5">
           {tools.map((tool) => {
             const description = tool.description?.trim();
             const content = (
@@ -76,7 +76,7 @@ export function McpToolCatalog({
                   {tool.title && tool.title !== tool.name ? (
                     <span className="ml-2 text-xs text-muted-foreground">{tool.title}</span>
                   ) : null}
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  <span className="mt-1 block [overflow-wrap:anywhere] text-xs leading-5 text-muted-foreground">
                     {description ? `${description.slice(0, 240)}${description.length > 240 ? '…' : ''}` : labels.noDescription}
                   </span>
                 </span>
@@ -96,7 +96,7 @@ export function McpToolCatalog({
   }
 
   return (
-    <section className="ui-panel overflow-hidden">
+    <section className="min-w-0 max-w-full overflow-hidden">
       <header className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
         <div className="flex min-w-0 items-start gap-2.5">
           <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -145,12 +145,12 @@ export function McpToolCatalog({
                 </Link>
               ) : null}
 
-              <div className="space-y-5 px-4 pb-4 pl-10">
+              <div className="min-w-0 space-y-5 px-3 pb-4 sm:px-4 sm:pl-10">
                 <section>
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {labels.instructions}
                   </h3>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">
+                  <p className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-6 text-foreground">
                     {tool.description?.trim() || labels.noDescription}
                   </p>
                 </section>
@@ -164,14 +164,14 @@ export function McpToolCatalog({
                   </div>
 
                   {Object.keys(properties).length ? (
-                    <div className="mt-3 overflow-x-auto rounded-md bg-background/70">
-                      <table className="w-full min-w-[36rem] text-left text-xs">
+                    <div tabIndex={0} role="region" aria-label={labels.inputSchema} className="mt-3 max-w-full overflow-x-auto overscroll-x-contain rounded-md bg-background/70">
+                      <table className="w-full min-w-[36rem] table-fixed text-left text-xs [overflow-wrap:anywhere]">
                         <thead className="text-muted-foreground">
                           <tr>
                             <th className="px-3 py-2 font-medium">{labels.parameter}</th>
                             <th className="px-3 py-2 font-medium">{labels.type}</th>
                             <th className="px-3 py-2 font-medium">{labels.required}</th>
-                            <th className="px-3 py-2 font-medium">{labels.descriptionColumn ?? labels.description}</th>
+                            <th className="w-2/5 px-3 py-2 font-medium">{labels.descriptionColumn ?? labels.description}</th>
                             <th className="px-3 py-2 font-medium">{labels.defaultValue}</th>
                           </tr>
                         </thead>
@@ -199,11 +199,11 @@ export function McpToolCatalog({
                     <p className="mt-2 text-sm text-muted-foreground">{labels.noArguments}</p>
                   )}
 
-                  <details open className="group/schema mt-3">
+                  <details className="group/schema mt-3">
                     <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
                       {labels.schemaJson}
                     </summary>
-                    <pre className="mt-2 max-h-96 overflow-auto rounded-md bg-background/70 p-3 font-mono text-xs leading-5 text-foreground">
+                    <pre tabIndex={0} className="mt-2 max-h-[min(24rem,50dvh)] max-w-full overflow-auto overscroll-contain rounded-md bg-background/70 p-3 font-mono text-xs leading-5 text-foreground">
                       {JSON.stringify(schema, null, 2)}
                     </pre>
                   </details>

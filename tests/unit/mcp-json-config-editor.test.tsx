@@ -34,6 +34,7 @@ describe('McpJsonConfigEditor', () => {
     );
 
     expect(screen.getByLabelText('MCP JSON config')).toHaveValue(initialConfig);
+    expect(screen.getByLabelText('MCP JSON config')).toHaveClass('max-h-[60dvh]', 'overflow-auto', 'overscroll-contain');
     expect(screen.getByRole('radio', { name: /isolated/i })).toBeChecked();
     expect(screen.getByRole('button', { name: 'Save and rebuild' })).toBeInTheDocument();
   });
@@ -101,6 +102,8 @@ describe('McpJsonConfigEditor', () => {
     );
 
     expect(screen.getByLabelText('MCP JSON config')).toHaveTextContent('********');
+    expect(screen.getByLabelText('MCP JSON config')).toHaveClass('h-[min(28rem,50dvh)]', 'overflow-auto', 'overscroll-contain');
+    expect(screen.getByLabelText('MCP JSON config')).toHaveAttribute('tabindex', '0');
     expect(screen.queryByDisplayValue(initialConfig)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save and rebuild' })).not.toBeInTheDocument();
 

@@ -3,9 +3,11 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DashboardChrome } from '@/components/dashboard/DashboardChrome';
 
+const navigation = vi.hoisted(() => ({ pathname: '/app/smoke/agents', search: '' }));
+
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/app/smoke/agents',
-  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => navigation.pathname,
+  useSearchParams: () => new URLSearchParams(navigation.search),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
@@ -33,8 +35,8 @@ function setDesktopViewport(matches: boolean) {
   });
 }
 
-function renderChrome(isAdmin = false, initialSidebarCollapsed = false) {
-  return render(
+function chrome(isAdmin = false, initialSidebarCollapsed = false) {
+  return (
     <DashboardChrome
       slug="smoke"
       workspaceId="workspace-1"
@@ -45,13 +47,20 @@ function renderChrome(isAdmin = false, initialSidebarCollapsed = false) {
       initialSidebarCollapsed={initialSidebarCollapsed}
       workspaces={workspaces}
     >
-      <main>Workspace content</main>
-    </DashboardChrome>,
+      <div>Workspace content</div>
+    </DashboardChrome>
   );
+}
+
+function renderChrome(isAdmin = false, initialSidebarCollapsed = false) {
+  return render(chrome(isAdmin, initialSidebarCollapsed));
 }
 
 describe('DashboardChrome sidebar', () => {
   beforeEach(() => {
+    navigation.pathname = '/app/smoke/agents';
+    navigation.search = '';
+    window.history.replaceState(null, '', navigation.pathname);
     window.localStorage.clear();
     window.sessionStorage.clear();
     Element.prototype.scrollIntoView = vi.fn();
@@ -60,6 +69,47 @@ describe('DashboardChrome sidebar', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])('renders only feature content in a detached window (desktop=%s)', (desktop) => {
+    setDesktopViewport(desktop);
+    navigation.search = '__dashboardTab=initial&__dashboardDetached=1';
+    const savedTabs = JSON.stringify({
+      tabs: [{ id: 'other', href: '/app/smoke/skills', pinned: true }],
+      activeTabId: 'other',
+    });
+    window.sessionStorage.setItem('toolplane:dashboard-tabs:smoke', savedTabs);
+
+    renderChrome();
+
+    expect(screen.getByRole('main')).toHaveTextContent('Workspace content');
+    expect(screen.getByRole('main')).toHaveClass('h-dvh', '[--dashboard-tabbar-height:0rem]');
+    expect(screen.queryByRole('complementary', { hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Open pages', hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open menu', hidden: true })).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem('toolplane:dashboard-tabs:smoke')).toBe(savedTabs);
+  });
+
+  it('keeps feature navigation and reloads detached without discarding query parameters or hashes', () => {
+    navigation.search = '__dashboardDetached=1';
+    const view = renderChrome();
+
+    navigation.pathname = '/app/smoke/agents/agent-1';
+    navigation.search = 'tab=settings';
+    window.history.pushState(null, '', `${navigation.pathname}?${navigation.search}#model`);
+    view.rerender(chrome());
+
+    expect(window.location.pathname).toBe(navigation.pathname);
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('settings');
+    expect(new URLSearchParams(window.location.search).get('__dashboardDetached')).toBe('1');
+    expect(window.location.hash).toBe('#model');
+    expect(screen.queryByRole('complementary', { hidden: true })).not.toBeInTheDocument();
+
+    view.unmount();
+    navigation.search = window.location.search;
+    renderChrome();
+    expect(screen.getByRole('main')).toHaveTextContent('Workspace content');
+    expect(screen.queryByRole('navigation', { name: 'Open pages', hidden: true })).not.toBeInTheDocument();
   });
 
   it('renders an expanded workspace navigation by default', () => {

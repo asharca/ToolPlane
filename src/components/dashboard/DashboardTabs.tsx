@@ -349,7 +349,12 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
   const reorderTabs = useCallback((sourceId: string, targetId: string) => commitState((current) => ({ ...current, tabs: reorderDashboardTabs(current.tabs, sourceId, targetId) })), [commitState]);
   const openInNewWindow = useCallback((id: string) => {
     const tab = stateRef.current.tabs.find((item) => item.id === id);
-    if (!tab || !window.open(hrefForDetachedWindow(tab.href, tab.id), '_blank', 'popup,noopener')) return;
+    if (!tab) return;
+    // noopener returns null even on success; detach before navigating instead.
+    const popup = window.open('about:blank', '_blank', 'popup');
+    if (!popup) return;
+    popup.opener = null;
+    popup.location.replace(hrefForDetachedWindow(tab.href, tab.id));
     if (stateRef.current.tabs.length === 1) {
       const replacement = createTab(`${base}/${defaultTab.segment}`);
       commitState({ tabs: [replacement], activeTabId: replacement.id });
@@ -397,7 +402,7 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
 
 export function DashboardTabContent({ children }: { children?: ReactNode }) {
   return (
-    <main className="m-2 mt-0 flex min-h-0 flex-1 flex-col overflow-auto rounded-[12px] bg-background lg:ml-0">
+    <main className="m-2 mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain rounded-[12px] bg-background lg:ml-0">
       {children}
     </main>
   );

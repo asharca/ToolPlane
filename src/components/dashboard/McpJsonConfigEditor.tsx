@@ -125,13 +125,14 @@ export function McpJsonConfigEditor({
             aria-label={t('jsonConfig')}
             aria-invalid={Boolean(error)}
             aria-describedby={error ? 'mcp-json-config-error' : undefined}
-            className="min-h-[28rem] w-full resize-y rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring"
+            className="h-[min(28rem,50dvh)] min-h-32 max-h-[60dvh] w-full resize-y overflow-auto overscroll-contain rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring"
           />
         ) : (
           <>
             <pre
               aria-label={t('jsonConfig')}
-              className="min-h-[28rem] w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
+              tabIndex={0}
+              className="h-[min(28rem,50dvh)] w-full overflow-auto overscroll-contain whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground"
             >
               {maskedConfig}
             </pre>
