@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.29.0](https://github.com/asharca/ToolPlane/compare/v0.28.0...v0.29.0) (2026-09-10)
+
+
+### Features
+
+* complete workspace lifecycle, admin workflows and observability ([#125](https://github.com/asharca/ToolPlane/issues/125)) ([93e728f](https://github.com/asharca/ToolPlane/commit/93e728f04b8a04da5a346e5c664f8adc0963a2e2))
+* persist workspace sidebar organization ([#122](https://github.com/asharca/ToolPlane/issues/122)) ([410e25f](https://github.com/asharca/ToolPlane/commit/410e25f45708af03adfe0550387abf862712b343))
+* refine workspace and personal settings navigation ([#127](https://github.com/asharca/ToolPlane/issues/127)) ([d37c1a5](https://github.com/asharca/ToolPlane/commit/d37c1a55c7f1eb335d8bc059d7a117cd18f7cf23))
+* unify assistant composer tools ([#120](https://github.com/asharca/ToolPlane/issues/120)) ([24db3e0](https://github.com/asharca/ToolPlane/commit/24db3e0460580949bc4a0777aff83963632e91e3))
+
+
+### Bug Fixes
+
+* load skills in Claude sandbox runtime ([#124](https://github.com/asharca/ToolPlane/issues/124)) ([67b2a6a](https://github.com/asharca/ToolPlane/commit/67b2a6aaf31f0a2ea713311f065e4c1302a5b369))
+* MCP viewport overflow and standalone feature windows ([#126](https://github.com/asharca/ToolPlane/issues/126)) ([bafbcc5](https://github.com/asharca/ToolPlane/commit/bafbcc56f099280e01d4099da15bc4dac8425d90))
+* reorder sidebar assistants and conversations ([#123](https://github.com/asharca/ToolPlane/issues/123)) ([a5cd39d](https://github.com/asharca/ToolPlane/commit/a5cd39d7c5018167f8277db1d7827d64bc7f90a7))
+* **ui:** remove assistant composer top gap ([00769f6](https://github.com/asharca/ToolPlane/commit/00769f6913d837ea7ea8739868a0d76682a101a5))
+
 ## [0.28.0](https://github.com/asharca/ToolPlane/compare/v0.27.0...v0.28.0) (2026-09-06)
 
 
