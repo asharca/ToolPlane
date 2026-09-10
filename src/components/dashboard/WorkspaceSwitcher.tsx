@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
 import { Popover } from 'radix-ui';
-import { Check, ChevronsUpDown, Layers3, Plus } from 'lucide-react';
+import { Check, ChevronsUpDown, Plus, Settings } from 'lucide-react';
 import { CreateWorkspaceForm } from './WorkspaceForms';
-import { WORKSPACE_MANAGER_HREF, workspaceInitials, workspaceSwitchHref, type WorkspaceSummary } from '@/lib/workspace/navigation';
+import { workspaceInitials, workspaceSwitchHref, type WorkspaceSummary } from '@/lib/workspace/navigation';
 
 const WIDE_VIEWPORT_QUERY = '(min-width: 1024px)';
 
@@ -111,6 +111,15 @@ export function WorkspaceSwitcher({
           </div>
 
           <div className="border-t border-border p-1">
+            <Popover.Close asChild>
+              <Link
+                href={`/app/${encodeURIComponent(slug)}/settings?returnTo=${encodeURIComponent(pathname)}`}
+                className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-accent"
+              >
+                <Settings className="size-4" />
+                {managementT('settings')}
+              </Link>
+            </Popover.Close>
             {creating ? (
               <div className="p-3"><CreateWorkspaceForm autoFocus /></div>
             ) : (
@@ -123,7 +132,6 @@ export function WorkspaceSwitcher({
                 {t('createWorkspace')}
               </button>
             )}
-            <Popover.Close asChild><Link href={WORKSPACE_MANAGER_HREF} className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-accent"><Layers3 className="size-4" />{managementT('manage')}</Link></Popover.Close>
           </div>
         </Popover.Content>
       </Popover.Portal>
