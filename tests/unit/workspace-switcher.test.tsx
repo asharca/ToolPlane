@@ -127,7 +127,7 @@ describe('WorkspaceSwitcher', () => {
     expect(outside).toHaveFocus();
   });
 
-  it('exposes workspace management and keeps personal actions out of the workspace picker', async () => {
+  it('exposes workspace settings and keeps management actions out of the workspace picker', async () => {
     const user = userEvent.setup();
     render(
       <WorkspaceSwitcher
@@ -140,7 +140,11 @@ describe('WorkspaceSwitcher', () => {
 
     await user.click(screen.getByRole('button', { name: /Acme/ }));
 
-    expect(screen.getByRole('link', { name: 'Manage workspaces' })).toHaveAttribute('href', '/app?view=workspaces');
+    expect(screen.getByRole('link', { name: 'Workspace settings' })).toHaveAttribute(
+      'href',
+      '/app/acme/settings?returnTo=%2Fapp%2Facme%2Fwork',
+    );
+    expect(screen.queryByRole('link', { name: 'Manage workspaces' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /sign out/i })).toBeNull();
   });
 });

@@ -125,6 +125,9 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/app/smoke/skills');
     expect(screen.getByRole('link', { name: 'Members' })).toHaveAttribute('href', '/app/smoke/members');
     expect(screen.getByRole('link', { name: 'Model Providers' })).toHaveAttribute('href', '/app/smoke/providers');
+    const workspaceButton = screen.getByRole('button', { name: /Smoke Workspace/ });
+    const accountButton = screen.getByRole('button', { name: /Personal settings: smoke@example\.com/ });
+    expect(workspaceButton.compareDocumentPosition(accountButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('uses the server-seeded collapsed state on the first render', () => {
@@ -182,11 +185,16 @@ describe('DashboardChrome sidebar', () => {
     expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
   });
 
-  it('opens settings as a modal route', () => {
+  it('keeps workspace settings out of the sidebar and opens personal settings from the account menu', async () => {
+    const user = userEvent.setup();
     renderChrome();
 
-    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/app/smoke/settings?returnTo=%2Fapp%2Fsmoke%2Fagents');
-    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Personal settings: smoke@example\.com/ }));
+    expect(screen.getByRole('link', { name: 'Personal settings' })).toHaveAttribute(
+      'href',
+      '/app/smoke/settings/account?returnTo=%2Fapp%2Fsmoke%2Fagents',
+    );
   });
 
   it('keeps the closed mobile drawer inert and restores focus after Escape', async () => {

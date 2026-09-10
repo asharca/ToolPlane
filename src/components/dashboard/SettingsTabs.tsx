@@ -2,7 +2,6 @@
 
 import {
   Radio,
-  Users,
   Settings,
   type LucideIcon,
 } from 'lucide-react';
@@ -14,14 +13,12 @@ export function SettingsTabs({ slug }: { slug: string }) {
   const pathname = usePathname();
   const returnTo = useSearchParams().get('returnTo');
   const t = useTranslations('console.settings');
-  const management = useTranslations('console.workspaces');
   const base = `/app/${slug}/settings`;
   const withReturnTo = (href: string) => returnTo
     ? `${href}?returnTo=${encodeURIComponent(returnTo)}`
     : href;
   const tabs: { label: string; href: string; icon: LucideIcon }[] = [
     { label: t('general'), href: withReturnTo(base), icon: Settings },
-    { label: management('members'), href: `/app/${slug}/members`, icon: Users },
     { label: t('channels'), href: withReturnTo(`${base}/channels`), icon: Radio },
   ];
 
