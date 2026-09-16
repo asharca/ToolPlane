@@ -7,8 +7,8 @@
 
 ## 更新 UI
 
-组件或样式改动在 `asharca/ui` 中进行，跑它的检查并合并 PR。在该仓库用配套的
-`ui-vX.Y.Z` tag 发布新包版本。ToolPlane 不再拥有 UI 源码或其 npm 发布权。
+组件或样式改动在 `asharca/ui` 中进行，跑它的检查并合并 PR，再使用该仓库自己的发布工作流发布新包版本。
+ToolPlane 不再拥有 UI 源码或其 npm 发布权。
 
 在 ToolPlane PR 中更新应用：
 
@@ -21,13 +21,11 @@ pnpm add @asharca/ui@X.Y.Z --save-exact
 
 ## CI 与合并
 
-每个 PR（包括堆叠 PR）都运行完整 CI 工作流，也可手动触发。合并进 `main` 不会重复
-跑一次完整 CI。
+普通 PR（包括堆叠 PR）运行完整的 [`ci.yml`](../.github/workflows/ci.yml)，也可手动触发。该工作流没有 `push` 触发器，因此合并进 `main` 不会重复运行完整 CI。
 
-受保护的 `main` 分支要求 PR 保持最新，并通过以下 GitHub Actions 检查：`validate`、
-`connector (ubuntu-latest)`、`connector (macos-latest)`、`connector (windows-latest)`。
-管理员同样受这些要求约束；直接推送、强制推送和删除分支都被阻止。检查是必需的，但此
-仓库不要求第二位维护者批准。
+同仓库中以 `release-please--branches--` 开头的发布分支是例外：`pull_request_target` 校验变更文件只有 `.release-please-manifest.json`、`CHANGELOG.md` 和 `package.json`，通过后提供 Connector 校验结果；这种纯元数据 PR 不重新执行应用或 Connector 测试。参见[发布](./RELEASES.zh-CN.md)。
 
-UI 发布在其自己的仓库中校验 UI 版本。ToolPlane 现有的 `release-please.yml` 应用发布
-流程和 `vX.Y.Z` tag 保持不变；普通功能合并不会发布新的 UI 包。
+工作流提供的检查名称为 `validate`、`connector (ubuntu-latest)`、`connector (macos-latest)` 和 `connector (windows-latest)`。分支保护、必需的 review、管理员绕过权限，以及直接推送或删除限制，都在 GitHub 仓库规则中单独配置，不能仅凭工作流文件断言这些策略已启用或生效。
+
+UI 发布在其自己的仓库中校验 UI 版本。ToolPlane 的 `release-please.yml` 应用发布流程和
+`vX.Y.Z` tag 与此独立；普通功能合并不会发布新的 UI 包。

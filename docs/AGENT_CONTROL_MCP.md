@@ -10,7 +10,7 @@ POST /api/v1/workspaces/<workspace-slug>/agents/mcp
 Authorization: Bearer <personal-api-token>
 ```
 
-The console's **Agents → Connect AI** page can generate connection configs for clients such as Claude Code, Codex, and Cursor directly. Tokens are created under **Settings → API Tokens**; cookie sessions cannot call this endpoint, and the scoped tokens issued by the Toolkit install flow do not have agent-management permissions.
+The console's **Agents → Connect AI** page can generate connection configs for clients such as Claude Code, Codex, and Cursor directly. Create a personal API token in account settings at `/app?view=account`; cookie sessions cannot call this endpoint, and the scoped tokens issued by the Toolkit install flow do not have agent-management permissions.
 
 ## Client configuration
 
@@ -39,10 +39,12 @@ Recommended order of operations for the AI:
 
 1. Call `list_agent_resources` and `list_agents` to get the IDs available in the current workspace.
 2. Call `inspect_mcp_deployment` for each MCP you plan to bind.
-3. Call `create_agent`. Native agents take `providerId`, `model`,
-   `systemPrompt`; Hermes agents take `providerIds` and an image approved by the instance admin.
+3. Call `create_agent`. Pi agents take `providerId`, `model`,
+   `systemPrompt`; Hermes agents take `providerIds` and use an image approved by the instance admin.
 4. Call `get_agent` to check `configured` / `ready` and the actual bindings.
 5. Call `send_message_to_agent`; pass the `conversationId` back to continue the conversation.
+
+The `create_agent.runtime` argument accepts only `"pi"` and `"hermes"`. `"native"` is not a valid value. The console supports additional runtimes (`"claude-code"` and `"dsh"`), but this MCP creation schema does not expose them. See [`control-mcp.ts`](../src/lib/agents/control-mcp.ts) for the tool contract and [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) for the platform runtime inventory.
 
 Model configuration can be omitted, in which case a Draft agent is created that can be finished in the console.
 `maxSteps` is the maximum number of tool-call rounds per reply, in the range `1..1000`, default `100`.
@@ -63,7 +65,7 @@ curl -sS "https://toolplane.example/api/v1/workspaces/acme/agents/mcp" \
       "name":"create_agent",
       "arguments":{
         "name":"Research assistant",
-        "runtime":"native",
+        "runtime":"pi",
         "providerId":"provider-id-from-list_agent_resources",
         "model":"model-id-from-provider",
         "systemPrompt":"Research carefully and cite the evidence.",
@@ -83,6 +85,6 @@ curl -sS "https://toolplane.example/api/v1/workspaces/acme/agents/mcp" \
   credentials never appear in MCP responses.
 - Agent Control MCP provides no tool to delete agents or create model providers.
 - The AI cannot choose the Hermes Docker image; only trusted images configured by the instance admin are used, so
-  provider credentials are never projected into arbitrary third-party images.
-- Audit logs record only the MCP method and tool name — never system prompts, chat content, or model output.
+  provider credentials are never projected into arbitrary third-party images through this creation tool.
+- Standard gateway events record method, tool name, outcome, and timing. The route also passes the MCP response to the diagnostic logging pipeline: when a matching workspace capture is enabled, sanitized response payloads can be stored in `LogDetail`, including returned agent configuration or model output. Redaction is not anonymization. See [Logging and Audit](./OBSERVABILITY.md); do not assume this endpoint is exempt from diagnostic capture.
 - `send_message_to_agent` only accepts a `conversationId` that belongs to the target workspace and target agent.

@@ -2,8 +2,8 @@
 
 > **中文**：[README.zh-CN.md](./README.zh-CN.md)
 >
-> This directory is ToolPlane's single authoritative documentation source. Suggested reading order: **root [README](../README.md) → [ARCHITECTURE.md](./ARCHITECTURE.md) → topic docs per the tables below**.
-> Docs follow the [Diátaxis](https://diataxis.fr/) taxonomy: **Concepts & Architecture** (understand the system), **Usage & Integration** (accomplish a task), **Operations & Releases** (run the system), **Design Archive** (historical decisions, not the current state).
+> This directory is ToolPlane's single authoritative documentation source. Suggested reading order: **root [README](../README.md) → [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) → topic docs per the tables below**.
+> Inspired by [Diátaxis](https://diataxis.fr/), docs are grouped by reader task: **Concepts & Architecture** (understand the system), **Usage & Integration** (accomplish a task), and **Operations & Releases** (run the system).
 
 ---
 
@@ -11,8 +11,8 @@
 
 | Doc | Contents |
 |---|---|
-| [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) ([中文](./ARCHITECTURE.md)) | **Main entry**: tech stack, top-level architecture, directory layout, 68 Prisma models, console/admin/JSON API overview |
-| [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md) ([中文](./HERMES_AGENT_RUNTIME.md)) | Agent runtime architecture decision: Hermes-first, ToolPlane-owned control plane, role of the Native runtime |
+| [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) ([中文](./ARCHITECTURE.md)) | **Main entry**: tech stack, top-level architecture, directory layout, Prisma domain models, console/admin/JSON API overview |
+| [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md) ([中文](./HERMES_AGENT_RUNTIME.md)) | Hermes runtime: configuration projection, lifecycle, network and credential boundaries; see Architecture for the full runtime inventory |
 | [SANDBOXES.md](./SANDBOXES.md) ([中文](./SANDBOXES.zh-CN.md)) | Agent sandbox shape: Docker / Connector runtimes, MCP tools exposure, PTY terminal |
 | [OBSERVABILITY.md](./OBSERVABILITY.md) ([中文](./OBSERVABILITY.zh-CN.md)) | Logging/audit model: `LogEvent` / `LogDetail` / `AuditEvent` semantics, capture and retention |
 | [WORKSPACES.en.md](./WORKSPACES.en.md) ([中文](./WORKSPACES.md)) | Workspace lifecycle: members, invitations, ownership transfer, deletion state machine |
@@ -32,14 +32,14 @@
 |---|---|
 | [RELEASES.md](./RELEASES.md) ([中文](./RELEASES.zh-CN.md)) | release-please workflow and GitHub setup |
 | [UI_LIBRARY.md](./UI_LIBRARY.md) ([中文](./UI_LIBRARY.zh-CN.md)) | Shared UI package `@asharca/ui`: update and release workflow |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | (also) diagnostic capture windows, log export, retention management |
-| [WORKSPACES.md](./WORKSPACES.md) | (also) deployment notes for the workspace-deletion migration |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) ([中文](./OBSERVABILITY.zh-CN.md)) | (also) diagnostic capture windows, log export, retention management |
+| [WORKSPACES.en.md](./WORKSPACES.en.md) ([中文](./WORKSPACES.md)) | (also) deployment notes for the workspace-deletion migration |
 
 ---
 
 ## Documentation Conventions
 
-- **Single source of truth**: each topic is covered in exactly one document; everywhere else links to it instead of copying paragraphs.
+- **Single source of truth**: each topic has one maintained document per language; everywhere else links to it instead of copying paragraphs.
 - **Code wins**: when a description conflicts with the code, trust the code and fix the doc; behavior changes update the matching doc in the same PR.
 - **New docs**: topic docs live at this directory's root with an all-caps underscore name (`TOPIC_NAME.md`), open with one paragraph stating "what this is and who it's for", and get registered in this index.
 - **Languages**: every topic doc is bilingual — Chinese original `NAME.md` + English translation `NAME.en.md`, or English original + Chinese translation `NAME.zh-CN.md`. Both are cross-linked at the top; the index links both. New docs must ship both languages, and changes should update both copies in the same PR.

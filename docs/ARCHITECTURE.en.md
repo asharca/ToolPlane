@@ -2,356 +2,257 @@
 
 > **中文**：[ARCHITECTURE.md](./ARCHITECTURE.md)
 >
-> ToolPlane is a self-hosted agent tool control plane: a **standalone public product site**, a **signed-in console with a real marketplace and MCP/Agent/Sandbox runtimes**, an **admin console**, and a **JSON API**.
+> ToolPlane is a self-hosted agent tool control plane with a standalone public product site, a signed-in console with a real marketplace and MCP/Agent/Sandbox runtimes, an admin console, and JSON APIs. This document is for developers locating implementation entry points and understanding system boundaries.
 
 ---
 
 ## 1. Overview
 
-ToolPlane is an MCP (Model Context Protocol) and agent ecosystem platform with four functional areas:
+The platform has four functional areas:
 
-1. **Public product site** `(site)` — showcases ToolPlane's value and capabilities only; never reads or mirrors real MCP/Skill/Agent marketplace data.
-2. **Console / Hub** `app/[workspace]` — the signed-in workspace: browse the real marketplace, deploy MCP servers, install skills and agents, **freely assemble** resources into Toolkits, run agents (Native / Hermes sandbox), chat assistants, knowledge bases, Work task flows, call tools through the gateway, and inspect observability.
-3. **Admin console** `admin/` — administrators review marketplace entries and manage the catalog (Servers/Skills/Agents/Assistants/categories), users, workspaces, system settings, and log auditing.
-4. **JSON API** `api/v1/*` + `api/openai/v1/*` — MCP JSON-RPC gateway, skill downloads, Toolkit/workspace manifest export, the Agent public API, the Agent Control MCP, channel events, and admin endpoints; also exposes `api/v1/openapi.json`.
+1. **Public product site** `(site)`: presents product capabilities without reading or mirroring real MCP, Skill, or Agent marketplace data.
+2. **Console / Hub** `app/[workspace]`: browses the real marketplace, deploys MCPs, installs skills and agents, assembles Toolkits, runs Pi, Claude Code, DeepSeek Harness (DSH), or Hermes agents, and provides chat assistants, knowledge bases, Work flows, and observability.
+3. **Admin console** `admin/`: reviews marketplace entries and manages catalogs, users, workspaces, settings, and auditing.
+4. **JSON APIs** `api/v1/*` + `api/openai/v1/*`: MCP gateways, skill downloads, manifest export, the public Agent API, Agent Control MCP, channel events, and administration.
 
-Key trait: MCPs in the console are not mock data — a deployment can be a builtin child process, a remote MCP (streamable-http / sse), or a Docker bridge container; the gateway proxies requests to it and records observability.
+An MCP deployment can be a builtin child process, remote MCP (Streamable HTTP / SSE), or Docker bridge container. The gateway forwards real requests rather than returning marketplace demo data.
 
-Topic docs:
+Topic entry points:
 
-- [`docs/TOOLKIT_SYNC.md`](./TOOLKIT_SYNC.md) — how Toolkits sync to Claude Code, Codex, opencode, Hermes
-- [`docs/SANDBOXES.md`](./SANDBOXES.md) — Agent sandbox Docker/Connector runtime
-- [`docs/HERMES_AGENT_RUNTIME.md`](./HERMES_AGENT_RUNTIME.md) — Hermes-first agent runtime architecture
-- [`docs/AGENT_MESSAGING_PLATFORMS.md`](./AGENT_MESSAGING_PLATFORMS.md) — Telegram/Lark(Feishu)/QQ/WeChat/Discord/Slack channels
-- [`docs/AGENT_PUBLIC_API.md`](./AGENT_PUBLIC_API.md) — public API for published Agent Endpoints and deployment topology constraints
-- [`docs/AGENT_CONTROL_MCP.md`](./AGENT_CONTROL_MCP.md) — workspace-level Agent Control MCP
-- [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) — unified logging/audit model, capture and retention
-- [`docs/WORKSPACES.md`](./WORKSPACES.md) — workspace members, invitations, deletion lifecycle
-- [`docs/UI_LIBRARY.md`](./UI_LIBRARY.md), [`docs/RELEASES.md`](./RELEASES.md) — shared UI package and release process
-
----
+| Topic | Document |
+|---|---|
+| Toolkit sync | [TOOLKIT_SYNC.en.md](./TOOLKIT_SYNC.en.md) |
+| Docker / Connector sandboxes | [SANDBOXES.md](./SANDBOXES.md) |
+| Hermes runtime | [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md) |
+| Messaging channels | [AGENT_MESSAGING_PLATFORMS.md](./AGENT_MESSAGING_PLATFORMS.md) |
+| Public Agent API | [AGENT_PUBLIC_API.md](./AGENT_PUBLIC_API.md) |
+| Agent Control MCP | [AGENT_CONTROL_MCP.md](./AGENT_CONTROL_MCP.md) |
+| Logging and audit | [OBSERVABILITY.md](./OBSERVABILITY.md) |
+| Workspace lifecycle | [WORKSPACES.en.md](./WORKSPACES.en.md) |
+| UI and releases | [UI_LIBRARY.md](./UI_LIBRARY.md), [RELEASES.md](./RELEASES.md) |
 
 ## 2. Tech Stack
 
+Dependency versions and Node requirements are defined by [`package.json`](../package.json) and the lockfile, rather than a second version inventory maintained in prose.
+
 | Layer | Choice |
 |---|---|
-| Framework | Next.js 16.2.9 (App Router + Turbopack), React 19.2 |
-| Language | TypeScript 5 (Node >= 22) |
-| Styling | Tailwind CSS v4 + shared UI package `@asharca/ui` (published to npm, source in a separate repo) |
-| Theme | next-themes (`class` strategy, dark/light) |
-| i18n | next-intl (`messages/en.json`, `messages/zh.json`) |
-| ORM | Prisma 7.8 + `@prisma/adapter-pg` driver adapter + `pg` |
-| Database | PostgreSQL |
-| Auth | jose (signs/verifies JWT session cookies) + hashed API tokens + Agent API keys; admins identified via `ADMIN_EMAILS` |
-| Agent/Chat | Vercel AI SDK 7 (`ai` + `@ai-sdk/react`), assistant-ui, streamdown |
-| MCP | `@modelcontextprotocol/sdk`, in-house gateway/bridges (`mcp-http-bridge` / `mcp-stdio-bridge`) |
-| Channels | grammy (Telegram), `@larksuiteoapi/node-sdk` (Feishu), etc. |
-| Terminal/Desktop | node-pty + xterm, noVNC (sandbox screen), ws |
+| Application | Next.js App Router, React, TypeScript |
+| Styling | Tailwind CSS and the published `@asharca/ui` package |
+| Theme / i18n | next-themes, next-intl (`messages/en.json`, `messages/zh.json`) |
+| Data | PostgreSQL, Prisma, `@prisma/adapter-pg`, `pg` |
+| Authentication | jose-signed JWT sessions, hashed API tokens, separate Agent API keys |
+| Agent / chat | `@earendil-works/pi-ai` and sandbox runtimes; AI SDK UI message streams, assistant-ui, streamdown |
+| MCP | `@modelcontextprotocol/sdk`, platform gateways and HTTP/stdio bridges |
+| Channels | Node adapters including grammy and `@larksuiteoapi/node-sdk` |
+| Terminal / desktop | node-pty, xterm, noVNC, ws |
 | Icons | lucide-react, @primer/octicons-react |
-| Testing | Vitest 4 (~1800+ cases: 259 unit files, 56 integration files, a few `.live.` cases), raw Playwright library for e2e |
+| Testing | Vitest; test entry points and environments are defined in `vitest.config.ts`, `tests/`, and CI |
 
-Key environment variables (`.env.example`): `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `ADMIN_EMAILS`, `CONNECTOR_WS_*` (Connector onboarding), `HERMES_DASHBOARD_*`, `TOOLPLANE_IMAGE/PLATFORM/UPDATE_*` (self-update), `TOOLPLANE_MCP_STARTUP_*` (startup timeouts).
-
----
+See [`.env.example`](../.env.example) for configuration including `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CONNECTOR_WS_*`, `HERMES_DASHBOARD_*`, startup, and self-update settings. An environment example does not establish a common authentication policy for every route.
 
 ## 3. Top-Level Architecture
 
+```text
+Browser / CLI / Agent
+  -> Next.js App Router
+       |-- (site): static product site
+       |-- app/[workspace]: console and real marketplace
+       |-- admin: administration
+       `-- api/v1 + api/openai/v1: JSON / MCP APIs
+             |-- MCP Deployment
+             |    |-- builtin child process
+             |    |-- Docker bridge
+             |    `-- remote HTTP / SSE
+             `-- Agent Runtime
+                  |-- Pi / Claude Code / DSH: dedicated sandboxes
+                  `-- Hermes: dedicated container and /opt/data volume
+
+Generic Sandboxes (Docker / User Connector) separately expose files, PTYs, and MCP tools.
 ```
-                          ┌──────────────────────────────────────────┐
-   Browser                │            Next.js (App Router)           │
-   ──────                 │                                          │
-   Public visitor ──────► │  (site)  Static product marketing        │
-   Signed-in user ──────► │  app/[workspace]  Console + real market  │
-   Administrator ───────► │  admin/  Review, catalog, users, logs    │
-   Agent / CLI ─────────► │  api/v1/* + api/openai/v1/*  JSON API    │
-                          └───────┬──────────────┬───────────────────┘
-                                  │              │
-              ┌───────────────────▼───────┐  ┌───▼────────────────────────┐
-              │ MCP Deployment runtime    │  │ Agent Runtime              │
-              │ builtin child process /   │  │ Native in-process /        │
-              │ Docker bridge container / │  │ Hermes container + volume /│
-              │ remote MCP (HTTP/SSE)     │  │ Sandbox: Docker/Connector  │
-              └───────────────────────────┘  └────────────────────────────┘
-```
 
-**Route groups:**
-
-- `src/app/(site)/...` — standalone public product site, static marketing content only, **never reads real marketplace or personal data**.
-- `src/app/app/(auth)/...` — login/signup (URLs `/app/login`, `/app/signup`).
-- `src/app/app/[workspace]/...` — workspace console wrapped in `DashboardChrome`; plus `@modal` intercepting routes (e.g. the settings/account modal).
-- `src/app/admin/...` — admin console (own layout, admin required).
-- `src/app/api/v1/...`, `src/app/api/openai/v1/...` — UI-less JSON routes.
-
----
+Route groups do not appear in URLs. `src/app/app/(auth)` serves `/app/login` and `/app/signup`; `src/app/app/[workspace]` is the workspace UI with `DashboardChrome`; `src/app/admin` has its own admin gate. API authorization must not rely on the UI's permission checks.
 
 ## 4. Directory Layout
 
-```
+These are implementation entry points, not an exhaustive file inventory:
+
+```text
 src/
-├─ app/
-│  ├─ (site)/            Static public product site (page/server/client/agents/
-│  │                     categories/daily/leaderboards/news/search/sell/submit/
-│  │                     privacy/terms/what-is-an-mcp-server)
-│  ├─ app/
-│  │  ├─ page.tsx                /app → restore/select workspace (see WORKSPACES.md)
-│  │  ├─ (auth)/login, signup    /app/login, /app/signup
-│  │  └─ [workspace]/   Workspace console: mcp, skills, toolkits, market/{mcp,skills,
-│  │                     agents,assistants,toolkits,installed,items,publish},
-│  │                     agents, chat, knowledge, work,
-│  │                     sandboxes, providers, observability, members, seller,
-│  │                     settings{,/account,/tokens,/channels,/providers}, @modal
-│  ├─ admin/            Admin console: agents, assistants, categories, logs,
-│  │                     market, reviews, servers, settings, skills, users, workspaces
-│  └─ api/
-│     ├─ v1/            Main JSON API (see §10)
-│     └─ openai/v1/     OpenAI-compatible endpoints (models, chat/completions)
-├─ components/
-│  ├─ layout/  home/  cards/  server/  theme/  timezone/  marketing/  auth/
-│  ├─ dashboard/        All console components (Chrome/Sidebar/Header/Tabs,
-│  │                    MCP inspector, ToolPlayground, Toolkits, Agent, chat, ...)
-│  ├─ admin/            Admin console components
-│  └─ ui/               Local primitives (shared components mostly come from @asharca/ui)
-├─ lib/
-│  ├─ auth/        session(jose), tokens, password, current-user, request-user,
-│  │               safe-redirect, actions, token-format
-│  ├─ process/     supervisor, spawn-spec(builtin/remote/bridge), mcp-gateway,
-│  │               deployment-gateway, deployment-runtime-container,
-│  │               deployment-config-volume, mcp-client, mcp-tool-catalog,
-│  │               mcp-prompts, mcp-resources, mcp-result-redaction,
-│  │               reconcile, sandbox, sandbox-mcp-client, git-source
-│  ├─ agents/      Agent domain: run/native/sandbox-runtime/hermes/, channels/,
-│  │               control-mcp, control-service, public-api/, market*, messaging,
-│  │               conversation-*, model/provider catalog, platform runner, ...
-│  ├─ sandboxes/   Sandboxes: connector*(WS onboarding/auth/broker), runtime, images,
-│  │               reconcile, file-list, actions/queries
-│  ├─ chat/        Chat assistants: service, branches, web-search
-│  ├─ work/        Work task flows: coordinator, sessions, state-machine, run-control
-│  ├─ knowledge/   Knowledge bases
-│  ├─ market/      Unified marketplace: listings, artifact, skill/assistant manifest,
-│  │               copy-updates, publisher-management, secret-scan
-│  ├─ observability/ events(LogEvent), log, audit, http, queries, redaction,
-│  │               maintenance, settings, system, plugin-telemetry
-│  ├─ workspace/ toolkits/ skills/ seller/ admin/ system/ security/ http/
-│  ├─ attachments/ plugin/ remote-mcp/ i18n/ marketing/ queries/
-│  └─ db.ts        Prisma client + pg adapter
-├─ i18n/            next-intl config
-scripts/
-│  ├─ mcp-server.mjs / mcp-tools.mjs     Builtin demo MCP server and tools
-│  ├─ mcp-http-bridge.mjs / mcp-stdio-bridge.mjs / sandbox-mcp-server.mjs
-│  ├─ native-runtime-session.mjs / dsh-runtime-driver.mjs   Agent runtime drivers
-│  ├─ assemble-runtime.mjs / start-server.cjs / bridge-env.mjs  Packaging and startup
-│  └─ smoke-seed.ts / seed-real-mcp-skills.ts / import-*.ts / sync-tp-skills.ts
-packages/
-│  ├─ connector/    Sandbox host-side Connector (`pnpm connector:dev`)
-│  └─ ui/           (placeholder; shared UI moved to the separate @asharca/ui repo)
-runtime/migrator/   Deployment migrator
-prisma/
-│  ├─ schema.prisma (68 models)
-│  └─ migrations/   72 migrations (0_init … 20260908000000_workspace_lifecycle)
-tests/ (unit/ integration/ stubs/), e2e/
+  app/
+    (site)/                    static public product site
+    app/(auth)/                login and signup
+    app/page.tsx               account entry, workspace restoration/selection
+    app/[workspace]/           workspace console
+    admin/                     admin console
+    api/v1/                    platform APIs
+    api/openai/v1/             OpenAI-compatible adapter
+  components/
+    dashboard/                 console components
+    admin/                     admin components
+    ui/                        application-local primitives
+  lib/
+    auth/                      sessions, tokens, account and admin policies
+    process/                   MCP supervisor, bridges, catalogs, config volumes
+    agents/                    runtime selection, execution, control and public APIs
+      hermes/                  Hermes projection, proxying, lifecycle
+    sandboxes/                 Docker / Connector, files and runtimes
+    chat/                      assistants, threads, branches
+    work/                      coordinator, sessions, approvals, run control
+    knowledge/                 knowledge bases
+    market/                    listings, releases, installs, reviews
+    observability/             LogEvent, LogDetail, AuditEvent
+    workspace/                 members, invitations, deletion
+    toolkits/ skills/ plugin/   toolkits, skills, client synchronization
+    marketing/                 static public-site content
+    db.ts                      Prisma + pg adapter
+scripts/                       runtime drivers, packaging, startup, imports, seeds
+packages/connector/            user-host Connector
+runtime/migrator/              deployment migrator
+prisma/schema.prisma           authoritative data model
+prisma/migrations/             database migration history
+tests/                         unit/integration tests and stubs
 ```
 
----
+Shared UI source is in the separate `asharca/ui` repository. ToolPlane consumes released `@asharca/ui`; do not treat `packages/ui` as a maintained local source entry point. Obtain model, migration, route, and test counts from current source or actual test reports rather than static numbers copied here.
 
 ## 5. Data Model (Prisma)
 
-**68 models**, grouped by domain:
+[`prisma/schema.prisma`](../prisma/schema.prisma) defines the complete fields and relationships. Main domains include:
 
-**Catalog content**
+| Domain | Main models |
+|---|---|
+| Catalog | `Server`, `Client`, `Skill`, `Category`, `DailySnapshot` |
+| Accounts / workspaces | `User`, `ApiToken`, `PasswordResetToken`, `Workspace`, `Membership`, `WorkspaceInvitation`, `WorkspaceAttachment` |
+| MCP / Sandbox | `Deployment`, `DeploymentConfigFile`, `InstalledSkill`, `SkillInvocation`, `Sandbox`, `SandboxSnapshot` |
+| Toolkit | `Toolkit`, `ToolkitServer`, `ToolkitSkill`, `ToolkitInstallLink` |
+| Unified marketplace | `MarketListing`, `MarketRelease`, `MarketInstall` |
+| Agent composition | `Agent`, `AgentServer`, `AgentSkill`, `AgentToolkit`, `AgentSubAgent`, `AgentKnowledgeBase`, `AgentModelProvider`, `AgentComposerPrompt`, `AgentAttachment` |
+| Agent execution | `AgentRuntime`, `AgentSandbox`, `AgentRun`, `Conversation`, `Message`, `AgentChannelConnection` |
+| Agent marketplace | `AgentListing`, `AgentRelease`, `AgentInstall` |
+| Public Endpoints | `AgentEndpoint`, `AgentEndpointRevision`, `AgentEndpointRuntime`, `AgentApiClient`, `AgentApiKey`, `AgentApiUsageBucket`, `AgentApiMaintenanceLease`, `AgentPublicConversation` |
+| Chat / Work | `ChatAssistant`, `ChatAssistantMcpGrant`, `ChatThread`, `ChatTurn`, `ChatMessage`, `WorkSession`, `WorkApproval` |
+| Knowledge / models | `KnowledgeBase`, `KnowledgeDocument`, `KnowledgeChunk`, `ModelProvider`, `ProviderModel` |
+| Logs / system | `LogEvent`, `LogDetail`, `AuditEvent`, `SystemSetting`, `SyncEvent` |
 
-- `Server` — MCP servers (slug, recipe/verification, deployment source); `Client` — MCP clients; `Skill` — skills (GitHub/registry sources, bundles); `Category` — linked to Server/Client/Skill/marketplace entries; `DailySnapshot` — daily ranking snapshots.
+`Deployment.mcpToolExposure` / `mcpAllowedTools` control tool exposure; `publicInvocable` is an additional public-invocation gate. An `ApiToken` may be restricted to a Toolkit and must not be treated as an account-level token.
 
-**Accounts & workspaces**
-
-- `User` (locale, timeZone, status, roles), `ApiToken` (prefix + tokenHash, can be Toolkit-scoped), `PasswordResetToken`.
-- `Workspace` (unique slug, owner, lifecycle state active/deleting/delete_failed, model preferences), `Membership`, `WorkspaceInvitation` (one-time invitations, hash only), `WorkspaceAttachment`.
-
-**MCP runtime**
-
-- `Deployment` — a Server or custom source deployed in a workspace (`source`/`installCfg`, `status`, `mcpToolExposure`/`mcpAllowedTools` tool-exposure control, `publicInvocable` public-invocation gate).
-- `DeploymentConfigFile` — deployment config files (materialized as a managed volume mounted into the container).
-- `InstalledSkill`, `SkillInvocation` (plugin telemetry), `Sandbox`, `SandboxSnapshot`.
-
-**Toolkits**
-
-- `Toolkit` (`visibility`, `enabled`), `ToolkitServer` (↔ Deployment), `ToolkitSkill` (↔ InstalledSkill), `ToolkitInstallLink` (install share links).
-
-**Unified marketplace**
-
-- `MarketListing` — unified marketplace entries (MCP/Skill/Agent/Assistant, namespace + slug, categories, review state); `MarketRelease` — immutable releases; `MarketInstall` — install records (incl. requested release).
-
-**Agent domain**
-
-- `Agent` + composition links: `AgentServer` (MCP), `AgentSkill`, `AgentToolkit`, `AgentSubAgent`, `AgentKnowledgeBase`, `AgentComposerPrompt`, `AgentAttachment`, `AgentModelProvider`.
-- `AgentRuntime` (kind: native/hermes, explicitly chosen), `AgentSandbox` (exclusive binding), `AgentRun`.
-- Marketplace/publishing: `AgentListing`, `AgentRelease`, `AgentInstall`.
-- Messaging platforms: `AgentChannelConnection` (channel credentials/binding/sandbox scope), `Conversation`, `Message`.
-- Public API: `AgentEndpoint`, `AgentEndpointRevision`, `AgentEndpointRuntime`, `AgentApiClient`, `AgentApiKey`, `AgentApiUsageBucket`, `AgentApiMaintenanceLease`, `AgentPublicConversation`.
-
-**Chat assistants**
-
-- `ChatAssistant` (configuration + marketplace origin), `ChatAssistantMcpGrant` (MCP grants), `ChatThread`, `ChatTurn`, `ChatMessage` (branch support).
-
-**Work task flows**
-
-- `WorkSession` (coordinator-driven background execution), `WorkApproval` (human approval gates).
-
-**Knowledge bases**
-
-- `KnowledgeBase`, `KnowledgeDocument`, `KnowledgeChunk`.
-
-**Model providers**
-
-- `ModelProvider`, `ProviderModel` (model catalog available to Hermes/Agents).
-
-**Observability & system**
-
-- `LogEvent` (searchable event metadata + trace/span), `LogDetail` (scoped diagnostic payload, 7-day retention), `AuditEvent` (append-only audit) — see OBSERVABILITY.md.
-- `SystemSetting` (admin settings), `SyncEvent` (Toolkit sync events).
-
----
+[`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) defines the runtime identifiers `pi`, `claude-code`, `dsh`, and `hermes`. The internal filename `native.ts` does not establish a selectable `native` runtime.
 
 ## 6. Auth & Sessions
 
-- **Sessions**: `lib/auth/session.ts` signs JWTs with `AUTH_SECRET` via `jose`, stored in an HTTP-only cookie.
-- **Passwords**: hashed/verified in `lib/auth/password.ts`; password recovery uses one-time `PasswordResetToken` (the `account:reset-password` script resets manually).
-- **API tokens**: user-level; `lib/auth/tokens.ts` creates (one-time plaintext)/verifies/revokes; can be bound to a Toolkit as a scoped token. Personal tokens are managed at `/app?view=account` (legacy workspace tokens pages redirect there).
-- **Agent API keys**: public Agent Endpoints use separate `AgentApiClient`/`AgentApiKey`; usage is limited by `AgentApiUsageBucket`.
-- **Dual-channel auth**: `resolveRequestUser(req)` tries `Authorization: Bearer <token>` first, then falls back to the session cookie.
-- **Admins**: identified by the `ADMIN_EMAILS` env var; access `/admin/*` and `api/v1/admin/*`.
-
----
+- **Sessions and passwords**: `lib/auth/session.ts` uses `jose` and `AUTH_SECRET` for HTTP-only session cookies; `lib/auth/password.ts` hashes passwords. Recovery uses one-time `PasswordResetToken`s, with an `account:reset-password` maintenance script.
+- **Personal API tokens**: plaintext is returned once at creation; hashes are persisted. Manage them at `/app?view=account`. Toolkit installation tokens have additional resource-scope restrictions.
+- **Different route policies**: in [`request-user.ts`](../src/lib/auth/request-user.ts), `resolveRequestUser` tries Bearer auth and then a session; `resolveAccountRequestUser` rejects Toolkit tokens; `resolveAgentControlRequestUser` requires an explicit valid account-level Bearer token and never accepts a cookie-only request.
+- **Public Agent API**: a separate `AgentApiClient` / `AgentApiKey` system enforces scopes and budgets rather than reusing console sessions.
+- **Administrators**: [`admin-policy.ts`](../src/lib/auth/admin-policy.ts) gates access on `user.role === 'admin'`, not an email allowlist checked in place of the role on each request. `ADMIN_EMAILS` is bootstrap configuration; suspended-account status must also be checked.
 
 ## 7. Public Product Site `(site)`
 
-The public site is strictly decoupled from the marketplace: pages read only the standalone bilingual static content in `lib/marketing/content.ts` and never import `lib/db`, `lib/queries`, workspace, or current-user modules.
+The public site is separate from the real marketplace. It reads bilingual static content in `lib/marketing/content.ts`, without importing database, workspace, or current-user queries.
 
-- **Home** `/` + capability pages `/server`, `/client`, `/agents`.
-- **Directory-style pages** `/categories`, `/search`, `/leaderboards`, `/daily` — marketing presentations/fixed redirects, no real DB queries.
-- **Static/landing** `/news`, `/sell`, `/submit` (enters the signed-in console), `/privacy`, `/terms`, `/what-is-an-mcp-server`.
+The home page `/` and `/server`, `/client`, `/agents` present capabilities. `/categories`, `/search`, `/leaderboards`, `/daily` are marketing presentations or fixed redirects. `/news`, `/sell`, `/submit`, `/privacy`, `/terms`, and `/what-is-an-mcp-server` are static or landing entries. Real installation enters the signed-in console.
 
-`tests/unit/public-site-boundary.test.ts` recursively checks public pages' dependency graphs to keep real marketplace queries out of the front site.
-
----
+`tests/unit/public-site-boundary.test.ts` checks the dependency graph to keep marketplace queries out of the public site.
 
 ## 8. Console / Hub `app/[workspace]`
 
-`layout.tsx` resolves the workspace and session, then renders `DashboardChrome` (grouped sidebar + header + mobile drawer). Sidebar organization is persisted (see #122).
+The workspace layout resolves authentication and access, then renders `DashboardChrome`. The following paths are under `/app/[workspace]`:
 
-### 8.1 MCP servers
-- `/mcp` — deployed list; `/market/mcp`, `/market/mcp/[serverSlug]` — signed-in marketplace (admin-verified entries with resolvable recipes only).
-- `/mcp/[deploymentId]` — inspector: Overview / Variables / **Tools** (`ToolPlayground` live `tools/list` + invocation) / Logs / **Terminal** (PTY stream) / **Runtime files** (`DeploymentConfigFile` editor); supports Connect/Restart/Stop/Rebuild and MCP JSON config editing.
+| Entry | Purpose |
+|---|---|
+| `/mcp`, `/market/mcp` | Deployed MCPs and the real marketplace |
+| `/mcp/[deploymentId]` | Tool inspection/calls, logs, variables, PTY, runtime config files, lifecycle actions |
+| `/skills`, `/market/skills`, `/skills/[installId]` | Skill installation, preview, copy, download |
+| `/toolkits`, `/toolkits/[slug]` | Resource composition, manifests, install links, sync configuration |
+| `/agents`, `/agents/[agentId]` | Explicit runtime selection, resource configuration, execution |
+| `/market/agents`, `/agents/[agentId]/publish` | Independent template installs and publication for review |
+| `/chat`, `/market/assistants` | Assistant conversations, threads, branches, marketplace |
+| `/knowledge`, `/work` | Knowledge bases, task flows, approvals |
+| `/sandboxes`, `/providers` | Sandboxes, snapshots, screens; model providers and catalogs |
+| `/observability` | `LogEvent` / `gateway.request` metrics, percentiles, hourly aggregates |
+| `/members`, `/settings` | Members and invitations; name, default model, ownership, deletion |
+| `/settings/channels`, `/settings/providers` | Channel and model credentials |
+| `/settings/tokens`, `/settings/account` | Legacy workspace entries for account settings; personal tokens live at `/app?view=account` |
+| `/seller` | Publishing and existing listings |
 
-### 8.2 Skills / Toolkits
-- `/skills`, `/market/skills`, `/skills/[installId]` (SKILL.md preview/copy/download).
-- `/toolkits`, `/toolkits/[slug]` — freely assemble deployed MCPs and installed Skills; export manifests, generate install links; sync mechanics in TOOLKIT_SYNC.md.
-
-### 8.3 Agents / Chat / Knowledge / Work / Sandboxes / Providers
-- `/agents`, `/agents/[agentId]` — agent management and runs (runtime kind chosen explicitly: native or hermes sandbox); `/market/agents` installs marketplace templates as independent copies; publishing goes `/agents/[agentId]/publish` → admin review at `/admin/agents`.
-- `/chat` — assistant conversations (`ChatAssistant` + threads/branches/turns, MCP grants via `ChatAssistantMcpGrant`).
-- `/knowledge` — knowledge bases (documents → chunks).
-- `/work` — Work task-flow sessions and approvals.
-- `/sandboxes` — sandbox management (Docker/Connector, snapshots, screen sessions).
-- `/providers` — model provider and model catalog configuration.
-- `/market/assistants` — assistant marketplace.
-
-### 8.4 Observability
-- `/observability` — Usage / Audit log; stat cards, p95, hourly distribution. Data comes from the unified `LogEvent` (`gateway.request` semantics), aggregated live in Postgres. See OBSERVABILITY.md for the model and semantics.
-
-### 8.5 Members / Settings / Seller
-- `/members` — member table, invitations (7-day one-time links), removal/leave (see WORKSPACES.md).
-- `/settings` — name/slug, default model, ownership transfer, Danger-zone deletion (`deleting` state machine + process/container/volume cleanup).
-- `/settings/channels` — messaging platform channels (Telegram/Feishu/QQ/WeChat/Discord/Slack, see AGENT_MESSAGING_PLATFORMS.md).
-- `/settings/providers` — workspace-level model provider credentials.
-- `/settings/tokens` — legacy entry; personal API tokens actually live at `/app?view=account`.
-- `/settings/account` — account settings (with `@modal` intercepted modal).
-- `/seller` → `/seller/overview` — publish skills + my listings.
-
----
+Renaming a workspace does not change its URL slug. `/app` provides restoration, selection, and the no-workspace entry state, not unconditional workspace creation or entry into a default workspace. See [WORKSPACES.en.md](./WORKSPACES.en.md).
 
 ## 9. Admin Console `/admin`
 
-- `/admin` — overview; `/admin/reviews`, `/admin/reviews/market/[id]` — marketplace entry/release review.
-- `/admin/market`, `/admin/servers`, `/admin/skills` (incl. `/skills/import`), `/admin/agents`, `/admin/assistants`, `/admin/categories` — catalog and unified marketplace management (create/edit/feature/verify).
-- `/admin/users`, `/admin/workspaces` — account and workspace governance.
-- `/admin/logs`, `/admin/logs/[id]` — structured event search and diagnostic details (viewing/exporting is itself audited).
-- `/admin/settings` — system settings (`SystemSetting`: MCP startup timeouts, remote-MCP private-network restrictions, diagnostic capture windows, self-update, etc.).
+`/admin` is the overview; `/admin/reviews` and `/admin/reviews/market/[id]` handle reviews. `/admin/market`, `/admin/servers`, `/admin/skills`, `/admin/agents`, `/admin/assistants`, and `/admin/categories` maintain catalogs and the marketplace. `/admin/skills/import` imports skills.
 
----
+`/admin/users` and `/admin/workspaces` govern accounts and workspaces. `/admin/logs` and `/admin/logs/[id]` search events and diagnostic details; viewing and exporting also require auditing. `/admin/settings` manages startup timeouts, remote-MCP private-network restrictions, diagnostic capture, self-update, and other system settings.
 
 ## 10. JSON API
 
-The main API lives under `api/v1` (88 routes), plus OpenAI-compatible endpoints `api/openai/v1/models` and `api/openai/v1/chat/completions`; machine-readable definition at `GET /api/v1/openapi.json`. Grouped by domain:
+The paths below omit the shared `/api` prefix. This is domain navigation, not an exhaustive OpenAPI inventory; each `route.ts` defines actual methods and authorization. The public Agent API's machine-readable definition is available at `GET /api/v1/openapi.json`.
 
-| Domain | Representative paths | Notes |
-|---|---|---|
-| MCP gateway | `POST /v1/mcp/[deploymentId]/rpc`, `GET .../health`, `.../runtime`, `.../files/upload`, `.../terminal/*` | Proxies JSON-RPC to the deployment runtime; PTY terminal sessions; records observability |
-| Skills | `GET /v1/skills/[installId]/download`, `.../skill.md` | Artifact download |
-| Workspace/Toolkit | `GET /v1/workspaces/[slug]/manifest`, `.../toolkits/[toolkitSlug]/{manifest,install,mcp}`, `.../attachments`, `.../market/installs*` | Manifest export, install links, Toolkit MCP aggregation |
-| Agent control | `POST /v1/workspaces/[slug]/agents/mcp` | Agent Control MCP (personal Bearer only, see AGENT_CONTROL_MCP.md) |
-| Agent runs | `/v1/agents/[agentId]/{chat,messages,conversations*,composer,prompts,terminal,attachments,hermes/*}` | Console agent sessions/operations/commands |
-| Agent public API | `/v1/agent-endpoints/[endpointId]/{responses*,conversations/*,client-tokens}` | External execution of published Endpoints (topology constraints in AGENT_PUBLIC_API.md) |
-| Agent runtime callbacks | `/v1/agent-runtime/{mcp,model}/...`, `/v1/agent-runtimes/[runtimeId]/{mcp,dashboard/*}` | In-sandbox runtime callback entry points (signed-grant auth) |
-| Channels | `/v1/agent-channels/[connectionId]/events`, `/v1/workspaces/[slug]/agent-channels` | Messaging platform event intake |
-| Chat assistants | `/v1/chat/assistants*`, `/v1/chat/threads/[threadId]/{turns,branches,composer,prompts}` | Assistants/threads/turns/branches |
-| Work | `/v1/work-sessions*` (events/input/cancel/resume/approvals/sandbox) | Task-flow driving and approvals |
-| Knowledge | `/v1/knowledge*` (documents/search/agents) | Knowledge base CRUD and search |
-| Marketplace | `/v1/market/listings*` (download) | Unified marketplace reads |
-| Sandboxes | `/v1/workspaces/[slug]/sandboxes/{hermes-import,[sandboxId]/connector-status,screen/*}` | Sandbox status, noVNC screen frames |
-| Connector | `/v1/connectors/{bootstrap,package.tgz}` | Sandbox host Connector onboarding |
-| Plugin/sync | `/v1/plugin/{baseline,sync-applied,sync-failure,skill-invocation}`, `/v1/skill-registries/tp-skills/webhook` | Toolkit sync telemetry and registry webhook |
-| Admin | `/v1/admin/{logs/export,system/update,agent-releases/[releaseId]/manifest}` | Log export, self-update, release manifests |
-| Misc | `/v1/health`, `/v1/attachments/[attachmentId]` | Health check, attachments |
+| Domain | Representative paths |
+|---|---|
+| MCP | `/v1/mcp/[deploymentId]/rpc`, `.../health`, `.../runtime`, `.../files/upload`, `.../terminal/*` |
+| Skills | `/v1/skills/[installId]/download`, `.../skill.md` |
+| Workspace / Toolkit | `/v1/workspaces/[slug]/manifest`, `.../toolkits/[toolkitSlug]/{manifest,install,mcp}`, `.../attachments`, `.../market/installs*` |
+| Agent Control | `/v1/workspaces/[slug]/agents/mcp` (account-level Bearer only; creation accepts `pi` / `hermes` only) |
+| Agent sessions | `/v1/agents/[agentId]/{chat,messages,conversations*,composer,prompts,terminal,attachments,hermes/*}` |
+| Public Endpoints | `/v1/agent-endpoints/[endpointId]/{responses*,conversations/*,client-tokens}` |
+| Runtime callbacks | `/v1/agent-runtime/{mcp,model}/...`, `/v1/agent-runtimes/[runtimeId]/{mcp,dashboard/*}` |
+| Channels | `/v1/agent-channels/[connectionId]/events`, `/v1/workspaces/[slug]/agent-channels` |
+| Chat | `/v1/chat/assistants*`, `/v1/chat/threads/[threadId]/{turns,branches,composer,prompts}` |
+| Work / knowledge | `/v1/work-sessions*`, `/v1/knowledge*` |
+| Marketplace | `/v1/market/listings*` |
+| Sandbox / Connector | `/v1/workspaces/[slug]/sandboxes/...`, `/v1/connectors/{bootstrap,package.tgz}` |
+| Plugin | `/v1/plugin/{baseline,sync-applied,sync-failure,skill-invocation}`, `/v1/skill-registries/tp-skills/webhook` |
+| Admin / other | `/v1/admin/{logs/export,system/update,agent-releases/[releaseId]/manifest}`, `/v1/health`, `/v1/attachments/[attachmentId]` |
 
-**Gateway flow** (`/mcp/[id]/rpc`): auth → verify deployment ownership → locate runtime (builtin child-process port / Docker container / remote URL) → forward (with timeout) → persist `LogEvent` (`gateway.request`; HTTP 200 with an RPC error still counts as failure).
-
----
+MCP gateway flow: authenticate → verify resource ownership → locate the actual process, container, or remote address → forward with a timeout → record `gateway.request`. HTTP 200 containing JSON-RPC `error` or MCP `isError` still counts as a business failure.
 
 ## 11. MCP Runtime (`lib/process`)
 
-- `spawn-spec.ts` — three deployment sources: `builtin` (built-in demo server), `remote` (remote MCP over streamable-http/sse; private-network restrictions in admin settings), `bridge` (arbitrary commands inside a Docker container, JSON-RPC exposed via a bridge; git sources are cloned first).
-- `supervisor.ts` — child-process table on `globalThis.__mcpSupervisor` (survives dev HMR); startup parsing, readiness timeouts, log files, redaction values, watchdog.
-- `deployment-runtime-container.ts` / `deployment-gateway.ts` — Docker container naming/removal and the in-container gateway; `deployment-config-volume.ts` materializes `DeploymentConfigFile` into a managed volume.
-- `mcp-client.ts` / `sandbox-mcp-client.ts` / `mcp-gateway.ts` — server-side RPC wrappers and tool aggregation; `mcp-tool-catalog(-store).ts` caches tool catalogs; `mcp-prompts.ts`, `mcp-resources.ts`, `mcp-result-redaction.ts`.
-- `reconcile.ts` — reconciles DB state against actual processes/containers.
-- `sandbox.ts` — network/image/cache flags; `git-source.ts` — git source detection.
+`spawn-spec.ts` resolves builtin, remote, bridge, and other startup sources. Bridges execute inside containers, with git sources prepared first. `supervisor.ts` tracks actual child processes, readiness, timeouts, redaction values, and logs; `reconcile.ts` compares persisted and live state.
+
+`deployment-runtime-container.ts` and `deployment-gateway.ts` manage containers and gateways; `deployment-config-volume.ts` materializes configuration volumes. `mcp-client.ts`, `sandbox-mcp-client.ts`, and `mcp-gateway.ts` call and aggregate tools; tool catalogs, prompts, resources, and result redaction have dedicated modules.
+
+A persisted running state does not prove a process is alive. Queries and actions must consider the supervisor's effective state.
 
 ## 12. Agent Runtime
 
-- **Native runtime** — lightweight in-process agents (direct model calls + MCP/Skill tool loop).
-- **Hermes runtime** — each agent gets its own Docker container, persistent volume, and API key; containers cannot reach Postgres and hold no user-level token (see HERMES_AGENT_RUNTIME.md).
-- **Sandboxes** — Docker, or remote hosts via Connector (`packages/connector`, WS onboarding), providing PTY terminals, files, and a noVNC screen; MCP tools are exposed to agents (see SANDBOXES.md).
-- Runtime callbacks (model/MCP) go through `/api/v1/agent-runtime/*` with signed grants carrying trace ancestry.
+| Runtime identifier | Current execution shape | Model configuration |
+|---|---|---|
+| `pi` | Dedicated sandbox, Pi runtime | `providerId` + `model` |
+| `claude-code` | Dedicated sandbox, Claude Code harness | `providerId` + `model` |
+| `dsh` | Dedicated sandbox, DeepSeek Harness | `providerId` + `model` |
+| `hermes` | Dedicated Hermes container and `/opt/data` volume | Multi-select `AgentModelProvider`; Hermes manages model assignments |
 
----
+Selection and capability checks live in [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts); execution dispatch lives in [`run.ts`](../src/lib/agents/run.ts) and [`sandbox-turn.ts`](../src/lib/agents/sandbox-turn.ts). Pi, Claude Code, and DSH accept the provider formats `openai`, `openai-responses`, and `anthropic`; do not assume Hermes has the same configuration interface.
+
+The internal `native.ts` helper uses `@earendil-works/pi-ai`. It is neither a public `native` runtime nor the old AI SDK `streamText` execution engine. The UI message-stream protocol and the model execution engine are separate layers.
+
+Dedicated-runtime model/MCP callbacks use platform-signed grants, while Hermes's aggregate MCP uses a runtime-bound Bearer token. Hermes receives neither user-level ToolPlane tokens nor Postgres access, but selected provider keys are written into its private config volume. “Not exposed publicly” does not mean “absent from the container.” See [AGENT_PUBLIC_API.md](./AGENT_PUBLIC_API.md) for additional public Endpoint isolation and tool restrictions.
 
 ## 13. Testing
 
-- **Unit/integration** (Vitest 4, ~1800+ cases): `tests/unit/*` (259 files), `tests/integration/*` (56 files covering db, admin, agent, market, runtime, workspace, ...; `*.live.test.ts` needs real Docker/network).
-- `server-only` is stubbed via `tests/stubs`; the public-site boundary is guarded by `public-site-boundary.test.ts`.
+Unit and integration tests live in `tests/unit/` and `tests/integration/`; `*.live.test.ts` may require real Docker or network access. Tests stub `server-only`; integration runs sharing a database must not run concurrently against that database.
 
----
+For documentation changes, check links, paths, commands, and contracts first; do not start services solely for prose. For behavior changes, run unit, integration, type, lint, and build checks according to impact. See [UI_LIBRARY.md](./UI_LIBRARY.md) for full CI and the release-metadata exception.
 
-## 14. Local Development & Ops Notes
+## 14. Local Development & Operations
 
 ```bash
-pnpm dev            # next dev (:3000)
-pnpm db:migrate     # prisma migrate dev
-pnpm db:generate    # prisma generate
-pnpm db:seed        # test account/workspace seed
+pnpm dev            # Next.js development server
+pnpm db:migrate     # prisma migrate dev; confirm the target database first
+pnpm db:generate    # Generate Prisma client
+pnpm db:seed        # Only against a confirmed local test database
 pnpm test           # vitest run
-pnpm connector:dev  # local Connector (remote sandbox host)
+pnpm connector:dev  # User-host Connector
 ```
 
-- **Restart the dev server after adding Prisma models**: `prisma generate` only updates the on-disk client; a running Next process keeps the old one.
-- Prisma 7: use `migrate diff --to-schema` (not `--to-schema-datamodel`); `prisma.config.ts` auto-loads dotenv.
-- Releases use release-please (see RELEASES.md); the version of record is `package.json` and the CHANGELOG (currently 0.29.0).
+After adding Prisma models and generating the client, restart development servers holding the old client. Prisma configuration lives in `prisma.config.ts`; migration diffs use `--to-schema`, not the old `--to-schema-datamodel` option.
 
----
+Versions are defined in `package.json` and CHANGELOG. See [RELEASES.md](./RELEASES.md) for publishing. A successful ordinary PR CI run is not a published image; a release-metadata check is not a rerun of the full test suite.
 
-## 15. Known Gaps / Limitations
+## 15. Known Boundaries
 
-- Some commercialization flows (Seller payout, Billing, Stripe, OAuth sign-in) are not wired up.
-- Agent public API execution currently supports exactly one runtime-owning process/replica (process-local supervisor/queue, see AGENT_PUBLIC_API.md).
-- Workspace deletion cleanup dedupes within a single admin-service process; multi-worker deployments need a renewable DB cleanup lease first (see WORKSPACES.md).
-- Log storage is best-effort diagnostics (events can be lost on crash/overload), not a durable external queue (see OBSERVABILITY.md).
+The public Agent API supports one runtime-owning application process. A process-local supervisor, execution queue, and maintenance gate do not become multi-replica-safe merely because Postgres is used. Workspace deletion also has single-process cleanup/deduplication boundaries; distributed leases and coordination are needed before expanding that topology.
+
+Logging is bounded best-effort diagnostics, not a lossless external queue. Diagnostic capture may retain sanitized user text; redaction is not anonymization. Public Agent API and Agent Control MCP payload policies differ; consult their respective topic documents.

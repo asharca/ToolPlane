@@ -2,355 +2,207 @@
 
 > **中文**：[HERMES_AGENT_RUNTIME.md](./HERMES_AGENT_RUNTIME.md)
 
-## 1. Conclusion
+This document explains configuration ownership, persistence, networking, and operations for ToolPlane-managed Hermes agents. It is for platform developers and deployers. Configuration behavior is defined by [`hermes/config.ts`](../src/lib/agents/hermes/config.ts) and [`hermes/runtime.ts`](../src/lib/agents/hermes/runtime.ts).
 
-ToolPlane adopts `Hermes-first, ToolPlane-owned control plane`:
+## 1. Control Plane and Runtime
 
-- ToolPlane owns workspaces, permissions, model configuration, MCP/Skill selection, channel credentials, lifecycle, auditing, and UI.
-- Hermes, as an optional agent runtime, owns sessions, long-term memory, the tool loop, the file workspace, Skills, Cron, and other Hermes-native capabilities.
-- The Native runtime remains for lightweight agents; the Hermes runtime creates a dedicated container, persistent volume, and API key per agent.
+ToolPlane owns workspaces, permissions, provider configuration, MCP/Skill selection, channel credentials, lifecycle, auditing, and UI. Hermes is one optional runtime responsible for sessions, long-term memory, the tool loop, its file workspace, Skills, Cron, and other Hermes-native capabilities.
 
-Hermes is not ToolPlane's database or authorization source. Containers cannot reach Postgres and never receive user-level ToolPlane API tokens.
+The current platform runtime identifiers are `pi`, `claude-code`, `dsh`, and `hermes`, not the former Native/Hermes pair. Pi, Claude Code, and DSH use dedicated sandboxes; Hermes gets a dedicated container, persistent volume, and runtime credentials per agent. The internal `native.ts` filename does not make `runtime: "native"` selectable. See [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) for the full inventory.
 
-## 2. Creation Flow
+Hermes is not ToolPlane's database or authorization source. Containers receive neither Postgres access nor user-level ToolPlane API tokens. Selected model-provider keys are, however, written into the agent's private Hermes configuration volume. This is a different boundary from not exposing credentials through public APIs.
 
-New Agent offers a one-time choice:
+## 2. Creation and Upgrades
 
-1. Runtime: `Native` or `Hermes`.
-2. One or more model providers (no concrete model is chosen in ToolPlane).
-3. MCP deployments.
-4. Installed Skills.
-5. Toolkits.
-6. Hermes Docker image (when Hermes is chosen).
+The console's New Agent flow first selects a runtime. For Hermes, configure one or more model providers, MCP deployments, installed Skills, Toolkits, and a Hermes Docker image; Hermes manages concrete model assignments. Pi, Claude Code, and DSH instead use a single provider/model binding and must not be described using Hermes's multi-select flow.
 
-After choosing Hermes, ToolPlane creates in one transaction:
+Agent Control MCP's `create_agent` exposes only `pi` and `hermes`, not every console runtime. It also uses the instance administrator's image configuration rather than accepting a caller-selected Hermes image. See [AGENT_CONTROL_MCP.md](./AGENT_CONTROL_MCP.md).
+
+The resource chain is:
 
 ```text
 Agent
   -> AgentRuntime(kind=hermes)
   -> Sandbox(kind=hermes)
   -> Deployment(source=sandbox)
-  -> Docker named volume
+  -> Docker named volume mounted at /opt/data
 ```
 
-With no provider selected, the runtime stays `setup_required`, but the Agent, Sandbox, and config volume already exist. Once at least one provider is selected and saved, ToolPlane syncs the provider inventory and starts the gateway.
+Database setup and Docker provisioning are separate operations: a Docker volume is not a row atomically committed by the database transaction. With no provider selected, the runtime remains `setup_required`; selecting at least one provider and saving synchronizes the provider inventory and starts the gateway.
 
-### Choosing and upgrading the Hermes version
+### Image Versions
 
-When creating a Hermes agent you can pick from the official Hermes image versions offered by ToolPlane, or enter a full
-Docker image reference. In production, prefer a pinned `v...` tag for reproducible deploys; `latest` is a moving tag for
-runtimes that should track upstream.
+The console supports image versions offered by ToolPlane or a full image reference. Do not treat a moving `latest` tag as immutable; use an image digest when strict reproducibility is required. `TOOLPLANE_HERMES_IMAGE` sets the instance default. In Compose deployments, recreate the application container after changing its `.env` configuration.
 
-An existing Hermes agent can pick another version under **Settings → Hermes** and click **Upgrade & restart**.
-ToolPlane pulls the target image first; if the pull fails, the current runtime is not stopped. After a successful pull it
-stops and rebuilds the container, re-projects ToolPlane-managed config, and starts with the new image. Even re-selecting
-the same `:latest` tag re-pulls and rebuilds the container. The agent's `/opt/data` named volume is not deleted, so
-sessions, memory, the workspace, local Skills, and attachments survive; in-flight requests are briefly interrupted
-during the upgrade.
+Existing agents upgrade through **Settings → Hermes → Upgrade & restart**. ToolPlane pulls first; a pull failure leaves the current runtime running. After a successful pull it rebuilds the container and reprojects configuration. Selecting the same `:latest` still repulls and rebuilds. The `/opt/data` volume survives, preserving sessions, memories, workspace, local Skills, and attachments; in-flight requests may be interrupted.
 
-The image choice is written back to `AgentRuntime`, its managed `Sandbox`, and the associated `Deployment`, so later
-syncs or restarts cannot silently revert to an old image. `TOOLPLANE_HERMES_IMAGE` sets the instance default image when
-no version was chosen explicitly; with Docker Compose, put it in the adjacent `.env` and recreate the `app` container.
+The chosen image is written back to `AgentRuntime`, the managed `Sandbox`, and `Deployment` so later syncs do not revert it. Messaging channels use separate Node adapters rather than Python channel adapters installed in the Hermes image.
 
-Messaging channels use Cherry Studio's native Node adapters, independent of the agent's runtime image.
-ToolPlane no longer bundles the Hermes Python messaging channel adapters.
+### Importing an Existing `.hermes` Home
 
-### Importing an existing `.hermes` home directory
+Upload a ZIP through **Sandboxes → New sandbox → Import .hermes archive**. It may contain a single `.hermes/` root or the home directory's contents directly. Import creates the same Agent/runtime/Sandbox chain, not a generic sandbox detached from an agent.
 
-Under **Sandboxes → New sandbox → Import .hermes archive** you can upload a ZIP backup of an existing Hermes
-home directory. The ZIP may be rooted at a single `.hermes/` directory or directly at that directory's
-contents. The archive size limit is configured in **Admin → System settings**, defaulting to 48 MiB,
-adjustable between 1–10,240 MiB (10 GiB). The browser streams the ZIP as a raw request body straight into
-dedicated staging storage — no Server Action, multipart parsing, or `arrayBuffer()` — so the archive is never
-held whole in Node.js memory.
+[`archive-limits.ts`](../src/lib/agents/hermes/archive-limits.ts) defines a default compressed limit of 48 MiB, configurable from 1 to 10,240 MiB. The unpacked-total cap defaults to 256 MiB and grows with a raised upload limit, up to 10 GiB. These are binary MiB/GiB units, unlike the decimal MB/GB used for ordinary attachments.
 
-Docker Compose mounts `toolplane_imports` at `/var/lib/toolplane/imports` as the staging volume by default. A 10 GiB
-import may transiently need about 40 GiB of free space across the ZIP, the unpacked tree, the Docker init-container
-copy, and the final volume; deployers should plan capacity for that volume separately. Set Compose's
-`TOOLPLANE_HERMES_ARCHIVE_VOLUME=/srv/toolplane/imports` to switch it to a bind mount on a large host disk (the
-directory must be writable by the in-container `node` user). To keep concurrency from exhausting the volume, the
-instance runs only one Hermes archive import at a time; staging space is pre-checked against the worst case of ZIP plus
-unpack, crash-leftover directories are cleaned at startup and periodically, and expired import lease reclamation
-immediately removes the corresponding ZIP/unpack tree. That lease exists for crash recovery of a single ToolPlane app
-process — do not mount the same staging volume into multiple running ToolPlane instances as a distributed lock. The
-archive, per-file, and unpacked-total sizes are limited together: the default unpack cap is 256 MiB, which grows with
-the admin-raised archive cap up to 10 GiB. Archives may contain at most 200,000 ZIP entries and 1,024 links; available
-bytes and inodes are also pre-checked before unpacking. Compression-ratio, path/permission checks, and the maximum
-inspection time are still enforced for large files (highly compressible cache files up to 4 MiB excepted). The
-runtime-parsed `config.yaml` and `.env` remain capped at 4 MiB.
+The browser streams a raw request body into staging storage, without Server Actions, multipart parsing, or a whole-archive `arrayBuffer()`. Compose mounts `toolplane_imports` at `/var/lib/toolplane/imports` by default. Set `TOOLPLANE_HERMES_ARCHIVE_VOLUME=/srv/toolplane/imports` for a larger host directory and ensure the container's `node` user can write there.
 
-In production behind a reverse proxy such as Nginx, Caddy, Traefik, or Coolify, you must also raise the request-body
-size and upload/read timeouts for `POST /api/v1/workspaces/:slug/sandboxes/hermes-import`, and disable request
-buffering for that path. The ToolPlane image sets the Node request timeout to four hours by default, adjustable via
-`TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS` (no lower than one minute). Four hours only covers raw request-body reception; the
-Route Handler reserves up to fourteen hours for ZIP inspection, the two-phase Docker copy, and the first sync, so the
-proxy's response/read/send timeouts for this path should be relaxed accordingly. This is a Node process-level
-request-body timeout; production proxies should still keep short body/connection timeouts and enforce connection and
-rate limits on other paths. Compose and `pnpm start` use this production launcher; `pnpm dev` is unsuitable for
-verifying a full 10 GiB upload. The upload is a single-request stream with no resume; the page reuses the same import
-ID, so a retry after a lost response returns the completed result, while an unfinished previous import explicitly asks
-you to inspect or clean up first.
+The ZIP, unpacked tree, initialization copy, and final volume can coexist; plan roughly 40 GiB of transient capacity for a 10 GiB import. The instance serializes archive imports, prechecks capacity, and cleans crash leftovers and expired-lease staging files. This lease is single-application-process crash recovery, not a distributed lock for sharing staging across active replicas.
 
-An import does not create a generic Sandbox detached from an agent; it creates the same
-`Agent → AgentRuntime → Sandbox(kind=hermes) → Deployment → named volume`
-chain and writes the unpacked content into that agent's private `/opt/data` volume. Existing
-sessions, memories, workspace, local skills, and Hermes-native settings therefore remain managed by the
-Hermes runtime lifecycle.
+Archive checks cover paths, duplicate/Unicode conflicts, links/special files, encryption, permissions, entry counts, sizes, compression ratios, and inspection time. Relative links that stay under the home root may survive; links to absolute paths on the old host are dropped; other unsafe links are rejected. Additional limits include 200,000 entries, 1,024 links, and 4 MiB each for runtime-parsed `config.yaml` / `.env`, with a bounded exception for highly compressible cache files. The compressed-upload limit is not the only check.
 
-Before writing to the Docker volume, the archive is checked for ZIP paths, duplicate/Unicode conflicts, links/special
-files, encrypted entries, permissions, file counts, sizes, compression ratio, and unpack time; relative links that
-cannot escape the `.hermes` root are preserved, links pointing at absolute paths on the original host are dropped, and
-other unsafe links are rejected. Archive contents never enter the database or error responses. ToolPlane drops its own
-managed `.toolplane-env-keys.json`, `skills/toolplane-agent/`, and `skill-bundles/toolplane-agent.yaml`, which the
-first sync then regenerates.
+Reverse proxies must relax body and upload/read limits for `POST /api/v1/workspaces/:slug/sandboxes/hermes-import` and disable request buffering there. The production launcher's `TOOLPLANE_HTTP_REQUEST_TIMEOUT_MS` defaults to four hours, configurable no lower than one minute, for raw-body reception. The complete Route Handler budget is 50,400 seconds (fourteen hours), including inspection, copies, and synchronization. Keep suitable connection and rate limits on other routes. `pnpm dev` does not replace production-launcher validation for large imports.
 
-An imported runtime stays stopped by default with no provider auto-selected. Only after confirming the model
-configuration in the new agent's settings and explicitly starting it can imported plugins, hooks, MCP, or other Hermes
-configuration run. Only upload archives you trust; they may contain credentials, sessions, and executable
-configuration.
+Uploads are single-request streams without resume. The page reuses an import ID: retrying after a lost response can return a completed result, while an unfinished previous import requires inspection or cleanup. ToolPlane's managed env-key manifest, `skills/toolplane-agent/`, and `skill-bundles/toolplane-agent.yaml` are removed and regenerated; existing sessions, memories, local Skills, and other native settings enter the private volume.
 
-## 3. Config Projection
+Imported runtimes stay stopped and select no provider automatically. Imported plugins, hooks, and MCP configuration can run only after model configuration is confirmed and the runtime is explicitly started. Import only trusted archives: they can contain credentials, sessions, and executable configuration.
 
-ToolPlane generates the Hermes `/opt/data` contents from the agent's current grants:
+## 3. Configuration Projection
 
 ```text
 /opt/data/
 ├─ config.yaml
-├─ .env                         # merged result of Hermes and ToolPlane variables
-├─ .toolplane-env-keys.json     # manifest of ToolPlane-managed keys
-├─ sessions/                     # Hermes-managed, never overwritten by ToolPlane
-├─ memories/                     # Hermes-managed, never overwritten by ToolPlane
+├─ .env                         # merged Hermes and ToolPlane variables
+├─ .toolplane-env-keys.json      # ToolPlane-managed key manifest
+├─ sessions/                    # Hermes-managed
+├─ memories/                    # Hermes-managed
 ├─ workspace/
-│  └─ attachments/               # uploaded by ToolPlane, read by Hermes
+│  └─ attachments/
 ├─ skills/
-│  └─ toolplane-agent/
-│     └─ <skill>/
-│        ├─ SKILL.md
-│        └─ ...bundle files
+│  └─ toolplane-agent/<skill>/
+│     ├─ SKILL.md
+│     └─ ...bundle files
 └─ skill-bundles/
    └─ toolplane-agent.yaml
 ```
 
-Each sync replaces only these ToolPlane-managed paths or fields:
+For an ordinary console Hermes agent, synchronization manages:
 
-- `skills/toolplane-agent`
-- `skill-bundles/toolplane-agent.yaml`
-- ToolPlane-managed env vars in `.env` saved from the agent settings
-- Under the ToolPlane namespace in `config.yaml`: `providers`, `agent.max_turns`, `approvals`,
-  `tool_loop_guardrails`, and `mcp_servers.toolplane`
+- `skills/toolplane-agent` and `skill-bundles/toolplane-agent.yaml`.
+- ToolPlane-managed environment variables and the runtime API key in `.env`.
+- `toolplane-` provider entries in `config.yaml`, `agent.max_turns`, `approvals`, `tool_loop_guardrails`, `platforms.api_server.enabled`, and `mcp_servers.toolplane`; primary-model initialization and invalid-model fallback are described below.
 
-`config.yaml` uses a structured YAML merge, so memory providers, cron, plugins, channels, other MCP servers, and other
-native config written by the Hermes Dashboard are preserved. Hermes sessions, memories, cron, logs, plugins, local
-Skills, and the user workspace are never deleted by syncs.
+These are YAML fields and naming conventions, not a single top-level `toolplane` object holding all configuration. Structured merging preserves unmanaged memory, cron, plugins, other MCP servers, native settings, sessions, local Skills, and the user workspace.
 
-Hermes environment variables in the agent settings are edited as `KEY=value` and projected to the
-`/opt/data/.env` returned by `hermes config env-path`. Using `.toolplane-env-keys.json`, a sync only replaces or
-removes keys ToolPlane previously managed; other variables and comments from the Hermes Dashboard, the terminal, or the
-image itself are preserved verbatim. Both `.env` and the managed-key manifest are written atomically with `0600`
-permissions; after saving, a sync runs immediately and the Hermes runtime restarts so new variables take effect.
+Environment settings use `KEY=value`. Synchronization uses `.toolplane-env-keys.json` to replace or remove only previously managed keys, preserving other variables and comments. The `.env` and manifest writes are atomic with `0600` permissions; subsequent sync/restart makes saved variables effective.
 
-`agent.system_prompt` is fully Hermes-managed. ToolPlane does not display that field, does not project
-`Agent.systemPrompt` into Hermes, and never adds, modifies, or deletes it during config syncs. The system prompt can
-only be changed through the Hermes Dashboard or the Hermes terminal.
+### System Prompt Ownership
 
-### Model providers
+For ordinary console Hermes agents, `agent.system_prompt` belongs to the Hermes Dashboard/terminal. ToolPlane does not project the ordinary `Agent.systemPrompt` field into it.
 
-Hermes agents use a dedicated multi-select `AgentModelProvider` relation. Selected `ModelProvider`s are injected into
-Hermes as keyed `providers` with stable names, each entry carrying its full cached model list:
+**Public Endpoint runtimes are an exception**: `renderManagedHermesConfig` passes the published revision's `systemPrompt` and enables `publicRuntime`; the generator additionally restricts builtin toolsets, API-server tool access, and delegation. Do not extend the console's preserve-native-capabilities/no-prompt-overwrite contract to isolated public execution runtimes. See [AGENT_PUBLIC_API.md](./AGENT_PUBLIC_API.md).
 
-- OpenAI compatible -> `api_mode: chat_completions`
-- OpenAI Responses -> `api_mode: codex_responses`
-- Anthropic -> `api_mode: anthropic_messages`
-- models, base URL, and provider API key are written to the agent's own persistent volume
+### Model Providers
 
-On first configuration with no primary model yet, ToolPlane picks the first provider/model pair with a cached model
-list as the startup default; afterwards, Hermes-side changes to `model` are preserved. Which model serves the main conversation,
-auxiliary tasks, vision, compaction, delegation, and fallback is managed by Hermes's own configuration. When a selected
-provider is removed, only the corresponding ToolPlane provider entry is cleaned up; if the current primary model
-references that entry, ToolPlane falls back to the startup default from the remaining providers.
+Hermes uses multi-select `AgentModelProvider`, projected under stable `toolplane-...` provider keys. The current field is `transport`, not the old documentation's `api_mode`:
 
-Native agents keep the single-provider / single-model binding via `Agent.providerId + Agent.model`.
+| ToolPlane provider format | Hermes field |
+|---|---|
+| `openai` | `transport: chat_completions` |
+| `openai-responses` | `transport: codex_responses` |
+| `anthropic` | `transport: anthropic_messages` |
 
-Provider keys never enter the Deployment JSON, Sandbox JSON, or Docker inspect environment.
+Entries also contain `name`, `api`, `api_key`, and `models`; cached inventories get a `default_model`, while providers without cached models enable `discover_models`. Model lists, base URLs, and actual provider keys enter the private volume, not Deployment JSON, Sandbox JSON, or Docker inspect environment.
 
-### MCP
+When there is no valid primary model initially, the first provider with a cached model supplies the bootstrap default. Hermes controls concrete model assignments, and synchronization preserves a still-valid primary model. If a ToolPlane-managed provider disappears, or a nonempty cached inventory no longer includes the selected model, configuration falls back to a remaining provider's bootstrap model. Fallback is not limited to removing a provider. Unmanaged provider entries survive.
 
-Hermes sees exactly one aggregated MCP server:
+Pi, Claude Code, and DSH retain a single `Agent.providerId + Agent.model` binding rather than Hermes's multi-select projection.
+
+### MCP and Skills
+
+ToolPlane projects one aggregate MCP entry; it does not prohibit other Hermes-managed MCP configuration:
 
 ```text
 POST /api/v1/agent-runtimes/:runtimeId/mcp
+Authorization: Bearer <runtime-scoped-token>
 ```
 
-This endpoint uses an agent-runtime-scoped Bearer token and only aggregates deployments bound directly to the agent and
-derived from Toolkits. `tools/call` is routed onward to the existing MCP supervisor and continues to write LogEvent.
+This entry aggregates the agent's authorized deployments, including Toolkit-derived bindings, routes calls through the existing MCP supervisor, and writes `LogEvent`. Structured merging preserves other unmanaged `mcp_servers` entries.
 
-### Skills
+`resolveAgentTools()` deduplicates directly bound and Toolkit-derived Skills. Only agent-invocable entries are projected. Skill text and bundle attachments are preserved under `skills/toolplane-agent`, without deleting Hermes-created local Skills.
 
-Directly bound and Toolkit-derived skills are deduplicated by `resolveAgentTools()`; only entries with
-`agentInvocable != false` are synced. `SKILL.md` and bundle attachments keep their original content.
+## 4. Network, Credentials, and Persistence
 
-## 4. Runtime Network & Secrets
+Hermes uses the `mcp-sandbox` egress network, not the internal ToolPlane/Postgres network. Its API server listens at container loopback `127.0.0.1:8642`, and its Dashboard at `127.0.0.1:9119`; neither container port is published. The supervisor accesses them through controlled `docker exec curl` proxying.
 
-Hermes containers:
+The container drops default capabilities, restoring those needed for startup/file ownership, and applies CPU, memory, and PID limits. `no-new-privileges` is enabled by default; `Allow sudo` is an explicit exception described below.
 
-- Use the `mcp-sandbox` egress network and never join the ToolPlane/Postgres internal network.
-- Do not publish `8642` or the dashboard port.
-- Run the Dashboard inside the container, bound to `127.0.0.1:9119` only.
-- Drop all root capabilities, restoring only the minimal set needed for container startup and file ownership.
-- Default to `no-new-privileges` plus CPU, memory, and PID limits (enabling the `Allow sudo` option lifts
-  `no-new-privileges`; see Hermes Terminal).
-- Use a per-agent Docker named volume for `/opt/data`.
-- Bind the API Server to `127.0.0.1:8642` inside the container only.
-- The managed runtime Sandbox does not appear in the generic Sandbox list and cannot be bound to other agents. Its
-  dedicated managed-runtime panel manages the name, environment variables, and `/opt/data` volume snapshots; start,
-  stop, delete, and agent configuration still go through the agent runtime lifecycle.
+The runtime API key and aggregate MCP token are derived from the instance secret by `deriveHermesRuntimeToken(runtimeId, purpose)`. `hermes-api` and `toolplane-mcp` have distinct purposes and are not interchangeable. Plaintext runtime tokens are not stored in the database; this does not mean provider keys are absent from the private volume.
 
-### Runtime data snapshots
+The managed runtime Sandbox is bound one-to-one to its Agent, stays out of the generic Sandbox list, and cannot be attached to another Agent. Its managed panel controls name, environment, and snapshots; start/stop/delete still follow the Agent runtime lifecycle.
 
-A Hermes managed runtime supports creating, restoring, and deleting snapshots of its `/opt/data` named volume. That
-volume holds the workspace, sessions, memories, attachments, local Skills, and Hermes-native config; the image writable
-layer is not part of a snapshot. Snapshots are volume-level restore points and do not roll back `Conversation` or
-`AgentAttachment` rows in the ToolPlane database, so after restoring an older snapshot, database metadata may still
-reference old files or sessions that no longer exist in the current volume.
+### Snapshots
 
-When creating or restoring a snapshot, ToolPlane first enters the Hermes runtime maintenance gate, waits for admitted
-chat and attachment writes to finish while rejecting new writes, then stops the runtime before copying the volume.
-After a restore, ToolPlane re-projects the agent's currently managed providers, MCP, Skills, and environment variables;
-a previously running runtime is restarted. A Hermes runtime is bound one-to-one with its agent and cannot be cloned
-directly via generic Sandbox clone; use the agent clone flow for copies.
+Snapshots copy the `/opt/data` named volume, including workspace, sessions, memories, attachments, local Skills, and native configuration. They exclude the container writable layer and do not roll back ToolPlane `Conversation` / `AgentAttachment` rows. This is not a complete logical Agent checkpoint; restoring an old volume can leave database metadata referring to missing files or sessions.
 
-The ToolPlane supervisor proxies Hermes HTTP via `docker exec curl`. Both the API key and the MCP token are derived as:
+Snapshot creation or restore first enters the maintenance gate, drains admitted chat/attachment writes, rejects new writes, then stops and copies the runtime volume. Restore reprojects current providers, MCP, Skills, and environment; only a previously running runtime is restarted. Hermes cannot be copied through generic Sandbox clone; use Agent clone. See [SANDBOXES.md](./SANDBOXES.md) for generic Docker snapshot recovery and cleanup-failure states.
 
-```text
-HMAC-SHA256(AUTH_SECRET, runtimeId + purpose)
-```
+### Dashboard
 
-so the database stores no plaintext runtime token. `hermes-api` and `toolplane-mcp` use different purposes and are not
-interchangeable.
-
-### Hermes Dashboard
-
-The `Hermes` tab in the agent settings embeds the official Dashboard, including the native Skills, Files, Sessions,
-Memory, Cron, Plugins, MCP, Channels, Config, Keys, and System pages.
-
-The browser never connects to the container port directly. The access chain is:
+The Agent settings embed the native Dashboard. Access goes through runtime-scoped signed capabilities, a platform route, a separate-origin Dashboard broker, and a controlled sandbox proxy, never a direct browser connection to a container port.
 
 ```text
 ToolPlane Agent page
-  -> 8-hour, runtime-scoped signed capability
+  -> runtime-scoped capability (8 hours)
   -> /api/v1/agent-runtimes/:runtimeId/dashboard/:capability/*
-  -> 307 to the separate origin http://<host>:9332
-  -> a second signed capability bound to the ToolPlane parent-page origin
-  -> Hermes Dashboard broker
-  -> supervised sandbox proxy
+  -> 307 to a separate origin http://<host>:9332
+  -> capability bound to the parent-page origin
+  -> Dashboard broker -> sandbox proxy
   -> docker exec curl 127.0.0.1:9119
 ```
 
-The Dashboard iframe grants `allow-same-origin` on the separate port origin so the official Dashboard can use
-`localStorage`. It remains isolated from the ToolPlane page by the browser same-origin policy; the broker does not
-forward ToolPlane cookies, Authorization headers, or user API tokens, and returns CSP such as `connect-src 'self'` and
-a `frame-ancestors` bound to the parent-page origin. Even if an agent chooses a custom Hermes image, Dashboard
-JavaScript shipped by that image cannot read the ToolPlane page or call other ToolPlane APIs. The proxy only forwards
-the `X-Hermes-Session-Token` that Hermes itself injects.
+The separate origin supports iframe `allow-same-origin` / `localStorage` while isolating it from ToolPlane. The broker does not forward platform cookies, Authorization, or user tokens, and restricts `connect-src` and `frame-ancestors`. It may forward Hermes's own `X-Hermes-Session-Token`. After capability and Origin validation, WebSockets use a frame bridge in `docker exec --user hermes`, without publishing container ports.
 
-Local development listens on `0.0.0.0:9332` by default. HTTPS deployments must set
-`HERMES_DASHBOARD_PUBLIC_URL=https://hermes.example.com` and reverse-proxy that separate TLS origin to the app's
-`HERMES_DASHBOARD_PORT`; the URL must not share an origin with `NEXT_PUBLIC_APP_URL`.
+The local broker defaults to `0.0.0.0:9332`. For HTTPS, set `HERMES_DASHBOARD_PUBLIC_URL` to an origin different from `NEXT_PUBLIC_APP_URL`, such as `https://hermes.example.com`, and proxy it to `HERMES_DASHBOARD_PORT`. ToolPlane-owned configuration remains authoritative; an ordinary console runtime's other Skills, model assignments, and system prompt remain Hermes-managed.
 
-ToolPlane-projected `skills/toolplane-agent` is platform-managed content in the Dashboard; other Skills created by
-Hermes itself can be edited and persisted directly. `providers` and `mcp_servers.toolplane` under the ToolPlane
-namespace always defer to ToolPlane; Hermes's model assignments, system prompt, and other native config remain
-Hermes-managed.
-The Dashboard's own Chat, event stream, and live console are also forwarded through the separate broker; ToolPlane's
-Agent Chat and Terminal remain the platform-native entries. After capability and browser-Origin checks, the WebSocket
-reaches the container loopback `127.0.0.1:9119` through a controlled frame bridge inside `docker exec --user hermes`;
-no container port is published.
-
-### Hermes Terminal
-
-The `Terminal` tab in the agent settings provides a full interactive shell. The browser uses xterm over an agent-scoped
-HTTP + SSE API connected to the supervisor:
+### Terminal and Allow sudo
 
 ```text
 /api/v1/agents/:agentId/terminal
-  -> verify user membership and URL Agent runtime
-  -> auto-start Hermes runtime when needed
+  -> verify membership and the URL Agent's runtime
+  -> start Hermes when needed
   -> supervised /terminal/session
   -> docker exec -w /opt/data/workspace
 ```
 
-A terminal session only resolves inside the container of the agent in the URL; one agent's session ID cannot reach
-another runtime. The shell runs as the image's default user (root), consistent with the MCP shell/file tools, so
-`apt-get`, `chown`, etc. work directly; the `hermes` CLI in the wrapper drops back to the `hermes` service user via
-`setpriv`, so `/opt/data` stays manageable by the service user. ToolPlane sync directories and uploaded attachments
-still get their permissions corrected for that user.
+The interactive terminal uses the image's default user, root in the current managed image; the whole shell is not automatically started as `hermes`. The `hermes` CLI wrapper switches to the `hermes` service user via `setpriv`, preserving service-user ownership of Hermes state. One Agent's terminal session ID cannot reach another runtime.
 
-In Chat, the agent's native shell tool runs as the `hermes` service user and cannot escalate by default. After enabling
-`Allow sudo` in the sandbox settings (stored in `Sandbox.config.allowSudo` and projected to the deployment
-`installCfg`), container startup (`ensureHermesSudo`) installs `sudo` and writes `/etc/sudoers.d/99-toolplane`
-(`hermes ALL=(ALL) NOPASSWD:ALL`), letting the agent run `sudo`-escalated commands directly (Hermes's sudo handling
-also supports automatic `SUDO_PASSWORD` injection). With it enabled the container no longer sets
-`no-new-privileges` — setuid sudo requires that; the terminal and MCP shell/file tools already run as root, so the
-practical protection level is unchanged. The toggle takes effect on the next container rebuild (forced runtime resync,
-volume preserved); disabling restores `no-new-privileges`. The option can also be checked directly when creating a
-Hermes sandbox (archive import).
+The chat runtime's native shell runs as the `hermes` service user. Enabling `Sandbox.config.allowSudo` installs sudo, grants `hermes ALL=(ALL) NOPASSWD:ALL`, and removes `no-new-privileges` to permit setuid sudo. Although the console terminal and MCP shell already have root access, **this still expands the chat runtime's escalation capability**; do not claim the security boundary is unchanged. The setting takes effect on container rebuild while preserving the volume; disabling it restores the default restriction.
 
-## 5. Chat, Memory & Attachments
+## 5. Sessions, Channels, and Attachments
 
-### Console chat
+### Console Chat
 
-ToolPlane converts Hermes OpenAI SSE into the existing AI SDK UI stream; the frontend protocol is unchanged.
+ToolPlane converts Hermes OpenAI SSE to the AI SDK UI stream. This frontend protocol does not imply that execution still uses the former Native runtime.
 
-- `Conversation.id` -> `X-Hermes-Session-Id`
-- `agent:<agentId>:console:<conversationId>` -> `X-Hermes-Session-Key`
-- ToolPlane keeps storing user/assistant message parts
-- Hermes keeps the full session and memory in its own volume
+- `Conversation.id` supplies `X-Hermes-Session-Id`.
+- `agent:<agentId>:console:<conversationId>` supplies `X-Hermes-Session-Key`.
+- ToolPlane stores user/assistant message parts; Hermes maintains full sessions and memory in its own volume.
 
 ### Channels
 
-Channels use Cherry Studio's native Node adapters, configured per sandbox and migratable:
+Platform Node adapters call `runAgentChannelMessage`, dispatch by the target Agent's runtime, and send results through ToolPlane's response contract. A stable DM, group, or thread session key reaches `X-Hermes-Session-Key`.
 
-```text
-Platform
-  -> Native Node channel adapter
-  -> runAgentChannelMessage
-  -> Hermes Agent runtime
-  -> ToolPlane response contract
-  -> Native adapter send
-```
-
-A channel's stable messaging session key is passed straight to `X-Hermes-Session-Key`, so the same DM, group, or
-thread gets a stable long-term memory scope.
-
-Channel credentials are not copied into the agent container, avoiding duplicate consumption. A channel can migrate to
-another sandbox in the same workspace, keeping its credentials while using the target agent's runtime; DSH, Pi, and
-Claude Code need no Hermes platform adapter.
+Channel credentials are not copied into Agent containers, avoiding duplicate consumption. A channel can migrate within the workspace to another sandbox while keeping credentials and using the target runtime. Pi, Claude Code, and DSH need no Hermes platform adapter. See [AGENT_MESSAGING_PLATFORMS.md](./AGENT_MESSAGING_PLATFORMS.md).
 
 ### Attachments
 
-The Hermes OpenAI API supports inline images but not PDF/plain file upload, so ToolPlane provides:
+ToolPlane's Hermes file-upload entry point is:
 
 ```text
-POST /api/v1/agents/:agentId/attachments
+POST /api/v1/agents/:agentId/attachments?filename=<name>&conversationId=<optional-id>
+Content-Type: <file-mime-type>
+<body: raw file bytes>
 ```
 
-Rules:
+The route requires user/session authorization and workspace verification, and the target must have a Hermes runtime. It rejects multipart and streams a raw request body. `conversationId` is optional; when provided it must belong to the URL Agent. Files enter `/opt/data/workspace/attachments/<conversation-id>/...`, or `attachments/inbox/` without a conversation.
 
-- Must be authorized with a user/session token and verify the agent's workspace.
-- `conversationId` must belong to the agent in the URL.
-- Files stream into the runtime — no Base64/JSON, and file contents never enter the model context.
-- Default max 1 GB per file; admins can change it in `/admin/settings`, the database override wins over
-  `TOOLPLANE_MAX_ATTACHMENT_BYTES`, and the server always keeps an upper bound to prevent disk exhaustion.
-- Files are written to `/opt/data/workspace/attachments/<conversation>/...`.
-- `AgentAttachment` stores workspace, agent, conversation, runtime, MIME, size, and storage path.
-- Conversations only send filename, size, MIME, and runtime path; neither images nor plain files are sent to the model
-  as inline parts.
-- Behind a reverse proxy such as Nginx, the proxy's request-body limit must be at least this value and request
-  buffering should be disabled to keep uploads end-to-end streaming.
+The default per-file limit is **1,000,000,000 bytes (decimal 1 GB)**. A valid database setting takes precedence over `TOOLPLANE_MAX_ATTACHMENT_BYTES`, then the default. Requests use the resolved byte limit; the admin form's bounds must not be described as a universal clamp on all environment and manually edited database values. Deployers must also plan storage quotas and proxy limits. See [`attachment-limits.ts`](../src/lib/agents/attachment-limits.ts).
+
+`AgentAttachment` stores workspace, Agent, optional conversation, runtime, MIME, size, and storage path. Upload does not inline the file as Base64/JSON model messages; conversations reference metadata and the runtime path. Hermes may subsequently read file contents through tools, which is different from claiming contents can never enter model context.
+
+Runtime write leases coordinate uploads with snapshots. Match proxy body limits to configuration and disable request buffering. See [`attachments/route.ts`](../src/app/api/v1/agents/[agentId]/attachments/route.ts) for the actual route contract.
 
 ## 6. Lifecycle
-
-Runtime states:
 
 ```text
 setup_required -> provisioning -> running
@@ -359,60 +211,19 @@ setup_required -> provisioning -> running
                                        -> stopped
 ```
 
-- `setup_required`: no provider injectable into Hermes has been selected.
-- `provisioning`: image, volume, or gateway is starting.
-- `running`: supervisor alive and `/health` succeeds.
-- `stopped`: stopped by the user or the process is gone.
-- `error`: sync, Docker, or gateway health failed; see `lastError`.
+`setup_required` means no injectable provider; `provisioning` covers image, volume, or gateway preparation; `running` depends on supervisor and health state; `stopped` means user stop or process exit; `error` records sync, Docker, or health failures.
 
-Config content is deduplicated by SHA-256 hash. A no-change autosave does not rebuild the container; when config,
-MCP/Skill selection, or models change, the volume is preserved while the container is rebuilt and a new gateway starts.
+Configuration is deduplicated by SHA-256 hash. An unchanged save should not rebuild; configuration, MCP, Skill, or model changes trigger projection and rebuilding as needed while retaining the persistent volume. Agent/workspace deletion must clean supervisors, containers, snapshots, and volumes before completing database deletion. Failures should retain retryable state: database rollback cannot undo external teardown.
 
-Both agent deletion and workspace deletion stop the supervisor, remove the container and named volume, then delete the
-database records.
+## 7. Verification and Limits
 
-## 7. Phased Scope
+Review ordinary console and isolated public Endpoint contracts separately: configuration ownership, provider-key boundaries, cross-workspace/runtime rejection, session scope, native-config preservation, snapshot/write exclusion, terminal users, and cleanup-failure recovery.
 
-### This branch
+Important regressions include preserving unmanaged Skills/settings; fallback after provider/model removal; projecting public revision prompts and tool restrictions; starting terminals as the image default user while the CLI drops privileges; reprojecting current grants after restoring an old volume; and rejecting other Agents' capabilities, tokens, conversations, or terminal sessions.
 
-- Agent runtime data model and migrations
-- New Agent runtime/model/MCP/Skill/Toolkit selection
-- Hermes-dedicated Sandbox and Docker lifecycle
-- Model, MCP, Skill config projection
-- Console chat streaming adapter
-- Channel message runtime routing and Hermes memory scope
-- Attachment upload, persistent workspace, and metadata
-- Start, stop, sync, status, and error UI
-- Controlled proxy for the native Hermes Dashboard and its in-agent embed
-- Agent-scoped Hermes interactive terminal
-- Native runtime compatibility
+Historical planning lists are not evidence that a feature is still unimplemented. Check source, tests, and the target image for new capabilities and upstream compatibility. Single-process runtime/maintenance-gate constraints still apply; horizontal scaling needs additional coordination.
 
-### Later
-
-- Periodic Hermes `/v1/capabilities` collection and a version compatibility matrix
-- Optional ToolPlane-native Cron, memory, sessions, plugins management pages
-- Attachment download, deletion, quotas, and virus scanning
-- Tool progress events mapped to AI SDK structured parts
-- Runtime image allowlist, signature/SBOM verification, and upgrade policy
-- Per-workspace/agent CPU, memory, disk, and concurrency limits
-- Catalog onboarding for more Hermes channel adapters
-
-## 8. Acceptance Criteria
-
-1. Native agents' chat, tools, channels, and historical behavior are unchanged.
-2. Creating a Hermes agent produces exactly one dedicated runtime Sandbox.
-3. Hermes containers cannot reach the ToolPlane DB, and the host exposes no public Hermes API port.
-4. A runtime MCP token cannot access another agent's tools.
-5. After changing an agent's MCP/Skill/Toolkit, Hermes config re-syncs repeatably without duplicates.
-6. The same conversation/channel session keeps using the original Hermes memory/session volume after a container restart.
-7. Cross-workspace provider, tool, conversation, and attachment IDs are rejected.
-8. Deleting an agent/workspace leaves no residual supervisor, container, or volume.
-9. The Dashboard port is not published; expired or other runtimes' capabilities cannot reach that Dashboard.
-10. Dashboard-created local Skills, memory, and non-ToolPlane config survive an agent tool re-sync.
-11. Hermes Terminal auto-starts the runtime, lands in `/opt/data/workspace` as the `hermes` user, and isolates sessions
-    between agents.
-
-Upstream contract references:
+Upstream references (the target image version's contract may differ):
 
 - <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/docker.md>
 - <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md>
