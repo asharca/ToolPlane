@@ -1,0 +1,26 @@
+name: architecture-repair-snapshot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  source-snapshot:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/architecture-130-137'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: git archive --format=tar HEAD | gzip > /tmp/toolplane-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: architecture-repair-source
+          path: /tmp/toolplane-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
