@@ -237,6 +237,7 @@ ToolPlane：面向智能体工具、MCP 服务器、技能、工具包和沙箱�
 
 ## 参考资料
 
+- 文档总索引：[docs/README.zh-CN.md](docs/README.zh-CN.md)（[English](docs/README.md)）
 - 深入架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Sandbox 与连接器设计：[docs/SANDBOXES.md](docs/SANDBOXES.md)
 - Toolkit 同步设计：[docs/TOOLKIT_SYNC.md](docs/TOOLKIT_SYNC.md)

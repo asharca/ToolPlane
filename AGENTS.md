@@ -36,7 +36,10 @@ details live in `docs/`. Read only the references relevant to the task.
   See `src/lib/auth/request-user.ts` before choosing an auth helper.
 - Public agent endpoints must not expose Hermes container APIs/dashboards,
   runtime tokens, provider keys, or MCP runtime tokens. Hermes containers do not
-  receive Postgres access or provider keys.
+  receive Postgres access or user-level ToolPlane tokens. Selected provider keys
+  are projected into the agent's private Hermes config volume; do not expose
+  them through public responses, Deployment/Sandbox JSON, or Docker inspect
+  environment. See `src/lib/agents/hermes/runtime.ts` and `config.ts`.
 - Return plaintext API tokens only at creation; persist only their hashes.
   Keep credentials out of logs, test artifacts, and committed files.
 
@@ -82,7 +85,7 @@ Confirm the database is local before migrating or seeding.
   justifies it. State missing prerequisites and checks not run.
 - Vitest uses `fileParallelism: false`: integration files share Postgres. Do not
   enable parallel files or launch overlapping test runs against that database.
-- Server modules import `'server-only'`; tests alias it to
+- Server modules import 'server-only'; tests alias it to
   `tests/stubs/server-only.ts` in `vitest.config.ts`.
 - Prisma uses `@prisma/adapter-pg` in `src/lib/db.ts`. After model changes, generate
   the client and restart the dev server; HMR retains the old client. Use
@@ -94,8 +97,9 @@ Confirm the database is local before migrating or seeding.
 ToolPlane is a self-hosted control plane for tools, MCP servers, skills, toolkits,
 sandboxes, and agents. Route groups do not appear in URLs:
 
-- `src/app/(site)/`: public directory, no personal data; Server Components use
-  `src/lib/queries/` directly. The layout supplies Header/Footer.
+- `src/app/(site)/`: static public product site; do not read real marketplace or
+  personal data here. Use `src/lib/marketing/content.ts`, not `src/lib/queries/`
+  or the database. The layout supplies Header/Footer.
 - `src/app/app/(auth)/`: `/app/login` and `/app/signup`.
 - `src/app/app/[workspace]/`: authenticated console with `DashboardChrome`;
   `/app` redirects to the default workspace.
@@ -103,26 +107,27 @@ sandboxes, and agents. Route groups do not appear in URLs:
 
 | Task | Start here |
 | --- | --- |
-| Core platform | `docs/ARCHITECTURE.md` (Chinese, predates agents); `prisma/schema.prisma` |
+| Core platform | `docs/README.md` (index), `docs/ARCHITECTURE.md` (Chinese); `prisma/schema.prisma` |
 | Shared UI | `docs/UI_LIBRARY.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
 | Toolkits and sync | `src/lib/toolkits/actions.ts`; `docs/TOOLKIT_SYNC.md` |
-| Native agent turns | `src/lib/agents/native.ts`, `model.ts`, `run.ts`; native execution uses `@earendil-works/pi-ai`, not AI SDK `streamText` |
+| Agent runtime selection and turns | `src/lib/agents/runtime-kind.ts`, `sandbox-turn.ts`, `run.ts`, `native.ts`; Pi, Claude Code, and DSH use dedicated sandboxes. The internal `native.ts` helper uses `@earendil-works/pi-ai`, not AI SDK `streamText`; its filename is not a public runtime identifier. |
 | Chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `skill-tools.ts`, `system-prompt.ts`, `mutations.ts` |
 | Hermes | `docs/HERMES_AGENT_RUNTIME.md`; `src/lib/agents/hermes/` |
 | Sandboxes and PTY | `docs/SANDBOXES.md`; `src/app/api/v1/agents/[agentId]/terminal/` |
 | Messaging channels | `docs/AGENT_MESSAGING_PLATFORMS.md`; `src/lib/agents/channel-*.ts` |
 | Public agent API | `docs/AGENT_PUBLIC_API.md`; `src/lib/agents/public-api/` |
-| Workspace control MCP | `docs/AGENT_CONTROL_MCP.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts` |
+| Workspace control MCP | `docs/AGENT_CONTROL_MCP.md`; `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi` or `hermes`, not every console runtime. |
 | Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment
-status with supervisor live state; observability comes from `RequestLog`.
-Native chat uses the AI SDK UI message stream through `ui-stream.ts`, while
-`native.ts` executes model/tool steps. Preserve conversation scoping, tool-source
-deduplication, and sub-agent depth/cycle guards. Trust current code over stale
-architecture descriptions.
+status with supervisor live state; observability comes from `LogEvent` (see
+docs/OBSERVABILITY.md).
+Agent chat uses the AI SDK UI message stream through `ui-stream.ts`; execution
+is selected by `runtime-kind.ts` and the runtime-specific runners. Preserve
+conversation scoping, tool-source deduplication, and sub-agent depth/cycle guards.
+Trust current code over stale architecture descriptions.
 
 ## Repository skill
 

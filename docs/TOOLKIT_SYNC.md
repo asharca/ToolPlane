@@ -1,5 +1,7 @@
 # Toolkit 同步机制
 
+> **English**: [TOOLKIT_SYNC.en.md](./TOOLKIT_SYNC.en.md)
+
 > 本文说明 Toolkit 如何同步到 Claude Code、Codex、opencode 和 Hermes，包括 MCP 工具、Skills、安装 token、客户端本地文件和测试覆盖。
 
 ---
