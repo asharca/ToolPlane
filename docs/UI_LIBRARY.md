@@ -1,5 +1,7 @@
 # Shared UI and CI
 
+> **中文**：[UI_LIBRARY.zh-CN.md](./UI_LIBRARY.zh-CN.md)
+
 The shared UI library is maintained in https://github.com/asharca/ui and
 published to npm as `@asharca/ui`. ToolPlane consumes a released version, just
 like any other application. Keep routing, authentication, API clients, and

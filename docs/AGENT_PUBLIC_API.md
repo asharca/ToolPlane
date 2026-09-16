@@ -1,5 +1,7 @@
 # Agent Public API
 
+> **中文**：[AGENT_PUBLIC_API.zh-CN.md](./AGENT_PUBLIC_API.zh-CN.md)
+
 ToolPlane exposes published Agent Endpoints through its own HTTPS gateway. It never publishes the
 Hermes container API, dashboard port, runtime token, model-provider key, workspace session, or MCP
 runtime token.

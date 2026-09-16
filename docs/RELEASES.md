@@ -1,5 +1,7 @@
 # Releases
 
+> **中文**：[RELEASES.zh-CN.md](./RELEASES.zh-CN.md)
+
 ToolPlane now uses `release-please` to compute semantic versions
 automatically, but release preparation is started manually.
 

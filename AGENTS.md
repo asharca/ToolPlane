@@ -103,7 +103,7 @@ sandboxes, and agents. Route groups do not appear in URLs:
 
 | Task | Start here |
 | --- | --- |
-| Core platform | `docs/ARCHITECTURE.md` (Chinese, predates agents); `prisma/schema.prisma` |
+| Core platform | `docs/README.md` (index), `docs/ARCHITECTURE.md` (Chinese); `prisma/schema.prisma` |
 | Shared UI | `docs/UI_LIBRARY.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
@@ -118,7 +118,8 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment
-status with supervisor live state; observability comes from `RequestLog`.
+status with supervisor live state; observability comes from `LogEvent` (see
+docs/OBSERVABILITY.md).
 Native chat uses the AI SDK UI message stream through `ui-stream.ts`, while
 `native.ts` executes model/tool steps. Preserve conversation scoping, tool-source
 deduplication, and sub-agent depth/cycle guards. Trust current code over stale

@@ -1,5 +1,7 @@
 # Agent Sandboxes
 
+> **中文**：[SANDBOXES.zh-CN.md](./SANDBOXES.zh-CN.md)
+
 Agent sandboxes give an agent a workspace that behaves like a small operating
 environment. In this project a sandbox is exposed to agents as MCP tools and,
 for the browser console, as a PTY-backed terminal stream. The app does not

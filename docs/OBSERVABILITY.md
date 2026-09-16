@@ -1,5 +1,7 @@
 # Logging and Audit
 
+> **中文**：[OBSERVABILITY.zh-CN.md](./OBSERVABILITY.zh-CN.md)
+
 The administrator console at `/admin/logs` reads structured events, independently
 of workspace business records. Workspace observability remains restricted to the
 signed-in user's workspace and never includes diagnostic payloads.

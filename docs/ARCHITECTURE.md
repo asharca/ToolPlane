@@ -1,22 +1,33 @@
 # ToolPlane — 架构文档
 
-> ToolPlane 是一个自托管 Agent 工具控制面，包含一个**独立的公开产品站**、一个**带真实市场和 MCP/Agent/Sandbox 运行时的登录后控制台**，以及一套 **JSON API**。
+> **English**: [ARCHITECTURE.en.md](./ARCHITECTURE.en.md)
+
+> ToolPlane 是一个自托管 Agent 工具控制面，包含一个**独立的公开产品站**、一个**带真实市场和 MCP/Agent/Sandbox 运行时的登录后控制台**、一个**管理后台**，以及一套 **JSON API**。
 
 ---
 
 ## 1. 项目概述
 
-本项目是一个 MCP（Model Context Protocol）生态平台，分三大功能区：
+本项目是一个 MCP（Model Context Protocol）与 Agent 生态平台，分四大功能区：
 
 1. **公开产品站** `(site)` —— 只展示 ToolPlane 的产品优势与能力，不读取或镜像真实 MCP、Skill、Agent 市场数据。
-2. **控制台 / Hub** `app/[workspace]` —— 登录后的工作区：浏览真实市场、部署 MCP 服务器（**真实子进程**）、安装技能和智能体、把资源**自由组装**成 Toolkit、通过网关调用工具、查看可观测性。
-3. **JSON API** `api/v1/*` —— MCP JSON-RPC 网关、技能下载、Toolkit/工作区 manifest 导出。
+2. **控制台 / Hub** `app/[workspace]` —— 登录后的工作区：浏览真实市场、部署 MCP 服务器、安装技能和智能体、把资源**自由组装**成 Toolkit、运行 Agent（Native / Hermes 沙箱）、聊天助手、知识库、Work 任务流、通过网关调用工具、查看可观测性。
+3. **管理后台** `admin/` —— 管理员审核市场条目、管理目录（Servers/Skills/Agents/Assistants/分类）、用户、工作区、系统设置与日志审计。
+4. **JSON API** `api/v1/*` + `api/openai/v1/*` —— MCP JSON-RPC 网关、技能下载、Toolkit/工作区 manifest 导出、Agent 公共 API、Agent Control MCP、渠道事件、管理接口，并暴露 `api/v1/openapi.json`。
 
-核心特点：控制台里的 MCP 不是“假数据”——每次部署都会 `spawn` 一个真实的 Node 子进程跑 JSON-RPC server，网关把请求代理过去并记录可观测性。
+核心特点：控制台里的 MCP 不是“假数据”——部署可以是内置子进程、远程 MCP（streamable-http / sse）或 Docker bridge 容器，网关把请求代理过去并记录可观测性。
 
-Toolkit 同步到 Claude Code、Codex、opencode 的安装脚本、MCP tools 聚合、skills baseline、token 轮换和本地文件布局见 [`docs/TOOLKIT_SYNC.md`](./TOOLKIT_SYNC.md)。
+各专题文档：
 
-Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill script 执行路径见 [`docs/SANDBOXES.md`](./SANDBOXES.md)。
+- [`docs/TOOLKIT_SYNC.md`](./TOOLKIT_SYNC.md) —— Toolkit 同步到 Claude Code、Codex、opencode、Hermes 的机制
+- [`docs/SANDBOXES.md`](./SANDBOXES.md) —— Agent 沙箱的 Docker/Connector runtime
+- [`docs/HERMES_AGENT_RUNTIME.md`](./HERMES_AGENT_RUNTIME.md) —— Hermes-first 的 Agent runtime 架构
+- [`docs/AGENT_MESSAGING_PLATFORMS.md`](./AGENT_MESSAGING_PLATFORMS.md) —— Telegram/Lark(飞书)/QQ/微信/Discord/Slack 渠道
+- [`docs/AGENT_PUBLIC_API.md`](./AGENT_PUBLIC_API.md) —— 已发布 Agent Endpoint 的公共 API 与部署拓扑约束
+- [`docs/AGENT_CONTROL_MCP.md`](./AGENT_CONTROL_MCP.md) —— 工作区级 Agent Control MCP
+- [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) —— 统一日志/审计模型与采集保留策略
+- [`docs/WORKSPACES.md`](./WORKSPACES.md) —— 工作区成员、邀请与删除生命周期
+- [`docs/UI_LIBRARY.md`](./UI_LIBRARY.md)、[`docs/RELEASES.md`](./RELEASES.md) —— 共享 UI 包与发布流程
 
 ---
 
@@ -25,47 +36,51 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
 | 层 | 选型 |
 |---|---|
 | 框架 | Next.js 16.2.9（App Router + Turbopack）、React 19.2 |
-| 语言 | TypeScript 5 |
-| 样式 | Tailwind CSS v4（`@tailwindcss/postcss`，`@theme inline`，方角 `--radius:0`，控制台用圆角设计系统）|
+| 语言 | TypeScript 5（Node >= 22）|
+| 样式 | Tailwind CSS v4 + 共享 UI 包 `@asharca/ui`（npm 发布，源码在独立仓库）|
 | 主题 | next-themes（`class` 策略，深/浅色）|
+| 国际化 | next-intl（`messages/en.json`、`messages/zh.json`）|
 | ORM | Prisma 7.8 + `@prisma/adapter-pg` 驱动适配器 + `pg` |
 | 数据库 | PostgreSQL |
-| 认证 | jose（签发/校验 JWT 会话 Cookie）+ 哈希 API Token |
-| 图标 | lucide-react |
-| 测试 | Vitest 4（单元/集成，53 用例）、Playwright 裸库做 e2e |
+| 认证 | jose（签发/校验 JWT 会话 Cookie）+ 哈希 API Token + Agent API Key；管理员由 `ADMIN_EMAILS` 识别 |
+| Agent/聊天 | Vercel AI SDK 7（`ai` + `@ai-sdk/react`）、assistant-ui、streamdown |
+| MCP | `@modelcontextprotocol/sdk`，自研网关/桥接（`mcp-http-bridge` / `mcp-stdio-bridge`）|
+| 渠道 | grammy（Telegram）、`@larksuiteoapi/node-sdk`（飞书）等 |
+| 终端/桌面 | node-pty + xterm、noVNC（沙箱屏幕）、ws |
+| 图标 | lucide-react、@primer/octicons-react |
+| 测试 | Vitest 4（约 1800+ 用例：259 个 unit 文件、56 个 integration 文件，含少量 `.live.` 用例）、Playwright 裸库做 e2e |
 
-环境变量（`.env.example`）：`DATABASE_URL`、`AUTH_SECRET`（会话签名）、`NEXT_PUBLIC_APP_URL`。
+主要环境变量（`.env.example`）：`DATABASE_URL`、`AUTH_SECRET`、`NEXT_PUBLIC_APP_URL`、`NEXT_PUBLIC_SUPPORT_EMAIL`、`ADMIN_EMAILS`、`CONNECTOR_WS_*`（Connector 接入）、`HERMES_DASHBOARD_*`、`TOOLPLANE_IMAGE/PLATFORM/UPDATE_*`（自更新）、`TOOLPLANE_MCP_STARTUP_*`（启动超时）。
 
 ---
 
 ## 3. 顶层架构
 
 ```
-                          ┌─────────────────────────────────────────┐
-   Browser                │            Next.js (App Router)          │
-   ──────                  │                                         │
+                          ┌──────────────────────────────────────────┐
+   Browser                │            Next.js (App Router)           │
+   ──────                 │                                          │
    Public visitor ──────► │  (site)  Static product marketing        │
-                          │     └─ marketing/content (no market DB)  │
-   Signed-in user ──────► │  app/[workspace]  Console + market       │
-                          │     └─ workspace/* agents/* ──► Prisma   │
-   Agent / CLI ─────────► │  api/v1/*  JSON API (Bearer/session)     │
-                          │     └─ /mcp/[id]/rpc  Gateway proxy      │
-                          └──────────────┬──────────────────────────┘
-                                         │ HTTP 127.0.0.1:<port>
-                                         ▼
-                          ┌─────────────────────────────────────────┐
-                          │  MCP child process (one per Deployment) │
-                          │  scripts/mcp-server.mjs (JSON-RPC 2.0)   │
-                          │  Managed by lib/process/supervisor.ts    │
-                          └─────────────────────────────────────────┘
+   Signed-in user ──────► │  app/[workspace]  Console + real market  │
+   Administrator ───────► │  admin/  Review, catalog, users, logs    │
+   Agent / CLI ─────────► │  api/v1/* + api/openai/v1/*  JSON API    │
+                          └───────┬──────────────┬───────────────────┘
+                                  │              │
+              ┌───────────────────▼──┐   ┌───────▼────────────────┐
+              │ MCP Deployment 运行时  │   │ Agent Runtime           │
+              │ builtin 子进程 /       │   │ Native 进程内 /          │
+              │ Docker bridge 容器 /   │   │ Hermes 独立容器+持久卷    │
+              │ 远程 MCP(HTTP/SSE)     │   │ Sandbox: Docker/Connector│
+              └──────────────────────┘   └────────────────────────┘
 ```
 
 **路由分组（route groups）：**
 
-- `src/app/(site)/...` —— 独立公开产品站，套 `(site)/layout.tsx`（Header/Footer），只使用静态营销内容，**不读取真实市场或个人数据**；通过 `/app`、`/app/login` 进入控制台。
-- `src/app/app/(auth)/...` —— 登录/注册（URL `/app/login`、`/app/signup`），套居中的 `(auth)/layout.tsx`。
-- `src/app/app/[workspace]/...` —— 工作区控制台，套 `DashboardChrome`（侧栏 + 顶栏 + 移动抽屉）；Settings 内含 **API Tokens**（`/app/[workspace]/settings/tokens`）。
-- `src/app/api/v1/...` —— 无 UI 的 JSON 路由。
+- `src/app/(site)/...` —— 独立公开产品站，只使用静态营销内容，**不读取真实市场或个人数据**。
+- `src/app/app/(auth)/...` —— 登录/注册（URL `/app/login`、`/app/signup`）。
+- `src/app/app/[workspace]/...` —— 工作区控制台，套 `DashboardChrome`；另有 `@modal` 拦截路由（如 settings/account 弹层）。
+- `src/app/admin/...` —— 管理后台（独立 layout，要求管理员）。
+- `src/app/api/v1/...`、`src/app/api/openai/v1/...` —— 无 UI 的 JSON 路由。
 
 ---
 
@@ -74,224 +89,269 @@ Agent 沙箱的 Docker/Connector runtime、MCP tools 暴露方式和 skill scrip
 ```
 src/
 ├─ app/
-│  ├─ (site)/            Static product marketing
-│  │  ├─ page.tsx                Product overview
-│  │  ├─ server                  MCP capability page (static)
-│  │  ├─ client                  Client integration page (static)
-│  │  ├─ tools/skills            Skill capability page (static)
-│  │  ├─ agents                  Agent capability page (static)
-│  │  ├─ legacy detail/search/rank routes -> fixed marketing redirects
-│  │  ├─ hub, sell, submit       Public landing/console entry pages
-│  │  └─ privacy, terms, news, what-is-an-mcp-server  Static pages
-│  ├─ app/               Console namespace (URL /app)
-│  │  ├─ page.tsx                /app -> default workspace -> /app/<slug>/mcp
-│  │  ├─ (auth)/login, signup    /app/login, /app/signup (centered auth layout)
-│  │  └─ [workspace]/   Workspace console (see sec. 8; settings/tokens = API tokens)
-│  │  ├─ layout.tsx              DashboardChrome
-│  │  ├─ market/{mcp,skills,agents}/...  Authenticated real market
-│  │  ├─ mcp, mcp/new, mcp/[deploymentId]       (`mcp/new` redirects to market)
-│  │  ├─ skills, skills/new, skills/[installId] (`skills/new` redirects to market)
-│  │  ├─ toolkits, toolkits/[slug]
-│  │  ├─ observability, members, settings
-│  │  ├─ seller -> seller/overview, agents
-│  └─ api/v1/            JSON API (see sec. 9)
+│  ├─ (site)/            静态公开产品站（page/server/client/agents/
+│  │                     categories/daily/leaderboards/news/search/sell/submit/
+│  │                     privacy/terms/what-is-an-mcp-server）
+│  ├─ app/
+│  │  ├─ page.tsx                /app → 恢复/选择工作区（见 WORKSPACES.md）
+│  │  ├─ (auth)/login, signup    /app/login, /app/signup
+│  │  └─ [workspace]/   工作区控制台：mcp, skills, toolkits, market/{mcp,skills,
+│  │                     agents,assistants,toolkits,installed,items,publish},
+│  │                     agents, chat, knowledge, work,
+│  │                     sandboxes, providers, observability, members, seller,
+│  │                     settings{,/account,/tokens,/channels,/providers}, @modal
+│  ├─ admin/            管理后台：agents, assistants, categories, logs,
+│  │                     market, reviews, servers, settings, skills, users, workspaces
+│  └─ api/
+│     ├─ v1/            主 JSON API（见 §10）
+│     └─ openai/v1/     OpenAI 兼容端点（models, chat/completions）
 ├─ components/
-│  ├─ layout/   Header, Footer, AnnouncementBar, Logo
-│  ├─ home/     HomeView, RotatingHeadline, FaqSection
-│  ├─ cards/    EntityCard, ServerCard, ClientCard, SkillCard
-│  ├─ dashboard/  Chrome, Sidebar, Header(+Controls), TabBar,
-│  │             ConnectDialog, ReadyToConnectBanner, ToolPlayground,
-│  │             ToolkitsBrowser, WorkspaceSwitcher,
-│  │             StatusBadge, CopyButton, BrowseGrid, DashboardLogo
-│  ├─ server/   ServerList     (dashboard/ also has TokenManager, SettingsTabs)
-│  └─ theme/    ThemeProvider, ThemeToggle
+│  ├─ layout/  home/  cards/  server/  theme/  timezone/  marketing/  auth/
+│  ├─ dashboard/        控制台全部组件（Chrome/Sidebar/Header/Tabs、
+│  │                    MCP 检查器、ToolPlayground、Toolkits、Agent、聊天等）
+│  ├─ admin/            管理后台组件
+│  └─ ui/               本地基础组件（共享组件主要来自 @asharca/ui）
 ├─ lib/
-│  ├─ auth/        session(jose), tokens, password, current-user,
-│  │               request-user, safe-redirect, actions, token-format
-│  ├─ process/     supervisor(child processes), mcp-client(RPC client)
-│  ├─ observability/ log (record + aggregate, including p95)
-│  ├─ queries/     servers, clients, skills, categories, home, search
-│  ├─ workspace/   queries, actions
-│  ├─ toolkits/    queries, actions
-│  ├─ hub/, seller/, skills/(artifact)
+│  ├─ auth/        session(jose), tokens, password, current-user, request-user,
+│  │               safe-redirect, actions, token-format
+│  ├─ process/     supervisor, spawn-spec(builtin/remote/bridge), mcp-gateway,
+│  │               deployment-gateway, deployment-runtime-container,
+│  │               deployment-config-volume, mcp-client, mcp-tool-catalog,
+│  │               mcp-prompts, mcp-resources, mcp-result-redaction,
+│  │               reconcile, sandbox, sandbox-mcp-client, git-source
+│  ├─ agents/      Agent 域：run/native/sandbox-runtime/hermes/、channels/、
+│  │               control-mcp, control-service, public-api/, market*, messaging,
+│  │               conversation-*, model/provider catalog, platform runner 等
+│  ├─ sandboxes/   沙箱：connector*(WS 接入/鉴权/broker)、runtime, images,
+│  │               reconcile, file-list, actions/queries
+│  ├─ chat/        聊天助手：service, branches, web-search
+│  ├─ work/        Work 任务流：coordinator, sessions, state-machine, run-control
+│  ├─ knowledge/   知识库
+│  ├─ market/      统一市场：listings, artifact, skill/assistant manifest,
+│  │               copy-updates, publisher-management, secret-scan
+│  ├─ observability/ events(LogEvent), log, audit, http, queries, redaction,
+│  │               maintenance, settings, system, plugin-telemetry
+│  ├─ workspace/ toolkits/ skills/ seller/ admin/ system/ security/ http/
+│  ├─ attachments/ plugin/ remote-mcp/ i18n/ marketing/ queries/
 │  └─ db.ts        Prisma client + pg adapter
+├─ i18n/            next-intl 配置
 scripts/
-│  ├─ mcp-server.mjs   JSON-RPC HTTP server for one MCP
-│  ├─ mcp-tools.mjs    5 built-in tools + RPC handler
-│  └─ smoke-seed.ts    Test account/workspace seed
+│  ├─ mcp-server.mjs / mcp-tools.mjs     内置 MCP 演示 server 与工具
+│  ├─ mcp-http-bridge.mjs / mcp-stdio-bridge.mjs / sandbox-mcp-server.mjs
+│  ├─ native-runtime-session.mjs / dsh-runtime-driver.mjs   Agent runtime 驱动
+│  ├─ assemble-runtime.mjs / start-server.cjs / bridge-env.mjs  打包与启动
+│  └─ smoke-seed.ts / seed-real-mcp-skills.ts / import-*.ts / sync-tp-skills.ts
+packages/
+│  ├─ connector/    沙箱主机侧 Connector（`pnpm connector:dev`）
+│  └─ ui/           （占位；共享 UI 已迁至 @asharca/ui 独立仓库）
+runtime/migrator/   部署迁移器
 prisma/
-│  ├─ schema.prisma
-│  └─ migrations/  0_init, 20260624122620_add_toolkits
-tests/, e2e/
+│  ├─ schema.prisma（68 个模型）
+│  └─ migrations/   72 个迁移（0_init … 20260908000000_workspace_lifecycle）
+tests/（unit/ integration/ stubs/）、e2e/
 ```
 
 ---
 
 ## 5. 数据模型（Prisma）
 
-共 16 个模型。目录侧与 Hub 侧两块。
+共 **68 个模型**，按域分组：
 
 **目录内容**
 
-- `Server` —— MCP 服务器（slug、name、author、stars、isOfficial/Featured、installCfg、readme）。多对多 `Category`、多对多 `User`（Hub 收藏）、一对多 `Deployment`。
-- `Client` —— MCP 客户端。
-- `Skill` —— 技能（score、多对多 `Category`、一对多 `InstalledSkill`）。
-- `Category` —— 与 Server/Client/Skill 多对多。
-- `DailySnapshot` —— 每日排名快照（entityType/entityId/date/rank/score）。
+- `Server` —— MCP 服务器（slug、配方/验证、部署来源）；`Client` —— MCP 客户端；`Skill` —— 技能（支持 GitHub/registry 来源、bundle）；`Category` —— 与 Server/Client/Skill/市场条目关联；`DailySnapshot` —— 每日排名快照。
 
-**账户与 Hub（运行时状态）**
+**账户与工作区**
 
-- `User` —— 邮箱 + `passwordHash`，拥有 `ApiToken[]`、`Workspace[]`、`Membership[]`、Hub 收藏 `Server[]`。
-- `ApiToken` —— 程序化访问令牌，存 `prefix` + 唯一 `tokenHash`（不存明文）。
-- `Workspace` —— 工作区（slug 唯一、owner），含 `deployments`、`installedSkills`、`requestLogs`、`toolkits`、`members`。
-- `Membership` —— 用户 ↔ 工作区（role）。
-- `Deployment` —— 工作区里部署的某个 Server（status，`@@unique([workspaceId, serverId])`）。对应一个真实子进程。
-- `InstalledSkill` —— 工作区安装的某个 Skill。
-- `RequestLog` —— 网关请求日志（method/path/statusCode/durationMs），可观测性来源。
-- `Toolkit` —— 命名工具包（name、slug、`visibility` private|public、`enabled`，`@@unique([workspaceId, slug])`）。
-- `ToolkitServer` —— Toolkit ↔ Deployment 关联（自由组装）。
-- `ToolkitSkill` —— Toolkit ↔ InstalledSkill 关联。
+- `User`（含 locale、timeZone、status、角色）、`ApiToken`（prefix + tokenHash，可绑定 Toolkit 专用）、`PasswordResetToken`。
+- `Workspace`（slug 唯一、owner、生命周期状态 active/deleting/delete_failed、模型偏好）、`Membership`、`WorkspaceInvitation`（一次性邀请，仅存哈希）、`WorkspaceAttachment`。
 
-> Relationship: `Workspace 1-* Deployment / InstalledSkill / Toolkit`; `Toolkit *-* Deployment` via `ToolkitServer`, and `*-* InstalledSkill` via `ToolkitSkill`.
+**MCP 运行时**
+
+- `Deployment` —— 工作区里部署的某个 Server 或自定义来源（`source`/`installCfg`、`status`、`mcpToolExposure`/`mcpAllowedTools` 工具暴露控制、`publicInvocable` 公共调用闸门）。
+- `DeploymentConfigFile` —— 部署配置文件（物化为托管卷挂载进容器）。
+- `InstalledSkill`、`SkillInvocation`（插件遥测）、`Sandbox`、`SandboxSnapshot`。
+
+**Toolkits**
+
+- `Toolkit`（`visibility`、`enabled`）、`ToolkitServer`（↔ Deployment）、`ToolkitSkill`（↔ InstalledSkill）、`ToolkitInstallLink`（安装分享链接）。
+
+**统一市场（Marketplace）**
+
+- `MarketListing` —— 统一市场条目（MCP/Skill/Agent/Assistant，命名空间 + slug、分类、审核状态）；`MarketRelease` —— 不可变版本；`MarketInstall` —— 安装记录（含 requested release）。
+
+**Agent 域**
+
+- `Agent` + 组成关联：`AgentServer`（MCP）、`AgentSkill`、`AgentToolkit`、`AgentSubAgent`、`AgentKnowledgeBase`、`AgentComposerPrompt`、`AgentAttachment`、`AgentModelProvider`。
+- `AgentRuntime`（kind：native/hermes，显式指定）、`AgentSandbox`（独占绑定）、`AgentRun`。
+- 市场/发布：`AgentListing`、`AgentRelease`、`AgentInstall`。
+- 消息平台：`AgentChannelConnection`（渠道凭据/绑定/沙箱范围）、`Conversation`、`Message`。
+- 公共 API：`AgentEndpoint`、`AgentEndpointRevision`、`AgentEndpointRuntime`、`AgentApiClient`、`AgentApiKey`、`AgentApiUsageBucket`、`AgentApiMaintenanceLease`、`AgentPublicConversation`。
+
+**聊天助手（Chat）**
+
+- `ChatAssistant`（配置 + 市场来源）、`ChatAssistantMcpGrant`（MCP 授权）、`ChatThread`、`ChatTurn`、`ChatMessage`（分支支持）。
+
+**Work 任务流**
+
+- `WorkSession`（协调器驱动的后台执行）、`WorkApproval`（人工审批闸门）。
+
+**知识库**
+
+- `KnowledgeBase`、`KnowledgeDocument`、`KnowledgeChunk`。
+
+**模型服务商**
+
+- `ModelProvider`、`ProviderModel`（Hermes/Agent 可用模型目录）。
+
+**可观测性与系统**
+
+- `LogEvent`（可检索事件元数据 + trace/span）、`LogDetail`（受限诊断载荷，7 天保留）、`AuditEvent`（追加式审计）——详见 OBSERVABILITY.md。
+- `SystemSetting`（管理设置）、`SyncEvent`（Toolkit 同步事件）。
 
 ---
 
 ## 6. 认证与会话
 
-- **会话**：`lib/auth/session.ts` 用 `jose` 以 `AUTH_SECRET` 签发 JWT，存 HTTP-only Cookie。`getCurrentUser()`（`current-user.ts`）解析会话取当前用户。
-- **密码**：`lib/auth/password.ts` 做哈希与校验。
-- **注册/登录/登出**：`lib/auth/actions.ts`（Server Actions）。登录支持安全回跳 `?next=`（`safe-redirect.ts` 防开放重定向）。
-- **API Token**：`lib/auth/tokens.ts` 创建（返回一次性明文）、按 `tokenHash` 校验、吊销；在 `/app/[workspace]/settings/tokens` 用 `TokenManager` 管理（工作区 Settings 的 API Tokens 标签页）。
-- **双通道鉴权**：`lib/auth/request-user.ts` 的 `resolveRequestUser(req)` 先认 `Authorization: Bearer <token>`，否则回退到会话 Cookie——所以 API 既能被 CLI/Agent 用 Token 调，也能被浏览器同源调用。
+- **会话**：`lib/auth/session.ts` 用 `jose` 以 `AUTH_SECRET` 签发 JWT，存 HTTP-only Cookie。
+- **密码**：`lib/auth/password.ts` 哈希与校验；忘记密码走一次性 `PasswordResetToken`（`account:reset-password` 脚本可人工重置）。
+- **API Token**：user 级，`lib/auth/tokens.ts` 创建（一次性明文）/校验/吊销；可绑定 Toolkit 作专用 token。个人 token 管理在 `/app?view=account`（旧工作区内 tokens 页跳转过去）。
+- **Agent API Key**：公共 Agent Endpoint 使用独立的 `AgentApiClient`/`AgentApiKey`，用量按 `AgentApiUsageBucket` 限额。
+- **双通道鉴权**：`resolveRequestUser(req)` 先认 `Authorization: Bearer <token>`，否则回退会话 Cookie。
+- **管理员**：`ADMIN_EMAILS` 环境变量识别，访问 `/admin/*` 与 `api/v1/admin/*`。
 
 ---
 
 ## 7. 公开产品站 `(site)`
 
-公开站与后台市场严格解耦：页面只读取 `lib/marketing/content.ts` 中的独立中英文静态内容，不导入 `lib/db`、`lib/queries`、`lib/agents/market`、工作区或当前用户模块。
+公开站与后台市场严格解耦：页面只读取 `lib/marketing/content.ts` 中的独立中英文静态内容，不导入 `lib/db`、`lib/queries`、工作区或当前用户模块。
 
-- **首页** `/` —— 独立产品介绍：自托管、真实 MCP 进程、工作区隔离、工具链能力和控制台入口。
-- **能力页** —— `/server`、`/tools/skills`、`/agents`、`/client` 分别介绍 MCP、Skill、Agent 和客户端集成的产品价值，不渲染真实市场条目。
-- **旧目录地址** —— `/server/[slug]`、`/tools/skills/[slug]`、`/agents/*`、客户端详情、分类、搜索、榜单和 Daily 地址固定重定向到对应营销页，不查询数据库。
-- **静态/落地** —— `/hub`、`/sell`、`/submit`、`/privacy`、`/terms`、`/news`、`/what-is-an-mcp-server`；`/submit` 进入登录后控制台。
-- **认证与真实数据** —— 登录注册在 `/app/login`、`/app/signup`；真实市场、详情、安装/添加操作和 API Token 均只存在于登录后工作区。
+- **首页** `/` + 能力页 `/server`、`/client`、`/agents`。
+- **目录式页面** `/categories`、`/search`、`/leaderboards`、`/daily` —— 营销化展示/固定重定向，不查询真实库。
+- **静态/落地** `/news`、`/sell`、`/submit`（进入登录后控制台）、`/privacy`、`/terms`、`/what-is-an-mcp-server`。
 
-`tests/unit/public-site-boundary.test.ts` 会递归检查公开页面的本地依赖图，防止通过共享组件把真实市场查询重新引入前台。
+`tests/unit/public-site-boundary.test.ts` 递归检查公开页面的依赖图，防止真实市场查询被重新引入前台。
 
 ---
 
 ## 8. 控制台 / Hub `app/[workspace]`
 
-`layout.tsx` 解析工作区与登录态，渲染 `DashboardChrome`：左侧 `DashboardSidebar`（MANAGE / MONITOR / WORKSPACE 分组 + Sell Skills + Support/Feedback + `WorkspaceSwitcher`），顶栏 `DashboardHeader`（面包屑或标题 + `DashboardHeaderControls`：⌘K 命令面板、主题切换、Help）。移动端为汉堡抽屉。
+`layout.tsx` 解析工作区与登录态，渲染 `DashboardChrome`（侧栏分组 + 顶栏 + 移动抽屉）。侧栏组织可持久化（见 #122）。
 
 ### 8.1 MCP 服务器
-- `/mcp` —— 已部署列表（状态、创建时间、Inspect/Start/Stop/Restart/Remove）。`displayStatus()` 会用进程表对账 DB 状态，避免“DB 说 running 但进程已死”。
-- `/market/mcp`、`/market/mcp/[serverSlug]` —— 登录后 MCP 市场列表与详情；只展示管理员已验证且部署配方可解析的条目，所有详情、添加和管理链接都留在控制台。
-- `/mcp/new` —— 保留旧书签兼容，携带查询参数重定向到 `/market/mcp`。
-- `/mcp/[deploymentId]` —— **检查器**：面包屑、标题 + Running + `Refreshed` 时间、动作 Connect/Restart/Stop/Rebuild，标签页 **Overview / Variables / Tools / Logs**（用 `?tab=` 切换）。
-  - Overview：`ReadyToConnectBanner`（内置 `ConnectDialog`）+ Identity 卡（Endpoint + 复制、Created）+ Observability 入口。
-  - Tools：`ToolPlayground`，对运行中的进程实时 `tools/list` 并可调用工具。
-  - Connect：`ConnectDialog` 弹「Install server」客户端选择器（Claude Code/Desktop、Cursor、VS Code、Codex、Windsurf、Cline、Gemini、Connection URL），按真实网关地址生成可复制安装片段。
+- `/mcp` —— 已部署列表；`/market/mcp`、`/market/mcp/[serverSlug]` —— 登录后市场（仅管理员已验证且配方可解析的条目）。
+- `/mcp/[deploymentId]` —— 检查器：Overview / Variables / **Tools**（`ToolPlayground` 实时 `tools/list` + 调用）/ Logs / **Terminal**（PTY 流）/ **Runtime files**（`DeploymentConfigFile` 编辑），支持 Connect/Restart/Stop/Rebuild 与 MCP JSON 配置编辑。
 
-### 8.2 Skills
-- `/skills` —— 列表；空态是「Create. Refine. Sync.」三步引导卡（STEP 01/02/03）。
-- `/market/skills`、`/market/skills/[skillSlug]` —— 登录后 Skill 市场列表与详情；只展示管理员精选（`curated`）条目。
-- `/skills/new` —— 保留旧书签兼容，携带查询参数重定向到 `/market/skills`。
-- `/skills/[installId]` —— 技能检查器：「How to use」+ `SKILL.md` 预览/复制/下载。
+### 8.2 Skills / Toolkits
+- `/skills`、`/market/skills`、`/skills/[installId]`（SKILL.md 预览/复制/下载）。
+- `/toolkits`、`/toolkits/[slug]` —— 自由组装已部署 MCP 与已安装 Skill；导出 manifest、生成安装链接；同步机制见 TOOLKIT_SYNC.md。
 
-### 8.3 Toolkits（自由组装）
-- `/toolkits` —— `ToolkitsBrowser`：副标题、**New Toolkit**（内联命名创建）、搜索过滤、表格（名称 + Private/Public 徽章 | Status | Tools | Created）。
-- `/toolkits/[slug]` —— 详情，标签页 **Overview / MCPs / Skills**：
-  - MCPs/Skills 标签即「组装区」：上半「In this toolkit」（× Remove），下半「Available」（+ Add）——把工作区里**已部署的 MCP / 已安装的 Skill** 自由增删进该工具包。
-  - 默认工具包 `My Toolkit`（slug `me`）首次访问惰性创建，并用工作区现有项预填。
-  - 每个工具包导出独立 manifest（见 §9）。
-
-后端动作（`lib/toolkits/actions.ts`）：create / delete / setVisibility / add·removeServer / add·removeSkill，全部做工作区授权校验。
+### 8.3 Agents / Chat / Knowledge / Work / Sandboxes / Providers
+- `/agents`、`/agents/[agentId]` —— Agent 管理与运行（runtime kind 显式选择：native 或 hermes 沙箱）；`/market/agents` 安装市场模板为独立副本；发布走 `/agents/[agentId]/publish` → 管理员 `/admin/agents` 审核。
+- `/chat` —— 助手对话（`ChatAssistant` + 线程/分支/轮次，MCP 授权 `ChatAssistantMcpGrant`）。
+- `/knowledge` —— 知识库（文档 → 分块）。
+- `/work` —— Work 任务流会话与审批。
+- `/sandboxes` —— 沙箱管理（Docker/Connector、快照、屏幕会话）。
+- `/providers` —— 模型服务商与模型目录配置。
+- `/market/assistants` —— 助手市场。
 
 ### 8.4 Observability
-- `/observability` —— 标签页 **Usage / Audit log**；4 张统计卡（Total Requests·24h、Error Rate、Avg Latency、**P95 Latency**）、Requests-per-hour 柱状图（requests/errors 图例）、Audit log 表。数据来自 `RequestLog`，`getObservability()` 现场聚合（含 p95）。**真实数据**，非 mock。
+- `/observability` —— Usage / Audit log；统计卡、p95、按小时分布。数据来自统一 `LogEvent`（`gateway.request` 口径），Postgres 现场聚合。模型与口径详见 OBSERVABILITY.md。
 
-### 8.5 Members / Settings / Seller / Agents
-- `/members` —— 「Invite your team」Team-plan 引导卡（对齐ToolPlane的付费门）+ 下方真实成员表。
-- `/settings` —— 子导航（General / API Tokens / Integrations / Billing）+ Organization name & URL slug 表单（`renameWorkspaceAction`）+ 时区显示 + Danger zone「Delete organization」（`deleteWorkspaceAction`，删前 `killMany` 关停子进程）。
-- `/seller` → 重定向 `/seller/overview` —— Marketplace 引导卡 + 真实发布技能表单（`submitSkillAction`）+ 我的上架列表。
-- `/agents`、`/agents/[agentId]` —— 工作区智能体管理与运行界面。
-- `/market/agents`、`/market/agents/[listingId]` —— 登录后智能体市场；只展示已发布且最新版本已经管理员批准的模板。添加后在目标工作区创建独立副本，密钥、对话、日志和运行数据不会复制。
-- `/agents/[agentId]/publish` —— 工作区所有者提交不可变可移植版本供管理员审核；管理员在 `/admin/agents` 管理条目、版本和发布状态。
-
-### 8.6 认证 `/app/(auth)` + API Token `settings/tokens`
-
-- **认证** —— `app/(auth)/login`、`app/(auth)/signup`（URL `/app/login`、`/app/signup`），套居中的 `(auth)/layout.tsx`；成功后默认跳 `/app`（→ `getOrCreateDefaultWorkspace` → 工作区控制台），即"进入 app 界面"。
-- **API Token** —— 在工作区 Settings 内：`/app/[workspace]/settings/tokens`，`DashboardChrome` + `SettingsTabs`（General / API Tokens）+ 重设计的 `TokenManager`（`components/dashboard/`）。**同页不跳转**。Token 是 **user 级**，在任意工作区 Settings 下都是同一份。
-
-> **Hub 已移除**：原 `/app/account` 账户区、`/app/account/hub` 个人 Hub、`GET /api/v1/hub`、`HubConnect`、公开 server 页的 Add-to-Hub 全部删除——它只是收藏夹+清单接口，和 Toolkit 重叠。`User.hubServers` 关系暂留在 Prisma schema（未迁移），已无代码使用。公开站 `(site)/hub` 仍是营销落地页。
+### 8.5 Members / Settings / Seller
+- `/members` —— 成员表、邀请（7 天一次性链接）、移除/退出（见 WORKSPACES.md）。
+- `/settings` —— 名称/slug、默认模型、所有权转移、Danger zone 删除（`deleting` 状态机 + 清理进程/容器/卷）。
+- `/settings/channels` —— 消息平台渠道（Telegram/飞书/QQ/微信/Discord/Slack，见 AGENT_MESSAGING_PLATFORMS.md）。
+- `/settings/providers` —— 工作区级模型服务商凭据。
+- `/settings/tokens` —— 保留入口；个人 API Token 实际在 `/app?view=account`。
+- `/settings/account` —— 账户设置（含 `@modal` 拦截弹层）。
+- `/seller` → `/seller/overview` —— 发布技能 + 我的上架。
 
 ---
 
-## 9. JSON API `api/v1`
+## 9. 管理后台 `/admin`
 
-| 方法 & 路径 | 鉴权 | 作用 |
+- `/admin` —— 总览；`/admin/reviews`、`/admin/reviews/market/[id]` —— 市场条目/版本审核。
+- `/admin/market`、`/admin/servers`、`/admin/skills`（含 `/skills/import`）、`/admin/agents`、`/admin/assistants`、`/admin/categories` —— 目录与统一市场管理（新建/编辑/精选/验证）。
+- `/admin/users`、`/admin/workspaces` —— 账户与工作区治理。
+- `/admin/logs`、`/admin/logs/[id]` —— 结构化事件检索与诊断详情（查看/导出本身也记审计）。
+- `/admin/settings` —— 系统设置（`SystemSetting`：MCP 启动超时、远程 MCP 私网限制、诊断抓取窗口、自更新等）。
+
+---
+
+## 10. JSON API
+
+主 API 在 `api/v1`（88 个路由），另有 OpenAI 兼容端点 `api/openai/v1/models`、`api/openai/v1/chat/completions`，机器可读定义见 `GET /api/v1/openapi.json`。按域分组：
+
+| 域 | 代表路径 | 说明 |
 |---|---|---|
-| `POST /api/v1/mcp/[deploymentId]/rpc` | Bearer 或 会话 | **MCP 网关**：把 JSON-RPC 2.0 请求代理到该部署的子进程，记录可观测性 |
-| `GET /api/v1/mcp/[deploymentId]/health` | — | 部署健康检查 |
-| `GET /api/v1/skills/[installId]/download` | Bearer 或 会话 | 下载 `SKILL.md` 工件 |
-| `GET /api/v1/workspaces/[slug]/manifest` | Bearer 或 会话 | 导出整个工作区的 toolkit manifest（全部部署+技能）|
-| `GET /api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/manifest` | Bearer 或 会话 | 导出**单个** toolkit 的 manifest（仅该包选中项）|
-| `POST /api/v1/workspaces/[slug]/agents/mcp` | 仅 Personal Bearer | **Agent Control MCP**：发现资源、原子创建智能体、检查 MCP 工具并调用智能体；拒绝 Cookie 会话与 Toolkit 专用 Token |
+| MCP 网关 | `POST /v1/mcp/[deploymentId]/rpc`、`GET .../health`、`.../runtime`、`.../files/upload`、`.../terminal/*` | 代理 JSON-RPC 到部署运行时；PTY 终端会话；记录可观测性 |
+| Skills | `GET /v1/skills/[installId]/download`、`.../skill.md` | 工件下载 |
+| 工作区/Toolkit | `GET /v1/workspaces/[slug]/manifest`、`.../toolkits/[toolkitSlug]/{manifest,install,mcp}`、`.../attachments`、`.../market/installs*` | manifest 导出、安装链接、Toolkit MCP 聚合 |
+| Agent 控制 | `POST /v1/workspaces/[slug]/agents/mcp` | Agent Control MCP（仅个人 Bearer，见 AGENT_CONTROL_MCP.md）|
+| Agent 运行 | `/v1/agents/[agentId]/{chat,messages,conversations*,composer,prompts,terminal,attachments,hermes/*}` | 控制台 Agent 会话/操作/命令 |
+| Agent 公共 API | `/v1/agent-endpoints/[endpointId]/{responses*,conversations/*,client-tokens}` | 已发布 Endpoint 的对外执行（拓扑约束见 AGENT_PUBLIC_API.md）|
+| Agent Runtime 回调 | `/v1/agent-runtime/{mcp,model}/...`、`/v1/agent-runtimes/[runtimeId]/{mcp,dashboard/*}` | 沙箱内 runtime 回调节点（签名 grant 鉴权）|
+| 渠道 | `/v1/agent-channels/[connectionId]/events`、`/v1/workspaces/[slug]/agent-channels` | 消息平台事件入口 |
+| 聊天助手 | `/v1/chat/assistants*`、`/v1/chat/threads/[threadId]/{turns,branches,composer,prompts}` | 助手/线程/轮次/分支 |
+| Work | `/v1/work-sessions*`（events/input/cancel/resume/approvals/sandbox） | 任务流驱动与审批 |
+| 知识库 | `/v1/knowledge*`（documents/search/agents） | 知识库 CRUD 与检索 |
+| 市场 | `/v1/market/listings*`（download） | 统一市场读取 |
+| 沙箱 | `/v1/workspaces/[slug]/sandboxes/{hermes-import,[sandboxId]/connector-status,screen/*}` | 沙箱状态、noVNC 屏幕帧 |
+| Connector | `/v1/connectors/{bootstrap,package.tgz}` | 沙箱主机 Connector 接入 |
+| 插件/同步 | `/v1/plugin/{baseline,sync-applied,sync-failure,skill-invocation}`、`/v1/skill-registries/tp-skills/webhook` | Toolkit 同步遥测与 registry webhook |
+| 管理 | `/v1/admin/{logs/export,system/update,agent-releases/[releaseId]/manifest}` | 日志导出、自更新、发布清单 |
+| 其他 | `/v1/health`、`/v1/attachments/[attachmentId]` | 健康检查、附件 |
 
-**网关流程**（`/mcp/[id]/rpc`）：`resolveRequestUser` 鉴权 → 校验该 deployment 属于用户工作区 → 用 `livePort()` 找到子进程端口 → `fetch http://127.0.0.1:<port>/`（3s 超时）→ 透传响应 → `logRequest` 落库（含 `#method` 便于审计）。进程未运行返回 503，上游不可达返回 502。
-
-**Agent Control MCP** 是控制面而不是 Deployment/Toolkit 数据面。它位于
-`workspaces/[slug]/agents/mcp`，通过安全 DTO 暴露 `list_agent_resources`、
-`inspect_mcp_deployment`、`list_agents`、`get_agent`、`create_agent` 和
-`send_message_to_agent`。创建前会在同一事务内验证 workspace 下的 Provider、
-Deployment、Skill、Toolkit、Sandbox 与 Sub-agent，任何外部 ID 都使事务整体
-失败。完整客户端配置与工具说明见 [`docs/AGENT_CONTROL_MCP.md`](./AGENT_CONTROL_MCP.md)。
-
----
-
-## 10. MCP 运行时（进程监督）
-
-**`lib/process/supervisor.ts`** —— 每个 `Deployment` 对应一个子进程，进程表存在 `globalThis.__mcpSupervisor`（穿越 dev HMR，不被模块重载清空）。
-
-- `startProcess(id, name)` —— `spawn` `scripts/mcp-server.mjs`（`MCP_PORT=0` 让 OS 选端口、`MCP_NAME`）；解析 stdout 的 `LISTENING <port>` → 状态置 `running`、记端口；3s 就绪超时。
-- `stopProcess` / `restartProcess` / `killProcess`（SIGKILL）/ `killMany`（删工作区时批量清理，避免孤儿进程）。
-- `liveStatus(id)` / `livePort(id)` —— 给页面与网关读实时状态/端口。
-- 状态变化经 `persist()` 同步回 `Deployment.status`。
-
-**`scripts/mcp-server.mjs`** —— 单个 MCP 的最小 HTTP 服务，跑 JSON-RPC 2.0（`initialize` / `tools/list` / `tools/call` / `ping`，protocolVersion `2025-06-18`）；启动打印 `LISTENING <port>`；提供 `GET /health`；带 ppid 看门狗（父进程没了自杀，防孤儿）。
-**`scripts/mcp-tools.mjs`** —— 纯逻辑：内置 5 个工具 `echo / add / current_time / random_number / uppercase` + `createRpcHandler()`。
-
-**`lib/process/mcp-client.ts`** —— 服务端调用封装：`mcpRpc(deploymentId, method, params)`、`listMcpTools(deploymentId)`（页面用它拉工具清单/工具数）。
+**网关流程**（`/mcp/[id]/rpc`）：鉴权 → 校验 deployment 归属 → 定位运行时（builtin 子进程端口 / Docker 容器 / 远程 URL）→ 转发（带超时）→ `LogEvent` 落库（`gateway.request`，HTTP 200 但 RPC error 也算失败）。
 
 ---
 
-## 11. 测试
+## 11. MCP 运行时（`lib/process`）
 
-- **单元/集成**（Vitest 4，53 用例）：`tests/unit/*`（auth、命令面板、卡片、mcp-tools、安全回跳、SKILL.md 工件、工具台、工作区切换…）、`tests/integration/*`（db、home、queries）。`server-only` 用 `tests/stubs` 替身。
+- `spawn-spec.ts` —— 三类部署来源：`builtin`（内置演示 server）、`remote`（远程 MCP，streamable-http/sse，私网限制见管理设置）、`bridge`（Docker 容器内跑任意命令，经桥接暴露 JSON-RPC；git 来源先 clone）。
+- `supervisor.ts` —— 子进程表存 `globalThis.__mcpSupervisor`（穿越 dev HMR）；启动解析、就绪超时、日志文件、脱敏值、看门狗。
+- `deployment-runtime-container.ts` / `deployment-gateway.ts` —— Docker 容器命名/移除与容器内网关；`deployment-config-volume.ts` 把 `DeploymentConfigFile` 物化为托管卷。
+- `mcp-client.ts` / `sandbox-mcp-client.ts` / `mcp-gateway.ts` —— 服务端 RPC 封装与工具聚合；`mcp-tool-catalog(-store).ts` 缓存工具清单；`mcp-prompts.ts`、`mcp-resources.ts`、`mcp-result-redaction.ts`。
+- `reconcile.ts` —— DB 状态与实际进程/容器对账。
+- `sandbox.ts` —— 网络/镜像/缓存标志；`git-source.ts` —— git 来源判定。
+
+## 12. Agent 运行时
+
+- **Native runtime** —— 进程内轻量 Agent（模型直连 + MCP/Skill 工具循环）。
+- **Hermes runtime** —— 每个 Agent 独立 Docker 容器 + 独立持久卷 + 独立 API key；容器不能访问 Postgres，也没有用户级 token（详见 HERMES_AGENT_RUNTIME.md）。
+- **沙箱** —— Docker 或经 Connector（`packages/connector`，WS 接入远程主机）提供 PTY 终端、文件、noVNC 屏幕；MCP tools 暴露给 Agent（详见 SANDBOXES.md）。
+- Runtime 回调（模型/MCP）走 `/api/v1/agent-runtime/*`，使用带 trace 祖先的签名 grant。
 
 ---
 
-## 12. 本地开发 & 运维注意
+## 13. 测试
+
+- **单元/集成**（Vitest 4，约 1800+ 用例）：`tests/unit/*`（259 个文件）、`tests/integration/*`（56 个文件，含 db、admin、agent、market、runtime、workspace 等；`*.live.test.ts` 需要真实 Docker/网络）。
+- `server-only` 用 `tests/stubs` 替身；公开站边界由 `public-site-boundary.test.ts` 守护。
+
+---
+
+## 14. 本地开发 & 运维注意
 
 ```bash
-npm run dev          # next dev (:3000)
-npm run db:migrate   # prisma migrate dev
-npm run db:generate  # prisma generate
-npm test             # vitest run
+pnpm dev            # next dev (:3000)
+pnpm db:migrate     # prisma migrate dev
+pnpm db:generate    # prisma generate
+pnpm db:seed        # 测试账号/工作区种子
+pnpm test           # vitest run
+pnpm connector:dev  # 本地 Connector（沙箱远程主机）
 ```
 
-- **加 Prisma 模型后必须重启 dev server**：`prisma generate` 只更新磁盘上的 client，正在运行的 Next 进程仍持旧 client（会 `db.xxx is undefined` → 500）。
+- **加 Prisma 模型后必须重启 dev server**：`prisma generate` 只更新磁盘 client，运行中的 Next 进程仍持旧 client。
 - Prisma 7：用 `migrate diff --to-schema`（非 `--to-schema-datamodel`）；`prisma.config.ts` 自动加载 dotenv。
-- 测试账号：`smoke@example.com` / `password123`（工作区 `smoke`、`staging`）。
+- 发布用 release-please（见 RELEASES.md）；版本以 `package.json` 与 CHANGELOG 为准（当前 0.29.0）。
 
 ---
 
-## 13. 未完成项
+## 15. 未完成项 / 已知限制
 
-- Observability/Members/Seller 的部分商业化流程仍是引导卡或占位。
-- Settings 的 Integrations/Billing 子页未建（占位）；时区为只读展示。
-- Toolkit 详情页的「可见性切换 / 删除」后端 action 已具备，UI 按钮尚未接上。
-- 品牌字体暂用 Geist/Inter 系列，后续可替换为正式品牌字体。
-- OAuth / Stripe 未接（需真实外部凭据）。
-- `/daily` 为「今日榜单」而非ToolPlane的多日快照归档（缺每日采集管道）。
+- 部分商业化流程（Seller 结算、Billing、Stripe、OAuth 登录）未接。
+- Agent 公共 API 的执行目前只支持单 runtime-owning 进程/副本（process-local supervisor/队列，见 AGENT_PUBLIC_API.md）。
+- 工作区删除清理的并发去重是单管理服务进程内的；多 worker 前需要数据库清理租约（见 WORKSPACES.md）。
+- 日志存储是 best-effort 诊断（进程崩溃/过载可丢事件），非 durable 外部队列（见 OBSERVABILITY.md）。

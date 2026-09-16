@@ -1,5 +1,7 @@
 # Hermes Agent Runtime
 
+> **English**: [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md)
+
 ## 1. 结论
 
 ToolPlane 采用 `Hermes-first, ToolPlane-owned control plane`：
@@ -175,7 +177,7 @@ Hermes 只看到一个聚合 MCP server：
 POST /api/v1/agent-runtimes/:runtimeId/mcp
 ```
 
-该 endpoint 使用 Agent runtime 专属 Bearer token，只聚合该 Agent 直接绑定和 Toolkit 派生的 deployments。`tools/call` 再路由到现有 MCP supervisor，并继续写 RequestLog。
+该 endpoint 使用 Agent runtime 专属 Bearer token，只聚合该 Agent 直接绑定和 Toolkit 派生的 deployments。`tools/call` 再路由到现有 MCP supervisor，并继续写 LogEvent。
 
 ### Skills
 

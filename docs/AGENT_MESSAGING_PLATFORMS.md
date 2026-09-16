@@ -1,5 +1,7 @@
 # Agent Messaging Platforms
 
+> **中文**：[AGENT_MESSAGING_PLATFORMS.zh-CN.md](./AGENT_MESSAGING_PLATFORMS.zh-CN.md)
+
 ## Channel Management
 
 The workspace Settings > Channels page (`/app/[workspace]/settings/channels`)
