@@ -1,0 +1,33 @@
+name: hermes-rpc-workbench
+on:
+  push:
+    branches: [feat/hermes-rpc-runtime]
+    paths: [.github/workflows/hermes-rpc-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: github.repository == 'asharca/ToolPlane' && github.ref == 'refs/heads/feat/hermes-rpc-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive repository source
+        run: git archive --format=tar.gz -o "$RUNNER_TEMP/toolplane-current.tar.gz" HEAD
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
+          path: upstream-hermes
+          persist-credentials: false
+      - name: Archive pinned upstream source
+        run: git -C upstream-hermes archive --format=tar.gz -o "$RUNNER_TEMP/hermes-pinned.tar.gz" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-rpc-sources
+          path: |
+            ${{ runner.temp }}/toolplane-current.tar.gz
+            ${{ runner.temp }}/hermes-pinned.tar.gz
+          retention-days: 2
