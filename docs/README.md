@@ -1,50 +1,40 @@
-# ToolPlane Documentation Index
+# ToolPlane Documentation
 
 > **中文**：[README.zh-CN.md](./README.zh-CN.md)
->
-> This directory is ToolPlane's single authoritative documentation source. Suggested reading order: **root [README](../README.md) → [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) → topic docs per the tables below**.
-> Inspired by [Diátaxis](https://diataxis.fr/), docs are grouped by reader task: **Concepts & Architecture** (understand the system), **Usage & Integration** (accomplish a task), and **Operations & Releases** (run the system).
 
----
+Start with the [project overview and quick start](../README.md), then choose a topic below.
 
-## Concepts & Architecture (Explanation)
+## Architecture and runtimes
 
-| Doc | Contents |
+| Document | Covers |
 |---|---|
-| [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) ([中文](./ARCHITECTURE.md)) | **Main entry**: tech stack, top-level architecture, directory layout, Prisma domain models, console/admin/JSON API overview |
-| [AGENT_RUNTIMES.md](./AGENT_RUNTIMES.md) ([中文](./AGENT_RUNTIMES.zh-CN.md)) | Pi, Claude Code, and DSH implementation: execution paths, model/MCP proxies, native sessions, Skills, events, security, and troubleshooting |
-| [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md) ([中文](./HERMES_AGENT_RUNTIME.md)) | Hermes runtime: configuration projection, lifecycle, network and credential boundaries; see Architecture for the full runtime inventory |
-| [SANDBOXES.md](./SANDBOXES.md) ([中文](./SANDBOXES.zh-CN.md)) | Agent sandbox shape: Docker / Connector runtimes, MCP tools exposure, PTY terminal |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) ([中文](./OBSERVABILITY.zh-CN.md)) | Logging/audit model: `LogEvent` / `LogDetail` / `AuditEvent` semantics, capture and retention |
-| [WORKSPACES.en.md](./WORKSPACES.en.md) ([中文](./WORKSPACES.md)) | Workspace lifecycle: members, invitations, ownership transfer, deletion state machine |
+| [System architecture](./ARCHITECTURE.en.md) · [中文](./ARCHITECTURE.md) | Stack, modules, and data models |
+| [Pi / Claude Code / DSH](./AGENT_RUNTIMES.md) · [中文](./AGENT_RUNTIMES.zh-CN.md) | Execution paths, native sessions, and security boundaries |
+| [Hermes runtime](./HERMES_AGENT_RUNTIME.en.md) · [中文](./HERMES_AGENT_RUNTIME.md) | Configuration, lifecycle, and credential isolation |
 
-## Usage & Integration (How-to)
+## Usage and integrations
 
-| Doc | Contents |
+| Document | Covers |
 |---|---|
-| [TOOLKIT_SYNC.en.md](./TOOLKIT_SYNC.en.md) ([中文](./TOOLKIT_SYNC.md)) | Toolkit sync to Claude Code / Codex / opencode / Hermes: tokens, local file layout |
-| [AGENT_CONTROL_MCP.md](./AGENT_CONTROL_MCP.md) ([中文](./AGENT_CONTROL_MCP.zh-CN.md)) | Workspace-level Agent Control MCP: create and invoke agents from MCP clients |
-| [AGENT_PUBLIC_API.md](./AGENT_PUBLIC_API.md) ([中文](./AGENT_PUBLIC_API.zh-CN.md)) | Public API for published Agent Endpoints: auth, limits, deployment topology constraints |
-| [AGENT_MESSAGING_PLATFORMS.md](./AGENT_MESSAGING_PLATFORMS.md) ([中文](./AGENT_MESSAGING_PLATFORMS.zh-CN.md)) | Messaging channels: Telegram / Feishu(Lark) / QQ / WeChat / Discord / Slack |
+| [Toolkit sync](./TOOLKIT_SYNC.en.md) · [中文](./TOOLKIT_SYNC.md) | Syncing MCP and Skills to AI clients |
+| [Sandboxes and connectors](./SANDBOXES.md) · [中文](./SANDBOXES.zh-CN.md) | Docker, device connections, terminals, and screens |
+| [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |
+| [Public Agent API](./AGENT_PUBLIC_API.md) · [中文](./AGENT_PUBLIC_API.zh-CN.md) | Publishing Endpoints, authentication, and limits |
+| [Messaging channels](./AGENT_MESSAGING_PLATFORMS.md) · [中文](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) | Telegram, Feishu/Lark, QQ, WeChat, Discord, and Slack |
+| [Workspace management](./WORKSPACES.en.md) · [中文](./WORKSPACES.md) | Members, invitations, ownership, and deletion |
 
-## Operations & Releases
+## Deployment and maintenance
 
-| Doc | Contents |
+| Document | Covers |
 |---|---|
-| [RELEASES.md](./RELEASES.md) ([中文](./RELEASES.zh-CN.md)) | release-please workflow and GitHub setup |
-| [UI_LIBRARY.md](./UI_LIBRARY.md) ([中文](./UI_LIBRARY.zh-CN.md)) | Shared UI package `@asharca/ui`: update and release workflow |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) ([中文](./OBSERVABILITY.zh-CN.md)) | (also) diagnostic capture windows, log export, retention management |
-| [WORKSPACES.en.md](./WORKSPACES.en.md) ([中文](./WORKSPACES.md)) | (also) deployment notes for the workspace-deletion migration |
+| [Deployment configuration](./DEPLOYMENT.en.md) · [中文](./DEPLOYMENT.md) | Images, ports, HTTPS, email, and updates |
+| [Upgrades and recovery](./RUNTIME_OPERATIONS.md) · [中文](./RUNTIME_OPERATIONS.zh-CN.md) | Migrations, single-owner recovery, and attachment quotas |
+| [Logging and audit](./OBSERVABILITY.md) · [中文](./OBSERVABILITY.zh-CN.md) | Log models, diagnostic capture, and retention |
+| [Releases](./RELEASES.md) · [中文](./RELEASES.zh-CN.md) | release-please and GitHub configuration |
+| [Shared UI](./UI_LIBRARY.md) · [中文](./UI_LIBRARY.zh-CN.md) | Updating and releasing `@asharca/ui` |
 
----
+## Maintenance conventions
 
-## Documentation Conventions
-
-- **Single source of truth**: each topic has one maintained document per language; everywhere else links to it instead of copying paragraphs.
-- **Code wins**: when a description conflicts with the code, trust the code and fix the doc; behavior changes update the matching doc in the same PR.
-- **New docs**: topic docs live at this directory's root with an all-caps underscore name (`TOPIC_NAME.md`), open with one paragraph stating "what this is and who it's for", and get registered in this index.
-- **Languages**: every topic doc is bilingual — Chinese original `NAME.md` + English translation `NAME.en.md`, or English original + Chinese translation `NAME.zh-CN.md`. Both are cross-linked at the top; the index links both. New docs must ship both languages, and changes should update both copies in the same PR.
-
-## Runtime deployment
-
-[Runtime Operations](./RUNTIME_OPERATIONS.md) ([中文](./RUNTIME_OPERATIONS.zh-CN.md)) covers the architecture migration, single-owner recovery, installation credentials and attachment quotas.
+- Maintain one Chinese/English pair per topic, cross-link it at the top, and register both versions in both indexes. Link rather than duplicate content elsewhere.
+- Code defines behavior. Update both languages in the same PR as implementation changes. Prefer Mermaid for architecture and flow diagrams.
+- Place new topics at the root of `docs/`, pairing `TOPIC_NAME.md` with `.en.md` or `.zh-CN.md`, and open with the purpose and intended audience.
