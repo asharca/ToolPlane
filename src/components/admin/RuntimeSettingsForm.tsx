@@ -13,11 +13,13 @@ import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 export function RuntimeSettingsForm({
   bytes,
   source,
+  cached = false,
   minMegabytes,
   maxMegabytes,
 }: {
   bytes: number;
   source: 'database' | 'environment' | 'default';
+  cached?: boolean;
   minMegabytes: number;
   maxMegabytes: number;
 }) {
@@ -40,6 +42,7 @@ export function RuntimeSettingsForm({
       actions={<AdminBadge tone={source === 'database' ? 'brand' : 'neutral'}>{sourceLabel}</AdminBadge>}
     >
       <form action={action} className="space-y-5">
+        {cached && <p role="alert" className="text-sm text-destructive-text">{t('attachmentLimitCached')}</p>}
         <div className="flex items-start gap-3 rounded-md border border-border bg-muted/25 p-4">
           <HardDriveUpload className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <div className="min-w-0 text-sm">
@@ -68,7 +71,7 @@ export function RuntimeSettingsForm({
             <span className="text-sm text-muted-foreground">MB</span>
           </div>
           <p id="max-agent-attachment-size-help" className="text-xs text-muted-foreground">
-            {t('maximumAttachmentSizeHelp', { bytes: bytes.toLocaleString() })}
+            {t('maximumAttachmentSizeHelp', { bytes: bytes.toLocaleString(), max: maxMegabytes.toLocaleString() })}
           </p>
         </div>
 

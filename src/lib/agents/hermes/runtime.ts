@@ -1,4 +1,5 @@
 import 'server-only';
+import { trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -575,7 +576,11 @@ function dockerEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runDocker(
+function runDocker(args: string[], input?: string, timeoutMs = DOCKER_TIMEOUT_MS, signal?: AbortSignal): Promise<DockerResult> {
+  const cleanup = ['stop', 'rm', 'inspect'].includes(args[0]) || (args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]));
+  return trackRuntimeOperation(() => runDockerOwned(args, input, timeoutMs, signal), cleanup);
+}
+function runDockerOwned(
   args: string[],
   input?: string,
   timeoutMs = DOCKER_TIMEOUT_MS,
@@ -585,7 +590,7 @@ function runDocker(
     const child = spawn('docker', args, {
       env: dockerEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
-      signal,
+      signal: signal && runtimeAbortSignal() ? AbortSignal.any([signal, runtimeAbortSignal()!]) : signal ?? runtimeAbortSignal(),
     });
     let stdout = '';
     let stderr = '';
@@ -597,7 +602,7 @@ function runDocker(
       if (error) reject(error);
       else resolve({ stdout, stderr });
     };
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    const timer = setTimeout(() => { markRuntimeUncertain(); child.kill('SIGKILL'); }, timeoutMs);
     child.stdout.on('data', (chunk) => {
       stdout = `${stdout}${chunk}`.slice(-32_000);
     });

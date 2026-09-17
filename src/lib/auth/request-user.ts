@@ -1,38 +1,48 @@
 import 'server-only';
 import { getCurrentUser } from '@/lib/auth/current-user';
-import { verifyApiToken, verifyApiTokenContext } from '@/lib/auth/tokens';
+import { verifyApiTokenContext } from '@/lib/auth/tokens';
 import { enrichLogContext } from '@/lib/observability/context';
 
-function identify<T extends { id: string }>(user: T | null) {
-  if (user) enrichLogContext({ actorId: user.id });
-  return user;
+type TokenContext = NonNullable<Awaited<ReturnType<typeof verifyApiTokenContext>>>;
+export type RequestPrincipal = {
+  user: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
+  credential: 'session' | 'personal-token' | 'toolkit-token';
+  token: TokenContext['token'] | null;
+};
+
+// Never discard credential scope or fall back to cookies after an explicit,
+// invalid Authorization header. A user can own more resources than a token.
+export async function resolveRequestPrincipal(
+  req: Request,
+  { allowSession = true }: { allowSession?: boolean } = {},
+): Promise<RequestPrincipal | null> {
+  const authorization = req.headers.get('authorization');
+  if (authorization !== null) {
+    const context = await verifyApiTokenContext(authorization);
+    if (!context) return null;
+    enrichLogContext({ actorId: context.user.id });
+    return {
+      ...context,
+      credential: context.token.toolkitId ? 'toolkit-token' : 'personal-token',
+    };
+  }
+  if (!allowSession) return null;
+  const user = await getCurrentUser();
+  if (!user) return null;
+  enrichLogContext({ actorId: user.id });
+  return { user, token: null, credential: 'session' };
 }
 
-// Resolve the caller from a Bearer API token (for external clients) or fall
-// back to the dashboard session cookie. Shared by gateway API routes.
+// General routes are account-level by default. Only explicitly scoped toolkit
+// routes may accept installation credentials, using resolveRequestPrincipal.
 export async function resolveRequestUser(req: Request) {
-  const viaToken = await verifyApiToken(req.headers.get('authorization'));
-  if (viaToken) return identify(viaToken);
-  return identify(await getCurrentUser());
+  const principal = await resolveRequestPrincipal(req);
+  return principal && principal.credential !== 'toolkit-token' ? principal.user : null;
 }
 
-// Account-level routes accept dashboard sessions and personal API tokens, but
-// toolkit install tokens must stay scoped to their toolkit.
-export async function resolveAccountRequestUser(req: Request) {
-  const authorization = req.headers.get('authorization');
-  if (!authorization) return identify(await getCurrentUser());
-  const context = await verifyApiTokenContext(authorization);
-  if (!context || context.token.toolkitId) return null;
-  return identify(context.user);
-}
+export const resolveAccountRequestUser = resolveRequestUser;
 
-// Agent-control calls can create resources and invoke tools, so they require an
-// explicit account-level Bearer token. Toolkit tokens and cookie-only browser
-// sessions must never inherit this write capability.
 export async function resolveAgentControlRequestUser(req: Request) {
-  const authorization = req.headers.get('authorization');
-  if (!authorization) return null;
-  const context = await verifyApiTokenContext(authorization);
-  if (!context || context.token.toolkitId) return null;
-  return identify(context.user);
+  const principal = await resolveRequestPrincipal(req, { allowSession: false });
+  return principal?.credential === 'personal-token' ? principal.user : null;
 }

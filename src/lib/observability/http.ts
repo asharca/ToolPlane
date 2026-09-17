@@ -1,19 +1,22 @@
 import 'server-only';
+import { runtimeRequestUnavailable, runtimeRequest, RuntimeUnavailableError } from '@/lib/runtime/ownership-state';
 import { getLogContext, newRequestId, withLogContext } from './context';
 import { recordEvent } from './events';
 
 export function withRequestLogging<A extends unknown[], R extends Response | undefined>(
   route: string, handler: (req: Request, ...args: A) => R | Promise<R>,
 ): (req: Request, ...args: A) => Promise<Exclude<R, undefined>> {
-  return (req, ...args) => withLogContext({ requestId: newRequestId(),
+  return (req, ...args) => runtimeRequest(route, req.method, () => withLogContext({ requestId: newRequestId(),
     secrets: [req.headers.get('authorization') ?? '', req.headers.get('authorization')?.replace(/^(Bearer|Basic)\s+/i, '') ?? '',
       req.headers.get('x-api-key') ?? '', req.headers.get('x-toolplane-runtime-token') ?? '',
       ...(req.headers.get('cookie') ?? '').split(';').map((cookie) => cookie.slice(cookie.indexOf('=') + 1).trim()).filter((value) => value.length >= 8)],
   }, async () => {
     const start = performance.now();
     const context = getLogContext()!;
-    const base = { domain: 'http' as const, eventName: 'http.request', method: req.method, path: route };
+    const agentRoute = /\/(?:agents|agent-runtimes?|agent-endpoints|work-sessions)(?:\/|$)/.test(route) || route.includes('/api/openai/v1/chat');
+    const base = { payloadPolicy: agentRoute ? 'agent-content' as const : 'metadata-only' as const, domain: 'http' as const, eventName: 'http.request', method: req.method, path: route };
     try {
+      if (runtimeRequestUnavailable(route, req.method)) return Response.json({ error: 'runtime_not_ready' }, { status: 503, headers: { 'Retry-After': '5', 'cache-control': 'no-store' } }) as Exclude<R, undefined>;
       const response = await handler(req, ...args);
       if (!response) throw new Error('Request handler did not return a response');
       // Preserve public API IDs already assigned by the admission layer.
@@ -54,11 +57,12 @@ export function withRequestLogging<A extends unknown[], R extends Response | und
       });
       return new Response(body, { status, statusText: response.statusText, headers }) as Exclude<R, undefined>;
     } catch (error) {
+      if (error instanceof RuntimeUnavailableError) return Response.json({ error: 'runtime_not_ready' }, { status: 503, headers: { 'Retry-After': '5' } }) as Exclude<R, undefined>;
       const digest = error && typeof error === 'object' && 'digest' in error ? String(error.digest) : '';
       if (!digest.startsWith('NEXT_REDIRECT') && !digest.startsWith('NEXT_HTTP_ERROR_FALLBACK')) {
         await recordEvent({ ...base, error, httpStatus: 500, durationMs: Math.round(performance.now() - start) });
       }
       throw error;
     }
-  });
+  }));
 }

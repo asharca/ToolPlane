@@ -1,7 +1,9 @@
+import { mcpResponseOutcome } from '@/lib/observability/mcp-log-entry';
 import { withRequestLogging } from '@/lib/observability/http';
 import { NextResponse } from 'next/server';
-import { resolveRequestUser } from '@/lib/auth/request-user';
+import { resolveRequestPrincipal } from '@/lib/auth/request-user';
 import { db } from '@/lib/db';
+import { toolkitAccessWhere } from '@/lib/auth/toolkit-scope';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
@@ -31,32 +33,28 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/toolkits/[tool
   { params }: { params: Promise<{ slug: string; toolkitSlug: string }> },
 ) {
   const start = Date.now();
+  let rpcOutcome: 'success' | 'error' = 'success';
+  const loggedError = (...args: Parameters<typeof err>) => { rpcOutcome = 'error'; return err(...args); };
   const { slug, toolkitSlug } = await params;
 
-  const user = await resolveRequestUser(req);
-  if (!user) return err(null, -32001, 'unauthorized', 401);
+  const principal = await resolveRequestPrincipal(req);
+  if (!principal) return loggedError(null, -32001, 'unauthorized', 401);
 
   const toolkit = await db.toolkit.findFirst({
-    where: {
-      slug: toolkitSlug,
-      workspace: {
-        slug,
-        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
-    },
+    where: toolkitAccessWhere(principal, slug, toolkitSlug),
     select: {
       name: true,
       workspaceId: true,
       servers: { select: { deploymentId: true } },
     },
   });
-  if (!toolkit) return err(null, -32004, 'toolkit not found', 404);
+  if (!toolkit) return loggedError(null, -32004, 'toolkit not found', 404);
 
   let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
   try {
     msg = (await req.json()) as typeof msg;
   } catch {
-    return err(null, -32700, 'parse error', 400);
+    return loggedError(null, -32700, 'parse error', 400);
   }
 
   const { id, method } = msg;
@@ -115,23 +113,24 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/toolkits/[tool
     logTool = toolName;
     reqBody = JSON.stringify({ name: toolName, arguments: args }).slice(0, 16000);
     if (!deploymentIds.includes(depId)) {
-      response = err(id, -32602, `Unknown tool: ${fullName}`);
+      response = loggedError(id, -32602, `Unknown tool: ${fullName}`);
     } else if (!isMcpToolExposedToAi(policies.get(depId), toolName)) {
-      response = err(id, -32602, `Unknown tool: ${fullName}`);
+      response = loggedError(id, -32602, `Unknown tool: ${fullName}`);
     } else if (liveStatus(depId) !== 'running') {
       logDeploymentId = depId;
-      response = err(id, -32000, 'tool deployment is not running');
+      response = loggedError(id, -32000, 'tool deployment is not running');
     } else {
       logDeploymentId = depId;
       const result = await mcpRpc(depId, 'tools/call', { name: toolName, arguments: args });
+      rpcOutcome = mcpResponseOutcome(result, result ? 200 : 502);
       response = result
         ? NextResponse.json({ jsonrpc: '2.0', id, result })
-        : err(id, -32000, 'tool deployment is unreachable');
+        : loggedError(id, -32000, 'tool deployment is unreachable');
     }
   } else if (id === undefined || id === null) {
     return new NextResponse(null, { status: 202 });
   } else {
-    response = err(id, -32601, `Method not found: ${method ?? ''}`);
+    response = loggedError(id, -32601, `Method not found: ${method ?? ''}`);
   }
 
   await logRequest({
@@ -142,7 +141,8 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/toolkits/[tool
     statusCode: response.status,
     durationMs: Date.now() - start,
     requestBody: reqBody,
-    responseBody: await response.clone().text(),
+    response,
+    outcome: rpcOutcome,
   });
 
   return response;

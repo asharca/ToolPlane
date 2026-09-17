@@ -49,15 +49,17 @@ describe('buildSyncScript telemetry', () => {
   it('reports the delta to sync-applied and failures to sync-failure', () => {
     expect(sync).toContain('/api/v1/plugin/sync-applied');
     expect(sync).toContain('/api/v1/plugin/sync-failure');
-    expect(sync).toContain('report_applied');
-    expect(sync).toContain('report_failure "fetch_failed"');
-    expect(sync).toContain('report_failure "invalid_response"');
+    expect(sync).toContain('reason:"sync_failed"');
+    expect(sync).toContain('retaining last known good skills');
+    expect(sync).toContain('exit "$RESULT"');
   });
 
   it('counts added / updated / removed for the applied delta', () => {
-    expect(sync).toContain('ADDED=$((ADDED + 1))');
-    expect(sync).toContain('UPDATED=$((UPDATED + 1))');
-    expect(sync).toContain('REMOVED=$((REMOVED + 1))');
-    expect(sync).toContain('report_applied "$ADDED" "$REMOVED" "$UPDATED" "$COUNT"');
+    expect(sync).toContain('added');
+    expect(sync).toContain('updated');
+    expect(sync).toContain('removed');
+    expect(sync).toContain('JSON.parse(process.env.COUNTS)');
+    expect(sync).not.toContain('RESP_JSON=');
+
   });
 });

@@ -1,4 +1,5 @@
 import 'server-only';
+import { trackRuntimeOperation, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn } from 'node:child_process';
 
 const DOCKER_COMMAND_TIMEOUT_MS = 30_000;
@@ -42,7 +43,7 @@ function isMissingDockerContainer(error: unknown): boolean {
  */
 export async function removeDeploymentContainer(deploymentId: string): Promise<void> {
   const containerName = deploymentContainerName(deploymentId);
-  await new Promise<void>((resolve, reject) => {
+  await trackRuntimeOperation(() => new Promise<void>((resolve, reject) => {
     const child = spawn('docker', ['rm', '-f', containerName], {
       env: dockerEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -57,6 +58,7 @@ export async function removeDeploymentContainer(deploymentId: string): Promise<v
       else resolve();
     };
     const timer = setTimeout(() => {
+      markRuntimeUncertain();
       try { child.kill('SIGKILL'); } catch { /* Docker CLI may already have exited. */ }
       finish(new Error(`Docker runtime container cleanup timed out after ${DOCKER_COMMAND_TIMEOUT_MS}ms.`));
     }, DOCKER_COMMAND_TIMEOUT_MS);
@@ -81,5 +83,5 @@ export async function removeDeploymentContainer(deploymentId: string): Promise<v
         finish(error);
       }
     });
-  });
+  }), true);
 }

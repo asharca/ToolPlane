@@ -38,7 +38,7 @@ export function withLogContext<T>(context: Partial<LogContext>, fn: () => T, det
     parentSpanId: parent?.spanId,
     spanId: newSpanId(),
     ...identities,
-    suppressPayload: context.suppressPayload ?? parent?.suppressPayload,
+    suppressPayload: Boolean(context.suppressPayload || parent?.suppressPayload),
     secrets: [...(parent?.secrets ?? []), ...(context.secrets ?? [])],
   }, fn);
 }
@@ -46,5 +46,5 @@ export function withLogContext<T>(context: Partial<LogContext>, fn: () => T, det
 // Only call with identities resolved by the server's existing authorization flow.
 export function enrichLogContext(context: Partial<LogContext>) {
   const current = storage.getStore();
-  if (current) Object.assign(current, context, context.secrets ? { secrets: [...(current.secrets ?? []), ...context.secrets] } : {});
+  if (current) Object.assign(current, { ...context, suppressPayload: Boolean(current.suppressPayload || context.suppressPayload) }, context.secrets ? { secrets: [...(current.secrets ?? []), ...context.secrets] } : {});
 }

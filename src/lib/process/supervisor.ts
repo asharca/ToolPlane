@@ -1,4 +1,5 @@
 import 'server-only';
+import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { recordEvent } from '@/lib/observability/events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
@@ -176,7 +177,7 @@ function launchPrevented(deploymentId: string, workspaceId?: string): boolean {
 function enqueueLifecycle<T>(deploymentId: string, operation: () => Promise<T>): Promise<T> {
   const queues = lifecycleQueues();
   const previous = queues.get(deploymentId) ?? Promise.resolve();
-  const result = previous.catch(() => undefined).then(operation);
+  const result = previous.catch(() => undefined).then(() => trackRuntimeOperation(operation, true));
   const tail = result.then(
     () => undefined,
     () => undefined,
@@ -1157,20 +1158,38 @@ function liveRegistry(deploymentId: string): RegistryEntry | null {
 }
 
 // Create the dedicated MCP sandbox network if it doesn't exist (idempotent).
-// Called once on startup before reconciling. Tolerant: if docker isn't
-// reachable, it resolves quietly — custom MCP spawns would then fail on their
-// own with a visible error.
+// Called by the runtime owner before reconciliation. Unavailable Docker
+// leaves execution unready rather than advertising a healthy runtime.
 export function ensureSandboxNetwork(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const check = spawn('docker', ['network', 'inspect', MCP_NETWORK], { stdio: 'ignore' });
-    check.on('error', () => resolve());
-    check.on('exit', (code) => {
-      if (code === 0) return resolve();
-      const create = spawn('docker', ['network', 'create', MCP_NETWORK], { stdio: 'ignore' });
-      create.on('error', () => resolve());
-      create.on('exit', () => resolve());
+  return trackRuntimeOperation(() => new Promise<void>((resolve, reject) => {
+    let child: ChildProcess | undefined;
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => {
+      markRuntimeUncertain(); child?.kill('SIGKILL');
+      finish(new Error('Sandbox network setup timed out.'));
+    }, 30_000);
+    const launch = (args: string[], done: (code: number | null) => void) => {
+      try {
+        // Recheck ownership before the mutation, not just before async inspect.
+        assertRuntimeOwner();
+        child = spawn('docker', args, { stdio: 'ignore', ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}) });
+        child.once('error', () => finish(new Error('Docker is unavailable during runtime recovery.')));
+        child.once('exit', (code) => { if (!settled) done(code); });
+      } catch (error) { finish(error instanceof Error ? error : new Error('Runtime owner unavailable.')); }
+    };
+    launch(['network', 'inspect', MCP_NETWORK], (code) => {
+      if (code === 0) finish();
+      else launch(['network', 'create', MCP_NETWORK], (created) => {
+        if (created === 0) finish();
+        else launch(['network', 'inspect', MCP_NETWORK], (exists) => finish(exists === 0 ? undefined : new Error('Sandbox network is unavailable.')));
+      });
     });
-  });
+  }));
 }
 
 export function liveStatus(deploymentId: string): string | null {
@@ -1290,6 +1309,7 @@ async function launchProcess(
 ): Promise<LaunchResult> {
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   if (workspaceId && !await db.workspace.findFirst({ where: { id: workspaceId, status: 'active' }, select: { id: true } })) return { ready: null };
+  assertRuntimeOwner();
   const s = store();
   const existing = s.get(deploymentId);
   if (existing && existing.child.exitCode === null && !existing.stopping) {
@@ -1581,6 +1601,7 @@ export async function startProcess(
   spec: SpawnSpec,
   options: StartProcessOptions = {},
 ): Promise<void> {
+  assertRuntimeOwner();
   const { ready } = await enqueueLifecycle(deploymentId, () => (
     launchProcess(deploymentId, spec, options.workspaceId)
   ));
@@ -1623,6 +1644,7 @@ async function stopProcessUnlocked(
 }
 
 export async function stopProcess(deploymentId: string): Promise<void> {
+  assertRuntimeOwner(true);
   await enqueueLifecycle(deploymentId, () => stopProcessUnlocked(deploymentId));
 }
 
@@ -1631,6 +1653,7 @@ export async function restartProcess(
   spec: SpawnSpec,
   options: StartProcessOptions = {},
 ): Promise<void> {
+  assertRuntimeOwner();
   const { ready } = await enqueueLifecycle(deploymentId, async () => {
     await stopProcessUnlocked(deploymentId);
     return launchProcess(deploymentId, spec, options.workspaceId);
@@ -1650,6 +1673,7 @@ export async function killProcess(
   deploymentId: string,
   options: KillProcessOptions = {},
 ): Promise<void> {
+  assertRuntimeOwner(true);
   if (options.preventRestart) tombstones().add(deploymentId);
   await enqueueLifecycle(
     deploymentId,
@@ -1667,4 +1691,14 @@ export async function killMany(
     ...options,
     preventRestart: true,
   })));
+}
+
+// Shutdown must be able to stop only this process's children after a lost lease.
+export async function shutdownOwnedProcesses(): Promise<void> {
+  await Promise.all([...store().entries()].map(async ([id, entry]) => {
+    await terminateChild(entry, false);
+    deleteRegistry(id, entry.pid);
+    if (store().get(id) === entry) store().delete(id);
+    // entry.stopping suppresses exit-handler DB updates. Preserve desired state for restart.
+  }));
 }

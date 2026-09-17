@@ -1,6 +1,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { livePort } from '@/lib/process/supervisor';
+import { mcpResponseOutcome } from '@/lib/observability/mcp-log-entry';
 import { logRequest } from '@/lib/observability/log';
 import {
   filterMcpToolsForAi,
@@ -109,7 +110,8 @@ export async function proxyMcpRpcRequest(
     durationMs: Date.now() - start,
     error: upstreamError,
     requestBody: body || null,
-    responseBody: JSON.stringify(payload),
+    outcome: mcpResponseOutcome(payload, statusCode),
+    payload: () => ({ request: body || null, response: payload }),
   });
 
   return NextResponse.json(payload, { status: statusCode });

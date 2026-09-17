@@ -1,4 +1,5 @@
 import 'server-only';
+import { assertRuntimeOwner, runtimeCanOperate } from '@/lib/runtime/ownership-state';
 import type { UIMessage } from 'ai';
 import { db } from '@/lib/db';
 import { decryptChannelCredentials } from './channel-connections';
@@ -47,6 +48,7 @@ export async function reconcileAgentChannelRunners() {
 }
 
 export function startAgentChannelRunner(workspaceId: string, connectionId: string): Promise<{ error?: string }> {
+  assertRuntimeOwner();
   const key = `${workspaceId}:${connectionId}`;
   const pending = starts().get(key);
   if (pending) return pending;
@@ -90,7 +92,7 @@ async function start(workspaceId: string, connectionId: string): Promise<{ error
     const controller = new AbortController();
     active.cleanup = () => controller.abort();
     runners().set(connectionId, active);
-    const current = () => runners().get(connectionId) === active;
+    const current = () => runtimeCanOperate() && runners().get(connectionId) === active;
     const update = (data: { status?: string; lastError: string | null }) => {
       active.pendingWrite = active.pendingWrite.then(() => current()
         ? db.agentChannelConnection.updateMany({ where: { id: connectionId, workspaceId }, data }) : undefined).catch(() => {});
@@ -195,4 +197,17 @@ export async function stopAgentChannelRunner(workspaceId: string, connectionId: 
     appendAgentChannelLog(connectionId, 'info', 'Channel stopped.');
   }
   await db.agentChannelConnection.updateMany({ where: { id: connectionId, workspaceId }, data: { status: 'stopped', runnerPid: null, lastError: null } });
+}
+
+export async function shutdownAgentChannelRunners() {
+  // Do not write persisted channel state: running channels should resume on a clean restart.
+  await Promise.allSettled([...starts().values()]);
+  const active = [...runners().values()];
+  runners().clear();
+  for (const runner of active) runner.cleanup();
+  await Promise.all(active.map(async (runner) => {
+    await runner.adapter.disconnect();
+    await runner.pendingWrite;
+    await Promise.allSettled([...runner.queues.values()]);
+  }));
 }

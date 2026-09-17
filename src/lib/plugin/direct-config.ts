@@ -56,7 +56,7 @@ export function buildDirectSnippet(client: DirectClient, key: string, url: strin
       '# ~/.hermes/config.yaml',
       '# After editing, run /reload-mcp in Hermes or restart Hermes.',
       'mcp_servers:',
-      `  toolplane-${key}:`,
+      `  ${key.startsWith('toolplane-') ? key : `toolplane-${key}`}:`,
       `    url: "${url}"`,
       '    headers:',
       '      Authorization: "Bearer YOUR_TOKEN"',

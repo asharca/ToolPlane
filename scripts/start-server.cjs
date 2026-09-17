@@ -21,6 +21,7 @@ function findAppRoot(start) {
 
 const appRoot = findAppRoot(__dirname);
 process.env.NODE_ENV = 'production';
+process.env.NEXT_MANUAL_SIG_HANDLE = '1';
 process.chdir(appRoot);
 
 const requiredFiles = JSON.parse(fs.readFileSync(
@@ -46,10 +47,12 @@ const requestTimeout = Number.isFinite(parsedRequestTimeout) && parsedRequestTim
 // Next creates the HTTP server internally. Wrap that one creation so large
 // raw-body Hermes imports are not cut off by Node's five-minute default. Header
 // parsing keeps Node's normal, separate header timeout limit.
+const servers = new Set();
 const originalCreateServer = http.createServer;
 http.createServer = function createServerWithToolPlaneTimeout(...args) {
   const server = originalCreateServer.apply(this, args);
   server.requestTimeout = requestTimeout;
+  servers.add(server);
   return server;
 };
 
@@ -72,3 +75,19 @@ Promise.resolve(serverPromise).catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  for (const server of servers) server.close();
+  const timeout = setTimeout(() => process.exit(1), 50_000);
+  try {
+    const clean = await globalThis.__toolplaneShutdown?.();
+    for (const server of servers) server.closeAllConnections?.();
+    clearTimeout(timeout);
+    process.exit(clean === false ? 1 : 0);
+  } catch { process.exit(1); }
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

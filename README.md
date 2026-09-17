@@ -242,3 +242,5 @@ ToolPlane：面向智能体工具、MCP 服务器、技能、工具包和沙箱�
 - Sandbox 与连接器设计：[docs/SANDBOXES.md](docs/SANDBOXES.md)
 - Toolkit 同步设计：[docs/TOOLKIT_SYNC.md](docs/TOOLKIT_SYNC.md)
 - Agent Control MCP：[docs/AGENT_CONTROL_MCP.md](docs/AGENT_CONTROL_MCP.md)
+
+升级与运行时所有权：[运维指南](docs/RUNTIME_OPERATIONS.zh-CN.md)（[English](docs/RUNTIME_OPERATIONS.md)）。

@@ -6,6 +6,7 @@ import {
   type InstallClient,
 } from './clients';
 import { SITE } from '@/lib/site';
+import { installationName, type InstallationIdentity } from './installation-identity';
 
 export type { InstallClient };
 export { INSTALL_CLIENTS, installClientLabel } from './clients';
@@ -14,7 +15,7 @@ export function resolveClient(raw: string | null | undefined): InstallClient {
   return resolveInstallClient(raw);
 }
 
-type InstallScriptOptions = {
+export type InstallScriptOptions = InstallationIdentity & {
   base: string;
   workspaceSlug: string;
   toolkitSlug: string;
@@ -67,12 +68,12 @@ const bundleFile = process.env.BUNDLE_FILE;
 const toolkit = process.env.TOOLKIT;
 const server = process.env.SERVER_NAME;
 fs.mkdirSync(path.dirname(bundleFile), { recursive: true });
-const skills = fs.existsSync(skillsDir)
-  ? fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort()
-  : [];
+// Only committed, manifest-owned skills enter the Hermes bundle. Ignore
+// state/staging directories and user-created siblings.
+const manifestPath = path.join(skillsDir, '.toolplane-state', server, 'manifest.json');
+const manifest = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+const skills = manifest && manifest.schemaVersion === 1 && manifest.installation === server
+  ? Object.keys(manifest.skills).filter((name) => /^[a-z0-9-]+$/.test(name)).sort() : [];
 const q = (value) => JSON.stringify(String(value));
 const yaml = [
   'name: ' + server,
@@ -110,7 +111,7 @@ export function buildToolkitInstallScript(opts: InstallScriptOptions): string {
 export function buildPluginInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
   const client = 'claude-code';
-  const pluginName = `toolplane-${toolkitSlug}`;
+  const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
 
   const marketplaceJson =
@@ -176,7 +177,7 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
       2,
     ) + '\n';
 
-  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client });
+  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client, installation: pluginName, workspaceId: opts.workspaceId, toolkitId: opts.toolkitId });
   const skillInvocationSh = buildSkillInvocationScript({
     apiBase: base,
     workspaceSlug,
@@ -187,6 +188,7 @@ export function buildPluginInstallScript(opts: InstallScriptOptions): string {
   // String.raw: backslashes (e.g. \"…\") stay literal; only the JS values
   // below are interpolated. The bash uses plain $VAR (no bash ${...}).
   return String.raw`#!/usr/bin/env bash
+umask 077
 set -euo pipefail
 
 main() {
@@ -239,7 +241,7 @@ main "$@"
 export function buildCodexInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
   const client = 'codex';
-  const pluginName = `toolplane-${toolkitSlug}`;
+  const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
   const syncSh = buildSyncScript({
@@ -247,11 +249,15 @@ export function buildCodexInstallScript(opts: InstallScriptOptions): string {
     workspaceSlug,
     toolkitSlug,
     client,
+    installation: pluginName,
+    workspaceId: opts.workspaceId,
+    toolkitId: opts.toolkitId,
     defaultSkillsDir: '$HOME/.agents/skills',
     defaultSkillDirPrefix: `${pluginName}-`,
   });
 
   return String.raw`#!/usr/bin/env bash
+umask 077
 set -eo pipefail
 
 main() {
@@ -291,6 +297,7 @@ const out = [];
 let skip = false;
 for (const line of src.split(/\r?\n/)) {
   if (line.trim() === begin) {
+    if (skip) throw new Error('Unbalanced ToolPlane config markers');
     skip = true;
     continue;
   }
@@ -300,6 +307,7 @@ for (const line of src.split(/\r?\n/)) {
   }
   if (!skip) out.push(line);
 }
+if (skip) throw new Error('Unbalanced ToolPlane config markers');
 src = out.join('\n').replace(/\s+$/g, '');
 const block = [
   begin,
@@ -328,12 +336,11 @@ if (fs.existsSync(file)) {
     try {
       cfg = JSON.parse(raw);
     } catch {
-      fs.copyFileSync(file, file + '.bak.' + Date.now());
-      cfg = {};
+      throw new Error('Existing client JSON cannot be parsed. Repair it before installing; the original file was not changed.');
     }
   }
 }
-if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {};
+if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('Client configuration must be a JSON object.');
 if (!cfg.hooks || typeof cfg.hooks !== 'object' || Array.isArray(cfg.hooks)) cfg.hooks = {};
 const existing = Array.isArray(cfg.hooks.SessionStart) ? cfg.hooks.SessionStart : [];
 function hasSyncHook(group) {
@@ -343,7 +350,9 @@ function hasSyncHook(group) {
 function shellDouble(s) {
   return '"' + String(s).replace(/(["\\$])/g, '\\$1') + '"';
 }
-cfg.hooks.SessionStart = existing.filter((group) => !hasSyncHook(group));
+cfg.hooks.SessionStart = existing.map((group) => hasSyncHook(group)
+  ? { ...group, hooks: group.hooks.filter((hook) => !hook || typeof hook.command !== 'string' || !hook.command.includes(syncPath)) } : group
+).filter((group) => !Array.isArray(group?.hooks) || group.hooks.length > 0);
 cfg.hooks.SessionStart.push({
   matcher: 'startup|resume|clear|compact',
   hooks: [
@@ -374,12 +383,13 @@ main "$@"
 export function buildOpenCodeInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
   const client = 'opencode';
-  const pluginName = `toolplane-${toolkitSlug}`;
+  const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
-  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client });
+  const syncSh = buildSyncScript({ apiBase: base, workspaceSlug, toolkitSlug, client, installation: pluginName, workspaceId: opts.workspaceId, toolkitId: opts.toolkitId });
 
   return String.raw`#!/usr/bin/env bash
+umask 077
 set -eo pipefail
 
 main() {
@@ -423,12 +433,11 @@ if (fs.existsSync(file)) {
     try {
       cfg = JSON.parse(raw);
     } catch {
-      fs.copyFileSync(file, file + '.bak.' + Date.now());
-      cfg = {};
+      throw new Error('Existing client JSON cannot be parsed. Repair it before installing; the original file was not changed.');
     }
   }
 }
-if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {};
+if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('Client configuration must be a JSON object.');
 cfg.$schema = cfg.$schema || 'https://opencode.ai/config.json';
 if (!cfg.mcp || typeof cfg.mcp !== 'object' || Array.isArray(cfg.mcp)) cfg.mcp = {};
 cfg.mcp[server] = {
@@ -468,7 +477,7 @@ main "$@"
 export function buildHermesInstallScript(opts: InstallScriptOptions): string {
   const { base, workspaceSlug, toolkitSlug, token } = opts;
   const client = 'hermes';
-  const pluginName = `toolplane-${toolkitSlug}`;
+  const pluginName = installationName(opts);
   const mcpUrl = `${base}/api/v1/workspaces/${workspaceSlug}/toolkits/${toolkitSlug}/mcp`;
   const mcpConfigJson = mcpJson(pluginName, mcpUrl, token);
   const hookSyncSh = buildHermesHookSyncScript(pluginName, toolkitSlug);
@@ -477,10 +486,14 @@ export function buildHermesInstallScript(opts: InstallScriptOptions): string {
     workspaceSlug,
     toolkitSlug,
     client,
+    installation: pluginName,
+    workspaceId: opts.workspaceId,
+    toolkitId: opts.toolkitId,
     defaultSkillsDir: `\${HERMES_HOME:-$HOME/.hermes}/skills/${pluginName}`,
   });
 
   return String.raw`#!/usr/bin/env bash
+umask 077
 set -eo pipefail
 
 main() {
@@ -526,6 +539,7 @@ const withoutOld = [];
 let skip = false;
 for (const line of src.split(/\r?\n/)) {
   if (line.trim() === begin) {
+    if (skip) throw new Error('Unbalanced ToolPlane config markers');
     skip = true;
     continue;
   }
@@ -535,6 +549,7 @@ for (const line of src.split(/\r?\n/)) {
   }
   if (!skip) withoutOld.push(line);
 }
+if (skip) throw new Error('Unbalanced ToolPlane config markers');
 const lines = withoutOld.join('\n').replace(/\s+$/g, '').split(/\r?\n/);
 const entry = [
   '  ' + begin,
@@ -544,16 +559,17 @@ const entry = [
   '      Authorization: ' + JSON.stringify('Bearer ' + token),
   '  ' + end,
 ];
-const idx = lines.findIndex((line) => /^mcp_servers:\s*(?:#.*)?$/.test(line));
+const mcpKeys = lines.filter((line) => /^mcp_servers:/.test(line));
+if (mcpKeys.length > 1 || mcpKeys.some((line) => !/^mcp_servers:\s*(?:\{\}\s*)?(?:#.*)?$/.test(line))) throw new Error('Unsupported Hermes mcp_servers mapping; preserve and normalize it before installing');
+const idx = lines.findIndex((line) => /^mcp_servers:/.test(line));
+if (idx >= 0) lines[idx] = 'mcp_servers:';
 let out;
 if (idx >= 0) {
   out = [...lines.slice(0, idx + 1), ...entry, ...lines.slice(idx + 1)];
 } else {
   out = [...(lines.length === 1 && lines[0] === '' ? [] : lines), '', 'mcp_servers:', ...entry];
 }
-fs.writeFileSync(file, out.join('\n').replace(/^\n+/, '') + '\n');
-
-src = fs.readFileSync(file, 'utf8').replace(/\s+$/g, '');
+src = out.join('\n').replace(/^\n+/, '').replace(/\s+$/g, '');
 let hookLines = src ? src.split(/\r?\n/) : [];
 const hookBlock = [
   '    ' + begin,
@@ -561,6 +577,8 @@ const hookBlock = [
   '      timeout: 30',
   '    ' + end,
 ];
+const hookKeys = hookLines.filter((line) => /^hooks:/.test(line));
+if (hookKeys.length > 1 || hookKeys.some((line) => !/^hooks:\s*(?:\{\}\s*)?(?:#.*)?$/.test(line))) throw new Error('Unsupported Hermes hooks mapping; original configuration was not changed');
 let hooksIdx = hookLines.findIndex((line) => /^hooks:\s*(?:\{\}\s*)?(?:#.*)?$/.test(line));
 if (hooksIdx < 0) {
   hookLines = [...(hookLines.length ? hookLines : []), '', 'hooks:', '  on_session_start:', ...hookBlock];
@@ -595,12 +613,12 @@ const bundleFile = process.env.BUNDLE_FILE;
 const toolkit = process.env.TOOLKIT;
 const server = process.env.SERVER_NAME;
 fs.mkdirSync(path.dirname(bundleFile), { recursive: true });
-const skills = fs.existsSync(skillsDir)
-  ? fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort()
-  : [];
+// Only committed, manifest-owned skills enter the Hermes bundle. Ignore
+// state/staging directories and user-created siblings.
+const manifestPath = path.join(skillsDir, '.toolplane-state', server, 'manifest.json');
+const manifest = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+const skills = manifest && manifest.schemaVersion === 1 && manifest.installation === server
+  ? Object.keys(manifest.skills).filter((name) => /^[a-z0-9-]+$/.test(name)).sort() : [];
 const q = (value) => JSON.stringify(String(value));
 const yaml = [
   'name: ' + server,
@@ -639,12 +657,15 @@ main "$@"
 
 // `curl … | bash` uninstaller: unregister the plugin from Claude Code and remove
 // its directory (which also removes the synced skills). The toolkit's API key is
-// revoked server-side when this endpoint is fetched.
-export function buildPluginUninstallScript(opts: { toolkitSlug: string }): string {
-  const pluginName = `toolplane-${opts.toolkitSlug}`;
+// revoked explicitly for this installation before the cleanup script is issued.
+export function buildPluginUninstallScript(opts: InstallationIdentity & { client?: string }): string {
+  const pluginName = installationName(opts);
+  const client = resolveClient(opts.client);
   return String.raw`#!/usr/bin/env bash
+umask 077
 set -eo pipefail
 
+CLIENT="${client}"
 PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 PLUGIN_DIR="$HOME/.claude/plugins/${pluginName}"
@@ -678,14 +699,14 @@ HERMES_BUNDLE_FILE="$HERMES_HOME_DIR/skill-bundles/${pluginName}.yaml"
 
 echo "${SITE.compactName} uninstall — toolkit ${opts.toolkitSlug}"
 
-if command -v claude >/dev/null 2>&1; then
+if [ "$CLIENT" = "claude-code" ] && command -v claude >/dev/null 2>&1; then
   claude plugin uninstall ${pluginName}@${pluginName} </dev/null >/dev/null 2>&1 || true
   claude plugin marketplace remove ${pluginName} </dev/null >/dev/null 2>&1 || true
   echo "  ✓ unregistered from Claude Code"
 fi
 
 if command -v node >/dev/null 2>&1; then
-  CODEX_CONFIG_PATH="$CODEX_CONFIG_PATH" CODEX_HOOKS_PATH="$CODEX_HOOKS_PATH" SYNC_PATH="$CODEX_BUNDLE_DIR/shared/sync.sh" SERVER_NAME="${pluginName}" SKILLS_DIR="$HOME/.agents/skills" PREFIX="${pluginName}-" OPENCODE_CONFIG_PATH="$OPENCODE_CONFIG_PATH_VALUE" HERMES_CONFIG_PATH="$HERMES_CONFIG_PATH" HERMES_SKILLS_DIR="$HERMES_SKILLS_DIR" HERMES_BUNDLE_FILE="$HERMES_BUNDLE_FILE" node <<'NODE'
+  INSTALL_CLIENT="$CLIENT" PLUGIN_DIR="$PLUGIN_DIR" CODEX_BUNDLE_DIR="$CODEX_BUNDLE_DIR" OPENCODE_BUNDLE_DIR="$OPENCODE_BUNDLE_DIR" HERMES_BUNDLE_DIR="$HERMES_BUNDLE_DIR" CODEX_CONFIG_PATH="$CODEX_CONFIG_PATH" CODEX_HOOKS_PATH="$CODEX_HOOKS_PATH" SYNC_PATH="$CODEX_BUNDLE_DIR/shared/sync.sh" SERVER_NAME="${pluginName}" SKILLS_DIR="$HOME/.agents/skills" PREFIX="${pluginName}-" OPENCODE_CONFIG_PATH="$OPENCODE_CONFIG_PATH_VALUE" HERMES_CONFIG_PATH="$HERMES_CONFIG_PATH" HERMES_SKILLS_DIR="$HERMES_SKILLS_DIR" HERMES_BUNDLE_FILE="$HERMES_BUNDLE_FILE" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const server = process.env.SERVER_NAME;
@@ -699,6 +720,7 @@ function removeCodexMcpBlock(file) {
   let skip = false;
   for (const line of src.split(/\r?\n/)) {
     if (line.trim() === begin) {
+      if (skip) throw new Error('Unbalanced ToolPlane config markers');
       skip = true;
       continue;
     }
@@ -708,6 +730,7 @@ function removeCodexMcpBlock(file) {
     }
     if (!skip) out.push(line);
   }
+  if (skip) throw new Error('Unbalanced ToolPlane config markers');
   fs.writeFileSync(file, out.join('\n').replace(/\s+$/g, '') + '\n');
 }
 
@@ -720,18 +743,33 @@ function removeCodexHook(file, syncPath) {
     return;
   }
   if (!cfg || !cfg.hooks || !Array.isArray(cfg.hooks.SessionStart)) return;
-  cfg.hooks.SessionStart = cfg.hooks.SessionStart.filter((group) => {
-    if (!group || !Array.isArray(group.hooks)) return true;
-    return !group.hooks.some((hook) => hook && typeof hook.command === 'string' && hook.command.includes(syncPath));
-  });
+  cfg.hooks.SessionStart = cfg.hooks.SessionStart.map((group) => {
+    if (!group || !Array.isArray(group.hooks)) return group;
+    return { ...group, hooks: group.hooks.filter((hook) => !hook || typeof hook.command !== 'string' || !hook.command.includes(syncPath)) };
+  }).filter((group) => !Array.isArray(group?.hooks) || group.hooks.length > 0);
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
 }
 
 function removePrefixedSkills(dir, prefix) {
-  if (!fs.existsSync(dir)) return;
-  for (const name of fs.readdirSync(dir)) {
-    if (name.startsWith(prefix)) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+  const stateDir = path.join(dir, '.toolplane-state', server);
+  for (const candidate of [dir, path.join(dir, '.toolplane-state'), stateDir]) {
+    if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) throw new Error('Refusing symlinked ownership state');
   }
+  if (!fs.existsSync(stateDir)) return; // Legacy ownership is ambiguous: preserve it.
+  const lock = path.join(stateDir, 'lock');
+  fs.mkdirSync(lock); // A concurrent sync/uninstall must finish before cleanup.
+  try {
+    const file = path.join(stateDir, 'manifest.json');
+    if (fs.existsSync(path.join(stateDir, 'journal.json'))) throw new Error('Recover the interrupted sync before uninstalling');
+    if (!fs.existsSync(file)) return;
+    if (fs.lstatSync(file).isSymbolicLink()) throw new Error('Invalid ownership manifest');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (manifest.installation !== server || manifest.schemaVersion !== 1 || !manifest.skills || typeof manifest.skills !== 'object' || Array.isArray(manifest.skills)) throw new Error('Invalid ownership manifest');
+    const names = Object.keys(manifest.skills);
+    if (names.some((name) => !name.startsWith(prefix) || path.basename(name) !== name || !/^[a-z0-9-]+$/.test(name))) throw new Error('Invalid owned path');
+    for (const name of names) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    fs.rmSync(file);
+  } finally { fs.rmSync(lock, { recursive: true, force: true }); }
 }
 
 function removeOpenCodeConfig(file) {
@@ -756,6 +794,7 @@ function removeMarkerBlock(file) {
   let skip = false;
   for (const line of src.split(/\r?\n/)) {
     if (line.trim() === begin) {
+      if (skip) throw new Error('Unbalanced ToolPlane config markers');
       skip = true;
       continue;
     }
@@ -765,22 +804,47 @@ function removeMarkerBlock(file) {
     }
     if (!skip) out.push(line);
   }
+  if (skip) throw new Error('Unbalanced ToolPlane config markers');
   fs.writeFileSync(file, out.join('\n').replace(/\s+$/g, '') + '\n');
 }
 
-removeCodexMcpBlock(process.env.CODEX_CONFIG_PATH);
-removeCodexHook(process.env.CODEX_HOOKS_PATH, process.env.SYNC_PATH);
-removePrefixedSkills(process.env.SKILLS_DIR, process.env.PREFIX);
-removeOpenCodeConfig(process.env.OPENCODE_CONFIG_PATH);
-removeMarkerBlock(process.env.HERMES_CONFIG_PATH);
-if (process.env.HERMES_SKILLS_DIR) fs.rmSync(process.env.HERMES_SKILLS_DIR, { recursive: true, force: true });
-if (process.env.HERMES_BUNDLE_FILE) fs.rmSync(process.env.HERMES_BUNDLE_FILE, { force: true });
+if (process.env.INSTALL_CLIENT === 'codex') {
+  removePrefixedSkills(process.env.SKILLS_DIR, process.env.PREFIX);
+  removeCodexMcpBlock(process.env.CODEX_CONFIG_PATH);
+  removeCodexHook(process.env.CODEX_HOOKS_PATH, process.env.SYNC_PATH);
+}
+if (process.env.INSTALL_CLIENT === 'opencode') {
+  removePrefixedSkills(path.join(process.env.OPENCODE_BUNDLE_DIR, 'skills'), '');
+  removeOpenCodeConfig(process.env.OPENCODE_CONFIG_PATH);
+}
+if (process.env.INSTALL_CLIENT === 'claude-code') removePrefixedSkills(path.join(process.env.PLUGIN_DIR, 'skills'), '');
+if (process.env.INSTALL_CLIENT === 'hermes') {
+  removePrefixedSkills(process.env.HERMES_SKILLS_DIR, '');
+  removeMarkerBlock(process.env.HERMES_CONFIG_PATH);
+  if (process.env.HERMES_BUNDLE_FILE) fs.rmSync(process.env.HERMES_BUNDLE_FILE, { force: true });
+}
+// Remove exact managed installer files only. Do not recursively delete a
+// bundle that may now contain user-created files or ambiguous legacy skills.
+const roots = { 'claude-code': process.env.PLUGIN_DIR, codex: process.env.CODEX_BUNDLE_DIR,
+  opencode: process.env.OPENCODE_BUNDLE_DIR, hermes: process.env.HERMES_BUNDLE_DIR };
+const root = roots[process.env.INSTALL_CLIENT];
+if (fs.existsSync(root) && fs.lstatSync(root).isSymbolicLink()) throw new Error('Refusing symlinked bundle');
+for (const rel of ['.mcp.json', 'installation.json', 'pending-install.sh', 'shared/sync.sh', 'shared/skill-invocation.sh',
+  'shared/hook-sync.sh', '.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', 'hooks/hooks.json']) {
+  const target = path.join(root, rel);
+  const parent = path.dirname(target);
+  if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) throw new Error('Refusing symlinked bundle directory');
+  fs.rmSync(target, { force: true });
+}
+for (const rel of ['shared', '.claude-plugin', 'hooks', 'skills', '']) {
+  try { fs.rmdirSync(path.join(root, rel)); } catch (error) {
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+  }
+}
 NODE
-  echo "  ✓ removed Codex/opencode/Hermes config entries where present"
+  echo "  ✓ removed selected client config and owned files"
 fi
 
-rm -rf "$PLUGIN_DIR"
-rm -rf "$CODEX_BUNDLE_DIR" "$OPENCODE_BUNDLE_DIR" "$HERMES_BUNDLE_DIR"
 echo "  ✓ removed managed local bundles"
 echo "Done. The toolkit's install API key has been revoked."
 `;

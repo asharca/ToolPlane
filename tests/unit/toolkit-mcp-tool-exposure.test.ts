@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  resolveRequestUser: vi.fn(),
+  resolveRequestPrincipal: vi.fn(),
   toolkitFindFirst: vi.fn(),
   liveStatus: vi.fn(),
   listMcpTools: vi.fn(),
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   loadMcpToolPolicies: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
+vi.mock('@/lib/auth/request-user', () => ({ resolveRequestPrincipal: mocks.resolveRequestPrincipal }));
 vi.mock('@/lib/db', () => ({ db: { toolkit: { findFirst: mocks.toolkitFindFirst } } }));
 vi.mock('@/lib/process/supervisor', () => ({ liveStatus: mocks.liveStatus }));
 vi.mock('@/lib/process/mcp-client', () => ({
@@ -41,7 +41,7 @@ const routeParams = {
 describe('toolkit MCP tool exposure', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveRequestUser.mockResolvedValue({ id: 'user1' });
+    mocks.resolveRequestPrincipal.mockResolvedValue({ user: { id: 'user1' }, token: null, credential: 'session' });
     mocks.toolkitFindFirst.mockResolvedValue({
       name: 'Default',
       workspaceId: 'ws1',

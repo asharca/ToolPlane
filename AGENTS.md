@@ -30,8 +30,9 @@ details live in `docs/`. Read only the references relevant to the task.
 - Verify workspace ownership on every workspace-scoped query and mutation,
   including gateway calls, manifests, toolkits, and agent tools.
 - Persist a chat turn only if its conversation belongs to the agent in the URL.
-- Preserve the route's auth policy: `resolveRequestUser()` supports API tokens
-  and session cookies; account routes reject toolkit-scoped tokens; agent-control
+- Preserve the route's auth policy: `resolveRequestUser()` accepts personal API tokens
+  and session cookies, never Toolkit tokens; Toolkit endpoints use
+  `resolveRequestPrincipal()` and intersect the token scope with the query; agent-control
   MCP requires an account-level Bearer token, never a cookie or toolkit token.
   See `src/lib/auth/request-user.ts` before choosing an auth helper.
 - Public agent endpoints must not expose Hermes container APIs/dashboards,
@@ -128,6 +129,8 @@ Agent chat uses the AI SDK UI message stream through `ui-stream.ts`; execution
 is selected by `runtime-kind.ts` and the runtime-specific runners. Preserve
 conversation scoping, tool-source deduplication, and sub-agent depth/cycle guards.
 Trust current code over stale architecture descriptions.
+Runtime mutations require the single-owner guard; read `docs/RUNTIME_OPERATIONS.md`
+for upgrade/recovery and `src/lib/runtime/` before adding external operations.
 
 ## Repository skill
 

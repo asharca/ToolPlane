@@ -1,4 +1,5 @@
 import 'server-only';
+import { trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
@@ -93,8 +94,12 @@ export async function resolveDockerImageDigest(
 }
 
 function runDocker(args: string[], timeoutMs = 30_000): Promise<string> {
+  const cleanup = ['stop', 'rm', 'inspect'].includes(args[0]) || (args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]));
+  return trackRuntimeOperation(() => runDockerOwned(args, timeoutMs), cleanup);
+}
+function runDockerOwned(args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: dockerEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('docker', args, { env: dockerEnv(), ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -106,6 +111,7 @@ function runDocker(args: string[], timeoutMs = 30_000): Promise<string> {
       else resolve(stdout);
     };
     const timer = setTimeout(() => {
+      markRuntimeUncertain();
       child.kill('SIGKILL');
       finish(new Error(`Docker command timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
