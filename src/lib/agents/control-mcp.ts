@@ -1,5 +1,6 @@
 import 'server-only';
 import { z } from 'zod';
+import { AGENT_CONTROL_RUNTIME_KINDS } from './runtime-kind';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   AgentControlError,
@@ -28,7 +29,7 @@ const SendMessageArguments = z.object({
 }).strict();
 const CreateAgentArguments = z.object({
   name: z.string().trim().min(1).max(60),
-  runtime: z.enum(['pi', 'hermes']),
+  runtime: z.enum(AGENT_CONTROL_RUNTIME_KINDS),
   systemPrompt: z.string().trim().max(100_000).nullable().optional(),
   providerId: Id.nullable().optional(),
   providerIds: IdList.default([]),
@@ -117,7 +118,7 @@ export const AGENT_CONTROL_MCP_TOOLS = [
       type: 'object',
       properties: {
         name: { type: 'string', minLength: 1, maxLength: 60 },
-        runtime: { type: 'string', enum: ['pi', 'hermes'] },
+        runtime: { type: 'string', enum: [...AGENT_CONTROL_RUNTIME_KINDS] },
         systemPrompt: { type: ['string', 'null'], maxLength: 100000 },
         providerId: { type: ['string', 'null'], description: 'Pi model provider ID.' },
         providerIds: {

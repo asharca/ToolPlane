@@ -128,6 +128,7 @@ export async function removeWorkspaceMember(actorId: string, slug: string, membe
     const member = await tx.user.findUnique({ where: { id: memberId }, select: { email: true } });
     if (member) await tx.workspaceInvitation.deleteMany({ where: { workspaceId: workspace.id, email: member.email.toLowerCase() } });
     await tx.apiToken.deleteMany({ where: { userId: memberId, toolkit: { workspaceId: workspace.id } } });
+    await tx.toolkitInstallation.updateMany({ where: { userId: memberId, toolkit: { workspaceId: workspace.id } }, data: { status: 'revoked' } });
     await writeAudit(tx, { actorId, workspaceId: workspace.id, action: memberId === actorId ? 'workspace.left' : 'workspace.member_removed', targetType: 'user', targetId: memberId });
     return workspace.id;
   });

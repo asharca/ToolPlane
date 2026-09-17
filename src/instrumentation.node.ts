@@ -1,21 +1,35 @@
+import { startRuntimeOwner } from '@/lib/runtime/owner';
+import { runtimeCanOperate } from '@/lib/runtime/ownership-state';
 import { systemLog } from '@/lib/observability/system';
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
   if (process.env.NEXT_PHASE === 'phase-production-build') return;
+  await startRuntimeOwner(registerNodeOwned);
+}
+async function registerNodeOwned() {
+  if (process.env.NEXT_PHASE === 'phase-production-build') return;
 
+  let failed = false;
   const g = globalThis as unknown as {
+    __toolplaneStopTimers?: () => void;
     __mcpReconciled?: boolean;
     __agentApiMaintenanceTimer?: ReturnType<typeof setInterval>;
     __agentApiIdleMaintenanceTimer?: ReturnType<typeof setInterval>;
+    __attachmentMaintenanceTimer?: ReturnType<typeof setInterval>;
     __logMaintenanceTimer?: ReturnType<typeof setInterval>;
   };
   if (g.__mcpReconciled) return;
   g.__mcpReconciled = true;
+  g.__toolplaneStopTimers = () => {
+    for (const timer of [g.__attachmentMaintenanceTimer, g.__logMaintenanceTimer, g.__agentApiMaintenanceTimer, g.__agentApiIdleMaintenanceTimer]) {
+      if (timer) clearInterval(timer);
+    }
+  };
   if (!g.__logMaintenanceTimer) {
     let running = false;
     const maintain = async () => {
-      if (running) return;
+      if (running || !runtimeCanOperate()) return;
       running = true;
       try { await (await import('@/lib/observability/maintenance')).maintainLogs(); }
       catch (error) { (await import('@/lib/observability/system')).systemLog('error', 'Log retention maintenance failed', error); }
@@ -23,6 +37,18 @@ export async function registerNode() {
     };
     g.__logMaintenanceTimer = setInterval(() => { void maintain(); }, 5 * 60_000);
     g.__logMaintenanceTimer.unref?.();
+  }
+  if (!g.__attachmentMaintenanceTimer) {
+    let running = false;
+    const maintain = async () => {
+      if (running || !runtimeCanOperate()) return;
+      running = true;
+      try { await (await import('@/lib/agents/upload-reservations')).maintainAttachmentUploads(); }
+      catch (error) { systemLog('error', 'Attachment cleanup failed', error); }
+      finally { running = false; }
+    };
+    g.__attachmentMaintenanceTimer = setInterval(() => { void maintain(); }, 60_000);
+    g.__attachmentMaintenanceTimer.unref?.();
   }
   const helpersCreatedBefore = new Date();
   // A materializer normally lives for only a few seconds. Unlike the broader
@@ -42,10 +68,11 @@ export async function registerNode() {
         systemLog('warn', `[mcp] cleaned ${removed} stale deployment configuration materializer helper(s)`);
       }
     } catch (error) {
+      failed = true;
       systemLog('error', `[mcp] deployment configuration helper reconcile attempt ${attempt} failed`, error);
       if (attempt < 3) {
         const retry = setTimeout(() => {
-          void reconcileDeploymentConfigHelpers(attempt + 1);
+          if (runtimeCanOperate()) void reconcileDeploymentConfigHelpers(attempt + 1);
         }, attempt * 5_000);
         retry.unref?.();
       }
@@ -65,10 +92,11 @@ export async function registerNode() {
         );
       }
     } catch (error) {
+      failed = true;
       systemLog('error', `[mcp] sandbox volume reconcile attempt ${attempt} failed`, error);
       if (attempt < 3) {
         const retry = setTimeout(() => {
-          void reconcileSandboxCopies(attempt + 1);
+          if (runtimeCanOperate()) void reconcileSandboxCopies(attempt + 1);
         }, attempt * 5_000);
         retry.unref?.();
       }
@@ -80,6 +108,7 @@ export async function registerNode() {
     const restored = await reconcileAgentChannelRunners();
     if (restored > 0) systemLog('info', `[agent-channels] restored ${restored} channel(s) on startup`);
   } catch (error) {
+    failed = true;
     systemLog('error', '[agent-channels] startup reconcile failed', error);
   }
 
@@ -98,6 +127,7 @@ export async function registerNode() {
     const n = await reconcileDeployments();
     if (n > 0) systemLog('info', `[mcp] reconciled ${n} deployment(s) on startup`);
   } catch (error) {
+    failed = true;
     systemLog('error', '[mcp] startup reconcile failed', error);
   }
 
@@ -105,13 +135,14 @@ export async function registerNode() {
     const { startWorkCoordinator } = await import('@/lib/work/coordinator');
     await startWorkCoordinator();
   } catch (error) {
+    failed = true;
     systemLog('error', '[work] startup reconcile failed', error);
   }
 
   if (!g.__agentApiMaintenanceTimer) {
     let running = false;
     const maintain = async () => {
-      if (running) return;
+      if (running || !runtimeCanOperate()) return;
       running = true;
       try {
         const { runAgentApiMaintenance } = await import('@/lib/agents/public-api/maintenance');
@@ -137,7 +168,7 @@ export async function registerNode() {
   if (!g.__agentApiIdleMaintenanceTimer) {
     let idleRunning = false;
     const stopIdleRuntimes = async () => {
-      if (idleRunning) return;
+      if (idleRunning || !runtimeCanOperate()) return;
       idleRunning = true;
       try {
         const { runAgentApiIdleRuntimeMaintenance } = await import(
@@ -160,4 +191,5 @@ export async function registerNode() {
     }, 60_000);
     g.__agentApiIdleMaintenanceTimer.unref?.();
   }
+  if (failed) throw new Error('Runtime startup recovery failed; execution remains blocked.');
 }

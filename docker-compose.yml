@@ -39,6 +39,7 @@ services:
 
   # The app. Publish the HTTP port so an external proxy can route to this host.
   app:
+    stop_grace_period: 60s
     image: ${TOOLPLANE_IMAGE:-ghcr.io/asharca/toolplane:latest}
     platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
     # Keep the archive lease owner stable across an app-container recreate so
@@ -78,6 +79,12 @@ services:
       # Internal network → reach Postgres on 5432.
       DATABASE_URL: postgresql://mcp:mcp@postgres:5432/toolplane
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your environment or .env}
+      TOOLPLANE_RUNTIME_DOMAIN: ${TOOLPLANE_RUNTIME_DOMAIN:-default}
+      TOOLPLANE_RUNTIME_RECOVERY_ACK: ${TOOLPLANE_RUNTIME_RECOVERY_ACK:-}
+      TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES: ${TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES:-2000000000}
+      TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES: ${TOOLPLANE_ATTACHMENT_WORKSPACE_BYTES:-20000000000}
+      TOOLPLANE_ATTACHMENT_AGENT_BYTES: ${TOOLPLANE_ATTACHMENT_AGENT_BYTES:-5000000000}
+      TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS: ${TOOLPLANE_ATTACHMENT_CONCURRENT_UPLOADS:-2}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:10030}
       NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-support@tp.rhzy.ai}
       SMTP_URL: ${SMTP_URL:-}

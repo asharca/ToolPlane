@@ -116,3 +116,11 @@ pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-storage.test.ts te
 pnpm exec tsc --noEmit
 pnpm lint
 ```
+
+## Explicit Payload Policy
+
+Events declare `metadata-only` (default), `diagnostic`, `agent-content`, or `forbidden`. A diagnostic capture does not automatically enable Agent content. An administrator must explicitly select `includeAgentContent` for the named resource, with the existing time limit and access audit. Agent-content details retain for at most 24 hours (or less if configured); exports remain metadata-only.
+
+A lazy detail reader runs only after policy and capture checks. Response readers stop at 32 KiB or 200 ms and do not capture SSE. Sensitive Agent events keep only their generic event name/error category in metadata, omit arbitrary attributes and error text from stderr, and do not copy payloads merely to determine success. Parent `suppressPayload` is monotonic: children cannot turn it off. `forbidden` and public Endpoint suppression override every capture.
+
+Content redaction does not anonymize arbitrary business text. Opt-in captures still require restricted administrator access and minimal retention.

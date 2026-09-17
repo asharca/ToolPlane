@@ -1,4 +1,5 @@
 import 'server-only';
+import { trackRuntimeOperation, beginRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
@@ -79,8 +80,12 @@ function appendError(current: string, chunk: Buffer): string {
 }
 
 function runDocker(args: string[], timeoutMs = 30_000): Promise<void> {
+  const cleanup = args[0] === 'volume' && ['rm', 'inspect'].includes(args[1]);
+  return trackRuntimeOperation(() => runDockerOwned(args, timeoutMs), cleanup);
+}
+function runDockerOwned(args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { env: dockerEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn('docker', args, { env: dockerEnv(), ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}), stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     let settled = false;
     const finish = (error?: Error) => {
@@ -92,6 +97,7 @@ function runDocker(args: string[], timeoutMs = 30_000): Promise<void> {
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
+      markRuntimeUncertain();
       finish(new AttachmentStorageError(`Docker command timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
     child.stderr?.on('data', (chunk: Buffer) => { stderr = appendError(stderr, chunk); });
@@ -154,6 +160,12 @@ async function streamIntoHelper(
   maxBytes: number,
   signal?: AbortSignal,
 ): Promise<number> {
+  const ownerSignal = runtimeAbortSignal();
+  const combined = ownerSignal ? (signal ? AbortSignal.any([signal, ownerSignal]) : ownerSignal) : signal;
+  return trackRuntimeOperation(() => streamIntoHelperOwned(args, body, maxBytes, combined));
+}
+async function streamIntoHelperOwned(args: string[], body: ReadableStream<Uint8Array>, maxBytes: number, signal?: AbortSignal): Promise<number> {
+  if (signal?.aborted) throw new AttachmentStorageError('Attachment upload was aborted.');
   const child = spawn('docker', args, { env: dockerEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdout.resume();
   const resultPromise = waitForChild(child);
@@ -167,6 +179,8 @@ async function streamIntoHelper(
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', abort, { once: true });
+  const stopChild = () => { child.kill('SIGKILL'); markRuntimeUncertain(); };
+  controller.signal.addEventListener('abort', stopChild, { once: true });
   const timer = setTimeout(() => controller.abort(new Error('Attachment upload timed out.')), HELPER_TIMEOUT_MS);
 
   try {
@@ -192,6 +206,7 @@ async function streamIntoHelper(
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
+    controller.signal.removeEventListener('abort', stopChild);
   }
 }
 
@@ -247,8 +262,10 @@ export function readWorkspaceAttachment(
   }
   const volumeName = workspaceAttachmentVolumeName(workspaceId);
   const target = checkedStoragePath(storagePath);
+  const release = beginRuntimeOperation();
   const child = spawn('docker', helperArgs(volumeName, 'cat "$1"', [target], { readOnly: true }), {
     env: dockerEnv(),
+    ...(runtimeAbortSignal() ? { signal: runtimeAbortSignal() } : {}),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -270,8 +287,9 @@ export function readWorkspaceAttachment(
 
   child.stdout.pipe(output, { end: false });
   child.stderr.on('data', (chunk: Buffer) => { stderr = appendError(stderr, chunk); });
-  child.once('error', (error) => output.destroy(new AttachmentStorageError(error.message)));
+  child.once('error', (error) => { release(); output.destroy(new AttachmentStorageError(error.message)); });
   child.once('close', (code, signal) => {
+    release();
     clearTimeout(timer);
     if (code === 0) output.end();
     else output.destroy(new AttachmentStorageError(

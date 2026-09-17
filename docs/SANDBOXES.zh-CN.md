@@ -268,7 +268,7 @@ Python 不在 `PATH` 中时设置 `TOOLPLANE_CONNECTOR_PYTHON`。`TOOLPLANE_CONN
 可选择绝对 `pwsh.exe` 路径，但交互式会话不支持 `cmd.exe`。这避免了 Windows 上对 POSIX
 引号和 `base64 -d` 的假设。
 
-没有绑定沙箱时，`skill_run_script` 回退到本地临时执行路径，使用最小环境。
+没有绑定沙箱时，`skill_run_script` 返回错误，不回退宿主机执行。显式传入的 Sandbox ID 必须属于 Agent 的绑定集合。
 
 ## 数据库
 

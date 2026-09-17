@@ -1,3 +1,4 @@
+import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 import { systemLog } from '@/lib/observability/system';
 import 'server-only';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -1208,6 +1209,7 @@ export async function ensureHermesDashboardBroker(): Promise<{
   bind: string;
   port: number;
 }> {
+  assertRuntimeOwner();
   const s = state();
   s.handler = proxyDashboard;
   s.upgradeHandler = upgradeHermesDashboardWebSocket;

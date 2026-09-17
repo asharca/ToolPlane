@@ -254,7 +254,7 @@ async function runNativeSteps(options: NativeRunOptions): Promise<string> {
         outcome: isError || semanticError ? 'error' : 'success',
         error: toolError,
         durationMs: Math.round(performance.now() - toolStart), attributes: { toolCallId: toolCall.id },
-        detail: { input: toolCall.arguments, output } });
+        payloadPolicy: 'agent-content', detail: () => ({ input: toolCall.arguments, output }) });
       await options.onToolResult?.(toolCall, output, isError);
       context.messages.push({
         role: 'toolResult',

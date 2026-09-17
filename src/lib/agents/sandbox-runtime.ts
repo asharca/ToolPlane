@@ -1,4 +1,5 @@
 import 'server-only';
+import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
@@ -1033,6 +1034,7 @@ function redact(value: string, secrets: readonly string[]): string {
 }
 
 function runDockerOnce(args: string[], timeoutMs = 10_000): Promise<void> {
+  assertRuntimeOwner(true);
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, { env: dockerEnv(), stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
@@ -1046,6 +1048,7 @@ function runDockerOnce(args: string[], timeoutMs = 10_000): Promise<void> {
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
+      markRuntimeUncertain();
       finish(new Error('Docker cleanup timed out.'));
     }, timeoutMs);
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -1084,6 +1087,11 @@ kill_tree "$pid"
 }
 
 function runTrackedDockerExec(options: DockerExecOptions): Promise<string> {
+  const ownerSignal = runtimeAbortSignal();
+  const signal = ownerSignal ? (options.signal ? AbortSignal.any([options.signal, ownerSignal]) : ownerSignal) : options.signal;
+  return trackRuntimeOperation(() => runTrackedDockerExecOwned({ ...options, signal }));
+}
+function runTrackedDockerExecOwned(options: DockerExecOptions): Promise<string> {
   if (options.signal?.aborted) return Promise.reject(new Error('Sandbox runtime aborted.'));
   const commandEnv = options.env ?? {};
   for (const [key, value] of Object.entries(commandEnv)) {

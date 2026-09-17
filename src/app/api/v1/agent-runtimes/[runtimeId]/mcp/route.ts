@@ -7,7 +7,7 @@ import { verifyHermesRuntimeToken } from '@/lib/agents/hermes/token';
 import { liveStatus } from '@/lib/process/supervisor';
 import { listMcpTools, McpPayloadTooLargeError, mcpRpc } from '@/lib/process/mcp-client';
 import { logRequest } from '@/lib/observability/log';
-import { inspectMcpLog } from '@/lib/observability/mcp-log-entry';
+import { mcpResponseOutcome } from '@/lib/observability/mcp-log-entry';
 import { enrichLogContext } from '@/lib/observability/context';
 import {
   filterMcpToolsForAi,
@@ -72,6 +72,8 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
   { params }: { params: Promise<{ runtimeId: string }> },
 ) {
   const startedAt = Date.now();
+  let rpcOutcome: 'success' | 'error' = 'success';
+  const loggedError = (...args: Parameters<typeof errorResponse>) => { rpcOutcome = 'error'; return errorResponse(...args); };
   const { runtimeId } = await params;
   const runtimeRow = await db.agentRuntime.findUnique({
     where: { id: runtimeId },
@@ -82,12 +84,12 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     || runtimeRow.kind !== 'hermes'
     || !verifyHermesRuntimeToken(runtimeId, 'toolplane-mcp', bearerToken(req))
   ) {
-    return errorResponse(null, -32001, 'unauthorized', 401);
+    return loggedError(null, -32001, 'unauthorized', 401);
   }
 
   const agent = await getAgent(runtimeRow.workspaceId, runtimeRow.agentId);
   if (!agent?.runtime || agent.runtime.id !== runtimeId) {
-    return errorResponse(null, -32004, 'agent runtime not found', 404);
+    return loggedError(null, -32004, 'agent runtime not found', 404);
   }
   const publicAllocation = agent.publicRuntimeAllocation;
   enrichLogContext({ workspaceId: runtimeRow.workspaceId, agentId: runtimeRow.agentId, suppressPayload: Boolean(publicAllocation) });
@@ -98,7 +100,7 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     // An Endpoint deletion can remove the allocation before asynchronous
     // runtime garbage collection. Never let that orphan fall back to the
     // ordinary, broader Agent MCP policy while its container drains.
-    return errorResponse(null, -32004, 'agent runtime not found', 404);
+    return loggedError(null, -32004, 'agent runtime not found', 404);
   }
 
   let message: { id?: unknown; method?: string; params?: Record<string, unknown> };
@@ -109,9 +111,9 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     ) as typeof message;
   } catch (error) {
     if (error instanceof McpPayloadTooLargeError) {
-      return errorResponse(null, -32002, 'public MCP request is too large', 413);
+      return loggedError(null, -32002, 'public MCP request is too large', 413);
     }
-    return errorResponse(null, -32700, 'parse error', 400);
+    return loggedError(null, -32700, 'parse error', 400);
   }
 
   const { id, method } = message;
@@ -182,7 +184,7 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
       }
     } catch (error) {
       if (error instanceof McpPayloadTooLargeError) {
-        response = errorResponse(id, -32002, 'public MCP tool catalog is too large', 502);
+        response = loggedError(id, -32002, 'public MCP tool catalog is too large', 502);
         await logRequest({
           workspaceId: runtimeRow.workspaceId,
           deploymentId: null,
@@ -199,7 +201,7 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     }
     const payload = JSON.stringify({ jsonrpc: '2.0', id, result: { tools } });
     response = publicAllocation && new TextEncoder().encode(payload).byteLength > PUBLIC_MCP_RESPONSE_BYTES
-      ? errorResponse(id, -32002, 'public MCP tool catalog is too large', 502)
+      ? loggedError(id, -32002, 'public MCP tool catalog is too large', 502)
       : new NextResponse(payload, { headers: { 'content-type': 'application/json; charset=utf-8' } });
   } else if (method === 'tools/call') {
     const fullName = String(rpcParams.name ?? '');
@@ -214,17 +216,17 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     }
 
     if (!deploymentIds.includes(deploymentId)) {
-      response = errorResponse(id, -32602, `Unknown tool: ${fullName}`);
+      response = loggedError(id, -32602, `Unknown tool: ${fullName}`);
     } else if (!isMcpToolExposedToAi(policies.get(deploymentId), toolName)) {
-      response = errorResponse(id, -32602, `Unknown tool: ${fullName}`);
+      response = loggedError(id, -32602, `Unknown tool: ${fullName}`);
     } else if (
       publicAllocation
       && !endpointAllowsTool(endpointToolPolicy, deploymentId, toolName)
     ) {
-      response = errorResponse(id, -32602, `Unknown tool: ${fullName}`);
+      response = loggedError(id, -32602, `Unknown tool: ${fullName}`);
     } else if (liveStatus(deploymentId) !== 'running') {
       logDeploymentId = deploymentId;
-      response = errorResponse(id, -32000, 'tool deployment is not running');
+      response = loggedError(id, -32000, 'tool deployment is not running');
     } else {
       logDeploymentId = deploymentId;
       logTool = safeLogTool;
@@ -240,22 +242,22 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
             maxResponseBytes: PUBLIC_MCP_RESPONSE_BYTES,
           } : undefined,
         );
+        rpcOutcome = mcpResponseOutcome(result, result ? 200 : 502);
         response = result
           ? NextResponse.json({ jsonrpc: '2.0', id, result })
-          : errorResponse(id, -32000, 'tool deployment is unreachable');
+          : loggedError(id, -32000, 'tool deployment is unreachable');
       } catch (error) {
         response = error instanceof McpPayloadTooLargeError
-          ? errorResponse(id, -32002, 'public MCP tool payload is too large', 502)
-          : errorResponse(id, -32000, 'tool deployment is unreachable');
+          ? loggedError(id, -32002, 'public MCP tool payload is too large', 502)
+          : loggedError(id, -32000, 'tool deployment is unreachable');
       }
     }
   } else if (id === undefined || id === null) {
     return new NextResponse(null, { status: 202 });
   } else {
-    response = errorResponse(id, -32601, `Method not found: ${method ?? ''}`);
+    response = loggedError(id, -32601, `Method not found: ${method ?? ''}`);
   }
 
-  const observedBody = await response.clone().text();
   await logRequest({
     workspaceId: runtimeRow.workspaceId,
     deploymentId: logDeploymentId,
@@ -264,8 +266,9 @@ export const POST = withRequestLogging("/api/v1/agent-runtimes/[runtimeId]/mcp",
     statusCode: response.status,
     durationMs: Date.now() - startedAt,
     requestBody,
-    responseBody: publicAllocation ? null : observedBody,
-    outcome: inspectMcpLog({ path: '', statusCode: response.status, responseBody: observedBody }).outcome,
+    response: publicAllocation ? undefined : response,
+    payloadPolicy: publicAllocation ? 'forbidden' : 'agent-content',
+    outcome: rpcOutcome,
   });
   return response;
 });

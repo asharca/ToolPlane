@@ -151,11 +151,12 @@ describe('public Hermes runtime MCP policy', () => {
     expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({
       deploymentId: 'deployment-1',
       requestBody: null,
-      responseBody: null,
+      response: undefined,
+      payloadPolicy: 'forbidden',
     }));
   });
 
-  it('preserves detailed MCP audit bodies for ordinary Hermes Agents', async () => {
+  it('defers ordinary Hermes response capture behind an explicit Agent-content policy', async () => {
     mocks.getAgent.mockResolvedValue({
       ...publicAgent,
       publicRuntimeAllocation: null,
@@ -172,8 +173,13 @@ describe('public Hermes runtime MCP policy', () => {
 
     expect(mocks.logRequest).toHaveBeenCalledWith(expect.objectContaining({
       requestBody: expect.stringContaining('ordinary audit'),
-      responseBody: expect.stringContaining('secret result'),
+      response: expect.any(Response),
+      payloadPolicy: 'agent-content',
+      outcome: 'success',
     }));
+    const log = mocks.logRequest.mock.calls[0][0];
+    expect(log.responseBody).toBeUndefined();
+    expect(await log.response.clone().text()).toContain('secret result');
   });
 
   it('fails closed when endpoint deletion leaves a marked runtime without its allocation', async () => {

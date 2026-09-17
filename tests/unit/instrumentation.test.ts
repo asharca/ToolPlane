@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   ensureConnectorBroker: vi.fn(),
+  ownerReady: vi.fn(), ownerFailed: vi.fn(),
   ensureHermesDashboardBroker: vi.fn(),
   ensureSandboxNetwork: vi.fn(),
   cleanupHermesArchiveStaging: vi.fn(),
@@ -11,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   reconcileAgentChannelRunners: vi.fn(),
 }));
 
+vi.mock('@/lib/runtime/owner', () => ({ startRuntimeOwner: async (recover: () => Promise<void>) => {
+  try { await recover(); mocks.ownerReady(); } catch (error) { mocks.ownerFailed(error); throw error; }
+} }));
+vi.mock('@/lib/work/coordinator', () => ({ startWorkCoordinator: async () => undefined }));
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
 }));
@@ -56,6 +61,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     mocks.removeStaleDeploymentConfigMaterializerHelpers.mockResolvedValue(0);
     mocks.reconcileDeployments.mockResolvedValue(0);
     mocks.reconcileAgentChannelRunners.mockResolvedValue(0);
+    mocks.reconcileSandboxVolumeCopies.mockResolvedValue({ helpersRemoved: 0 });
   });
 
   afterEach(() => {
@@ -67,7 +73,7 @@ describe('startup sandbox lifecycle reconciliation', () => {
     delete process.env.NEXT_PHASE;
   });
 
-  it('continues normal deployment recovery and retries when Docker helper cleanup fails', async () => {
+  it('retries helper recovery but does not declare readiness after an initial cleanup failure', async () => {
     mocks.reconcileSandboxVolumeCopies
       .mockRejectedValueOnce(new Error('docker unavailable'))
       .mockResolvedValueOnce({
@@ -102,6 +108,8 @@ describe('startup sandbox lifecycle reconciliation', () => {
       mocks.reconcileSandboxVolumeCopies.mock.calls[1][0].helpersCreatedBefore,
     ).toBe(firstCutoff);
     expect(mocks.removeStaleDeploymentConfigMaterializerHelpers).toHaveBeenCalledTimes(1);
+    expect(mocks.ownerReady).not.toHaveBeenCalled();
+    expect(mocks.ownerFailed).toHaveBeenCalled();
   });
 
   it('does not block the web server on slow deployment recovery', async () => {
@@ -115,6 +123,8 @@ describe('startup sandbox lifecycle reconciliation', () => {
       expect(mocks.reconcileDeployments).toHaveBeenCalledTimes(1);
     });
 
+    expect(mocks.ownerReady).not.toHaveBeenCalled();
     finishRecovery(0);
+    await vi.waitFor(() => expect(mocks.ownerReady).toHaveBeenCalledOnce());
   });
 });

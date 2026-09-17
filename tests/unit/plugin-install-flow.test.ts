@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -35,7 +36,7 @@ function writeFakeCurl(
       '#!/usr/bin/env bash',
       'case "$*" in',
       '  *"/api/v1/plugin/baseline"*)',
-      `    printf "%s\\n" '${JSON.stringify({ data: { skills: [{ slug: skill.slug, content: skill.content, files: [{ path: skill.filePath, content: skill.fileContent }] }] } }).replace(/'/g, "'\\''")}'`,
+      `    printf "%s\\n" '${JSON.stringify({ data: { schemaVersion: 1, snapshotComplete: true, workspaceSlug: 'ws', toolkitSlug: 'tk', skills: [{ slug: skill.slug, content: skill.content, files: [{ path: skill.filePath, content: skill.fileContent }], version: createHash('sha256').update(JSON.stringify({ content: skill.content, files: [{ path: skill.filePath, content: skill.fileContent }] })).digest('hex').slice(0, 12) }] } }).replace(/'/g, "'\\''")}'`,
       '    ;;',
       '  *)',
       '    exit 0',
@@ -50,8 +51,8 @@ function writeFakeCurl(
 describe('generated Claude Code plugin installer', () => {
   it('installs the plugin files and registers through the claude CLI', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-install-'));
-    const bin = path.join(tmp, 'bin');
-    mkdirSync(bin);
+    const bin = path.join(tmp, '.local/bin');
+    mkdirSync(bin, { recursive: true });
     const claudeStub = path.join(bin, 'claude');
     writeFileSync(
       claudeStub,
@@ -77,13 +78,13 @@ describe('generated Claude Code plugin installer', () => {
       stdio: 'pipe',
     });
 
-    const root = '.claude/plugins/toolplane-tk';
+    const root = '.claude/plugins/toolplane-775ff1e300598486cd833e1c';
     const marketplace = readJson(`${root}/.claude-plugin/marketplace.json`) as {
       name: string;
       plugins: { name: string; source: string }[];
     };
-    expect(marketplace.name).toBe('toolplane-tk');
-    expect(marketplace.plugins[0]).toEqual({ name: 'toolplane-tk', source: './' });
+    expect(marketplace.name).toBe('toolplane-775ff1e300598486cd833e1c');
+    expect(marketplace.plugins[0]).toEqual({ name: 'toolplane-775ff1e300598486cd833e1c', source: './' });
 
     const plugin = readJson(`${root}/.claude-plugin/plugin.json`) as {
       skills: string;
@@ -95,7 +96,7 @@ describe('generated Claude Code plugin installer', () => {
     const mcp = readJson(`${root}/.mcp.json`) as {
       mcpServers: Record<string, { url: string; headers: { Authorization: string } }>;
     };
-    expect(mcp.mcpServers['toolplane-tk']).toEqual({
+    expect(mcp.mcpServers['toolplane-775ff1e300598486cd833e1c']).toEqual({
       url: 'https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp',
       headers: { Authorization: 'Bearer sk_user_TEST' },
     });
@@ -111,16 +112,16 @@ describe('generated Claude Code plugin installer', () => {
 
     const calls = readFileSync(path.join(tmp, 'claude-calls.log'), 'utf8');
     expect(calls).toContain(`plugin marketplace add ${path.join(tmp, root)}`);
-    expect(calls).toContain('plugin uninstall toolplane-tk@toolplane-tk');
-    expect(calls).toContain('plugin install toolplane-tk@toolplane-tk');
+    expect(calls).toContain('plugin uninstall toolplane-775ff1e300598486cd833e1c@toolplane-775ff1e300598486cd833e1c');
+    expect(calls).toContain('plugin install toolplane-775ff1e300598486cd833e1c@toolplane-775ff1e300598486cd833e1c');
   });
 });
 
 describe('generated Codex installer', () => {
   it('configures Codex MCP, hooks, and synced user skills', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-codex-install-'));
-    const bin = path.join(tmp, 'bin');
-    mkdirSync(bin);
+    const bin = path.join(tmp, '.local/bin');
+    mkdirSync(bin, { recursive: true });
     writeFakeCurl(bin);
 
     const installer = path.join(tmp, 'install-codex.sh');
@@ -142,7 +143,7 @@ describe('generated Codex installer', () => {
     });
 
     const config = readFileSync(path.join(tmp, '.codex/config.toml'), 'utf8');
-    expect(config).toContain('[mcp_servers.toolplane-tk]');
+    expect(config).toContain('[mcp_servers.toolplane-775ff1e300598486cd833e1c]');
     expect(config).toContain('url = "https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp"');
     expect(config).toContain('http_headers = { Authorization = "Bearer sk_user_CODEX" }');
 
@@ -150,26 +151,26 @@ describe('generated Codex installer', () => {
       hooks: { SessionStart: { hooks: { command: string }[] }[] };
     };
     expect(hooks.hooks.SessionStart[0].hooks[0].command).toContain(
-      '.codex/toolplane/toolplane-tk/shared/sync.sh',
+      '.codex/toolplane/toolplane-775ff1e300598486cd833e1c/shared/sync.sh',
     );
 
-    const mcp = readJson('.codex/toolplane/toolplane-tk/.mcp.json') as {
+    const mcp = readJson('.codex/toolplane/toolplane-775ff1e300598486cd833e1c/.mcp.json') as {
       mcpServers: Record<string, { headers: { Authorization: string } }>;
     };
-    expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_CODEX');
-    expect(statSync(path.join(tmp, '.codex/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
-    const skill = readFileSync(path.join(tmp, '.agents/skills/toolplane-tk-alpha/SKILL.md'), 'utf8');
-    expect(skill).not.toContain('name: toolplane-tk-alpha');
+    expect(mcp.mcpServers['toolplane-775ff1e300598486cd833e1c'].headers.Authorization).toBe('Bearer sk_user_CODEX');
+    expect(statSync(path.join(tmp, '.codex/toolplane/toolplane-775ff1e300598486cd833e1c/shared/sync.sh')).mode & 0o111).toBeTruthy();
+    const skill = readFileSync(path.join(tmp, '.agents/skills/toolplane-775ff1e300598486cd833e1c-alpha/SKILL.md'), 'utf8');
+    expect(skill).not.toContain('name: toolplane-775ff1e300598486cd833e1c-alpha');
     expect(skill).toContain('# Alpha');
-    expect(readFileSync(path.join(tmp, '.agents/skills/toolplane-tk-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
+    expect(readFileSync(path.join(tmp, '.agents/skills/toolplane-775ff1e300598486cd833e1c-alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
   });
 });
 
 describe('generated opencode installer', () => {
   it('configures remote MCP, a toolkit command, and synced skill cache', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-opencode-install-'));
-    const bin = path.join(tmp, 'bin');
-    mkdirSync(bin);
+    const bin = path.join(tmp, '.local/bin');
+    mkdirSync(bin, { recursive: true });
     writeFakeCurl(bin);
     const configDir = path.join(tmp, 'opencode-config');
 
@@ -195,27 +196,27 @@ describe('generated opencode installer', () => {
       mcp: Record<string, unknown>;
       command: Record<string, { template: string }>;
     };
-    expect(cfg.mcp['toolplane-tk']).toEqual({
+    expect(cfg.mcp['toolplane-775ff1e300598486cd833e1c']).toEqual({
       type: 'remote',
       url: 'https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp',
       enabled: true,
       oauth: false,
       headers: { Authorization: 'Bearer sk_user_OC' },
     });
-    expect(cfg.command['toolplane-tk'].template).toContain(
-      path.join(configDir, 'toolplane/toolplane-tk/skills'),
+    expect(cfg.command['toolplane-775ff1e300598486cd833e1c'].template).toContain(
+      path.join(configDir, 'toolplane/toolplane-775ff1e300598486cd833e1c/skills'),
     );
-    expect(cfg.command['toolplane-tk'].template).toContain('$ARGUMENTS');
-    expect(readFileSync(path.join(configDir, 'toolplane/toolplane-tk/skills/alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
-    expect(readFileSync(path.join(configDir, 'toolplane/toolplane-tk/skills/alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
+    expect(cfg.command['toolplane-775ff1e300598486cd833e1c'].template).toContain('$ARGUMENTS');
+    expect(readFileSync(path.join(configDir, 'toolplane/toolplane-775ff1e300598486cd833e1c/skills/alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
+    expect(readFileSync(path.join(configDir, 'toolplane/toolplane-775ff1e300598486cd833e1c/skills/alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
   });
 });
 
 describe('generated Hermes installer', () => {
   it('configures remote MCP, syncs skills, and writes a skill bundle', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-hermes-install-'));
-    const bin = path.join(tmp, 'bin');
-    mkdirSync(bin);
+    const bin = path.join(tmp, '.local/bin');
+    mkdirSync(bin, { recursive: true });
     mkdirSync(path.join(tmp, '.hermes'), { recursive: true });
     writeFileSync(path.join(tmp, '.hermes/config.yaml'), 'hooks: {}\n');
     writeFakeCurl(bin, {
@@ -245,20 +246,20 @@ describe('generated Hermes installer', () => {
 
     const config = readFileSync(path.join(tmp, '.hermes/config.yaml'), 'utf8');
     expect(config).toContain('mcp_servers:');
-    expect(config).toContain('  toolplane-tk:');
+    expect(config).toContain('  toolplane-775ff1e300598486cd833e1c:');
     expect(config).toContain('    url: "https://mcp.example.com/api/v1/workspaces/ws/toolkits/tk/mcp"');
     expect(config).toContain('      Authorization: "Bearer sk_user_HERMES"');
     expect(config).toContain('hooks:');
     expect(config).toContain('  on_session_start:');
     expect(config).toContain('    - command: "bash \\"');
-    expect(config).toContain('/.hermes/toolplane/toolplane-tk/shared/hook-sync.sh\\""');
+    expect(config).toContain('/.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/shared/hook-sync.sh\\""');
 
-    const mcp = readJson('.hermes/toolplane/toolplane-tk/.mcp.json') as {
+    const mcp = readJson('.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/.mcp.json') as {
       mcpServers: Record<string, { headers: { Authorization: string } }>;
     };
-    expect(mcp.mcpServers['toolplane-tk'].headers.Authorization).toBe('Bearer sk_user_HERMES');
-    expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh')).mode & 0o111).toBeTruthy();
-    const hookSync = path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/hook-sync.sh');
+    expect(mcp.mcpServers['toolplane-775ff1e300598486cd833e1c'].headers.Authorization).toBe('Bearer sk_user_HERMES');
+    expect(statSync(path.join(tmp, '.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/shared/sync.sh')).mode & 0o111).toBeTruthy();
+    const hookSync = path.join(tmp, '.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/shared/hook-sync.sh');
     expect(statSync(hookSync).mode & 0o111).toBeTruthy();
     const hookOut = execFileSync('/bin/bash', [hookSync], {
       env: { ...process.env, HOME: tmp, PATH: `${bin}:${process.env.PATH ?? ''}` },
@@ -266,16 +267,16 @@ describe('generated Hermes installer', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).toString();
     expect(hookOut).toBe('{}\n');
-    const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane-tk/pdf/SKILL.md'), 'utf8');
-    expect(skill).not.toContain('name: toolplane-tk-alpha');
+    const skill = readFileSync(path.join(tmp, '.hermes/skills/toolplane-775ff1e300598486cd833e1c/pdf/SKILL.md'), 'utf8');
+    expect(skill).not.toContain('name: toolplane-775ff1e300598486cd833e1c-alpha');
     expect(skill).toContain('name: pdf');
     expect(skill).toContain('# PDF');
-    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane-tk/pdf/scripts/pdf.py'), 'utf8')).toBe('print("pdf")');
+    expect(readFileSync(path.join(tmp, '.hermes/skills/toolplane-775ff1e300598486cd833e1c/pdf/scripts/pdf.py'), 'utf8')).toBe('print("pdf")');
 
-    const bundle = readFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'utf8');
-    expect(bundle).toContain('name: toolplane-tk');
-    expect(bundle).toContain('  - toolplane-tk/pdf');
-    expect(bundle).toContain('Its MCP tools are available through the "toolplane-tk" MCP server.');
+    const bundle = readFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-775ff1e300598486cd833e1c.yaml'), 'utf8');
+    expect(bundle).toContain('name: toolplane-775ff1e300598486cd833e1c');
+    expect(bundle).toContain('  - toolplane-775ff1e300598486cd833e1c/pdf');
+    expect(bundle).toContain('Its MCP tools are available through the "toolplane-775ff1e300598486cd833e1c" MCP server.');
   });
 });
 
@@ -283,29 +284,32 @@ describe('generated toolkit uninstaller', () => {
   it('removes only ToolPlane-prefixed Hermes skills for the toolkit', () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-uninstall-'));
 
-    mkdirSync(path.join(tmp, '.hermes/skills/toolplane-tk/alpha'), { recursive: true });
+    mkdirSync(path.join(tmp, '.hermes/skills/toolplane-775ff1e300598486cd833e1c/alpha'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skills/apple/apple-notes'), { recursive: true });
     mkdirSync(path.join(tmp, '.hermes/skill-bundles'), { recursive: true });
-    mkdirSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared'), { recursive: true });
-    writeFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'), 'name: toolplane-tk\n');
-    writeFileSync(path.join(tmp, '.hermes/toolplane/toolplane-tk/shared/sync.sh'), '#!/usr/bin/env bash\n');
+    mkdirSync(path.join(tmp, '.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/shared'), { recursive: true });
+    writeFileSync(path.join(tmp, '.hermes/skill-bundles/toolplane-775ff1e300598486cd833e1c.yaml'), 'name: toolplane-775ff1e300598486cd833e1c\n');
+    writeFileSync(path.join(tmp, '.hermes/toolplane/toolplane-775ff1e300598486cd833e1c/shared/sync.sh'), '#!/usr/bin/env bash\n');
     writeFileSync(
       path.join(tmp, '.hermes/config.yaml'),
       [
         'mcp_servers:',
-        '  # BEGIN TOOLPLANE toolplane-tk',
-        '  toolplane-tk:',
+        '  # BEGIN TOOLPLANE toolplane-775ff1e300598486cd833e1c',
+        '  toolplane-775ff1e300598486cd833e1c:',
         '    url: "https://mcp.example.com"',
-        '  # END TOOLPLANE toolplane-tk',
+        '  # END TOOLPLANE toolplane-775ff1e300598486cd833e1c',
         '  other-server:',
         '    url: "https://other.example.com"',
         '',
       ].join('\n'),
     );
 
+    const state = path.join(tmp, '.hermes/skills/toolplane-775ff1e300598486cd833e1c/.toolplane-state/toolplane-775ff1e300598486cd833e1c');
+    mkdirSync(state, { recursive: true });
+    writeFileSync(path.join(state, 'manifest.json'), JSON.stringify({ schemaVersion: 1, installation: 'toolplane-775ff1e300598486cd833e1c', skills: { alpha: {} } }));
     const uninstaller = path.join(tmp, 'uninstall.sh');
-    writeFileSync(uninstaller, buildPluginUninstallScript({ toolkitSlug: 'tk' }), {
+    writeFileSync(uninstaller, buildPluginUninstallScript({ base: 'https://mcp.example.com', workspaceSlug: 'ws', toolkitSlug: 'tk', client: 'hermes' }), {
       mode: 0o755,
     });
 
@@ -314,13 +318,13 @@ describe('generated toolkit uninstaller', () => {
       stdio: 'pipe',
     });
 
-    expect(() => statSync(path.join(tmp, '.hermes/skills/toolplane-tk'))).toThrow();
+    expect(() => statSync(path.join(tmp, '.hermes/skills/toolplane-775ff1e300598486cd833e1c/alpha'))).toThrow();
     expect(statSync(path.join(tmp, '.hermes/skills/toolplane/toolplane-other-beta')).isDirectory()).toBe(true);
     expect(statSync(path.join(tmp, '.hermes/skills/apple/apple-notes')).isDirectory()).toBe(true);
-    expect(() => statSync(path.join(tmp, '.hermes/skill-bundles/toolplane-tk.yaml'))).toThrow();
-    expect(() => statSync(path.join(tmp, '.hermes/toolplane/toolplane-tk'))).toThrow();
+    expect(() => statSync(path.join(tmp, '.hermes/skill-bundles/toolplane-775ff1e300598486cd833e1c.yaml'))).toThrow();
+    expect(() => statSync(path.join(tmp, '.hermes/toolplane/toolplane-775ff1e300598486cd833e1c'))).toThrow();
     const config = readFileSync(path.join(tmp, '.hermes/config.yaml'), 'utf8');
-    expect(config).not.toContain('toolplane-tk');
+    expect(config).not.toContain('toolplane-775ff1e300598486cd833e1c');
     expect(config).toContain('other-server');
   });
 });

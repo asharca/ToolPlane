@@ -40,7 +40,7 @@ describe('durable scoped logging', () => {
     const value = JSON.stringify({ captures: [{ field: 'workspaceId', id: workspaceId, expiresAt: new Date(Date.now() + 60_000).toISOString() }] });
     await db.systemSetting.upsert({ where: { key: LOG_SETTINGS_KEY }, create: { key: LOG_SETTINGS_KEY, value }, update: { value } });
     invalidateLogSettings();
-    await withLogContext({ workspaceId, actorId: userId, secrets: ['fixture-private-key'] }, () => recordEvent({ domain: 'mcp', eventName: 'test.failure',
+    await withLogContext({ workspaceId, actorId: userId, secrets: ['fixture-private-key'] }, () => recordEvent({ domain: 'mcp', eventName: 'test.failure', payloadPolicy: 'diagnostic',
       error: new Error('upstream failed: fixture-private-key', { cause: new Error('timeout') }), detail: { apiKey: 'never-store', query: 'safe' },
     }));
     const result = await listLogEvents({ adminId }, { workspaceId });

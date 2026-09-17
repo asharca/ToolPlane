@@ -126,3 +126,11 @@ export function inspectMcpLog(input: McpLogInput): McpLogInspection {
     errorSummary: input.errorSummary ?? errorSummary ?? (input.statusCode >= 400 ? `HTTP ${input.statusCode}` : null),
   };
 }
+
+/** Metadata only: decide RPC outcome without serializing or reading tool content. */
+export function mcpResponseOutcome(response: unknown, statusCode = 200): McpLogOutcome {
+  if (statusCode >= 400) return 'error';
+  if (!isRecord(response)) return 'success';
+  return response.error !== undefined || response.isError === true
+    || (isRecord(response.result) && response.result.isError === true) ? 'error' : 'success';
+}

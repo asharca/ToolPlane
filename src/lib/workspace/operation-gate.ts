@@ -1,4 +1,5 @@
 import 'server-only';
+import { assertRuntimeOwner, beginRuntimeOperation } from '@/lib/runtime/ownership-state';
 
 type WorkspaceOperationState = {
   active: number;
@@ -16,6 +17,7 @@ function states(): Map<string, WorkspaceOperationState> {
 }
 
 export function beginWorkspaceOperation(workspaceId: string): (() => void) | null {
+  assertRuntimeOwner();
   const entries = states();
   let state = entries.get(workspaceId);
   if (state?.closing) return null;
@@ -23,12 +25,14 @@ export function beginWorkspaceOperation(workspaceId: string): (() => void) | nul
     state = { active: 0, closing: false };
     entries.set(workspaceId, state);
   }
+  const releaseRuntime = beginRuntimeOperation();
   state.active += 1;
 
   let released = false;
   return () => {
     if (released) return;
     released = true;
+    releaseRuntime();
     state!.active -= 1;
     if (state!.active !== 0) return;
     state!.resolveDrained?.();

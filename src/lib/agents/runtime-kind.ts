@@ -6,6 +6,18 @@ export type SandboxHarnessRuntimeKind = Extract<AgentRuntimeKind, 'claude-code' 
 export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh'>;
 export type WorkRuntimeKind = DedicatedSandboxRuntimeKind | 'hermes';
 
+// Explicit public capability inventory. Entry-point subsets are intentional:
+// console support does not automatically grant creation through Control MCP.
+export const AGENT_CONTROL_RUNTIME_KINDS = ['pi', 'hermes'] as const satisfies readonly AgentRuntimeKind[];
+export const AGENT_RUNTIME_CAPABILITIES = {
+  pi: { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
+  'claude-code': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
+  dsh: { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
+  hermes: { sandbox: true, providerBinding: 'multiple', attachments: true, terminal: true, publicEndpoint: true },
+} as const satisfies Record<AgentRuntimeKind, {
+  sandbox: boolean; providerBinding: 'single' | 'multiple'; attachments: boolean; terminal: boolean; publicEndpoint: boolean;
+}>;
+
 export type AgentRuntimeBuiltinToolCategory =
   | 'file'
   | 'shell'
@@ -116,9 +128,13 @@ export function agentRuntimeDisplayName(value: string): string {
 }
 
 export function implementedAgentRuntimeKind(value: unknown): ImplementedAgentRuntimeKind | null {
-  return value === 'pi' || value === 'claude-code' || value === 'dsh' || value === 'hermes'
-    ? value
-    : null;
+  return typeof value === 'string' && (AGENT_RUNTIME_KINDS as readonly string[]).includes(value)
+    ? value as ImplementedAgentRuntimeKind : null;
+}
+
+export function agentRuntimeCapabilities(value: unknown) {
+  const kind = implementedAgentRuntimeKind(value);
+  return kind ? AGENT_RUNTIME_CAPABILITIES[kind] : null;
 }
 
 export function agentRuntimeBuiltinToolGroups(value: unknown): readonly AgentRuntimeBuiltinToolGroup[] {
@@ -140,14 +156,14 @@ export function isSandboxHarnessRuntimeKind(value: unknown): value is SandboxHar
 }
 
 export function isDedicatedSandboxRuntimeKind(value: unknown): value is DedicatedSandboxRuntimeKind {
-  return value === 'pi' || isSandboxHarnessRuntimeKind(value);
+  return agentRuntimeCapabilities(value)?.providerBinding === 'single';
 }
 
 export function isWorkRuntimeKind(value: unknown): value is WorkRuntimeKind {
-  return value === 'hermes' || isDedicatedSandboxRuntimeKind(value);
+  return agentRuntimeCapabilities(value)?.sandbox === true;
 }
 
 export function agentRuntimeSupportsProviderFormat(runtime: string, format: string): boolean {
   if (isDedicatedSandboxRuntimeKind(runtime)) return GENERIC_PROXY_PROVIDER_FORMATS.has(format);
-  return true;
+  return agentRuntimeCapabilities(runtime)?.providerBinding === 'multiple';
 }

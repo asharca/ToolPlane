@@ -1,7 +1,8 @@
 import 'server-only';
 import { z } from 'zod';
-import { verifyApiToken } from '@/lib/auth/tokens';
+import { verifyApiTokenContext } from '@/lib/auth/tokens';
 import { db } from '@/lib/db';
+import { toolkitAccessWhere } from '@/lib/auth/toolkit-scope';
 import { enrichLogContext } from '@/lib/observability/context';
 
 // Slugs are lowercase, 2+ chars, dash-separated — same shape the install/sync
@@ -29,21 +30,15 @@ export async function scopeToolkitForToken(
   workspaceSlug: string,
   toolkitSlug: string,
 ): Promise<Scope> {
-  const user = await verifyApiToken(authHeader);
-  if (!user) return { ok: false, status: 401, error: 'unauthorized' };
+  const principal = await verifyApiTokenContext(authHeader);
+  if (!principal) return { ok: false, status: 401, error: 'unauthorized' };
 
   const toolkit = await db.toolkit.findFirst({
-    where: {
-      slug: toolkitSlug,
-      workspace: {
-        slug: workspaceSlug,
-        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
-    },
+    where: toolkitAccessWhere(principal, workspaceSlug, toolkitSlug),
     select: { id: true, workspaceId: true },
   });
   if (!toolkit) return { ok: false, status: 404, error: 'toolkit not found' };
-  enrichLogContext({ workspaceId: toolkit.workspaceId, actorId: user.id });
+  enrichLogContext({ workspaceId: toolkit.workspaceId, actorId: principal.user.id });
 
   return { ok: true, workspaceId: toolkit.workspaceId, toolkitId: toolkit.id };
 }

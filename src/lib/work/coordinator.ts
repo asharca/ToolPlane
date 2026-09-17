@@ -1,5 +1,6 @@
 import { systemLog } from '@/lib/observability/system';
 import 'server-only';
+import { runtimeCanOperate, trackRuntimeOperation } from '@/lib/runtime/ownership-state';
 import { withLogContext, enrichLogContext } from '@/lib/observability/context';
 import { recordEvent } from '@/lib/observability/events';
 import { posix } from 'node:path';
@@ -125,6 +126,7 @@ function hermesMcpToolOrigin(toolName: string, deploymentIds: readonly string[])
 
 type CoordinatorState = {
   draining: boolean;
+  stopping?: boolean;
   active: Set<string>;
   titleGenerations?: Set<string>;
   timer?: ReturnType<typeof setInterval>;
@@ -1074,7 +1076,7 @@ async function executeWork(workSessionId: string) {
 
 async function runClaimedWork(workSessionId: string) {
   try {
-    await withLogContext({ runId: workSessionId }, () => executeWork(workSessionId), true);
+    await trackRuntimeOperation(() => withLogContext({ runId: workSessionId }, () => executeWork(workSessionId), true));
   } catch (error) {
     systemLog('error', `[work] ${workSessionId} execution failed`, error);
   } finally {
@@ -1105,10 +1107,10 @@ async function claimNextWork(): Promise<string | null> {
 }
 
 async function drainWorkQueue() {
-  if (state.draining) return;
+  if (state.draining || state.stopping || !runtimeCanOperate()) return;
   state.draining = true;
   try {
-    while (state.active.size < MAX_CONCURRENT_WORK) {
+    while (!state.stopping && runtimeCanOperate() && state.active.size < MAX_CONCURRENT_WORK) {
       const workSessionId = await claimNextWork();
       if (!workSessionId) break;
       state.active.add(workSessionId);
@@ -1168,4 +1170,12 @@ export async function startWorkCoordinator() {
     state.timer.unref?.();
   }
   kickWorkCoordinator();
+}
+
+export function stopWorkCoordinator() {
+  state.stopping = true;
+  if (state.timer) clearInterval(state.timer);
+  for (const id of state.active) {
+    void import('./run-control').then(({ abortWorkRun }) => abortWorkRun(id));
+  }
 }

@@ -83,8 +83,8 @@ export async function buildToolSet(
               statusCode: 403,
               outcome: 'denied',
               durationMs: Date.now() - start,
-              requestBody: JSON.stringify({ name: t.name, arguments: args }),
-              responseBody: JSON.stringify(denied),
+              payloadPolicy: 'agent-content',
+              payload: () => ({ request: { name: t.name, arguments: args }, response: denied }),
             }).catch(() => {});
             return denied;
           }
@@ -101,8 +101,8 @@ export async function buildToolSet(
               statusCode: result ? 200 : 502,
               outcome: !result || result.isError === true || Boolean(result.error) ? 'error' : 'success',
               durationMs: Date.now() - start,
-              requestBody: JSON.stringify({ name: t.name, arguments: args }),
-              responseBody: JSON.stringify(result ?? { error: 'unreachable' }),
+              payloadPolicy: 'agent-content',
+              payload: () => ({ request: { name: t.name, arguments: args }, response: result ?? { error: 'unreachable' } }),
             })
             .catch(() => {});
           return result ?? { error: `MCP deployment ${deploymentId} is not reachable.` };

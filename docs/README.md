@@ -43,3 +43,7 @@
 - **Code wins**: when a description conflicts with the code, trust the code and fix the doc; behavior changes update the matching doc in the same PR.
 - **New docs**: topic docs live at this directory's root with an all-caps underscore name (`TOPIC_NAME.md`), open with one paragraph stating "what this is and who it's for", and get registered in this index.
 - **Languages**: every topic doc is bilingual — Chinese original `NAME.md` + English translation `NAME.en.md`, or English original + Chinese translation `NAME.zh-CN.md`. Both are cross-linked at the top; the index links both. New docs must ship both languages, and changes should update both copies in the same PR.
+
+## Runtime deployment
+
+[Runtime Operations](./RUNTIME_OPERATIONS.md) ([中文](./RUNTIME_OPERATIONS.zh-CN.md)) covers the architecture migration, single-owner recovery, installation credentials and attachment quotas.

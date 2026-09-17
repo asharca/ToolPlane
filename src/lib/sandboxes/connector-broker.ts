@@ -1,3 +1,4 @@
+import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 import { systemLog } from '@/lib/observability/system';
 import 'server-only';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -642,6 +643,7 @@ export async function ensureConnectorBroker(): Promise<{
   internalUrl: string;
   internalToken: string;
 }> {
+  assertRuntimeOwner();
   const s = state();
   if (s.server?.listening) {
     return {

@@ -319,8 +319,7 @@ Python is outside `PATH`. `TOOLPLANE_CONNECTOR_SHELL` may select an absolute
 `pwsh.exe` path, but `cmd.exe` is not supported for interactive sessions. This
 avoids POSIX quoting and `base64 -d` assumptions on Windows.
 
-Without an attached sandbox, `skill_run_script` falls back to the local
-temporary execution path with a minimal environment.
+Without an attached sandbox, `skill_run_script` returns an error; it never falls back to execution on the ToolPlane host. An explicitly requested sandbox must be attached to the Agent.
 
 ## Database
 

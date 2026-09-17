@@ -27,7 +27,9 @@ export async function updateLogSettings(_previous: { ok?: boolean; error?: strin
         : field === 'agentId' ? await tx.agent.findUnique({ where: { id }, select: { id: true } }) : null;
       if (!exists) throw new Error('Resource not found');
       after.captures = [...after.captures.filter((item) => item.field !== field || item.id !== id), {
-        field: field as 'workspaceId' | 'deploymentId' | 'agentId', id, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        field: field as 'workspaceId' | 'deploymentId' | 'agentId', id,
+        includeAgentContent: form.get('includeAgentContent') === 'confirmed',
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
       }];
     } else if (intent === 'stop') after.captures = [];
     else throw new Error('Invalid operation');

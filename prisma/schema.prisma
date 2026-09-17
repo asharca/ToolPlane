@@ -44,6 +44,7 @@ model Server {
 }
 
 model User {
+  toolkitInstallations ToolkitInstallation[]
   id                     String                @id @default(cuid())
   email                  String                @unique
   name                   String?
@@ -84,6 +85,10 @@ model PasswordResetToken {
 }
 
 model ApiToken {
+  installationId String?
+  @@index([installationId])
+  installation ToolkitInstallation? @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  expiresAt DateTime?
   id         String    @id @default(cuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -164,6 +169,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
@@ -411,6 +417,7 @@ model AuditEvent {
 }
 
 model Toolkit {
+  installations ToolkitInstallation[]
   id                  String               @id @default(cuid())
   workspaceId         String
   workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -512,6 +519,7 @@ model ProviderModel {
 }
 
 model Agent {
+  uploadReservations AgentUploadReservation[]
   id                      String                   @id @default(cuid())
   workspaceId             String
   workspace               Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1454,4 +1462,40 @@ model SyncEvent {
   createdAt   DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
+}
+
+// A server-assigned registration, never a hardware fingerprint or an authority
+// derived from a caller-supplied device ID. Tokens remain Toolkit-scoped.
+model ToolkitInstallation {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolkitId String
+  toolkit Toolkit @relation(fields: [toolkitId], references: [id], onDelete: Cascade)
+  client String
+  label String
+  status String @default("active")
+  tokens ApiToken[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastUsedAt DateTime?
+  @@index([userId, toolkitId, status])
+}
+
+// Capacity remains reserved until metadata commits or external cleanup is
+// confirmed. Expiry means "needs reconciliation", never "free the bytes".
+model AgentUploadReservation {
+  id String @id
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  runtimeId String
+  storagePath String
+  reservedBytes Int
+  status String @default("uploading")
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  @@index([workspaceId, status])
+  @@index([status, expiresAt])
 }

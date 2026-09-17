@@ -196,7 +196,7 @@ Content-Type: <file-mime-type>
 
 The route requires user/session authorization and workspace verification, and the target must have a Hermes runtime. It rejects multipart and streams a raw request body. `conversationId` is optional; when provided it must belong to the URL Agent. Files enter `/opt/data/workspace/attachments/<conversation-id>/...`, or `attachments/inbox/` without a conversation.
 
-The default per-file limit is **1,000,000,000 bytes (decimal 1 GB)**. A valid database setting takes precedence over `TOOLPLANE_MAX_ATTACHMENT_BYTES`, then the default. Requests use the resolved byte limit; the admin form's bounds must not be described as a universal clamp on all environment and manually edited database values. Deployers must also plan storage quotas and proxy limits. See [`attachment-limits.ts`](../src/lib/agents/attachment-limits.ts).
+The default per-file limit is **1,000,000,000 bytes (decimal 1 GB)**, with a universal hard maximum of **2,000,000,000 bytes** (or a lower deployment override). Database, environment and default settings all pass through the same clamp. Workspace/Agent quota and concurrency reservations are enforced before upload, and actual streamed bytes cannot exceed the reservation. Failures remain charged until cleanup is confirmed. See [Runtime Operations](./RUNTIME_OPERATIONS.md) for defaults, upgrade and recovery procedures.
 
 `AgentAttachment` stores workspace, Agent, optional conversation, runtime, MIME, size, and storage path. Upload does not inline the file as Base64/JSON model messages; conversations reference metadata and the runtime path. Hermes may subsequently read file contents through tools, which is different from claiming contents can never enter model context.
 

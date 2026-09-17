@@ -212,7 +212,7 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/agents/mcp", a
     statusCode: response.status,
     outcome: auditStatus >= 400 ? 'error' : 'success',
     error: upstreamError,
-    responseBody: await response.clone().text(),
+    response,
     durationMs: Date.now() - startedAt,
   });
   return response;
@@ -223,7 +223,7 @@ export const GET = withRequestLogging("/api/v1/workspaces/[slug]/agents/mcp", fu
     return NextResponse.json({ error: 'invalid origin' }, { status: 403 });
   }
   return NextResponse.json(
-    { error: 'Use POST for MCP JSON-RPC. Create a personal API token in workspace settings.' },
+    { error: 'Use POST for MCP JSON-RPC. Create a personal API token at /app?view=account.' },
     { status: 405 },
   );
 });

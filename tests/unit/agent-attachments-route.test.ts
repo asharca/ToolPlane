@@ -10,8 +10,12 @@ const mocks = vi.hoisted(() => ({
   systemSettingFindUnique: vi.fn(),
   conversationFindFirst: vi.fn(),
   attachmentCreate: vi.fn(),
+  reserve: vi.fn(), fail: vi.fn(),
 }));
 
+vi.mock('@/lib/agents/upload-reservations', () => ({
+  reserveAttachment: mocks.reserve, commitAttachment: mocks.attachmentCreate, failAttachment: mocks.fail,
+}));
 vi.mock('@/lib/auth/request-user', () => ({
   resolveRequestUser: mocks.resolveRequestUser,
 }));
@@ -62,10 +66,9 @@ describe('Agent attachment upload route', () => {
       release: mocks.releaseHermesRuntimeWriteLease,
     });
     mocks.ensureHermesRuntimeReady.mockResolvedValue({ port: 4312 });
-    mocks.attachmentCreate.mockImplementation(async ({ data }) => ({
-      id: 'attachment-1',
-      ...data,
-    }));
+    mocks.reserve.mockResolvedValue({});
+    mocks.fail.mockResolvedValue(undefined);
+    mocks.attachmentCreate.mockImplementation(async (data) => ({ id: 'attachment-1', ...data, storagePath: '/opt/data/workspace/file' }));
   });
 
   afterEach(() => {
@@ -80,7 +83,7 @@ describe('Agent attachment upload route', () => {
       expect(new Headers(init.headers).get('x-toolplane-max-upload-bytes')).toBe('1000000000');
       await expect(new Response(init.body).text()).resolves.toBe('spreadsheet bytes');
       return new Response(JSON.stringify({
-        path: '/opt/data/workspace/attachments/conv-1/stored-report.xlsx',
+        path: '/opt/data/workspace/' + url.searchParams.get('path'),
         size: 17,
       }), { status: 201, headers: { 'content-type': 'application/json' } });
     });
@@ -89,16 +92,12 @@ describe('Agent attachment upload route', () => {
     const response = await POST(uploadRequest(), context);
 
     expect(response.status).toBe(201);
-    expect(mocks.attachmentCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+    expect(mocks.attachmentCreate).toHaveBeenCalledWith(expect.objectContaining({
         workspaceId: 'workspace-1',
-        agentId: 'agent-1',
         conversationId: 'conv-1',
         name: 'report.xlsx',
         size: 17,
-        storage: 'hermes-volume',
-      }),
-    });
+      }));
   });
 
   it('rejects a declared file above the configured server limit before starting Hermes', async () => {
@@ -149,6 +148,7 @@ describe('Agent attachment upload route', () => {
       error: 'Could not reach the Hermes attachment store.',
     });
     expect(mocks.attachmentCreate).not.toHaveBeenCalled();
+    expect(mocks.fail).toHaveBeenCalledOnce();
   });
 
   it('rejects unauthenticated uploads before resolving an Agent', async () => {
@@ -173,4 +173,46 @@ describe('Agent attachment upload route', () => {
     expect(response.status).toBe(415);
     expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
   });
+  it('keeps failed-settlement files tracked after the upstream write succeeds', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: URL, init: RequestInit) => {
+      await new Response(init.body).text();
+      return Response.json({ path: '/opt/data/workspace/' + url.searchParams.get('path'), size: 17 }, { status: 201 });
+    }));
+    mocks.attachmentCreate.mockRejectedValueOnce(new Error('database secret must not leak'));
+    const response = await POST(uploadRequest(), context);
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain('database secret');
+    expect(mocks.fail).toHaveBeenCalledWith(mocks.reserve.mock.calls[0][0].id);
+    expect(mocks.releaseHermesRuntimeWriteLease).toHaveBeenCalledOnce();
+  });
+  it('rejects a dishonest Content-Length based on the actual byte stream', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL, init: RequestInit) => {
+      await new Response(init.body).text();
+      throw new Error('should not finish');
+    }));
+    const req = uploadRequest(); req.headers.set('content-length', '3');
+    const response = await POST(req, context);
+    expect(response.status).toBe(413);
+    expect(mocks.reserve).toHaveBeenCalledWith(expect.objectContaining({ reservedBytes: 3 }));
+    expect(mocks.attachmentCreate).not.toHaveBeenCalled();
+    expect(mocks.fail).toHaveBeenCalledOnce();
+  });
+  it('rejects a returned path outside the reserved upload', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL, init: RequestInit) => {
+      await new Response(init.body).text();
+      return Response.json({ path: '/opt/data/workspace/someone-else.txt', size: 17 }, { status: 201 });
+    }));
+    const response = await POST(uploadRequest(), context);
+    expect(response.status).toBe(409);
+    expect(mocks.attachmentCreate).not.toHaveBeenCalled();
+    expect(mocks.fail).toHaveBeenCalledOnce();
+  });
+  it('does not provision a runtime when capacity admission fails', async () => {
+    mocks.reserve.mockRejectedValueOnce(new Error('quota backend is unavailable'));
+    const response = await POST(uploadRequest(), context);
+    expect(response.status).toBe(503);
+    expect(mocks.ensureHermesRuntimeReady).not.toHaveBeenCalled();
+    expect(mocks.fail).not.toHaveBeenCalled();
+  });
+
 });

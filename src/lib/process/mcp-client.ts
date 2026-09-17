@@ -1,4 +1,5 @@
 import 'server-only';
+import { assertRuntimeOwner, runtimeAbortSignal } from '@/lib/runtime/ownership-state';
 import { liveMcpRuntimeSnapshot, livePort } from './supervisor';
 import { parseMcpToolCatalogResult, type McpToolDefinition } from './mcp-tool-catalog';
 import { persistDeploymentMcpToolCatalog } from './mcp-tool-catalog-store';
@@ -169,6 +170,7 @@ async function mcpRpcAtPort(
   timeoutMs = 30000,
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
+  assertRuntimeOwner();
   const start = performance.now();
   let httpStatus: number | undefined;
   try {
@@ -181,7 +183,7 @@ async function mcpRpcAtPort(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body,
-      signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal,
+      signal: AbortSignal.any([timeoutSignal, ...(options.signal ? [options.signal] : []), ...(runtimeAbortSignal() ? [runtimeAbortSignal()!] : [])]),
       cache: 'no-store',
     });
     httpStatus = res.status;

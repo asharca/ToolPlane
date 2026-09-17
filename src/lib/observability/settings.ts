@@ -11,6 +11,7 @@ export const logSettingsSchema = z.object({
     field: z.enum(['workspaceId', 'deploymentId', 'agentId']),
     id: z.string().min(1).max(200),
     expiresAt: z.string().datetime(),
+    includeAgentContent: z.boolean().optional(),
   })).max(20).default([]),
 });
 export type LogSettings = z.infer<typeof logSettingsSchema>;

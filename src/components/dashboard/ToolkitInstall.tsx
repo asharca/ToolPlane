@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
 import { RefreshCw, Link2, ExternalLink } from 'lucide-react';
 import { CopyButton } from './CopyButton';
+import { ToolkitInstallations } from './ToolkitInstallations';
 import {
   buildDirectSnippet,
   DIRECT_CLIENTS,
@@ -56,6 +57,7 @@ export function ToolkitInstall({
   uninstallUrl,
   mcpUrl,
   toolkitSlug,
+  installationKey,
   serverCount,
   skillCount,
 }: {
@@ -63,6 +65,7 @@ export function ToolkitInstall({
   uninstallUrl: string;
   mcpUrl: string;
   toolkitSlug: string;
+  installationKey?: string;
   serverCount: number;
   skillCount: number;
 }) {
@@ -72,11 +75,11 @@ export function ToolkitInstall({
   const [client, setClient] = useState<DirectClient>('claude-code');
 
   // Opaque, tokenless install link (the id is the only secret). The server
-  // mints a client-scoped token and returns the right installer.
+  // returns a bootstrap; executing it registers a scoped per-device credential.
   const autoInstallUrl = `${installUrl}${installUrl.includes('?') ? '&' : '?'}client=${autoClient}`;
   const autoSyncCmd = `curl -fsSL "${autoInstallUrl}" | bash`;
-  const uninstallCmd = `curl -fsSL "${uninstallUrl}" | bash`;
-  const directSnippet = buildDirectSnippet(client, toolkitSlug, mcpUrl);
+  const uninstallCmd = `curl -fsSL "${uninstallUrl}${uninstallUrl.includes('?') ? '&' : '?'}client=${autoClient}" | bash`;
+  const directSnippet = buildDirectSnippet(client, installationKey ?? toolkitSlug, mcpUrl);
   const autoDescription =
     autoClient === 'codex'
       ? t('codexAutoSyncDescription')
@@ -147,7 +150,7 @@ export function ToolkitInstall({
           <p className="mt-2 text-xs text-muted-foreground">
             {t('pasteThisInYourTerminalToInstallNoTokenNeededTheLinkMintsAPrivateApiTokenFor')} {installClientLabel(autoClient)}{t('soKeepItSecret')}{' '}
             <a
-              href={installUrl}
+              href={autoInstallUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 underline"
@@ -178,6 +181,7 @@ export function ToolkitInstall({
         </div>
       )}
 
+      <ToolkitInstallations mcpUrl={mcpUrl} />
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-3 dark:border-sky-500/20">
         <p className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{t('uninstall')}</span> {t('removesManagedClientConfigLocalSyncedSkillsAndAllInstallKeysForThisToolkit')}

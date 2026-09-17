@@ -69,6 +69,7 @@ export default async function AdminSettingsPage() {
       {section(AGENT_ATTACHMENT_LIMIT_SETTING_KEY, <RuntimeSettingsForm
         bytes={attachmentLimit.bytes}
         source={attachmentLimit.source}
+        cached={attachmentLimit.cached}
         minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
         maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
       />)}

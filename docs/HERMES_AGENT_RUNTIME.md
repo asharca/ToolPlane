@@ -196,7 +196,7 @@ Content-Type: <file-mime-type>
 
 接口要求用户/会话授权并验证 workspace，且目标必须具有 Hermes runtime。它拒绝 multipart；使用原始请求体流式上传。`conversationId` 可省略；提供时必须属于 URL 中的 Agent。文件写入 `/opt/data/workspace/attachments/<conversation-id>/...`，未指定会话时使用 `attachments/inbox/`。
 
-默认单文件限制为 **1,000,000,000 字节（十进制 1 GB）**。有效的数据库设置优先于 `TOOLPLANE_MAX_ATTACHMENT_BYTES`，再回退默认值。请求使用最终解析的 byte limit；管理员表单限制不应被误写为所有环境变量和手工数据库配置都被统一硬截断。部署者还应规划存储配额和代理限制，参见 [`attachment-limits.ts`](../src/lib/agents/attachment-limits.ts)。
+单文件默认 **1,000,000,000 字节（十进制 1 GB）**，统一硬上限为 **2,000,000,000 字节**，部署配置可进一步降低。数据库、环境变量和默认值均经过同一限制解析器。上传前执行 workspace/Agent 总容量与并发预留，实际流入字节不能超过预留；失败仍计入用量，直到物理清理确认。默认值、升级和恢复流程见[运行时运维](./RUNTIME_OPERATIONS.zh-CN.md)。
 
 `AgentAttachment` 保存 workspace、Agent、可选 conversation、runtime、MIME、大小和 storage path。上传流程不把文件内联成 Base64/JSON 模型消息；对话引用文件元数据与 runtime path。Hermes 后续仍可能通过工具读取文件内容，这不同于“文件内容永远不会进入模型上下文”。
 

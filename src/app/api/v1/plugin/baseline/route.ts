@@ -1,6 +1,7 @@
 import { withRequestLogging } from '@/lib/observability/http';
 import { createHash } from 'node:crypto';
-import { verifyApiToken } from '@/lib/auth/tokens';
+import { resolveRequestPrincipal } from '@/lib/auth/request-user';
+import { toolkitAccessWhere } from '@/lib/auth/toolkit-scope';
 import { db } from '@/lib/db';
 import { buildInstalledSkillMarkdown, installedSkillExtraFiles } from '@/lib/skills/artifact';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -9,8 +10,8 @@ import { logRequest } from '@/lib/observability/log';
 export const runtime = 'nodejs';
 
 // The plugin's SessionStart sync hook GETs this each session to refresh the
-// toolkit's skills on disk. version is a content hash so a future client can
-// skip rewrites when unchanged.
+// toolkit's skills on disk. version is a content hash used by the validated
+// snapshot client to skip rewrites when unchanged.
 function safeSlug(raw: string): string {
   const s = raw
     .toLowerCase()
@@ -22,7 +23,7 @@ function safeSlug(raw: string): string {
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' },
   });
 }
 
@@ -32,22 +33,17 @@ export const GET = withRequestLogging("/api/v1/plugin/baseline", async function 
   const workspaceSlug = url.searchParams.get('workspace') ?? '';
   const toolkitSlug = url.searchParams.get('toolkit') ?? '';
 
-  const user = await verifyApiToken(req.headers.get('authorization'));
-  if (!user) return json({ error: 'unauthorized' }, 401);
+  const principal = await resolveRequestPrincipal(req, { allowSession: false });
+  if (!principal) return json({ error: 'unauthorized' }, 401);
   if (!workspaceSlug || !toolkitSlug) {
     return json({ error: 'workspace and toolkit are required' }, 400);
   }
 
   // Workspace-scoped: only the owner or a member can read the toolkit's skills.
   const toolkit = await db.toolkit.findFirst({
-    where: {
-      slug: toolkitSlug,
-      workspace: {
-        slug: workspaceSlug,
-        status: 'active', OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
-    },
+    where: toolkitAccessWhere(principal, workspaceSlug, toolkitSlug),
     select: {
+      id: true,
       workspaceId: true,
       skills: {
         select: {
@@ -104,5 +100,13 @@ export const GET = withRequestLogging("/api/v1/plugin/baseline", async function 
     durationMs: Date.now() - start,
   });
 
-  return json({ data: { skills } });
+  return json({ data: {
+    schemaVersion: 1,
+    snapshotComplete: true,
+    workspaceId: toolkit.workspaceId,
+    toolkitId: toolkit.id,
+    workspaceSlug,
+    toolkitSlug,
+    skills,
+  } });
 });

@@ -22,7 +22,8 @@ import {
   getToolkitSkillCandidates,
 } from '@/lib/toolkits/queries';
 import { getOrCreateToolkitInstallLink } from '@/lib/toolkits/install-link';
-import { originFromHeaders } from '@/lib/http/origin';
+import { installBaseFromHeaders } from '@/lib/plugin/service-base';
+import { installationName } from '@/lib/plugin/installation-identity';
 import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
@@ -101,7 +102,7 @@ export default async function ToolkitDetailPage({
     headers(),
     getOrCreateToolkitInstallLink(toolkit.id, user.id),
   ]);
-  const origin = originFromHeaders(requestHeaders);
+  const origin = installBaseFromHeaders(requestHeaders);
   const installUrl = `${origin}/install/${installLink.id}`;
   const uninstallUrl = `${installUrl}/uninstall`;
   const mcpUrl = `${origin}/api/v1/workspaces/${wsSlug}/toolkits/${toolkitSlug}/mcp`;
@@ -167,6 +168,7 @@ export default async function ToolkitDetailPage({
               uninstallUrl={uninstallUrl}
               mcpUrl={mcpUrl}
               toolkitSlug={toolkitSlug}
+              installationKey={installationName({ base: origin, workspaceSlug: wsSlug, toolkitSlug, workspaceId: ws.id, toolkitId: toolkit.id })}
               serverCount={toolkit.servers.length}
               skillCount={toolkit.skills.length}
             />

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/lib/db';
-import { createApiToken, verifyApiToken } from '@/lib/auth/tokens';
+import { createApiToken, verifyApiToken, verifyApiTokenContext } from '@/lib/auth/tokens';
 import { issueInstallToken } from '@/lib/toolkits/install-link';
 
 const mocks = vi.hoisted(() => ({
@@ -365,7 +365,7 @@ describe('toolkit management actions', () => {
     });
   });
 
-  it('allocates distinct names and slugs for concurrent clones', async () => {
+  it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === '1')('allocates distinct names and slugs for concurrent clones', async () => {
     const source = await db.toolkit.create({
       data: { workspaceId: ownerWorkspaceId, name: 'Concurrent', slug: 'concurrent' },
     });
@@ -452,8 +452,8 @@ describe('toolkit management actions', () => {
     ]);
     const issued = await issueInstallToken(installLinkId, 'claude-code');
     expect(issued).not.toBeNull();
-    await expect(verifyApiToken(`Bearer ${issued!.token}`)).resolves.toMatchObject({
-      id: ownerId,
+    await expect(verifyApiTokenContext(`Bearer ${issued!.token}`)).resolves.toMatchObject({
+      user: { id: ownerId },
     });
     const legacy = await createApiToken(
       ownerId,
@@ -481,7 +481,7 @@ describe('toolkit management actions', () => {
     await expect(db.syncEvent.findUnique({ where: { id: syncEvent.id } })).resolves.toMatchObject({
       toolkitId: null,
     });
-    await expect(verifyApiToken(`Bearer ${issued!.token}`)).resolves.toBeNull();
+    await expect(verifyApiTokenContext(`Bearer ${issued!.token}`)).resolves.toBeNull();
     await expect(verifyApiToken(`Bearer ${legacy.token}`)).resolves.toBeNull();
   });
 

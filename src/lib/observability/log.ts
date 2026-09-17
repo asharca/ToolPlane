@@ -5,6 +5,7 @@ import { formatInTimeZone } from '@/lib/timezone';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { inspectMcpLog } from './mcp-log-entry';
 import { recordEvent, type LogOutcome } from './events';
+import { boundedResponseText, type PayloadPolicy } from './payload';
 import { enrichLogContext } from './context';
 import { aggregateLogs, authorizeLogs, cursorWhere, logCursor, logFilterSchema, logSqlWhere, logWhere } from './queries';
 
@@ -12,10 +13,12 @@ export async function logRequest(entry: {
   workspaceId: string; deploymentId?: string | null;
   method: string; path: string; statusCode: number; durationMs: number;
   requestBody?: string | null; responseBody?: string | null;
-  outcome?: LogOutcome; error?: unknown;
+  outcome?: LogOutcome; error?: unknown; response?: Response; payloadPolicy?: PayloadPolicy; payload?: () => unknown;
 }): Promise<void> {
   enrichLogContext({ workspaceId: entry.workspaceId });
-  const inspection = inspectMcpLog(entry);
+  const policy = entry.payloadPolicy ?? (entry.path.includes('/agents/mcp') || entry.path.includes('#tools/call') ? 'agent-content' : 'diagnostic');
+  const metadataBody = entry.responseBody ?? (!entry.outcome && entry.response ? await boundedResponseText(entry.response) : null);
+  const inspection = inspectMcpLog({ ...entry, responseBody: metadataBody });
   const parse = (text?: string | null) => { try { return text ? JSON.parse(text) : null; } catch { return '[INVALID OR TRUNCATED JSON]'; } };
   await recordEvent({
     domain: 'mcp', eventName: 'gateway.request', workspaceId: entry.workspaceId,
@@ -23,9 +26,11 @@ export async function logRequest(entry: {
     path: entry.path.split('#')[0], rpcMethod: inspection.rpcMethod ?? undefined, toolName: inspection.toolName ?? undefined,
     httpStatus: entry.statusCode, durationMs: entry.durationMs,
     outcome: entry.outcome ?? inspection.outcome,
-    message: inspection.errorSummary ?? inspection.toolName ?? inspection.rpcMethod ?? entry.path,
+    message: policy === 'agent-content' ? 'Agent Control request' : inspection.errorSummary ?? inspection.toolName ?? inspection.rpcMethod ?? entry.path,
     error: entry.error,
-    detail: { request: parse(entry.requestBody), response: parse(entry.responseBody) },
+    payloadPolicy: policy,
+    detail: entry.payload ?? (async () => ({ request: parse(entry.requestBody),
+      response: parse(entry.response ? await boundedResponseText(entry.response) : entry.responseBody) })),
   });
 }
 

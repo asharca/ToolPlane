@@ -228,7 +228,7 @@ const TOOLS = [
     description: 'Delete one file from the sandbox workspace.',
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string', description: 'Relative file path.' } },
+      properties: { path: { type: 'string', description: 'Relative file path.' }, missingOk: { type: 'boolean', description: 'Docker only: missing files count as already deleted.' } },
       required: ['path'],
     },
   },
@@ -840,7 +840,12 @@ async function deleteSandboxFile(args = {}) {
     return connectorTool('delete_file', { ...args, path: rel }, 10_000);
   }
   const p = workspacePath(rel);
-  const result = await run('docker', ['exec', CONTAINER, 'sh', '-lc', `test -f ${shQuote(p)} && rm -f -- ${shQuote(p)}`], {
+  const parent = path.posix.dirname(p);
+  const guard = `resolved_parent="$(realpath -m -- ${shQuote(parent)})" && case "$resolved_parent" in ${shQuote(WORKSPACE_ROOT)}|${shQuote(WORKSPACE_ROOT)}/*) ;; *) exit 73 ;; esac`;
+  const remove = args.missingOk === true
+    ? `test ! -d ${shQuote(p)} && rm -f -- ${shQuote(p)}`
+    : `test -f ${shQuote(p)} && rm -f -- ${shQuote(p)}`;
+  const result = await run('docker', ['exec', CONTAINER, 'sh', '-lc', `${guard} && ${remove}`], {
     env: dockerEnv(),
   });
   return textResult({ path: rel, deleted: result.exitCode === 0, stderr: result.stderr }, result.exitCode !== 0);
@@ -1106,7 +1111,9 @@ async function handleRuntimeFiles(req, res) {
 
   const target = workspacePath(rel);
   const parent = path.posix.dirname(target);
-  const temporary = `${target}.toolplane-upload-${randomUUID()}`;
+  const requestedUploadId = String(req.headers['x-toolplane-upload-id'] || '');
+  const uploadId = /^[a-f0-9-]{36}$/.test(requestedUploadId) ? requestedUploadId : randomUUID();
+  const temporary = `${target}.toolplane-upload-${uploadId}`;
   const guardParent = `resolved_parent="$(realpath -m -- ${shQuote(parent)})" && case "$resolved_parent" in ${shQuote(WORKSPACE_ROOT)}|${shQuote(WORKSPACE_ROOT)}/*) ;; *) echo 'Upload path leaves the workspace.' >&2; exit 73 ;; esac`;
   const command = [
     guardParent,

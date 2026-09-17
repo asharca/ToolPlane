@@ -38,12 +38,15 @@ export function LogSettings({ settings }: { settings: SettingsValue }) {
             </label>
             <label className="grid min-w-0 gap-1.5 text-xs font-medium">{t('logsResource')}<Input name="id" required maxLength={200} placeholder="ID" className="h-10 w-full font-mono" /></label>
           </div>
+          <label className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+            <input type="checkbox" name="includeAgentContent" value="confirmed" />{t('logsAgentContentConsent')}
+          </label>
           <Button type="submit" variant="secondary"><Play className="size-4" aria-hidden="true" />{t('logsStartCapture')}</Button>
         </form>
       </div>
       {settings.captures.length ? <div className="space-y-3 border-t border-border py-4">
         <ul className="divide-y divide-border">{settings.captures.map((item) => <li key={`${item.field}:${item.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 text-xs">
-          <Badge tone="warning">{t('logsCapturing')}</Badge>
+          <Badge tone="warning">{item.includeAgentContent ? t('logsAgentContentCapture') : t('logsCapturing')}</Badge>
           <span className="min-w-0 flex-1 break-all font-mono">{t(`logFields.${item.field}`)}: {item.id}</span>
           <span className="flex flex-wrap items-center gap-1.5 text-muted-foreground"><Clock3 className="size-3.5" aria-hidden="true" />{t('logsExpires')}: {item.expiresAt}</span>
         </li>)}</ul>

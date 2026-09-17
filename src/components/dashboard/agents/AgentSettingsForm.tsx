@@ -35,6 +35,7 @@ import {
   agentRuntimeBuiltinToolGroups,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
+  agentRuntimeCapabilities,
   isDedicatedSandboxRuntimeKind,
 } from '@/lib/agents/runtime-kind';
 import { formatInTimeZone } from '@/lib/timezone';
@@ -203,7 +204,7 @@ export function AgentSettingsForm({
       : sandboxes,
     [sandboxes, singleSandboxRuntime],
   );
-  const isHermes = runtimeKind === 'hermes';
+  const isHermes = agentRuntimeCapabilities(runtimeKind)?.providerBinding === 'multiple';
   const environmentSandboxId = runtimeSandboxId ?? runtime?.sandboxId ?? null;
   const runtimeLabel = agentRuntimeDisplayName(runtimeKind);
   const builtInToolCount = agentRuntimeBuiltinToolGroups(runtimeKind)

@@ -49,24 +49,43 @@ export async function verifyApiTokenContext(authHeader: string | null) {
 
   const record = await db.apiToken.findUnique({
     where: { tokenHash: hashToken(token) },
-    include: { user: true },
+    include: { user: true, installation: true },
   });
   if (!record) return null;
 
-  if (record.user.status === 'suspended') return null;
-  await db.apiToken.update({
-    where: { id: record.id },
-    data: { lastUsedAt: new Date() },
+  const now = new Date();
+  if (record.user.status === 'suspended' || (record.expiresAt && record.expiresAt <= now)) return null;
+  if (record.installationId && (!record.installation || record.installation.status !== 'active'
+    || record.installation.userId !== record.userId || record.installation.toolkitId !== record.toolkitId)) return null;
+  if (record.toolkitId) {
+    const allowed = await db.toolkit.findFirst({ where: {
+      id: record.toolkitId, enabled: true,
+      workspace: { status: 'active', OR: [{ ownerId: record.userId }, { members: { some: { userId: record.userId } } }] },
+    }, select: { id: true } });
+    if (!allowed) return null;
+  }
+  const used = await db.apiToken.updateMany({
+    where: { id: record.id, user: { status: { not: 'suspended' } },
+      ...(record.installationId ? { installation: { is: { id: record.installationId, status: 'active' } } } : {}),
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+    data: { lastUsedAt: now },
+  });
+  if (used.count !== 1) return null;
+  if (record.installationId) await db.toolkitInstallation.updateMany({
+    where: { id: record.installationId, status: 'active' }, data: { lastUsedAt: now },
   });
   return {
     user: record.user,
     token: {
       id: record.id,
       toolkitId: record.toolkitId,
+      installationId: record.installationId,
     },
   };
 }
 
 export async function verifyApiToken(authHeader: string | null) {
-  return (await verifyApiTokenContext(authHeader))?.user ?? null;
+  const context = await verifyApiTokenContext(authHeader);
+  // User-only consumers are account-level; scoped consumers must keep context.
+  return context && !context.token.toolkitId ? context.user : null;
 }

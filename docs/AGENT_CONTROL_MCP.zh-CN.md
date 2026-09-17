@@ -88,6 +88,6 @@ curl -sS "https://toolplane.example/api/v1/workspaces/acme/agents/mcp" \
 - Agent Control MCP 不提供删除 Agent 或创建模型 Provider 的工具。
 - AI 不能指定 Hermes Docker 镜像；只使用实例管理员配置的可信镜像，避免
   通过此创建工具把 Provider 凭据投影到任意第三方镜像。
-- 常规网关事件记录方法、工具名、结果和耗时。路由还会把 MCP 响应交给诊断日志管道：开启匹配的工作区诊断采集后，脱敏响应载荷可能存入 `LogDetail`，其中可能包含返回的 Agent 配置或模型输出。脱敏不等于匿名化，参见[日志与审计](./OBSERVABILITY.zh-CN.md)，不要认为此端点天然豁免诊断采集。
+- 常规网关事件记录方法、工具名、结果和耗时。路由还会把 MCP 响应交给诊断日志管道：只有匹配资源的诊断采集显式开启 Agent 内容（`includeAgentContent=true`）时，脱敏响应载荷可能存入 `LogDetail`，其中可能包含返回的 Agent 配置或模型输出。脱敏不等于匿名化，参见[日志与审计](./OBSERVABILITY.zh-CN.md)，普通采集不隐式获取 Agent 内容，此类详情最多保留 24 小时；公共 Endpoint 的禁止采集策略不可覆盖。
 - `send_message_to_agent` 只接受属于目标 workspace 和目标 Agent 的
   `conversationId`。

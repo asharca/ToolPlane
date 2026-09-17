@@ -156,7 +156,7 @@ export function buildSkillToolSet(
     skill_run_script: agentTool({
       name: 'skill_run_script',
       description:
-        'Run a bundled script from an attached skill. Only scripts/* files ending in .js, .mjs, .cjs, .py, or .sh are allowed. The script runs in a temporary skill folder with a minimal environment and no app secrets.',
+        'Run a bundled script from an attached skill. Only scripts/* files ending in .js, .mjs, .cjs, .py, or .sh are allowed. The script runs in an attached Agent sandbox; without one it is refused. The sandbox permissions and environment apply.',
       parameters: jsonSchema({
         type: 'object',
         properties: {
@@ -199,6 +199,9 @@ export function buildSkillToolSet(
           return { error: 'Script args must be strings shorter than 2000 characters.' };
         }
 
+        if (sandboxDeploymentId && !sandboxDeploymentIds.includes(sandboxDeploymentId)) {
+          return { error: 'The requested sandbox is not attached to this Agent.' };
+        }
         const targetSandbox = sandboxDeploymentId && sandboxDeploymentIds.includes(sandboxDeploymentId)
           ? sandboxDeploymentId
           : sandboxDeploymentIds[0];

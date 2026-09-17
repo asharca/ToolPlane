@@ -91,3 +91,11 @@ pnpm vitest run tests/unit/logging.test.ts tests/unit/logging-storage.test.ts te
 pnpm exec tsc --noEmit
 pnpm lint
 ```
+
+## 显式载荷策略
+
+事件声明 `metadata-only`（默认）、`diagnostic`、`agent-content` 或 `forbidden`。普通诊断采集不会自动启用 Agent 内容；管理员必须为指定资源显式选择 `includeAgentContent`，仍受时间限制与访问审计约束。Agent 内容详情最多保留 24 小时，配置更短时从短；导出仍只包含元数据。
+
+惰性详情读取器仅在策略和采集检查允许后执行。响应读取最多 32 KiB 或 200 ms，不采集 SSE。敏感 Agent 事件在元数据仅保留通用事件名/错误类别，不把任意 attributes 或错误文本写入 stderr，也不为判断成功而复制完整载荷。父上下文 `suppressPayload` 单向继承，子级不能关闭；`forbidden` 与公共 Endpoint 禁止策略优先于所有采集开关。
+
+脱敏不等于任意业务文本的匿名化；即使显式开启，也须限制管理员访问并缩短保留时间。

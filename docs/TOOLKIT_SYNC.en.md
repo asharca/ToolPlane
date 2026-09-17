@@ -4,6 +4,8 @@
 >
 > This document explains how Toolkits sync to Claude Code, Codex, opencode, and Hermes: MCP tools, Skills, install tokens, client-side local files, and test coverage.
 
+Installation paths below use `<installation>` for the stable `toolplane-<24 hex characters>` identifier. It hashes the normalized service URL (including its base path), workspace ID, and Toolkit ID; display names are not identities. `toolplane-0123456789abcdef01234567` is illustrative, not the hash of the example URL. Existing slug-only installations are preserved; register the new installation, verify it, and explicitly revoke/remove the legacy one.
+
 ---
 
 ## 1. Sync Targets
@@ -18,7 +20,7 @@ Syncing to a local client happens over two channels:
 | Channel | What syncs | How |
 |---|---|---|
 | MCP tools | All tools exposed by the toolkit's running deployments | The client configures one remote MCP endpoint; the server aggregates dynamically at `tools/list` |
-| Skills | The toolkit's published skills | A local install script pulls the baseline and writes each skill as a skill directory containing `SKILL.md` plus bundle files |
+| Skills | The toolkit's explicitly bound skills (including draft) | A local install script pulls the baseline and writes each skill as a skill directory containing `SKILL.md` plus bundle files |
 
 MCP tools are not written into local files. The client only needs one remote MCP URL:
 
@@ -28,7 +30,7 @@ MCP tools are not written into local files. The client only needs one remote MCP
 
 This endpoint reads the toolkit's bound deployments at runtime and aggregates the tools of every running MCP child process via `listMcpTools()`.
 
-Skills are different. Claude Code and Codex both have local skill directory/plugin mechanisms, so the remote baseline must be synced into file directories. opencode has no equivalent Agent Skills auto-discovery, so it uses a compatibility scheme of "remote MCP + command + local skill cache".
+Skills are different. Claude Code and Codex both have local skill directory/plugin mechanisms, so the remote baseline must be synced into file directories. The current ToolPlane opencode adapter uses "remote MCP + command + local skill cache"; this is a description of this adapter, not a claim that every opencode version lacks native skills.
 
 ---
 
@@ -53,52 +55,19 @@ Skills are different. Claude Code and Codex both have local skill directory/plug
 
 ---
 
-## 3. Install Links and Token Lifecycle
+## 3. Installation Identity and Credentials
 
-The Toolkit page generates an opaque install link:
+The opaque `/install/:id?client=<client>` link is a credential-issuing capability: keep it private. `GET` returns a tokenless bootstrap; previewing the link does not create or rotate credentials. Executing the bootstrap makes a bounded JSON `POST` to `/install/:id`.
 
-```txt
-/install/:id
-```
+A new device/client registration gets its own `ToolkitInstallation` and scoped API token. Reinstalling uses private `installation.json` plus `.mcp.json` to prove ownership of that registration. Knowing an installation ID alone cannot rotate or revoke it. Tokens are hashed in the database; generated scripts and client configuration necessarily contain the credential and are written with private permissions.
 
-`ToolkitInstallLink` stores only the `id -> toolkitId + userId` mapping — no plaintext token.
+The server rechecks the user, active workspace, membership, enabled Toolkit, link validity, client, and installation under a workspace row lock. Rotation and auditing are transactional. Previous current credentials get at most five minutes of grace; an earlier grace period is never extended, and each registration retains at most three keys. There are at most 100 active registrations per user/Toolkit. Separate devices do not rotate one another's keys.
 
-On each visit to an install link:
+The Toolkit install panel lists registrations and supports revoking one, revoking all of the current user's registrations for this Toolkit, and regenerating the install link. Regenerating the link invalidates the old registration capability without revoking already installed credentials. Member removal and Toolkit deletion still revoke the corresponding access.
 
-1. `src/app/install/[id]/route.ts` reads `?client=`.
-2. `resolveClient()` normalizes the client to one of:
-   - `claude-code`
-   - `codex`
-   - `opencode`
-   - `hermes`
-3. `issueInstallToken(id, client)` mints a fresh API token for this toolkit and client.
-4. Any old token with the same name is deleted first, then the new token is created.
-5. The plaintext token appears only inside the bash install script returned this once.
+The bootstrap serializes local configuration updates with a per-client lock. It records a private `pending-install.sh` before applying configuration; retrying resumes that file first. Never share it: it contains a credential. A stale installer lock requires confirming the previous process is stopped before removing the lock. A lost initial registration response can leave an unused registration; inspect/revoke it in the panel and register again. This flow does not promise exactly-once registration across a lost response.
 
-Token name format:
-
-```txt
-ToolPlane plugin - <toolkitSlug> (<Client Label>)
-```
-
-For example:
-
-```txt
-ToolPlane plugin - devtools (Claude Code)
-ToolPlane plugin - devtools (Codex)
-ToolPlane plugin - devtools (opencode)
-ToolPlane plugin - devtools (Hermes)
-```
-
-This lets one toolkit install into multiple clients at once without tokens overwriting each other.
-
-The uninstall link:
-
-```txt
-/install/:id/uninstall
-```
-
-deletes this toolkit's tokens for every installed client and returns a local cleanup script.
+Legacy slug-only installations are not guessed or automatically deleted. For same-type clients on separate computers, each computer registers independently; copying a credential/state directory to another machine intentionally shares the registration, not a new device identity.
 
 ---
 
@@ -122,7 +91,7 @@ When the client calls:
 
 the Toolkit MCP gateway:
 
-1. Verifies the current user can access the workspace/toolkit.
+1. Verifies the user can access an active workspace and enabled Toolkit, and intersects the requested Toolkit with the credential's `toolkitId` when the token is scoped.
 2. Reads the toolkit's bound `ToolkitServer`s.
 3. Filters out deployments that are not running.
 4. Calls `listMcpTools(deploymentId)` for each running deployment.
@@ -158,58 +127,47 @@ Some clients cache the tool list; those need a client restart or an MCP server r
 
 ---
 
-## 5. How Skills Sync
+## 5. Validated, Recoverable Skill Sync
 
-Skills sync through the baseline API:
-
-```txt
+```text
 GET /api/v1/plugin/baseline?workspace=<workspace>&toolkit=<toolkit>
 Authorization: Bearer <install-token>
 ```
 
-Response shape:
+The baseline is a complete, versioned snapshot. Example:
 
 ```json
 {
   "data": {
+    "schemaVersion": 1,
+    "snapshotComplete": true,
+    "workspaceId": "workspace-id",
+    "toolkitId": "toolkit-id",
+    "workspaceSlug": "acme",
+    "toolkitSlug": "devtools",
     "skills": [
       {
         "slug": "pdf",
-        "version": "a1b2c3d4e5f6",
-        "content": "---\nname: pdf\n...",
-        "files": [
-          {
-            "path": "scripts/convert_pdf_to_images.py",
-            "content": "..."
-          },
-          {
-            "path": "references/layout-notes.md",
-            "content": "..."
-          }
-        ]
+        "version": "8de29c512544",
+        "content": "---\nname: pdf\ndescription: Read PDFs\n---\n",
+        "files": []
       }
     ]
   }
 }
 ```
 
-The baseline API only returns:
+`version` is the first 12 hexadecimal characters of SHA-256 over `JSON.stringify({ content, files })`. The client checks it and records the full digest locally. File entries contain `path`, `content`, and optional `encoding: "base64"`; `SKILL.md` is represented by `content`, not duplicated in `files`.
 
-1. The workspace/toolkit the token's user may access.
-2. Skills in the toolkit whose status is not `draft`.
-3. Full `SKILL.md` content built by `buildInstalledSkillMarkdown()`. Skills imported from a real repo prefer the repo's original `SKILL.md`.
-4. `files`: companion files synced with the skill, e.g. `scripts/*.py`, `references/*.md`. `SKILL.md` itself is not duplicated into `files`.
-5. `version`: a hash of `content + files`, enabling a future skip-unchanged optimization.
+Baseline export includes every explicitly bound skill, including `draft`. It does not filter by `userInvocable` or `agentInvocable`; the artifact builder carries supported invocation metadata into SKILL.md. This is distinct from platform Agent resolution, which applies its own `agentInvocable` selection. Export is authorized distribution, not execution approval.
 
-The install script writes `sync.sh` onto the client. `sync.sh`:
+`sync.sh` downloads into a private bounded temporary file; bundles never travel in process environment variables. `sync-client.ts` validates schema/version, full-snapshot marker, workspace/Toolkit identity, unique skill names, file paths, encodings and hashes before touching the active version. Missing `data.skills` is an error, not an empty Toolkit. A valid empty snapshot can remove only this installation's owned skills.
 
-1. Reads the Bearer token from the local `.mcp.json`.
-2. Calls the baseline API.
-3. Validates skill slugs, blocking path traversal.
-4. Deletes and rebuilds local skill directories, writing `SKILL.md`.
-5. Writes bundle companion files, re-validating paths to block absolute paths, `..`, `.git`, `node_modules`, and other unsafe paths.
-6. Removes stale skill directories no longer in the baseline.
-7. Reports sync-applied or sync-failure telemetry.
+The client limits a response and aggregate content to 32 MiB, an individual file to 8 MiB, the snapshot to 1,000 skills and 20,000 files. It rejects traversal, absolute/reserved paths, duplicate/conflicting names and symlinked managed locations.
+
+A per-installation process lock serializes sync. New content is staged on the same filesystem; a recovery journal and backups protect the commit. The manifest generation is the commit point. A killed or failed update recovers on the next run before accepting another snapshot. This is recoverable multi-directory update, not a claim that readers see an atomic switch across every client directory.
+
+The manifest at `<skills-root>/.toolplane-state/<installation>/manifest.json` records exact owned directories, applied hashes and last-success time. `last-attempt.json` records failure/success status. Unchanged hashes are skipped. Cleanup never relies on a potentially overlapping Toolkit-name prefix and never overwrites an unowned directory. Hooks may allow chat to continue on sync failure; a zero exit from the outer hook is not proof of a successful refresh.
 
 ### 5.1 Importing real skill repositories
 
@@ -247,7 +205,7 @@ Claude Code uses its local plugin mechanism.
 File layout after install:
 
 ```txt
-~/.claude/plugins/toolplane-<toolkit>/
+~/.claude/plugins/<installation>/
 ├─ .claude-plugin/
 │  ├─ marketplace.json
 │  └─ plugin.json
@@ -267,8 +225,8 @@ The install script runs:
 
 ```bash
 claude plugin marketplace add "$PLUGIN_DIR"
-claude plugin uninstall toolplane-<toolkit>@toolplane-<toolkit> || true
-claude plugin install toolplane-<toolkit>@toolplane-<toolkit>
+claude plugin uninstall <installation>@<installation> || true
+claude plugin install <installation>@<installation>
 ```
 
 ### MCP tools
@@ -278,7 +236,7 @@ claude plugin install toolplane-<toolkit>@toolplane-<toolkit>
 ```json
 {
   "mcpServers": {
-    "toolplane-devtools": {
+    "toolplane-0123456789abcdef01234567": {
       "url": "https://app/api/v1/workspaces/ws/toolkits/devtools/mcp",
       "headers": {
         "Authorization": "Bearer <token>"
@@ -341,13 +299,13 @@ $CODEX_HOME or ~/.codex/
 ├─ config.toml
 ├─ hooks.json
 └─ toolplane/
-   └─ toolplane-<toolkit>/
+   └─ <installation>/
       ├─ .mcp.json
       └─ shared/
          └─ sync.sh
 
 ~/.agents/skills/
-└─ toolplane-<toolkit>-<skill-slug>/
+└─ <installation>-<skill-slug>/
    ├─ SKILL.md
    └─ scripts/...
 ```
@@ -357,12 +315,12 @@ $CODEX_HOME or ~/.codex/
 The install script writes a marker-delimited block into `~/.codex/config.toml`:
 
 ```toml
-# BEGIN TOOLPLANE toolplane-devtools
-[mcp_servers.toolplane-devtools]
+# BEGIN TOOLPLANE toolplane-0123456789abcdef01234567
+[mcp_servers.toolplane-0123456789abcdef01234567]
 url = "https://app/api/v1/workspaces/ws/toolkits/devtools/mcp"
 http_headers = { Authorization = "Bearer <token>" }
 enabled = true
-# END TOOLPLANE toolplane-devtools
+# END TOOLPLANE toolplane-0123456789abcdef01234567
 ```
 
 Reinstalling the same toolkit deletes the old marker block before writing the new one, avoiding duplicate config.
@@ -380,9 +338,9 @@ The install script writes a `SessionStart` hook into `~/.codex/hooks.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"~/.codex/toolplane/toolplane-devtools/shared/sync.sh\"",
+            "command": "bash \"$HOME/.codex/toolplane/toolplane-0123456789abcdef01234567/shared/sync.sh\"",
             "timeout": 30,
-            "statusMessage": "Syncing ToolPlane toolkit toolplane-devtools"
+            "statusMessage": "Syncing ToolPlane toolkit toolplane-0123456789abcdef01234567"
           }
         ]
       }
@@ -394,7 +352,7 @@ The install script writes a `SessionStart` hook into `~/.codex/hooks.json`:
 `sync.sh` writes skills to:
 
 ```txt
-~/.agents/skills/toolplane-<toolkit>-<skill-slug>/SKILL.md
+~/.agents/skills/<installation>-<skill-slug>/SKILL.md
 ```
 
 If a skill has bundle companion files, they land in the same skill directory, e.g. `scripts/convert_pdf_to_images.py`. Codex discovers these skills from the user-level `~/.agents/skills`. Codex hooks require user trust: on first install or after the hook content changes, the user may need to open `/hooks` in Codex to review and trust.
@@ -410,7 +368,7 @@ Codex skill invocation telemetry is not implemented yet, because Codex's skill i
 
 ## 8. opencode Auto-Sync
 
-opencode currently supports remote MCP and custom commands but has no automatic skill discovery equivalent to Codex Agent Skills. So a compatibility sync is used:
+The current ToolPlane opencode adapter uses this compatibility sync:
 
 1. MCP tools: native remote MCP.
 2. Skills: synced into a local cache.
@@ -422,7 +380,7 @@ File layout after install:
 $OPENCODE_CONFIG_DIR or ~/.config/opencode/
 ├─ opencode.json
 └─ toolplane/
-   └─ toolplane-<toolkit>/
+   └─ <installation>/
       ├─ .mcp.json
       ├─ shared/
       │  └─ sync.sh
@@ -446,7 +404,7 @@ The install script writes:
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "toolplane-devtools": {
+    "toolplane-0123456789abcdef01234567": {
       "type": "remote",
       "url": "https://app/api/v1/workspaces/ws/toolkits/devtools/mcp",
       "enabled": true,
@@ -464,7 +422,7 @@ The install script writes:
 `sync.sh` writes skills to:
 
 ```txt
-~/.config/opencode/toolplane/toolplane-<toolkit>/skills/<skill-slug>/SKILL.md
+~/.config/opencode/toolplane/<installation>/skills/<skill-slug>/SKILL.md
 ```
 
 Bundle companion files land in the same cache directory.
@@ -474,7 +432,7 @@ The install script also maintains a command:
 ```json
 {
   "command": {
-    "toolplane-devtools": {
+    "toolplane-0123456789abcdef01234567": {
       "description": "Use ToolPlane toolkit devtools skills",
       "template": "Use the ToolPlane toolkit \"devtools\".\nBefore answering, inspect the relevant synced SKILL.md files under:\n...\n\nUser request:\n$ARGUMENTS"
     }
@@ -485,7 +443,7 @@ The install script also maintains a command:
 Usage:
 
 ```txt
-/toolplane-<toolkit> <task>
+/<installation> <task>
 ```
 
 This is explicit command triggering, not implicit skill auto-triggering. If opencode later supports open agent skills or fuller prompt/session hooks, this layer can be upgraded toward the Codex experience.
@@ -497,8 +455,8 @@ This is explicit command triggering, not implicit skill auto-triggering. If open
 Hermes natively supports remote HTTP MCP and has local skills directories and skill bundles. So:
 
 1. MCP tools: written into `mcp_servers` in `~/.hermes/config.yaml`.
-2. Skills: synced under `~/.hermes/skills/toolplane-<toolkit>/`; directory names prefer the `name` from `SKILL.md` frontmatter to avoid long slugs in Hermes prompts.
-3. Bundle: written to `~/.hermes/skill-bundles/toolplane-<toolkit>.yaml`, organizing this toolkit's synced skills into one Hermes bundle.
+2. Skills: synced under `~/.hermes/skills/<installation>/`; directory names prefer the `name` from `SKILL.md` frontmatter to avoid long slugs in Hermes prompts.
+3. Bundle: written to `~/.hermes/skill-bundles/<installation>.yaml`, organizing this toolkit's synced skills into one Hermes bundle.
 4. Hook: written to `hooks.on_session_start`, silently running the sync script when a new session starts.
 
 File layout after install:
@@ -507,14 +465,14 @@ File layout after install:
 $HERMES_HOME or ~/.hermes/
 ├─ config.yaml
 ├─ skill-bundles/
-│  └─ toolplane-<toolkit>.yaml
+│  └─ <installation>.yaml
 ├─ skills/
-│  └─ toolplane-<toolkit>/
+│  └─ <installation>/
 │     └─ <skill-name>/
 │        ├─ SKILL.md
 │        └─ scripts/...
 └─ toolplane/
-   └─ toolplane-<toolkit>/
+   └─ <installation>/
       ├─ .mcp.json
       └─ shared/
          ├─ hook-sync.sh
@@ -539,12 +497,12 @@ The install script writes a marker block under `mcp_servers` in `config.yaml`:
 
 ```yaml
 mcp_servers:
-  # BEGIN TOOLPLANE toolplane-devtools
-  toolplane-devtools:
+  # BEGIN TOOLPLANE toolplane-0123456789abcdef01234567
+  toolplane-0123456789abcdef01234567:
     url: "https://app/api/v1/workspaces/ws/toolkits/devtools/mcp"
     headers:
       Authorization: "Bearer <token>"
-  # END TOOLPLANE toolplane-devtools
+  # END TOOLPLANE toolplane-0123456789abcdef01234567
 ```
 
 Reinstalling the same toolkit deletes the old marker block before writing the new one, avoiding duplicate config.
@@ -554,7 +512,7 @@ Reinstalling the same toolkit deletes the old marker block before writing the ne
 `sync.sh` writes skills to:
 
 ```txt
-~/.hermes/skills/toolplane-<toolkit>/<skill-name>/SKILL.md
+~/.hermes/skills/<installation>/<skill-name>/SKILL.md
 ```
 
 Directory names matter for Hermes skill lookup, but prompts display the `name` from `SKILL.md`. So the Hermes sync path reads the frontmatter `name` as the directory name, falling back to the baseline slug if it is missing or unsafe. Bundle companion files land in the same skill directory.
@@ -562,14 +520,14 @@ Directory names matter for Hermes skill lookup, but prompts display the `name` f
 After syncing, the install script scans these directories and writes the bundle:
 
 ```yaml
-name: toolplane-devtools
+name: toolplane-0123456789abcdef01234567
 description: "ToolPlane toolkit devtools"
 skills:
-  - toolplane-devtools/pdf
-  - toolplane-devtools/github
+  - toolplane-0123456789abcdef01234567/pdf
+  - toolplane-0123456789abcdef01234567/github
 instruction: |
   Use the ToolPlane toolkit "devtools".
-  Its MCP tools are available through the "toolplane-devtools" MCP server.
+  Its MCP tools are available through the "toolplane-0123456789abcdef01234567" MCP server.
 ```
 
 If the `hermes` CLI exists locally, the install script runs:
@@ -585,24 +543,24 @@ The install script also writes a shell hook under the same marker block in `conf
 ```yaml
 hooks:
   on_session_start:
-    # BEGIN TOOLPLANE toolplane-devtools
-    - command: "bash ~/.hermes/toolplane/toolplane-devtools/shared/hook-sync.sh"
+    # BEGIN TOOLPLANE toolplane-0123456789abcdef01234567
+    - command: "bash $HOME/.hermes/toolplane/toolplane-0123456789abcdef01234567/shared/hook-sync.sh"
       timeout: 30
-    # END TOOLPLANE toolplane-devtools
+    # END TOOLPLANE toolplane-0123456789abcdef01234567
 ```
 
 `hook-sync.sh`:
 
 1. Discards the hook JSON payload Hermes passes in.
 2. Silently runs `shared/sync.sh`.
-3. Rewrites `skill-bundles/toolplane-<toolkit>.yaml` from the synced skill directories.
+3. Rewrites `skill-bundles/<installation>.yaml` from the committed ownership manifest, excluding state folders and neighboring manual skills.
 4. Deletes `.skills_prompt_snapshot.json` so the next prompt re-reads the latest skills index.
 5. Outputs `{}`, satisfying the Hermes shell-hook stdout JSON protocol without injecting extra context.
 
 The first time this hook runs, Hermes may ask the user to approve; `--accept-hooks` or `HERMES_ACCEPT_HOOKS=1` pre-approves. The install script still syncs once at install time and leaves a manual sync entry point:
 
 ```bash
-~/.hermes/toolplane/toolplane-<toolkit>/shared/sync.sh
+~/.hermes/toolplane/<installation>/shared/sync.sh
 ```
 
 A running Hermes session needs manual reloads:
@@ -631,46 +589,21 @@ Auto-sync is the complete "tools + skills" sync path.
 
 ## 11. Uninstall Behavior
 
-The uninstall script cleans up all four client types as best it can:
+`GET /install/:id/uninstall?client=<client>` returns a tokenless bootstrap and does not revoke credentials. Running it proves the current registration's credential, revokes only that installation, and applies client-specific cleanup. Revocation retries are idempotent; revoking every installation is a separate panel action.
 
-1. Claude Code:
-   - `claude plugin uninstall`
-   - `claude plugin marketplace remove`
-   - delete `~/.claude/plugins/toolplane-<toolkit>`
+Cleanup removes the exact managed MCP configuration block/key, that sync hook, installer-owned files and manifest-owned skills for the selected client. Other clients, other installations, neighboring manual skills and user-created files are preserved. Empty managed directories can be removed; nonempty directories are retained. Corrupt manifests, symlinked state and pending sync recovery cause cleanup to stop rather than guess ownership.
 
-2. Codex:
-   - remove the marker block from `config.toml`
-   - remove the matching `sync.sh` hook from `hooks.json`
-   - delete `~/.agents/skills/toolplane-<toolkit>-*`
-   - delete `~/.codex/toolplane/toolplane-<toolkit>`
-
-3. opencode:
-   - remove `mcp[server]` from `opencode.json`
-   - remove `command[server]`
-   - delete the local cache bundle
-
-4. Hermes:
-   - remove the marker block from `config.yaml`
-   - delete `~/.hermes/skills/toolplane/toolplane-<toolkit>-*`
-   - delete `~/.hermes/skill-bundles/toolplane-<toolkit>.yaml`
-   - delete `~/.hermes/toolplane/toolplane-<toolkit>`
-
-The server simultaneously revokes every install token under this toolkit.
+Legacy installation directories have no proven new ownership and are deliberately retained. Reconcile or remove them explicitly after verifying the new registration. A server revocation does not claim it erased cached files from an offline device.
 
 ---
 
 ## 12. Security Boundaries
 
-These constraints must hold:
-
-1. An install link stores only an opaque id — never a plaintext token.
-2. The plaintext token appears exactly once, in the install-script response.
-3. Tokens are named and rotated independently per toolkit + client.
-4. The baseline API must verify the token's user belongs to the workspace.
-5. The MCP gateway must verify the toolkit belongs to the caller's workspace.
-6. `sync.sh` must validate skill slugs and bundle file paths against path traversal.
-7. Uninstall should revoke all install tokens under the toolkit.
-8. Local config merging must stay minimal: Codex and Hermes use marker blocks; opencode overwrites only the matching `mcp[server]` and `command[server]`.
+- A personal token and a Toolkit installation token are different principals. Toolkit endpoints preserve the scope; account and Agent Control APIs reject Toolkit tokens. An explicit invalid Bearer token never falls back to a browser cookie.
+- Install links are capabilities even though their rows contain no plaintext API token. Regenerate leaked links, inspect registrations, and revoke affected tokens separately.
+- All credential rotations/revocations remain bound to the user, Toolkit, client and installation. A self-reported device label is display metadata, not authorization.
+- Local configuration parsing fails closed on invalid JSON or unsupported YAML instead of replacing unrelated configuration. Configuration markers must be balanced. Existing files outside manifest ownership are not removed.
+- Download/hash/path checks protect update integrity but do not make arbitrary Skill instructions or scripts trustworthy. Client-side execution still needs the client's own permissions and trust controls.
 
 ---
 
@@ -685,9 +618,11 @@ Related tests:
 | `tests/unit/plugin-direct-config.test.ts` | Direct-connection config snippets |
 | `tests/unit/plugin-telemetry-scripts.test.ts` | sync and skill-invocation shell script content |
 | `tests/unit/skill-bundle.test.ts` | GitHub skill bundle URL parsing, frontmatter, path safety, recursive import |
-| `tests/integration/toolkit-install-link.test.ts` | opaque install links, token rotation, per-client tokens |
+| `tests/integration/toolkit-install-link.test.ts` | opaque install links, transactional rotation, per-installation tokens |
 | `tests/integration/plugin-baseline.test.ts` | baseline permissions, content filtering, bundle file return |
 | `tests/integration/plugin-telemetry.test.ts` | sync/skill telemetry APIs |
+
+Additional regressions: `tests/unit/toolkit-principal.test.ts`, `tests/unit/toolkit-sync-transaction.test.ts`, and `tests/unit/documentation-contracts.test.ts`.
 
 Recommended verification:
 
@@ -709,10 +644,8 @@ pnpm test
 
 ---
 
-## 14. Future Improvements
+## 14. Remaining Extensions
 
-1. `sync.sh` could use the baseline `version` to skip unchanged `SKILL.md` writes.
-2. Codex could move to local plugin distribution, though `config.toml + hooks.json + ~/.agents/skills` is currently more direct and testable.
-3. If opencode adds open agent skills, upgrade from the command/cache model to native skills.
-4. Add `--dry-run` to the install script, showing which files would be written.
-5. Show "last sync time / failure reason" in the UI by reading `SyncEvent`.
+Potential follow-ups include a dry-run installer, explicit guided legacy migration, and richer UI presentation of local last-success/failure state. Native client integrations may evolve independently; test their actual versions before changing adapters. Current sync already skips unchanged hashes and stores local recovery/status metadata.
+
+---
