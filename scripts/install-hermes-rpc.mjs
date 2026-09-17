@@ -38,7 +38,7 @@ export async function installHermesRpc(root) {
   const marker = join(root, '.ready');
   const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(root, 'build-home'), LANG: 'C.UTF-8',
     UV_PYTHON_INSTALL_DIR: join(root, 'python'), UV_CACHE_DIR: join(root, 'cache'),
-    UV_PYTHON_PREFERENCE: 'only-managed', UV_NO_PROGRESS: '1', GIT_TERMINAL_PROMPT: '0',
+    UV_NO_PROGRESS: '1', GIT_TERMINAL_PROMPT: '0',
     HERMES_HOME: join(root, 'probe-home'), HERMES_DISABLE_LAZY_INSTALLS: '1',
   };
   await mkdir(env.HOME, { recursive: true, mode: 0o700 });

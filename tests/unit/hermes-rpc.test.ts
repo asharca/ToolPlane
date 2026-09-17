@@ -48,6 +48,8 @@ describe('Hermes RPC platform projection', () => {
     const installer = await readFile('scripts/install-hermes-rpc.mjs', 'utf8');
     expect(installer).toContain(`HERMES_RPC_COMMIT = '${HERMES_RPC_REVISION}'`);
     expect(installer).toContain("'--frozen'");
+    expect(installer).toContain("'--managed-python'");
+    expect(installer).not.toContain('UV_PYTHON_PREFERENCE');
     expect(installer).toContain('integrity check failed');
   });
   it('executes in the selected container, maps MCP activity and only returns a successful result', async () => {
