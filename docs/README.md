@@ -12,6 +12,7 @@
 | Doc | Contents |
 |---|---|
 | [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) ([中文](./ARCHITECTURE.md)) | **Main entry**: tech stack, top-level architecture, directory layout, Prisma domain models, console/admin/JSON API overview |
+| [AGENT_RUNTIMES.md](./AGENT_RUNTIMES.md) ([中文](./AGENT_RUNTIMES.zh-CN.md)) | Pi, Claude Code, and DSH implementation: execution paths, model/MCP proxies, native sessions, Skills, events, security, and troubleshooting |
 | [HERMES_AGENT_RUNTIME.en.md](./HERMES_AGENT_RUNTIME.en.md) ([中文](./HERMES_AGENT_RUNTIME.md)) | Hermes runtime: configuration projection, lifecycle, network and credential boundaries; see Architecture for the full runtime inventory |
 | [SANDBOXES.md](./SANDBOXES.md) ([中文](./SANDBOXES.zh-CN.md)) | Agent sandbox shape: Docker / Connector runtimes, MCP tools exposure, PTY terminal |
 | [OBSERVABILITY.md](./OBSERVABILITY.md) ([中文](./OBSERVABILITY.zh-CN.md)) | Logging/audit model: `LogEvent` / `LogDetail` / `AuditEvent` semantics, capture and retention |
