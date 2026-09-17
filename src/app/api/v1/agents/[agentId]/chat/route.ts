@@ -336,7 +336,8 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/chat", async fu
         if (sandboxRuntime) {
           const uiStream = createSandboxUiStreamBridge(writer, `sandbox-${agent.id}`);
           await runDedicatedSandboxTurn({
-            ...(agent.runtimeKind === 'hermes-rpc' && conversationId ? { runtimeSessionId: conversationId } : {}),
+            collaboration: { targetIds: resolved.subAgents.map((sub) => sub.id) },
+            ...(conversationId ? { runtimeSessionId: conversationId } : {}),
             agent,
             systemPrompt: system,
             messages: hydratedMessages as never,

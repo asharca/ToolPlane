@@ -94,4 +94,6 @@ pnpm dev
 | 对外集成 | [Agent Control MCP](docs/AGENT_CONTROL_MCP.zh-CN.md) · [公共 API](docs/AGENT_PUBLIC_API.zh-CN.md) · [消息渠道](docs/AGENT_MESSAGING_PLATFORMS.zh-CN.md) |
 | 部署与维护 | [部署配置](docs/DEPLOYMENT.md) · [升级与恢复](docs/RUNTIME_OPERATIONS.zh-CN.md) · [日志与审计](docs/OBSERVABILITY.zh-CN.md) |
 
+平台内部任务委派与授权见 [Agent 间协作](docs/AGENT_COLLABORATION.zh-CN.md)。
+
 完整目录见[文档索引](docs/README.zh-CN.md)。ToolPlane 需要单个持续运行的应用进程，不适合 Serverless，也不要让多个实例同时操作同一运行域。

@@ -169,6 +169,8 @@ model DailySnapshot {
 }
 
 model Workspace {
+  collaborationRuns AgentCollaborationRun[]
+  collaborationTasks AgentCollaborationTask[]
   agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
@@ -519,6 +521,9 @@ model ProviderModel {
 }
 
 model Agent {
+  collaborationRuns AgentCollaborationRun[]
+  sentCollaborationTasks AgentCollaborationTask[] @relation("CollaborationCaller")
+  receivedCollaborationTasks AgentCollaborationTask[] @relation("CollaborationTarget")
   uploadReservations AgentUploadReservation[]
   id                      String                   @id @default(cuid())
   workspaceId             String
@@ -1500,4 +1505,81 @@ model AgentUploadReservation {
   expiresAt DateTime
   @@index([workspaceId, status])
   @@index([status, expiresAt])
+}
+
+// Opaque run identities are signed into runtime grants, never supplied by models.
+model AgentCollaborationRun {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  sandboxId String
+  providerId String
+  scopeKey String
+  rootId String
+  parentTaskId String?
+  workSessionId String?
+  chain String[]
+  allowedAgentIds String[]
+  taskCount Int @default(0)
+  deadlineAt DateTime
+  closedAt DateTime?
+  createdAt DateTime @default(now())
+  tasks AgentCollaborationTask[]
+  @@index([rootId])
+  @@index([agentId, scopeKey])
+  @@index([deadlineAt])
+}
+
+model AgentCollaborationTask {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  callerAgentId String
+  caller Agent @relation("CollaborationCaller", fields: [callerAgentId], references: [id], onDelete: Cascade)
+  targetAgentId String
+  target Agent @relation("CollaborationTarget", fields: [targetAgentId], references: [id], onDelete: Cascade)
+  runId String
+  run AgentCollaborationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  rootId String
+  scopeKey String
+  parentTaskId String?
+  ancestorTaskIds String[]
+  contextId String @unique
+  requestId String
+  requestHash String
+  targetBinding String
+  state String @default("submitted")
+  message String
+  result String?
+  question String?
+  artifacts Json @default("[]")
+  usage Json?
+  errorCode String?
+  cancelRequestedAt DateTime?
+  requiresApproval Boolean @default(false)
+  approvedById String?
+  attempt Int @default(0)
+  deadlineAt DateTime
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages AgentCollaborationMessage[]
+  @@unique([callerAgentId, scopeKey, requestId])
+  @@index([workspaceId, callerAgentId, createdAt])
+  @@index([state, createdAt])
+  @@index([rootId])
+  @@index([targetAgentId, state])
+}
+
+model AgentCollaborationMessage {
+  id String @id @default(cuid())
+  taskId String
+  task AgentCollaborationTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestId String
+  content String
+  createdAt DateTime @default(now())
+  @@unique([taskId, requestId])
 }

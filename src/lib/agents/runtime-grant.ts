@@ -35,6 +35,17 @@ export async function isAgentRuntimeGrantCurrent(
     ...(agent?.servers.map((server) => server.deploymentId) ?? []),
     ...(agent?.toolkits.flatMap((entry) => entry.toolkit.servers.map((server) => server.deploymentId)) ?? []),
   ]);
+  if (token.collaborationRunId) {
+    const run = await db.agentCollaborationRun.findFirst({ where: {
+      id: token.collaborationRunId, workspaceId: token.workspaceId, agentId: token.agentId,
+      sandboxId: token.sandboxId, providerId: token.providerId, closedAt: null, deadlineAt: { gt: new Date() },
+    } });
+    if (!run || !await db.agentCollaborationRun.count({ where: { id: run.rootId, workspaceId: token.workspaceId, deadlineAt: { gt: new Date() } } })) return false;
+    if (run.parentTaskId && !await db.agentCollaborationTask.count({ where: {
+      id: run.parentTaskId, targetAgentId: token.agentId, workspaceId: token.workspaceId,
+      state: 'working', cancelRequestedAt: null, deadlineAt: { gt: new Date() },
+    } })) return false;
+  }
   return Boolean(
     agent
     && isDedicatedSandboxRuntimeKind(agent.runtimeKind)

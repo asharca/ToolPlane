@@ -1,3 +1,6 @@
+import { openCollaborationRun, closeCollaborationRun, cancelRunTasks, assertCollaborationContext } from './collaboration/service';
+import { COLLABORATION_MCP_ID, COLLABORATION_INSTRUCTIONS } from './collaboration/protocol';
+import { runtimeCollaborationMcpUrl } from './runtime-access';
 import { observe, recordEvent } from '@/lib/observability/events';
 import 'server-only';
 import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
@@ -40,6 +43,7 @@ export async function runDedicatedSandboxTurn(input: {
   skills?: readonly SkillForPrompt[];
   deploymentIds?: readonly string[];
   workingDirectory?: string | null;
+  collaboration?: { targetIds: readonly string[]; taskId?: string; workSessionId?: string };
   runtimeSessionId?: string;
   command?: string;
   signal?: AbortSignal;
@@ -82,6 +86,7 @@ export async function runDedicatedSandboxTurn(input: {
     throw new Error('Assign exactly one Docker sandbox to this Agent before running it.');
   }
 
+  if (input.runtimeSessionId) await assertCollaborationContext(input.runtimeSessionId, input.collaboration?.taskId);
   if (runtimeKind === 'hermes-rpc' && input.runtimeSessionId) {
     await bindHermesRpcConversation({ workspaceId: input.agent.workspaceId, agentId: input.agent.id,
       conversationId: input.runtimeSessionId, sandboxId: link.sandboxId, providerId: provider.id,
@@ -89,7 +94,15 @@ export async function runDedicatedSandboxTurn(input: {
   }
   const deploymentIds = [...new Set(input.deploymentIds ?? [])]
     .filter((deploymentId) => liveStatus(deploymentId) === 'running');
+  const collaboration = input.collaboration && (input.collaboration.targetIds.length || input.collaboration.taskId)
+    ? await openCollaborationRun({ workspaceId: input.agent.workspaceId, agentId: input.agent.id,
+        sandboxId: link.sandboxId, providerId: provider.id, conversationId: input.runtimeSessionId,
+        ...input.collaboration }) : null;
   const now = Math.floor(Date.now() / 1000);
+  const effectiveSignal = collaboration
+    ? AbortSignal.any([...(input.signal ? [input.signal] : []), AbortSignal.timeout(Math.max(1, collaboration.deadlineAt.getTime() - Date.now()))])
+    : input.signal;
+  try {
   const runtimeAccessToken = await createAgentRuntimeToken({
     workspaceId: input.agent.workspaceId,
     agentId: input.agent.id,
@@ -97,9 +110,10 @@ export async function runDedicatedSandboxTurn(input: {
     providerId: provider.id,
     deploymentIds,
     exp: now + 55 * 60,
+    ...(collaboration ? { collaborationRunId: collaboration.id } : {}),
   });
 
-  return runSandboxAgentTurn({
+  return await runSandboxAgentTurn({
     runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
     workspaceId: input.agent.workspaceId,
     agentId: input.agent.id,
@@ -111,18 +125,17 @@ export async function runDedicatedSandboxTurn(input: {
     contextWindowEstimated: modelContext.estimated,
     modelProxyBase: runtimeModelProxyBase(provider.id),
     runtimeAccessToken,
-    systemPrompt: input.systemPrompt,
+    systemPrompt: collaboration ? [input.systemPrompt, COLLABORATION_INSTRUCTIONS].filter(Boolean).join('\n\n') : input.systemPrompt,
     disabledBuiltinTools: input.agent.disabledBuiltinTools,
     messages: input.messages,
     skills: input.skills,
-    mcpServers: deploymentIds.map((deploymentId) => ({
-      deploymentId,
-      url: runtimeMcpProxyUrl(deploymentId),
-    })),
+    mcpServers: [...deploymentIds.map((deploymentId) => ({
+      deploymentId, url: runtimeMcpProxyUrl(deploymentId),
+    })), ...(collaboration ? [{ deploymentId: COLLABORATION_MCP_ID, url: runtimeCollaborationMcpUrl(collaboration.id) }] : [])],
     workingDirectory: input.workingDirectory,
     runtimeSessionId: input.runtimeSessionId,
     command: input.command,
-    signal: input.signal,
+    signal: effectiveSignal,
     onTextDelta: input.onTextDelta,
     onActivity: async (activity) => {
       if (activity.type === 'tool') await recordEvent({ domain: 'agent', eventName: 'sandbox.tool',
@@ -134,6 +147,15 @@ export async function runDedicatedSandboxTurn(input: {
     onCommands: input.onCommands,
     onUsage: input.onUsage,
   });
+  } catch (error) {
+    if (collaboration) await cancelRunTasks(collaboration.id);
+    throw error;
+  } finally {
+    if (collaboration) {
+      try { if (effectiveSignal?.aborted) await cancelRunTasks(collaboration.id); }
+      finally { await closeCollaborationRun(collaboration.id); }
+    }
+  }
 
   });
 }

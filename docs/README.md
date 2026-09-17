@@ -17,6 +17,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 
 | Document | Covers |
 |---|---|
+| [Agent collaboration](./AGENT_COLLABORATION.md) · [中文](./AGENT_COLLABORATION.zh-CN.md) | Internal MCP delegation, durable tasks, authorization and results |
 | [Toolkit sync](./TOOLKIT_SYNC.en.md) · [中文](./TOOLKIT_SYNC.md) | Syncing MCP and Skills to AI clients |
 | [Sandboxes and connectors](./SANDBOXES.md) · [中文](./SANDBOXES.zh-CN.md) | Docker, device connections, terminals, and screens |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |

@@ -125,10 +125,10 @@ DSH 的内置工具禁用映射到插件行：例如多个文件工具共用 `to
 | `message-service.ts` | `conversation.id` | 使用对应原生会话 |
 | `work/coordinator.ts` | `work.conversationId` | 使用对应原生会话；传入 Work 工作目录 |
 | `runtime-command-service.ts` 的普通会话命令 | `conversation.id` | 对该原生会话执行命令；Work 命令则入队交给 coordinator |
-| `agents/[agentId]/chat/route.ts` 的 dedicated 分支 | 未传 | 使用无显式原生会话 ID 的执行路径 |
+| `agents/[agentId]/chat/route.ts` 的 dedicated 分支 | 有保存会话时传 `conversationId` | 复用对应原生会话，同时限定协作任务查询范围 |
 | `run.ts` 的 dedicated 子 Agent 分支 | 未传 | 单次委派，不复用父对话的原生会话 |
 
-因此，数据库中的平台消息、Hermes 的运行会话字段和这里的原生会话键不能混用。特别是直接 `/chat` 路径，即使保存了平台消息，也不能据此推断后续原生命令与聊天共享了同一个 CLI 状态。
+因此，数据库中的平台消息、Hermes 的运行会话字段和这里的原生会话键不能混用。直接 `/chat` 现在为已保存对话传入会话 ID；没有保存会话的请求仍没有持久化原生会话保证。
 
 Pi/CC 驱动按 `statePath` 的哈希生成沙箱内 Unix socket。一个 socket 同时只接一个请求；配置签名变化或进程达到复用年龄时，在下一次请求重启并恢复；空闲时也会退出。状态通过临时文件加 rename 保存。已经导入过的原生历史丢失时，驱动会报错，不能靠重放完整平台历史掩盖丢失，否则可能撤销先前的压缩语义。
 
@@ -151,6 +151,8 @@ Pi/CC 驱动按 `statePath` 的哈希生成沙箱内 Unix socket。一个 socket
 CC 的 Skill 根目录自身是插件目录，包含 `.claude-plugin/plugin.json` 和 `skills/<skill>/SKILL.md`，因此会出现额外一层 `skills/`。`materializeSandboxSkills()` 使用摘要跳过未变化内容，重建时写入 Markdown 与附加文件；它不是用户电脑上 `plugin/sync-client.ts` 的可恢复 Toolkit 同步事务，不能把两者的恢复保证混为一谈。
 
 运行时版本、安装目录和可执行文件统一定义在 [`SANDBOX_RUNTIME_PACKAGES`](../src/lib/agents/sandbox-runtime.ts)。`ensureRuntimeInstalled()` 在目标容器里检查二进制并使用固定版本 `pnpm add`，控制安装脚本允许清单，并在同一应用进程内合并并发安装等待。沙箱镜像需要具备执行器要求的 Node、pnpm 和系统能力；升级根项目依赖不会自动升级已有沙箱里的 CLI。
+
+关联平台子 Agent 时，执行器另外注入受限的协作 MCP；其任务、允许清单和用户授权见 [Agent 间协作](./AGENT_COLLABORATION.zh-CN.md)。它不通过旧的宿主工具集合隐式注入，也不等于原生 CLI 内部子 Agent。
 
 所选 Skill 来自平台资源解析，额外文件路径经过安全路径处理；三者均通过自己的文件/执行工具消费 Skill。`buildAgentToolSet()` 中的宿主工具、知识库工具、平台子 Agent 包装器不会仅因创建了 dedicated runner 就自动注入原生 CLI；原生 CLI 自带的子 Agent 能力也不等于 ToolPlane 的子 Agent 关系。
 

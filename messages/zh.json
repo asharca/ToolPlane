@@ -1382,7 +1382,33 @@
       "marketSetupEnvironmentRequirement": "为此 MCP 部署设置环境变量 {variable}。",
       "marketSetupConfigureMcp": "配置 MCP",
       "marketSetupRuntimeRequirement": "完成 {runtime} 运行时沙箱的配置。",
-      "marketSetupConfigureRuntime": "配置运行时"
+      "marketSetupConfigureRuntime": "配置运行时",
+      "collaboration": {
+        "title": "Agent 协作",
+        "description": "在“子 Agent”中选择允许委派的目标。任务在目标自己的沙箱执行；调用方结束本轮后不会自动续聊，可在这里或下一轮读取结果。",
+        "approvalWarning": "授权 Work 委派意味着允许本任务使用目标 Agent 配置的模型、沙箱、MCP 和 Skill。这是任务级授权，不是对每次原生工具调用逐项审批。请勿批准不可信的目标。",
+        "loadFailed": "无法加载协作任务。",
+        "actionFailed": "操作失败或任务状态已变化，请刷新并确认状态后再重试。",
+        "empty": "暂无协作任务。",
+        "approve": "授权执行任务",
+        "reject": "拒绝",
+        "answer": "补充信息",
+        "continue": "发送补充信息",
+        "cancel": "取消任务",
+        "cancelPending": "已请求取消，正在等待运行时停止。",
+        "result": "结果",
+        "limit": "当前显示最近 50 个任务。",
+        "states": {
+          "submitted": "排队中",
+          "working": "执行中",
+          "input-required": "等待信息",
+          "auth-required": "等待授权",
+          "completed": "已完成",
+          "failed": "失败",
+          "canceled": "已取消",
+          "rejected": "已拒绝"
+        }
+      }
     },
     "conversationOperations": {
       "channelCommandOnly": "/new 仅用于消息频道。这里请使用 + 菜单中的“新任务”。",

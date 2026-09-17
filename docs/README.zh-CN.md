@@ -17,6 +17,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [Agent 间协作](./AGENT_COLLABORATION.zh-CN.md) · [English](./AGENT_COLLABORATION.md) | 内部 MCP 委派、持久化任务、授权与结果 |
 | [Toolkit 同步](./TOOLKIT_SYNC.md) · [English](./TOOLKIT_SYNC.en.md) | 向 AI 客户端同步 MCP 与 Skill |
 | [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |
