@@ -1,0 +1,229 @@
++def main():
++    request = json.loads(Path(sys.argv[1]).read_text())
++    home = Path(request["home"])
++    home.mkdir(mode=0o700, parents=True, exist_ok=True)
++    # A separate open file description holds this lock until process exit,
++    # including SIGKILL. Never unlink it or guess whether a recorded PID is alive.
++    lease = open(home / ".toolplane-rpc.lock", "a+")
++    try:
++        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
++    except BlockingIOError:
++        raise RuntimeError("This Hermes RPC Agent is busy; retry after its current operation finishes.") from None
++    os.umask(0o077)
++    atomic_json(home / "config.yaml", request["config"])
++    # This mode owns its configuration; do not inherit manually planted provider
++    # credentials or process hooks from a previous native .env.
++    (home / ".env").write_text("# Managed by ToolPlane Hermes RPC.\n")
++    os.chmod(home / ".env", 0o600)
++    # Native providers may save resolved configuration in session metadata.
++    # Only short-lived runtime grants enter this home; they are replaced each turn.
++    os.environ.update({
++        "HERMES_HOME": str(home), "HOME": str(home),
++        "TERMINAL_CWD": request["cwd"],
++        "HERMES_SESSION_SOURCE": "toolplane",
++        "HERMES_TUI_TOOLSETS": ",".join(request["toolsets"]),
++        "HERMES_DISABLE_LAZY_INSTALLS": "1",
++        "PYTHONUNBUFFERED": "1", "NO_COLOR": "1",
++    })
++    # The named provider's canonical fallback also resolves only to the scoped
++    # ToolPlane proxy. This is needed by native resume after provider normalization.
++    os.environ["OPENAI_API_KEY"] = request["token"]
++    os.environ["OPENAI_BASE_URL"] = request["modelBase"]
++    source = request["source"]
++    sys.path.insert(0, source)
++    os.chdir(request["cwd"])
++    try:
++        runpy.run_module("tui_gateway.entry", run_name="__main__")
++    finally:
++        # Keep native state, memories and learned skills, not an active grant.
++        config = request["config"]
++        for provider in config.get("providers", {}).values():
++            provider["api_key"] = "expired-toolplane-runtime-grant"
++        for server in config.get("mcp_servers", {}).values():
++            server["headers"] = {}
++        atomic_json(home / "config.yaml", config)
++        lease.close()
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/hermes-rpc-session.mjs b/scripts/hermes-rpc-session.mjs
+new file mode 100644
+index 0000000..046a81f
+--- /dev/null
++++ b/scripts/hermes-rpc-session.mjs
+@@ -0,0 +1,214 @@
++// Bounded JSON-RPC adapter for the pinned Hermes TUI gateway, not terminal scraping.
++// Each invocation gets a fresh grant/process and resumes native persisted state.
++import { spawn } from 'node:child_process';
++import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
++import { dirname } from 'node:path';
++import { StringDecoder } from 'node:string_decoder';
++import { fileURLToPath } from 'node:url';
++
++const MAX_FRAME = 4 * 1024 * 1024;
++const MAX_INPUT = 8 * 1024 * 1024;
++const MAX_OUTPUT = 16 * 1024 * 1024;
++const ID = /^[a-zA-Z0-9_-]{1,200}$/;
++const COMMANDS = [{ name: 'compact', description: 'Compress this native Hermes session.' }];
++const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
++
++export async function runHermesRpcSession(input, emit = (value) => process.stdout.write(JSON.stringify(value) + '\n')) {
++  if (!input || !ID.test(input.sessionId) || !input.home || !input.cwd || !input.token || !input.source || !input.python || !input.bootstrap) {
++    throw new Error('Invalid Hermes RPC execution context.');
++  }
++  const command = input.command?.trim().match(/^\/compact(?:\s+([\s\S]*))?$/i);
++  if (input.command && !command) throw new Error('Unsupported Hermes RPC command.');
++  const mappingPath = `${input.home}/toolplane-sessions/${input.sessionId}.json`;
++  let mapping;
++  try { mapping = JSON.parse(await readFile(mappingPath, 'utf8')); }
++  catch (error) { if (error.code !== 'ENOENT') throw new Error('Hermes RPC session mapping is unreadable.'); }
++  if (mapping && (mapping.version !== 1 || !ID.test(mapping.storedSessionId) || mapping.binding !== input.binding)) {
++    throw new Error('Hermes RPC model or sandbox binding changed. Start a new conversation instead of reusing incompatible native state.');
++  }
++  if (command && !mapping) throw new Error('Send a message in this Hermes RPC conversation before compacting it.');
++  let child, sessionId, storedSessionId = mapping?.storedSessionId;
++  let nextId = 0, bytes = 0, buffer = '', nativeComplete, settled = false, fatal, exited = false;
++  let text = '', pendingText = '', nativeUsage, started = false;
++  const pending = new Map();
++  const events = [];
++  const clean = (value) => String(value ?? '').split(input.token).join('[redacted]');
++  const output = (value) => emit(JSON.parse(clean(JSON.stringify(value))));
++  // Retain enough suffix to redact a grant split across native delta frames.
++  const flushText = (final = false) => {
++    const safe = clean(pendingText);
++    let length = final ? safe.length : Math.max(0, safe.length - input.token.length);
++    // Do not split an incomplete replacement marker.
++    const marker = safe.lastIndexOf('[redacted]');
++    if (marker >= 0 && marker < length && marker + 10 > length) length = marker;
++    if (length) { output({ type: 'delta', text: safe.slice(0, length) }); pendingText = safe.slice(length); }
++    else pendingText = safe;
++  };
++  const fail = (error) => {
++    if (fatal) return;
++    fatal = error instanceof Error ? error : new Error(String(error));
++    for (const request of pending.values()) { clearTimeout(request.timer); request.reject(fatal); }
++    pending.clear();
++  };
++  const rpc = (method, params, timeout = 120_000) => new Promise((resolve, reject) => {
++    if (fatal || exited || !child?.stdin.writable) { reject(fatal ?? new Error('Hermes RPC backend is unavailable.')); return; }
++    const id = ++nextId;
++    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Hermes RPC ${method} timed out.`)); }, timeout);
++    pending.set(id, { resolve, reject, timer });
++    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', (error) => { if (error) fail(error); });
++  });
++  const wait = async (predicate, timeout) => {
++    const until = Date.now() + timeout;
++    while (!predicate()) {
++      if (fatal) throw fatal;
++      if (exited) throw new Error('Hermes RPC backend exited before completing the operation.');
++      if (Date.now() >= until) throw new Error('Hermes RPC operation timed out.');
++      await delay(10);
++    }
++    if (fatal) throw fatal;
++  };
++  const save = async () => {
++    if (!storedSessionId || !ID.test(storedSessionId)) throw new Error('Hermes RPC did not return a valid persistent session identity.');
++    await mkdir(dirname(mappingPath), { recursive: true, mode: 0o700 });
++    await writeFile(mappingPath + '.tmp', JSON.stringify({ version: 1, storedSessionId, binding: input.binding }), { mode: 0o600 });
++    await rename(mappingPath + '.tmp', mappingPath);
++  };
++  const onFrame = (frame) => {
++    if (frame.jsonrpc !== '2.0') throw new Error('Invalid Hermes RPC frame.');
++    if (frame.method && frame.id !== undefined) {
++      // This mode never grants authority to upstream interactive requests. Native
++      // approvals/clarification require a future explicit UI bridge, not auto-yes.
++      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: frame.id, error: { code: -32601, message: 'Interactive requests are not supported by this ToolPlane runtime.' } }) + '\n');
++      fail(new Error('Hermes RPC requires interactive approval or clarification. This operation was not approved.'));
++      return;
++    }
++    if (frame.id !== undefined) {
++      const request = pending.get(frame.id);
++      if (!request) return;
++      pending.delete(frame.id); clearTimeout(request.timer);
++      if (frame.error) request.reject(new Error(`Hermes RPC error ${frame.error.code}: ${clean(frame.error.message)}`));
++      else request.resolve(frame.result);
++      return;
++    }
++    if (frame.method !== 'event') return;
++    const event = frame.params;
++    if (event?.type === 'gateway.ready') { started = true; return; }
++    // The create response can be followed immediately by events in the same read.
++    if (!sessionId) { if (events.length >= 200) throw new Error('Too many pre-session Hermes events.'); events.push(event); return; }
++    if (event?.session_id !== sessionId) return;
++    const payload = event.payload ?? {};
++    if (event.type === 'session.info') {
++      if (typeof payload.stored_session_id === 'string' && ID.test(payload.stored_session_id)) storedSessionId = payload.stored_session_id;
++      if (payload.usage) nativeUsage = payload.usage;
++      if (nativeComplete && payload.running === false) settled = true;
++    } else if (event.type === 'message.delta' && typeof payload.text === 'string') {
++      text += payload.text; pendingText += payload.text; flushText();
++    } else if (event.type === 'tool.start' || event.type === 'tool.complete') {
++      output({ type: 'activity', activity: { type: 'tool', status: event.type === 'tool.start' ? 'running' : 'completed',
++        toolCallId: String(payload.tool_id ?? ''), toolName: String(payload.name ?? ''),
++        ...(event.type === 'tool.complete' ? { input: payload.args, output: payload.result,
++          ...(Number.isFinite(payload.duration_s) ? { durationMs: payload.duration_s * 1000 } : {}) } : {}),
++      } });
++    } else if (event.type === 'approval.request' || event.type === 'clarify.request') {
++      fail(new Error('Hermes RPC requested an interactive decision; no approval was granted.'));
++    } else if (event.type === 'message.complete') {
++      nativeComplete = payload;
++      if (payload.usage) nativeUsage = payload.usage;
++    } else if (event.type === 'error') {
++      fail(new Error(`Hermes RPC: ${clean(payload.message || 'native operation failed')}`));
++    }
++  };
++  const interrupt = () => fail(new Error('Hermes RPC operation was cancelled.'));
++  process.once('SIGTERM', interrupt); process.once('SIGINT', interrupt);
++  try {
++    // No inherited provider credentials, user home, .env or Python startup hooks.
++    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: input.home,
++      HERMES_HOME: input.home, PYTHONUNBUFFERED: '1', NO_COLOR: '1',
++      // Test-only Python search path is accepted only as an explicit fixture field.
++      ...(input.testPythonPath && process.env.TOOLPLANE_HERMES_RPC_TEST === '1' ? { PYTHONPATH: input.testPythonPath } : {}),
++    };
++    child = spawn(input.python, ['-u', input.bootstrap, input.inputPath], { cwd: input.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
++    child.stdin.on('error', fail); child.once('error', fail);
++    child.once('exit', () => { exited = true; if (!settled) fail(new Error('Hermes RPC backend exited unexpectedly.')); });
++    // Native diagnostics can contain configuration or model output. Do not relay
++    // them wholesale into platform logs; bounded protocol errors are sufficient.
++    child.stderr.on('data', (chunk) => {
++      if (process.env.TOOLPLANE_HERMES_RPC_TEST === '1' && process.env.HERMES_RPC_DEBUG === '1') process.stderr.write(chunk);
++    });
++    const decoder = new StringDecoder('utf8');
++    child.stdout.on('data', (chunk) => {
++      try {
++        bytes += chunk.length;
++        if (bytes > MAX_OUTPUT) throw new Error('Hermes RPC output limit exceeded.');
++        buffer += decoder.write(chunk);
++        let at;
++        while ((at = buffer.indexOf('\n')) >= 0) {
++          if (Buffer.byteLength(buffer.slice(0, at)) > MAX_FRAME) throw new Error('Hermes RPC frame limit exceeded.');
++          const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
++          if (line.trim()) onFrame(JSON.parse(line));
++        }
++        if (Buffer.byteLength(buffer) > MAX_FRAME) throw new Error('Hermes RPC frame limit exceeded.');
++      } catch (error) { fail(error); }
++    });
++    await wait(() => started, 120_000);
++    const session = await rpc(mapping ? 'session.resume' : 'session.create', mapping
++      ? { session_id: mapping.storedSessionId, omit_messages: true }
++      : { cwd: input.cwd, model: input.model, provider: input.provider, source: 'toolplane', title: `ToolPlane ${input.sessionId}`, messages: input.history ?? [] });
++    if (!ID.test(session?.session_id ?? '')) throw new Error('Invalid Hermes RPC session identity.');
++    sessionId = session.session_id;
++    storedSessionId = session.stored_session_id || session.session_key || storedSessionId;
++    for (const event of events.splice(0)) onFrame({ jsonrpc: '2.0', method: 'event', params: event });
++    output({ type: 'commands', commands: COMMANDS });
++    if (command) {
++      const result = await rpc('session.compress', { session_id: sessionId, focus_topic: command[1] ?? '' });
++      if (result?.lock_held) throw new Error('Hermes RPC compression is busy; retry when the native operation is idle.');
++      if (result?.status === 'aborted' || result?.summary?.aborted) throw new Error('Hermes RPC compression was aborted.');
++      text = result?.status === 'compressed' ? 'Native Hermes context compressed.' : 'Native Hermes context does not need compression.';
++      if (ID.test(result?.info?.stored_session_id ?? '')) storedSessionId = result.info.stored_session_id;
++      nativeUsage = result?.usage; nativeComplete = { status: 'complete', text }; settled = true;
++    } else {
++      // Save before execution so an interrupted turn can be recovered. A mapping
++      // with missing native state fails on resume rather than replaying history.
++      await save();
++      await rpc('prompt.submit', { session_id: sessionId, text: input.message });
++      await wait(() => nativeComplete && settled, input.timeoutMs ?? 25 * 60_000);
