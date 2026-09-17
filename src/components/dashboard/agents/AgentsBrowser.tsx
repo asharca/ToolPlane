@@ -75,6 +75,7 @@ type CreateOptions = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   toolkits: AgentResourceOption[];
+  sandboxes?: AgentResourceOption[];
 };
 
 export type AgentMarketOption = {
@@ -175,6 +176,7 @@ export function AgentsBrowser({
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<string>>(() => new Set());
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set());
   const [selectedToolkitIds, setSelectedToolkitIds] = useState<Set<string>>(() => new Set());
+  const [sandboxId, setSandboxId] = useState('');
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(() => new Set());
   const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
   const hasProviders = createOptions.providers.length > 0;
@@ -243,6 +245,7 @@ export function AgentsBrowser({
     setSelectedSkillIds(new Set());
     setSelectedToolkitIds(new Set());
     setDisabledBuiltinTools(new Set());
+    setSandboxId('');
   }
 
   return (
@@ -545,6 +548,12 @@ export function AgentsBrowser({
                         icon: Cpu,
                       },
                       {
+                        value: 'hermes-rpc' as const,
+                        label: t('hermesRpcRuntime'),
+                        description: t('hermesRpcRuntimeDescription'),
+                        icon: Cpu,
+                      },
+                      {
                         value: 'hermes' as const,
                         label: t('hermesManagedRuntime'),
                         description: t('hermesManagedRuntimeDescription'),
@@ -629,7 +638,17 @@ export function AgentsBrowser({
                   </div>
                 ) : null}
 
-                {runtime && runtime !== 'hermes' ? (
+                {runtime === 'hermes-rpc' ? (
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesRpcSandbox')}</span>
+                    <select name={sandboxId ? 'sandboxId' : undefined} value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input h-10 w-full">
+                      <option value="">{t('hermesRpcNewSandbox')}</option>
+                      {(createOptions.sandboxes ?? []).map((sandbox) => <option key={sandbox.id} value={sandbox.id}>{sandbox.label}</option>)}
+                    </select>
+                    <span className="mt-1.5 block text-xs text-muted-foreground">{t('hermesRpcSandboxHelp')}</span>
+                  </label>
+                ) : null}
+                {runtime && runtime !== 'hermes' && runtime !== 'hermes-rpc' ? (
                   <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
                     <Box className="mt-0.5 size-4 shrink-0" />
                     <p>{t('automaticSandboxHelp')}</p>

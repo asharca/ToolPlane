@@ -6,6 +6,8 @@ This guide is for developers maintaining ToolPlane, integrating another runtime,
 
 Reviewed against `35c308e83e75228f1b42e7660ceefdc1e459d04f` on 2026-09-17. Linked source files, rather than copied version tables, define package versions and allowed capabilities. A runtime's product name does not imply that ToolPlane exposes every upstream CLI feature. See [Architecture](./ARCHITECTURE.en.md) for the system overview and [Hermes Runtime](./HERMES_AGENT_RUNTIME.en.md) for the separate Hermes implementation.
 
+For the independent Hermes RPC sandbox adapter, see [Hermes RPC](./HERMES_RPC_RUNTIME.md); this guide still describes Pi, Claude Code and DSH.
+
 ## 1. Distinguish the four concepts
 
 An **Agent** is workspace-scoped configuration and resource relationships. The **runtime kind** selects the execution adapter. A **Sandbox** supplies processes, a filesystem, and networking. A **Conversation** stores platform messages and can provide the native session lookup key. Native session reuse also depends on whether the caller supplies `runtimeSessionId`; a Conversation database record alone does not enable it.

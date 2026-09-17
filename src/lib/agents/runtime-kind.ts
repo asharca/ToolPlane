@@ -1,9 +1,9 @@
-export const AGENT_RUNTIME_KINDS = ['pi', 'claude-code', 'dsh', 'hermes'] as const;
+export const AGENT_RUNTIME_KINDS = ['pi', 'claude-code', 'dsh', 'hermes', 'hermes-rpc'] as const;
 
 export type AgentRuntimeKind = (typeof AGENT_RUNTIME_KINDS)[number];
 export type ImplementedAgentRuntimeKind = AgentRuntimeKind;
 export type SandboxHarnessRuntimeKind = Extract<AgentRuntimeKind, 'claude-code' | 'dsh'>;
-export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh'>;
+export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh' | 'hermes-rpc'>;
 export type WorkRuntimeKind = DedicatedSandboxRuntimeKind | 'hermes';
 
 // Explicit public capability inventory. Entry-point subsets are intentional:
@@ -14,6 +14,7 @@ export const AGENT_RUNTIME_CAPABILITIES = {
   'claude-code': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
   dsh: { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
   hermes: { sandbox: true, providerBinding: 'multiple', attachments: true, terminal: true, publicEndpoint: true },
+  'hermes-rpc': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
 } as const satisfies Record<AgentRuntimeKind, {
   sandbox: boolean; providerBinding: 'single' | 'multiple'; attachments: boolean; terminal: boolean; publicEndpoint: boolean;
 }>;
@@ -66,6 +67,11 @@ const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<AgentRuntimeKind, readonly Agent
         'ralph',
       ],
     },
+  ],
+  'hermes-rpc': [
+    { category: 'file', tools: ['read_file', 'write_file', 'patch', 'search_files'] },
+    { category: 'shell', tools: ['terminal', 'process'] },
+    { category: 'context', tools: ['memory', 'session_search'] },
   ],
   hermes: [
     { category: 'file', tools: ['read_file', 'write_file', 'patch', 'search_files'] },
@@ -123,6 +129,7 @@ export function agentRuntimeDisplayName(value: string): string {
   if (value === 'claude-code') return 'Claude Code';
   if (value === 'dsh') return 'DeepSeek Harness';
   if (value === 'hermes') return 'Hermes';
+  if (value === 'hermes-rpc') return 'Hermes RPC';
   if (value === 'pi') return 'Pi';
   return value;
 }

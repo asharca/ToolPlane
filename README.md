@@ -10,7 +10,7 @@ ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织�
 
 - **MCP 管理**：从目录或自定义配置部署服务，支持 npm、PyPI、GitHub 和 Docker 来源。
 - **Toolkit 同步**：组合 MCP 与 Skill，同步到 Claude Code、Codex、OpenCode 和 Hermes 客户端。
-- **Agent 执行**：在沙箱中运行 Pi、Claude Code、DSH 或 Hermes，接入工作区工具和技能。
+- **Agent 执行**：在沙箱中运行 Pi、Claude Code、DSH、Hermes RPC 或托管 Hermes，接入工作区工具和技能。
 - **沙箱与设备**：管理 Docker 沙箱，通过 Connector 连接自己的电脑，或通过 ADB 桥接 Android。
 - **观测与集成**：查看调用、延迟和错误，通过 MCP、API 或消息渠道接入。
 
@@ -21,7 +21,7 @@ flowchart TB
   MCP["MCP 服务"] --> Toolkit["Toolkit · 可复用工具包"]
   Skills["Skill · 技能与文件"] --> Toolkit
   Toolkit -->|同步| Clients["AI 客户端<br/>Claude Code · Codex · OpenCode · Hermes"]
-  Toolkit -->|挂载| Agent["工作区 Agent<br/>Pi · Claude Code · DSH · Hermes"]
+  Toolkit -->|挂载| Agent["工作区 Agent<br/>Pi · CC · DSH · Hermes RPC · Hermes"]
   Agent --> Sandbox["Docker 沙箱"]
 ```
 
@@ -89,7 +89,7 @@ pnpm dev
 
 | 主题 | 入口 |
 |---|---|
-| 架构与运行时 | [系统架构](docs/ARCHITECTURE.md) · [Pi / Claude Code / DSH](docs/AGENT_RUNTIMES.zh-CN.md) · [Hermes](docs/HERMES_AGENT_RUNTIME.md) |
+| 架构与运行时 | [系统架构](docs/ARCHITECTURE.md) · [Pi / Claude Code / DSH](docs/AGENT_RUNTIMES.zh-CN.md) · [Hermes RPC](docs/HERMES_RPC_RUNTIME.zh-CN.md) · [Hermes](docs/HERMES_AGENT_RUNTIME.md) |
 | 工具与客户端 | [Toolkit 同步](docs/TOOLKIT_SYNC.md) · [沙箱与连接器](docs/SANDBOXES.zh-CN.md) |
 | 对外集成 | [Agent Control MCP](docs/AGENT_CONTROL_MCP.zh-CN.md) · [公共 API](docs/AGENT_PUBLIC_API.zh-CN.md) · [消息渠道](docs/AGENT_MESSAGING_PLATFORMS.zh-CN.md) |
 | 部署与维护 | [部署配置](docs/DEPLOYMENT.md) · [升级与恢复](docs/RUNTIME_OPERATIONS.zh-CN.md) · [日志与审计](docs/OBSERVABILITY.zh-CN.md) |

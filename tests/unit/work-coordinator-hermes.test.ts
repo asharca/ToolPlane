@@ -328,7 +328,7 @@ describe('Work coordinator', () => {
     });
   });
 
-  it.each(['pi', 'claude-code', 'dsh'])('runs %s commands natively and persists a normal assistant reply without generating a title', async (runtimeKind) => {
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('runs %s commands natively and persists a normal assistant reply without generating a title', async (runtimeKind) => {
     const command = runtimeKind === 'claude-code' ? '/usage' : '/compact';
     mocks.workFindUnique.mockResolvedValue({
       id: 'work-1', workspaceId: 'workspace-1', agentId: 'agent-1', sandboxId: 'sandbox-1', conversationId: 'conversation-1',

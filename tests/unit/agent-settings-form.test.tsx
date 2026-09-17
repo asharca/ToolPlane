@@ -69,6 +69,7 @@ describe('AgentSettingsForm', () => {
     ['pi', ['read', 'bash', 'edit', 'write'], 'Glob'],
     ['claude-code', ['Read', 'Bash', 'Glob', 'Workflow'], 'read_image'],
     ['dsh', ['read_image', 'todo_write', 'subagent', 'web_search'], 'Read'],
+    ['hermes-rpc', ['read_file', 'terminal', 'memory', 'session_search'], 'browser_navigate'],
     ['hermes', ['read_file', 'terminal', 'browser_navigate', 'image_generate'], 'todo_write'],
   ])('shows the %s runtime built-in tools', (runtimeKind, expectedTools, absentTool) => {
     render(
@@ -120,7 +121,7 @@ describe('AgentSettingsForm', () => {
     expect(screen.getByLabelText('System prompt')).toHaveValue('你好 hello');
   });
 
-  it.each(['pi', 'claude-code', 'dsh'])('keeps %s on one networked Docker sandbox', async (runtimeKind) => {
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('keeps %s on one networked Docker sandbox', async (runtimeKind) => {
     const user = userEvent.setup();
     const providerId = runtimeKind === 'claude-code' ? 'anthropic' : 'provider-1';
     render(

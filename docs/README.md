@@ -11,6 +11,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | [System architecture](./ARCHITECTURE.en.md) · [中文](./ARCHITECTURE.md) | Stack, modules, and data models |
 | [Pi / Claude Code / DSH](./AGENT_RUNTIMES.md) · [中文](./AGENT_RUNTIMES.zh-CN.md) | Execution paths, native sessions, and security boundaries |
 | [Hermes runtime](./HERMES_AGENT_RUNTIME.en.md) · [中文](./HERMES_AGENT_RUNTIME.md) | Configuration, lifecycle, and credential isolation |
+| [Hermes RPC](./HERMES_RPC_RUNTIME.md) · [中文](./HERMES_RPC_RUNTIME.zh-CN.md) | Independent native Hermes in a selected Docker sandbox: configuration, sessions, isolation and tests |
 
 ## Usage and integrations
 

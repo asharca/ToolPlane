@@ -362,7 +362,7 @@ describe('createAgentAction', () => {
     mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
   });
 
-  it.each(['pi', 'claude-code', 'dsh'] as const)(
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'] as const)(
     'starts the automatically provisioned sandbox for a newly created %s agent',
     async (runtime) => {
       const form = new FormData();

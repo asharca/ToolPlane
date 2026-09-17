@@ -1,3 +1,4 @@
+import { db } from '@/lib/db';
 import { randomUUID } from 'node:crypto';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
@@ -39,13 +40,18 @@ export default async function AgentsPage({
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
-  const [agents, providers, deployments, skills, toolkits, marketAgents] = await Promise.all([
+  const [agents, providers, deployments, skills, toolkits, marketAgents, rpcSandboxes] = await Promise.all([
     listAgents(ws.id),
     listProviders(ws.id),
     listAgentDeploymentOptions(ws.id),
     listAgentSkillOptions(ws.id),
     listToolkits(ws.id),
     listAgentMarketListings({ pageSize: 12, sort: 'popular' }),
+    db.sandbox.findMany({
+      where: { workspaceId: ws.id, kind: 'docker', network: { not: 'none' }, agentLinks: { none: {} },
+        deployment: { workspaceId: ws.id, status: { notIn: ['copying', 'copy_failed', 'restoring', 'restore_failed', 'restore_cleanup_required', 'upgrading', 'deleting'] } } },
+      select: { id: true, name: true }, orderBy: { name: 'asc' },
+    }),
   ]);
   const defaultModelProviderId = ws.defaultModelProviderId;
   const defaultModelId = ws.defaultModel;
@@ -114,6 +120,7 @@ export default async function AgentsPage({
           defaultModel,
           deployments,
           skills,
+          sandboxes: rpcSandboxes.map((sandbox) => ({ id: sandbox.id, label: sandbox.name })),
           toolkits: toolkits.map((toolkit) => ({
             id: toolkit.id,
             label: toolkit.name,

@@ -1,5 +1,8 @@
 import { observe, recordEvent } from '@/lib/observability/events';
 import 'server-only';
+import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
+import { bindHermesRpcConversation } from './hermes-rpc-session-binding';
+import { normalizeSandboxWorkingDirectory } from './sandbox-runtime';
 import { db } from '@/lib/db';
 import {
   createAgentRuntimeToken,
@@ -26,6 +29,7 @@ type SandboxTurnAgent = {
   disabledBuiltinTools: string[];
   provider: (ProviderConfig & SandboxRuntimeProvider & { id: string }) | null;
   model: string | null;
+  maxSteps?: number;
 };
 
 export async function runDedicatedSandboxTurn(input: {
@@ -48,7 +52,7 @@ export async function runDedicatedSandboxTurn(input: {
   return observe({ domain: 'agent', eventName: 'sandbox.run', workspaceId: input.agent.workspaceId, agentId: input.agent.id,
     model: input.agent.model ?? undefined, providerId: input.agent.provider?.id, secrets: [input.agent.provider?.apiKey ?? ''] }, async () => {
   const runtimeKind = input.agent.runtimeKind;
-  if (runtimeKind !== 'pi' && runtimeKind !== 'claude-code' && runtimeKind !== 'dsh') {
+  if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
     throw new Error(`Unsupported sandbox runtime: ${runtimeKind}.`);
   }
   const provider = input.agent.provider;
@@ -78,6 +82,11 @@ export async function runDedicatedSandboxTurn(input: {
     throw new Error('Assign exactly one Docker sandbox to this Agent before running it.');
   }
 
+  if (runtimeKind === 'hermes-rpc' && input.runtimeSessionId) {
+    await bindHermesRpcConversation({ workspaceId: input.agent.workspaceId, agentId: input.agent.id,
+      conversationId: input.runtimeSessionId, sandboxId: link.sandboxId, providerId: provider.id,
+      modelId, providerFormat: provider.format, workingDirectory: normalizeSandboxWorkingDirectory(input.workingDirectory) });
+  }
   const deploymentIds = [...new Set(input.deploymentIds ?? [])]
     .filter((deploymentId) => liveStatus(deploymentId) === 'running');
   const now = Math.floor(Date.now() / 1000);
@@ -97,6 +106,7 @@ export async function runDedicatedSandboxTurn(input: {
     sandboxId: link.sandboxId,
     provider,
     modelId,
+    maxSteps: input.agent.maxSteps,
     contextWindow: modelContext.maxTokens,
     contextWindowEstimated: modelContext.estimated,
     modelProxyBase: runtimeModelProxyBase(provider.id),

@@ -16,6 +16,7 @@ const BUILTINS: Record<string, readonly string[]> = {
   'claude-code': ['clear', 'compact', 'context', 'usage'],
   dsh: ['compact', 'goal'],
   hermes: ['compact'],
+  'hermes-rpc': ['compact'],
 };
 const HOST_ONLY = new Set(['new', 'help', 'whoami', 'effort', 'fast']);
 export function runtimeCommands(runtimeKind: string, live: readonly RuntimeCommand[] = []): RuntimeCommand[] {

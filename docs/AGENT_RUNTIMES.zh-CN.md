@@ -6,6 +6,8 @@
 
 核对基线：`35c308e83e75228f1b42e7660ceefdc1e459d04f`（2026-09-17）。包版本和能力允许值以链接的源码为准，不以文档中的产品名称推断上游 CLI 的所有功能都已接入。系统全貌见[架构](./ARCHITECTURE.md)，Hermes 的独立实现见 [Hermes 运行时](./HERMES_AGENT_RUNTIME.md)。
 
+独立的 Hermes RPC 沙箱适配器见 [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md)；本文仍聚焦 Pi、Claude Code 和 DSH。
+
 ## 1. 先分清四个概念
 
 **Agent** 是工作区内的配置与资源关系；**runtime kind** 决定执行适配器；**Sandbox** 提供进程、文件系统和网络；**Conversation** 保存平台消息，并可作为原生会话的定位键。原生会话是否复用，还取决于调用方有没有传入 `runtimeSessionId`，不是只看数据库里有没有 Conversation。

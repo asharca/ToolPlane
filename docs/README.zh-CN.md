@@ -11,6 +11,7 @@
 | [系统架构](./ARCHITECTURE.md) · [English](./ARCHITECTURE.en.md) | 技术栈、模块与数据模型 |
 | [Pi / Claude Code / DSH](./AGENT_RUNTIMES.zh-CN.md) · [English](./AGENT_RUNTIMES.md) | 执行链路、原生会话与安全边界 |
 | [Hermes 运行时](./HERMES_AGENT_RUNTIME.md) · [English](./HERMES_AGENT_RUNTIME.en.md) | 配置、生命周期与凭据隔离 |
+| [Hermes RPC](./HERMES_RPC_RUNTIME.zh-CN.md) · [English](./HERMES_RPC_RUNTIME.md) | 在所选 Docker 沙箱中运行原生 Hermes：配置、会话、边界与测试 |
 
 ## 使用与集成
 

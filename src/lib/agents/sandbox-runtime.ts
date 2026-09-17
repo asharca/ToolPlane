@@ -1,4 +1,5 @@
 import 'server-only';
+import { runHermesRpcTurn } from './hermes-rpc';
 import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -58,7 +59,7 @@ const NPM_CACHE = '/workspace/.toolplane/npm-cache';
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const CLAUDE_RUNTIME_USER = '1000:1000';
 
-export type SandboxAgentRuntimeKind = 'pi' | 'claude-code' | 'dsh';
+export type SandboxAgentRuntimeKind = 'pi' | 'claude-code' | 'dsh' | 'hermes-rpc';
 
 export type SandboxRuntimeProvider = {
   id: string;
@@ -94,6 +95,7 @@ export type RunSandboxAgentTurnOptions = {
   sandboxId: string;
   provider: SandboxRuntimeProvider;
   modelId: string;
+  maxSteps?: number;
   contextWindow: number;
   contextWindowEstimated?: boolean;
   modelProxyBase: string;
@@ -1329,7 +1331,7 @@ async function assertAssignedDockerSandbox(options: RunSandboxAgentTurnOptions):
 }
 
 async function ensureRuntimeInstalled(
-  runtimeKind: SandboxAgentRuntimeKind,
+  runtimeKind: keyof typeof SANDBOX_RUNTIME_PACKAGES,
   container: string,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -1457,6 +1459,7 @@ function nativeCommandResult(line: string): { text: string; isError?: boolean } 
 }
 
 async function runNativeSessionExec(options: RunSandboxAgentTurnOptions, exec: Parameters<typeof runTrackedDockerExec>[0]) {
+  if (options.runtimeKind === 'hermes-rpc') throw new Error('Hermes RPC uses its own native protocol driver.');
   if (!options.runtimeSessionId) return runTrackedDockerExec(exec);
   const id = randomUUID();
   const driverPath = `${RUNTIME_TEMP_ROOT}/${id}-session.mjs`;
@@ -1832,8 +1835,21 @@ export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): 
     options.disabledBuiltinTools,
   );
   const mcpServers = (options.mcpServers ?? []).filter((server) => server.deploymentId !== sandboxDeploymentId);
-  const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
   const skillRoot = sandboxRuntimeSkillRoot(options.runtimeKind, options.agentId);
+  if (options.runtimeKind === 'hermes-rpc') {
+    return runHermesRpcTurn(options, {
+      container, workdir, skillRoot, stateRoot: sandboxRuntimeStateRoot('hermes-rpc', options.agentId), mcpServers,
+      history: (options.command ? options.messages : options.messages.slice(0, -1))
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .map((message) => ({ role: message.role, content: buildSandboxTranscript([message]) })),
+      message: buildSandboxTranscript(options.messages.slice(-1)),
+    }, {
+      exec: runTrackedDockerExec, write: writeSandboxFile, remove: removeSandboxFiles,
+      prepareSkills: () => materializeSandboxSkills(container, 'hermes-rpc', skillRoot, options.skills ?? [], options.signal),
+      activities: (activities) => reportActivities(options, activities, mcpServers),
+    });
+  }
+  const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
   await materializeSandboxSkills(container, options.runtimeKind, skillRoot, options.skills ?? [], options.signal);
   if (options.runtimeKind === 'pi') {
     return runPi(options, container, binary, workdir, systemPrompt, prompt, skillRoot, mcpServers, disabledBuiltinTools);
