@@ -6,28 +6,29 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  dependencies:
     if: github.repository == 'asharca/ToolPlane' && github.ref == 'refs/heads/feat/hermes-rpc-runtime'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Archive repository source
-        run: git archive --format=tar.gz -o "$RUNNER_TEMP/toolplane-current.tar.gz" HEAD
       - uses: actions/checkout@v4
         with:
           repository: NousResearch/hermes-agent
           ref: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
-          path: upstream-hermes
+          path: hermes
           persist-credentials: false
-      - name: Archive pinned upstream source
-        run: git -C upstream-hermes archive --format=tar.gz -o "$RUNNER_TEMP/hermes-pinned.tar.gz" HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned native protocol dependencies
+        run: |
+          python -m pip install uv==0.11.6
+          cd hermes
+          uv sync --frozen --no-dev --extra mcp --extra anthropic --python "$(command -v python)"
+          HERMES_HOME="$RUNNER_TEMP/hermes-check" .venv/bin/python -c 'import tui_gateway.entry; print("gateway import passed")'
+          tar -czf "$RUNNER_TEMP/hermes-python-dependencies.tar.gz" -C .venv/lib/python3.13/site-packages .
       - uses: actions/upload-artifact@v4
         with:
-          name: hermes-rpc-sources
-          path: |
-            ${{ runner.temp }}/toolplane-current.tar.gz
-            ${{ runner.temp }}/hermes-pinned.tar.gz
+          name: hermes-rpc-native-dependencies
+          path: ${{ runner.temp }}/hermes-python-dependencies.tar.gz
           retention-days: 2
