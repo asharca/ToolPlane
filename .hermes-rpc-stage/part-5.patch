@@ -1,0 +1,229 @@
++  activities: (activities: SandboxRuntimeActivity[]) => Promise<void>;
++};
++
++export function hermesRpcAlias(deploymentId: string) {
++  return `tp_${createHash('sha256').update(deploymentId).digest('hex').slice(0, 24)}`;
++}
++
++export function buildHermesRpcConfig(input: {
++  provider: { format: string }; modelId: string; modelProxyBase: string; token: string;
++  skillRoot: string; systemPrompt?: string | null; maxSteps?: number;
++  mcpServers: readonly SandboxRuntimeMcpServer[]; disabledBuiltinTools?: readonly string[];
++}) {
++  const transport = ({ openai: 'chat_completions', 'openai-responses': 'codex_responses', anthropic: 'anthropic_messages' } as Record<string, string>)[input.provider.format];
++  if (!transport) throw new Error('Unsupported Hermes RPC provider format.');
++  const base = new URL(input.modelProxyBase);
++  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error('Invalid Hermes RPC model proxy URL.');
++  // The platform proxy joins /v1 safely against the configured upstream base.
++  const modelBase = base.toString().replace(/\/$/, '') + '/v1';
++  const mcpServers = Object.fromEntries(input.mcpServers.map((server) => {
++    const url = new URL(server.url);
++    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('Invalid Hermes RPC MCP URL.');
++    return [hermesRpcAlias(server.deploymentId), { url: url.toString(), enabled: true, headers: { Authorization: `Bearer ${input.token}` } }];
++  }));
++  const disabled = new Set(input.disabledBuiltinTools ?? []);
++  // Tool selection is toolset-grained, not a claim of per-tool sandbox isolation.
++  // Skills is always present so the explicit nonempty toolset inventory never
++  // falls back to Hermes' auto-discovered default/all toolsets.
++  const groups: Array<[string, string[]]> = [
++    ['file', ['read_file', 'write_file', 'patch', 'search_files']],
++    ['terminal', ['terminal', 'process']], ['memory', ['memory']], ['session_search', ['session_search']],
++  ];
++  const toolsets = ['skills', ...groups.filter(([, names]) => !names.some((name) => disabled.has(name))).map(([name]) => name), ...Object.keys(mcpServers)];
++  return { modelBase, toolsets, config: {
++    model: { provider: 'custom:toolplane-rpc', default: input.modelId },
++    providers: { 'toolplane-rpc': { name: 'ToolPlane runtime proxy', api: modelBase,
++      api_key: input.token, transport, models: { [input.modelId]: {} }, default_model: input.modelId, discover_models: false } },
++    agent: { max_turns: Number.isFinite(input.maxSteps) ? Math.min(1000, Math.max(1, Math.trunc(input.maxSteps!))) : 100, system_prompt: input.systemPrompt?.trim() ?? '' },
++    skills: { external_dirs: [input.skillRoot] }, plugins: { enabled: [] },
++    approvals: { mode: 'smart' }, mcp_servers: mcpServers,
++    // No gateway/cron/dashboard process is started by the protocol adapter.
++  } };
++}
++
++export async function runHermesRpcTurn(options: RunSandboxAgentTurnOptions, context: {
++  container: string; workdir: string; stateRoot: string; skillRoot: string;
++  mcpServers: readonly SandboxRuntimeMcpServer[];
++  history: Array<{ role: string; content: string }>; message: string;
++}, io: HermesRpcIO): Promise<string> {
++  const key = `${context.container}:${options.agentId}`;
++  if (active.has(key)) throw new Error('This Hermes RPC Agent is busy. Retry after its current operation finishes.');
++  active.add(key);
++  const id = randomUUID();
++  const temporary = `/workspace/.toolplane/runtime-tmp/${id}-hermes-rpc`;
++  const paths = [`${temporary}.json`, `${temporary}.mjs`, `${temporary}.py`, `${temporary}-install.mjs`];
++  try {
++    options.signal?.throwIfAborted();
++    await io.write(context.container, paths[3]!, await readFile(`${process.cwd()}/scripts/install-hermes-rpc.mjs`, 'utf8'), options.signal);
++    await io.exec({ container: context.container, workdir: context.workdir, executable: 'sh', args: ['-c',
++      'set -eu; mkdir -p "$1"; exec flock -n "$1/.install.lock" node "$2" "$1"', 'toolplane-hermes-install', HERMES_RPC_PACKAGE_ROOT, paths[3]!],
++      signal: options.signal, timeoutMs: 15 * 60_000 });
++    await io.prepareSkills();
++    const { config, modelBase, toolsets } = buildHermesRpcConfig({ ...options, token: options.runtimeAccessToken, skillRoot: context.skillRoot, mcpServers: context.mcpServers });
++    const timeoutMs = Math.min(options.timeoutMs ?? TURN_TIMEOUT, TURN_TIMEOUT);
++    const input = {
++      home: `${context.stateRoot}/home`, cwd: context.workdir, source: `${HERMES_RPC_PACKAGE_ROOT}/source`,
++      python: `${HERMES_RPC_PACKAGE_ROOT}/source/.venv/bin/python`, bootstrap: paths[2],
++      config, modelBase, toolsets, token: options.runtimeAccessToken,
++      sessionId: options.runtimeSessionId ?? `ephemeral-${id}`, provider: 'custom:toolplane-rpc', model: options.modelId,
++      binding: createHash('sha256').update(JSON.stringify({ sandboxId: options.sandboxId, agentId: options.agentId, providerId: options.provider.id, model: options.modelId, format: options.provider.format, cwd: context.workdir })).digest('hex'),
++      history: context.history, message: context.message, command: options.command, timeoutMs,
++    };
++    await io.write(context.container, paths[0]!, JSON.stringify(input), options.signal);
++    await io.write(context.container, paths[1]!, await readFile(`${process.cwd()}/scripts/hermes-rpc-session.mjs`, 'utf8'), options.signal);
++    await io.write(context.container, paths[2]!, await readFile(`${process.cwd()}/scripts/hermes-rpc-bootstrap.py`, 'utf8'), options.signal);
++    let buffer = '', result: string | undefined, failure: string | undefined;
++    const consume = async (line: string) => {
++      if (!line.trim()) return;
++      const event = JSON.parse(line);
++      if (event.type === 'delta' && typeof event.text === 'string') await options.onTextDelta?.(event.text);
++      if (event.type === 'activity' && event.activity?.type === 'tool') {
++        const activity = event.activity as SandboxRuntimeActivity;
++        const delegated = activity.toolName === 'tool_call' && activity.input && typeof activity.input === 'object'
++          ? (activity.input as { name?: unknown }).name : undefined;
++        const name = typeof delegated === 'string' ? delegated : activity.toolName;
++        for (const server of context.mcpServers) {
++          const prefix = `mcp__${hermesRpcAlias(server.deploymentId)}__`;
++          if (name?.startsWith(prefix)) { activity.deploymentId = server.deploymentId; activity.originalToolName = name.slice(prefix.length); }
++        }
++        await io.activities([activity]);
++      }
++      if (event.type === 'commands') await options.onCommands?.([{ name: 'compact', description: 'Compress the native Hermes session.' }]);
++      if (event.type === 'error') failure = String(event.message || 'Hermes RPC failed.');
++      if (event.type === 'result' && typeof event.text === 'string') {
++        result = event.text;
++        const usage = event.usage;
++        if (usage && Number.isFinite(usage.input) && Number.isFinite(usage.output)) {
++          const value: RuntimeUsage = { inputTokens: Math.max(0, usage.input), outputTokens: Math.max(0, usage.output), cacheReadTokens: 0, cacheWriteTokens: 0 };
++          await options.onUsage?.(value);
++        }
++        if (usage && Number.isFinite(usage.context_used) && usage.context_used > 0) await options.onContextUsage?.({ usedTokens: usage.context_used,
++          maxTokens: options.contextWindow, modelName: options.modelId, estimated: options.contextWindowEstimated === true });
++      }
++    };
++    try {
++      await io.exec({ container: context.container, workdir: context.workdir, executable: 'node', args: [paths[1]!, paths[0]!], signal: options.signal,
++        timeoutMs: timeoutMs + 300_000, secrets: [options.runtimeAccessToken], onStdout: async (chunk) => {
++          buffer += chunk;
++          let at;
++          while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); await consume(line); }
++          if (Buffer.byteLength(buffer) > 4 * 1024 * 1024) throw new Error('Hermes RPC frame limit exceeded.');
++        },
++      });
++    } catch (error) { if (failure) throw new Error(failure); throw error; }
++    if (buffer.trim()) await consume(buffer);
++    if (failure) throw new Error(failure);
++    if (result === undefined) throw new Error('Hermes RPC exited without a successful result.');
++    return result;
++  } finally {
++    try { await io.remove(context.container, paths); } finally { active.delete(key); }
++  }
++}
+diff --git a/src/lib/agents/runtime-command-service.ts b/src/lib/agents/runtime-command-service.ts
+index ceb7ceb..ee4c0c3 100644
+--- a/src/lib/agents/runtime-command-service.ts
++++ b/src/lib/agents/runtime-command-service.ts
+@@ -1,0 +2 @@
++import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
+@@ -48 +49 @@
+-    if (kind !== 'dsh' && kind !== 'claude-code' && kind !== 'pi') throw new RuntimeCommandError('unsupportedCommand');
++    if (!isDedicatedSandboxRuntimeKind(kind)) throw new RuntimeCommandError('unsupportedCommand');
+diff --git a/src/lib/agents/runtime-commands.ts b/src/lib/agents/runtime-commands.ts
+index e9dfa10..c7336f5 100644
+--- a/src/lib/agents/runtime-commands.ts
++++ b/src/lib/agents/runtime-commands.ts
+@@ -18,0 +19 @@
++  'hermes-rpc': ['compact'],
+diff --git a/src/lib/agents/runtime-kind.ts b/src/lib/agents/runtime-kind.ts
+index 36756a7..577c513 100644
+--- a/src/lib/agents/runtime-kind.ts
++++ b/src/lib/agents/runtime-kind.ts
+@@ -1 +1 @@
+-export const AGENT_RUNTIME_KINDS = ['pi', 'claude-code', 'dsh', 'hermes'] as const;
++export const AGENT_RUNTIME_KINDS = ['pi', 'claude-code', 'dsh', 'hermes', 'hermes-rpc'] as const;
+@@ -6 +6 @@
+-export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh'>;
++export type DedicatedSandboxRuntimeKind = Extract<AgentRuntimeKind, 'pi' | 'claude-code' | 'dsh' | 'hermes-rpc'>;
+@@ -16,0 +17 @@
++  'hermes-rpc': { sandbox: true, providerBinding: 'single', attachments: false, terminal: true, publicEndpoint: false },
+@@ -69,0 +71,5 @@
++  'hermes-rpc': [
++    { category: 'file', tools: ['read_file', 'write_file', 'patch', 'search_files'] },
++    { category: 'shell', tools: ['terminal', 'process'] },
++    { category: 'context', tools: ['memory', 'session_search'] },
++  ],
+@@ -125,0 +132 @@
++  if (value === 'hermes-rpc') return 'Hermes RPC';
+diff --git a/src/lib/agents/sandbox-runtime.ts b/src/lib/agents/sandbox-runtime.ts
+index 95969db..7b71ed5 100644
+--- a/src/lib/agents/sandbox-runtime.ts
++++ b/src/lib/agents/sandbox-runtime.ts
+@@ -1,0 +2 @@
++import { runHermesRpcTurn } from './hermes-rpc';
+@@ -61 +62 @@
+-export type SandboxAgentRuntimeKind = 'pi' | 'claude-code' | 'dsh';
++export type SandboxAgentRuntimeKind = 'pi' | 'claude-code' | 'dsh' | 'hermes-rpc';
+@@ -96,0 +98 @@
++  maxSteps?: number;
+@@ -1332 +1334 @@
+-  runtimeKind: SandboxAgentRuntimeKind,
++  runtimeKind: keyof typeof SANDBOX_RUNTIME_PACKAGES,
+@@ -1459,0 +1462 @@
++  if (options.runtimeKind === 'hermes-rpc') throw new Error('Hermes RPC uses its own native protocol driver.');
+@@ -1835 +1837,0 @@
+-  const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
+@@ -1836,0 +1839,14 @@
++  if (options.runtimeKind === 'hermes-rpc') {
++    return runHermesRpcTurn(options, {
++      container, workdir, skillRoot, stateRoot: sandboxRuntimeStateRoot('hermes-rpc', options.agentId), mcpServers,
++      history: (options.command ? options.messages : options.messages.slice(0, -1))
++        .filter((message) => message.role === 'user' || message.role === 'assistant')
++        .map((message) => ({ role: message.role, content: buildSandboxTranscript([message]) })),
++      message: buildSandboxTranscript(options.messages.slice(-1)),
++    }, {
++      exec: runTrackedDockerExec, write: writeSandboxFile, remove: removeSandboxFiles,
++      prepareSkills: () => materializeSandboxSkills(container, 'hermes-rpc', skillRoot, options.skills ?? [], options.signal),
++      activities: (activities) => reportActivities(options, activities, mcpServers),
++    });
++  }
++  const binary = await ensureRuntimeInstalled(options.runtimeKind, container, options.signal);
+diff --git a/src/lib/agents/sandbox-turn.ts b/src/lib/agents/sandbox-turn.ts
+index c168c34..60e89d3 100644
+--- a/src/lib/agents/sandbox-turn.ts
++++ b/src/lib/agents/sandbox-turn.ts
+@@ -2,0 +3,3 @@
++import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
++import { bindHermesRpcConversation } from './hermes-rpc-session-binding';
++import { normalizeSandboxWorkingDirectory } from './sandbox-runtime';
+@@ -28,0 +32 @@
++  maxSteps?: number;
+@@ -51 +55 @@
+-  if (runtimeKind !== 'pi' && runtimeKind !== 'claude-code' && runtimeKind !== 'dsh') {
++  if (!isDedicatedSandboxRuntimeKind(runtimeKind)) {
+@@ -80,0 +85,5 @@
++  if (runtimeKind === 'hermes-rpc' && input.runtimeSessionId) {
++    await bindHermesRpcConversation({ workspaceId: input.agent.workspaceId, agentId: input.agent.id,
++      conversationId: input.runtimeSessionId, sandboxId: link.sandboxId, providerId: provider.id,
++      modelId, providerFormat: provider.format, workingDirectory: normalizeSandboxWorkingDirectory(input.workingDirectory) });
++  }
+@@ -99,0 +109 @@
++    maxSteps: input.agent.maxSteps,
+diff --git a/tests/fixtures/fake-hermes-gateway.py b/tests/fixtures/fake-hermes-gateway.py
+new file mode 100644
+index 0000000..5f7c74d
+--- /dev/null
++++ b/tests/fixtures/fake-hermes-gateway.py
+@@ -0,0 +1,65 @@
++"""Deterministic JSON-RPC peer for adapter failure-path tests, not Hermes itself."""
++import json
++from pathlib import Path
++import sys
++import time
++
++context = json.loads(Path(sys.argv[1]).read_text())
++scenario = context.get("scenario", "success")
++sid = "native-session"
++stored = "stored-session"
++
++
++def send(value):
