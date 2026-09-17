@@ -40,7 +40,7 @@ export const executeCollaborationTask: CollaborationExecutor = async (task, sign
   return { text, usage };
 };
 
-async function validateTask(task: AgentCollaborationTask) {
+async function validateTask(task: AgentCollaborationTask, checkAncestors = true) {
   if (task.deadlineAt <= new Date()) throw new CollaborationError('deadline_exceeded', 'Task deadline exceeded.');
   if (!await db.agentCollaborationRun.count({ where: { id: task.rootId, workspaceId: task.workspaceId } })) throw new CollaborationError('authority_removed', 'Root execution authority was removed.');
   await liveEdge(db, task.workspaceId, task.callerAgentId, task.targetAgentId);
@@ -55,10 +55,21 @@ async function validateTask(task: AgentCollaborationTask) {
   if (!run || !run.allowedAgentIds.includes(task.targetAgentId)) throw new CollaborationError('revoked', 'Delegation authority was removed.');
   if (run.workSessionId && !await db.workSession.count({ where: { id: run.workSessionId, workspaceId: task.workspaceId,
     cancelRequestedAt: null, status: { notIn: ['failed', 'cancelling', 'archived'] } } })) throw new CollaborationError('work_canceled', 'Originating Work was canceled or failed.');
-  if (task.ancestorTaskIds.length && await db.agentCollaborationTask.count({ where: { id: { in: task.ancestorTaskIds }, workspaceId: task.workspaceId } }) !== task.ancestorTaskIds.length) throw new CollaborationError('ancestor_removed', 'Ancestor task was removed.');
-  if (task.ancestorTaskIds.length && await db.agentCollaborationTask.count({ where: { id: { in: task.ancestorTaskIds },
-    OR: [{ state: { in: ['failed', 'canceled', 'rejected'] } }, { cancelRequestedAt: { not: null } }] } })) {
-    throw new CollaborationError('ancestor_failed', 'An ancestor task failed or was canceled.');
+  if (checkAncestors && task.ancestorTaskIds.length) {
+    const ancestors = await db.agentCollaborationTask.findMany({ where: {
+      id: { in: task.ancestorTaskIds }, workspaceId: task.workspaceId, rootId: task.rootId,
+    } });
+    if (ancestors.length !== task.ancestorTaskIds.length) throw new CollaborationError('ancestor_removed', 'Ancestor task was removed.');
+    for (const ancestor of ancestors) {
+      if (['failed', 'canceled', 'rejected'].includes(ancestor.state) || ancestor.cancelRequestedAt) {
+        throw new CollaborationError('ancestor_failed', 'An ancestor task failed or was canceled.');
+      }
+      // Completed parents may still have live descendants. Their accepted
+      // resource binding, current delegation edge and human authorization
+      // remain part of the descendant's authority, not just their final state.
+      try { await validateTask(ancestor, false); }
+      catch { throw new CollaborationError('ancestor_revoked', 'An ancestor delegation authority changed.'); }
+    }
   }
 }
 
