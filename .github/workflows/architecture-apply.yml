@@ -1,0 +1,138 @@
+name: architecture-apply
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - '.architecture-repair/**'
+      - '.github/workflows/architecture-apply.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  apply-reviewed-delta:
+    if: >-
+      github.repository == 'asharca/ToolPlane' &&
+      github.event.pull_request.number == 138 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/architecture-130-137'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify and materialize the reviewed delta without moving any ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_PARENT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, re, shutil, subprocess, urllib.request
+
+          REPO = 'asharca/ToolPlane'
+          BASE = 'ba397ad62fa10b59c9bf81339fdf435e960357af'
+          BASE_TREE = '10b8e9496fef5ff2afc57bc5cc1a655dd037818d'
+          RESULT_TREE = '4326168b39c38d11c7d4c85a33dd6fc278d6786d'
+          ARCHIVE_HASH = '8eca80eaca11d99f4b42dff517da738497e234d90f3ed33d4963188e981fd74f'
+          parent = os.environ['EXPECTED_PARENT']
+          root = pathlib.Path.cwd().resolve()
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          assert git('rev-parse', 'HEAD') == parent
+          # The transport commit must descend directly from the inspected branch head.
+          # Checkout's shallow clone may not contain the parent object; fetch is not
+          # required because the git commit header records its parent SHA.
+          header = git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0].splitlines()
+          assert [line[7:] for line in header if line.startswith('parent ')] == [BASE]
+          encoded = ''.join((root / '.architecture-repair' / f'part-{i:02}.b64').read_text() for i in range(8))
+          assert len(encoded) == 88616
+          packed = base64.b64decode(encoded, validate=True)
+          assert len(packed) == 66460 and hashlib.sha256(packed).hexdigest() == ARCHIVE_HASH
+          decoder = lzma.LZMADecompressor(memlimit=128 * 1024 * 1024)
+          decoded = decoder.decompress(packed, max_length=4 * 1024 * 1024)
+          assert decoder.eof and not decoder.unused_data
+          bundle = json.loads(decoded)
+          assert (bundle['base'], bundle['baseTree'], bundle['resultTree']) == (BASE, BASE_TREE, RESULT_TREE)
+          assert len(bundle['files']) == 109
+          entries = []
+          seen = set()
+          allowed_roots = {'src', 'tests', 'scripts', 'docs', 'prisma', 'messages'}
+          allowed_files = {'.env.example', 'AGENTS.md', 'README.md', 'docker-compose.yml'}
+          snapshot = '.github/workflows/architecture-repair-snapshot.yml'
+          digest = lambda data: hashlib.sha256(data).hexdigest()
+          for name, before, after, edits in bundle['files']:
+              rel = pathlib.PurePosixPath(name)
+              assert not rel.is_absolute() and not any(p in ('', '.', '..', '.git') for p in rel.parts)
+              assert str(rel) == name and name not in seen
+              assert rel.parts[0] in allowed_roots or name in allowed_files or (name == snapshot and after is None)
+              seen.add(name)
+              path = root.joinpath(*rel.parts)
+              assert path.resolve().is_relative_to(root) and not path.is_symlink()
+              old = path.read_bytes() if path.exists() else None
+              assert (digest(old) if old is not None else None) == before, f'Unexpected original: {name}'
+              old_mode = git('ls-files', '--stage', '--', name).split(' ', 1)[0] or '100644'
+              assert old_mode in ('100644', '100755')
+              if after is None:
+                  assert old is not None and edits is None
+                  path.unlink()
+                  entries.append({'path': name, 'mode': old_mode, 'type': 'blob', 'sha': None})
+                  continue
+              lines = (old or b'').decode('utf-8').splitlines(keepends=True)
+              previous_end = 0
+              for start, end, text in edits:
+                  assert isinstance(start, int) and isinstance(end, int) and isinstance(text, str)
+                  assert previous_end <= start <= end <= len(lines)
+                  previous_end = end
+              for start, end, text in reversed(edits):
+                  lines[start:end] = text.splitlines(keepends=True)
+              result = ''.join(lines)
+              assert digest(result.encode()) == after, f'Unexpected result: {name}'
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(result.encode())
+              path.chmod(0o755 if old_mode == '100755' else 0o644)
+              entries.append({'path': name, 'mode': old_mode, 'type': 'blob', 'content': result})
+          # No transport helper or payload belongs in the proposed application tree.
+          shutil.rmtree(root / '.architecture-repair')
+          (root / '.github/workflows/architecture-apply.yml').unlink()
+          subprocess.run(['git', 'add', '-A'], check=True)
+          assert git('write-tree') == RESULT_TREE, 'Local tree differs from reviewed content'
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+
+          def api(method, endpoint, body=None):
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{REPO}/{endpoint}',
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json',
+                           'Content-Type': 'application/json',
+                           'User-Agent': 'ToolPlane-reviewed-repair',
+                           'X-GitHub-Api-Version': '2022-11-28'}, method=method)
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+          pr = api('GET', 'pulls/138')
+          assert pr['head']['sha'] == parent and pr['head']['ref'] == 'fix/architecture-130-137'
+          assert pr['state'] == 'open'
+          tree = api('POST', 'git/trees', {'base_tree': BASE_TREE, 'tree': entries})
+          assert tree['sha'] == RESULT_TREE, 'GitHub tree differs from reviewed content'
+          commit = api('POST', 'git/commits', {
+              'message': 'fix: harden toolkit authorization, installation, sync and runtime lifecycle\n\n'
+                         'Implement architecture follow-ups #130 through #137, with bounded Agent diagnostics, '
+                         'attachment reservations, runtime ownership, bilingual contract checks and migrations.\n\n'
+                         'Local validation: 267 unit files, 1777 tests passed, 1 skipped; TypeScript and ESLint passed. '
+                         'Focused migration and DB checks used isolated PGlite; real PostgreSQL, Docker, build and '
+                         'cross-platform CI are not claimed passed by this commit.\n\n'
+                         'Remove temporary repair transport/snapshot workflows. No deployment or main merge.',
+              'tree': RESULT_TREE, 'parents': [parent]})
+          assert re.fullmatch('[0-9a-f]{40}', commit['sha'])
+          result = {'commit': commit['sha'], 'tree': RESULT_TREE, 'parent': parent,
+                    'original': BASE, 'files': len(entries), 'archive_sha256': ARCHIVE_HASH}
+          print('REPAIR_RESULT=' + json.dumps(result, sort_keys=True))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Validated repair commit (no ref moved): `' + commit['sha'] + '`\n\n'
+                            'Tree: `' + RESULT_TREE + '`; 109 files. The native GitHub connection must '
+                            'verify this result before updating the repair branch.\n')
+          PY
