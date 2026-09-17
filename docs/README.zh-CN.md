@@ -12,6 +12,7 @@
 | 文档 | 内容 |
 |---|---|
 | [ARCHITECTURE.md](./ARCHITECTURE.md) ([English](./ARCHITECTURE.en.md)) | **总入口**：技术栈、顶层架构、目录结构、Prisma 领域模型、控制台/后台/JSON API 全貌 |
+| [AGENT_RUNTIMES.zh-CN.md](./AGENT_RUNTIMES.zh-CN.md) ([English](./AGENT_RUNTIMES.md)) | Pi、Claude Code、DSH 实现：执行链路、模型/MCP 代理、原生会话、Skill、事件、安全边界与排障 |
 | [HERMES_AGENT_RUNTIME.md](./HERMES_AGENT_RUNTIME.md) ([English](./HERMES_AGENT_RUNTIME.en.md)) | Hermes 运行时：配置投影、生命周期、网络与凭据边界；完整运行时清单见架构文档 |
 | [SANDBOXES.zh-CN.md](./SANDBOXES.zh-CN.md) ([English](./SANDBOXES.md)) | Agent 沙箱形态：Docker / Connector runtime、MCP tools 暴露、PTY 终端 |
 | [OBSERVABILITY.zh-CN.md](./OBSERVABILITY.zh-CN.md) ([English](./OBSERVABILITY.md)) | 日志/审计模型：`LogEvent` / `LogDetail` / `AuditEvent` 的口径、采集与保留策略 |
