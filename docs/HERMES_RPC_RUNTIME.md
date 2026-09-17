@@ -4,6 +4,8 @@
 
 This guide is for developers and operators configuring Hermes RPC. `hermes-rpc` runs the native Hermes backend in a selected ordinary Docker sandbox with platform models, MCP, Skills and Toolkits. It is independent of [managed `hermes`](./HERMES_AGENT_RUNTIME.en.md): no existing Agent is migrated, and no legacy container or `/opt/data` volume is accessed.
 
+Platform sub-agent bindings enable the scoped collaboration MCP and durable task service. This is separate from native delegation toolsets; Work-origin tasks require explicit user authorization. [Agent collaboration](./AGENT_COLLABORATION.md).
+
 ## Usage
 
 Choose **Hermes RPC** in **Agents → New Agent**, configure a workspace Provider, model, system prompt and step limit, and select an unassigned Docker sandbox or create a new one. MCP, Skill and Toolkit selection uses the existing resource pages; bindings can later be edited in Agent settings.

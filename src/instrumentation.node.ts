@@ -134,6 +134,7 @@ async function registerNodeOwned() {
   try {
     const { startWorkCoordinator } = await import('@/lib/work/coordinator');
     await startWorkCoordinator();
+    await (await import('@/lib/agents/collaboration/worker')).startCollaborationCoordinator();
   } catch (error) {
     failed = true;
     systemLog('error', '[work] startup reconcile failed', error);

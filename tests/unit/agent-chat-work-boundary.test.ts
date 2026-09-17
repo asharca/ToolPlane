@@ -78,7 +78,7 @@ describe('Chat and Work execution boundary', () => {
     });
     mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.messageFindMany.mockResolvedValue([]);
-    mocks.resolveAgentTools.mockReturnValue({ skills: [], deploymentIds: [] });
+    mocks.resolveAgentTools.mockReturnValue({ skills: [], deploymentIds: [], subAgents: [] });
     mocks.runDedicatedSandboxTurn.mockResolvedValue('done');
   });
 

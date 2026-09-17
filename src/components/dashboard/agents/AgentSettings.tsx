@@ -14,6 +14,8 @@ import type { AgentChannelConnectionClientView } from '@/lib/agents/channel-conn
 import type { AgentMarketSetupGuide } from '@/lib/agents/market-setup';
 import type { AgentEndpointView } from '@/components/dashboard/agents/AgentApiPanel';
 
+const AgentCollaborationPanel = dynamic(() => import('@/components/dashboard/agents/AgentCollaborationPanel').then((module) => module.AgentCollaborationPanel));
+
 const AgentMessagingPanel = dynamic(() =>
   import('@/components/dashboard/agents/AgentMessagingPanel').then(
     (module) => module.AgentMessagingPanel,
@@ -82,7 +84,7 @@ type AgentApiSettingsData = {
   canManage: boolean;
 };
 
-type SettingsTab = AgentSettingsSection | 'channels' | 'api' | 'profiles' | 'hermes' | 'terminal';
+type SettingsTab = AgentSettingsSection | 'collaboration' | 'channels' | 'api' | 'profiles' | 'hermes' | 'terminal';
 type InitialSettingsTab = SettingsTab | 'agent';
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -120,6 +122,7 @@ function resolveSettingsTab({
     ? 'general'
     : initialSettingsTab ?? 'general';
   if (isAgentSettingsSection(requested)) return requested;
+  if (requested === 'collaboration' && !isHermesRuntime) return requested;
   if (requested === 'channels' && supportsChannelSettings) return requested;
   if (requested === 'api' && supportsApiSettings) return requested;
   if (isHermesRuntime && ['profiles', 'hermes', 'terminal'].includes(requested)) return requested;
@@ -183,6 +186,7 @@ export function AgentSettings({
     { id: 'toolkits', label: t('toolkits') },
     { id: 'sandboxes', label: t('sandboxes') },
     { id: 'subAgents', label: t('subAgents') },
+    ...(!isHermesRuntime ? [{ id: 'collaboration' as const, label: t('collaboration.title') }] : []),
     { id: 'advanced', label: t('advanced') },
     { id: 'channels' as const, label: t('channelSettingsTab') },
     ...(isHermesRuntime
@@ -264,6 +268,8 @@ export function AgentSettings({
               showNavigation={false}
               className="mx-auto w-full max-w-2xl space-y-4 px-5 py-6 sm:px-6"
             />
+          ) : settingsTab === 'collaboration' && !isHermesRuntime ? (
+            <AgentCollaborationPanel slug={slug} agentId={agentId} />
           ) : settingsTab === 'channels' && supportsChannelSettings ? (
             <div className="mx-auto h-full w-full max-w-6xl">
               <AgentMessagingPanel

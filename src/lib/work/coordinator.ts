@@ -728,6 +728,7 @@ async function executeWork(workSessionId: string) {
     resolved.skills = resolved.skills.filter((skill) =>
       !skillIds || skillIds.has((skill as { id?: string }).id ?? ''));
     // Work V1 cannot propagate per-tool approvals through nested Agent runs.
+    const collaborationTargets = resolved.subAgents.map((sub) => sub.id);
     resolved.subAgents = [];
     if (resolved.knowledgeBases && knowledgeBaseIds) {
       resolved.knowledgeBases = resolved.knowledgeBases.filter((link) => knowledgeBaseIds.has(link.knowledgeBase.id));
@@ -888,6 +889,7 @@ async function executeWork(workSessionId: string) {
         workSystemPrompt(workingDirectory, true),
       ].filter(Boolean).join('\n\n---\n\n');
       response = await runDedicatedSandboxTurn({
+        collaboration: { targetIds: collaborationTargets, workSessionId: work.id },
         agent,
         sandboxId: work.sandbox.id,
         systemPrompt: system,

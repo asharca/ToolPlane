@@ -314,6 +314,7 @@ async function runLoadedAgentMessage(params: {
     const resolved = resolveAgentTools(agent);
     if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
       text = await runDedicatedSandboxTurn({
+        collaboration: { targetIds: resolved.subAgents.map((sub) => sub.id) },
         agent,
         sandboxId: params.sandboxId,
         runtimeSessionId: conversation.id,

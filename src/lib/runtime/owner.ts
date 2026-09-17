@@ -100,6 +100,7 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
     g.__toolplaneStopTimers?.();
     const stop = async () => {
       const work = await import('@/lib/work/coordinator'); work.stopWorkCoordinator();
+      (await import('@/lib/agents/collaboration/worker')).stopCollaborationCoordinator();
       const channels = await import('@/lib/agents/channel-runtime');
       const connectors = await import('@/lib/sandboxes/connector-broker');
       const dashboard = await import('@/lib/agents/hermes/dashboard-broker');

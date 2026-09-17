@@ -1382,7 +1382,33 @@
       "marketSetupEnvironmentRequirement": "Set the {variable} environment variable for this MCP deployment.",
       "marketSetupConfigureMcp": "Configure MCP",
       "marketSetupRuntimeRequirement": "Finish configuring the {runtime} runtime sandbox.",
-      "marketSetupConfigureRuntime": "Configure runtime"
+      "marketSetupConfigureRuntime": "Configure runtime",
+      "collaboration": {
+        "title": "Agent collaboration",
+        "description": "Select permitted Agents in Sub-agents. Delegated tasks run in the target’s own sandbox. Results are not automatically posted back after the calling turn ends; read them here or in the next turn.",
+        "approvalWarning": "Approving a Work delegation authorizes this task to use the target Agent’s configured model, sandbox, MCP and Skills. This is task-level consent, not approval of each native tool call. Do not approve targets you do not trust.",
+        "loadFailed": "Could not load collaboration tasks.",
+        "actionFailed": "The action failed or the task changed. Refresh and check its state before retrying.",
+        "empty": "No collaboration tasks yet.",
+        "approve": "Authorize task",
+        "reject": "Reject",
+        "answer": "Additional information",
+        "continue": "Send input",
+        "cancel": "Cancel task",
+        "cancelPending": "Cancellation requested; waiting for the runtime to stop.",
+        "result": "Result",
+        "limit": "Showing the latest 50 tasks.",
+        "states": {
+          "submitted": "Queued",
+          "working": "Working",
+          "input-required": "Needs input",
+          "auth-required": "Needs authorization",
+          "completed": "Completed",
+          "failed": "Failed",
+          "canceled": "Canceled",
+          "rejected": "Rejected"
+        }
+      }
     },
     "conversationOperations": {
       "channelCommandOnly": "/new is only available in messaging channels. Use New task from the + menu here.",

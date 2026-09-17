@@ -4,6 +4,8 @@
 
 本文面向配置或维护 Hermes RPC 的开发者与部署者。`hermes-rpc` 在所选普通 Docker 沙箱内运行 Hermes 原生后端，使用平台模型、MCP、Skill 和 Toolkit；它与原有 [`hermes` 托管模式](./HERMES_AGENT_RUNTIME.md)独立，不迁移旧 Agent，也不访问旧容器或 `/opt/data` 卷。
 
+关联平台子 Agent 后可启用受限协作 MCP 和持久化任务服务。这与原生委派工具组不同，Work 发起的任务需要显式用户授权。 [Agent 间协作](./AGENT_COLLABORATION.zh-CN.md)。
+
 ## 使用
 
 在 **Agents → New Agent** 选择 **Hermes RPC**，配置工作区内的 Provider、模型、系统提示词和执行步数，再选择未分配的 Docker 沙箱或自动创建一个。MCP、Skill 和 Toolkit 使用原有资源选择页；后续可在 Agent 设置中调整。

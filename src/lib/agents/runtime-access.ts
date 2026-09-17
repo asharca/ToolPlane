@@ -13,6 +13,7 @@ export type AgentRuntimeTokenPayload = {
   providerId: string;
   deploymentIds: string[];
   exp: number;
+  collaborationRunId?: string;
   traceId?: string;
   parentSpanId?: string;
 };
@@ -47,6 +48,7 @@ export async function createAgentRuntimeToken(
     || !validId(payload.agentId)
     || !validId(payload.sandboxId)
     || !validId(payload.providerId)
+    || (payload.collaborationRunId !== undefined && !validId(payload.collaborationRunId))
     || !validDeploymentIds(payload.deploymentIds)
     || !Number.isSafeInteger(payload.exp)
     || payload.exp <= issuedAt
@@ -61,6 +63,7 @@ export async function createAgentRuntimeToken(
     sandboxId: payload.sandboxId,
     providerId: payload.providerId,
     deploymentIds: [...new Set(payload.deploymentIds)],
+    ...(payload.collaborationRunId ? { collaborationRunId: payload.collaborationRunId } : {}),
     traceId: getLogContext()?.traceId,
     parentSpanId: getLogContext()?.spanId,
   })
@@ -91,6 +94,7 @@ export async function verifyAgentRuntimeToken(
       || !validId(payload.agentId)
       || !validId(payload.sandboxId)
       || !validId(payload.providerId)
+      || (payload.collaborationRunId !== undefined && !validId(payload.collaborationRunId))
       || !validDeploymentIds(payload.deploymentIds)
       || typeof issuedAt !== 'number'
       || typeof expiresAt !== 'number'
@@ -106,6 +110,7 @@ export async function verifyAgentRuntimeToken(
       sandboxId: payload.sandboxId,
       providerId: payload.providerId,
       deploymentIds: [...new Set(payload.deploymentIds)],
+      ...(typeof payload.collaborationRunId === 'string' ? { collaborationRunId: payload.collaborationRunId } : {}),
       exp: expiresAt,
       ...(typeof payload.traceId === 'string' ? { traceId: payload.traceId } : {}),
       ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),
@@ -179,4 +184,8 @@ export function runtimeProviderUrl(
   url.search = search;
   url.hash = '';
   return url.toString();
+}
+
+export function runtimeCollaborationMcpUrl(runId: string): string {
+  return `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/collaboration/${encodeURIComponent(runId)}/mcp`;
 }
