@@ -137,7 +137,7 @@ Shared UI source is in the separate `asharca/ui` repository. ToolPlane consumes 
 
 `Deployment.mcpToolExposure` / `mcpAllowedTools` control tool exposure; `publicInvocable` is an additional public-invocation gate. An `ApiToken` may be restricted to a Toolkit and must not be treated as an account-level token.
 
-[`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) defines the runtime identifiers `pi`, `claude-code`, `dsh`, and `hermes`. The internal filename `native.ts` does not establish a selectable `native` runtime.
+[`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) defines the runtime identifiers `pi`, `claude-code`, `dsh`, `hermes`, and `hermes-rpc`. The internal filename `native.ts` does not establish a selectable `native` runtime.
 
 ## 6. Auth & Sessions
 
@@ -256,3 +256,5 @@ Versions are defined in `package.json` and CHANGELOG. See [RELEASES.md](./RELEAS
 The public Agent API supports one runtime-owning application process. A process-local supervisor, execution queue, and maintenance gate do not become multi-replica-safe merely because Postgres is used. Workspace deletion also has single-process cleanup/deduplication boundaries; distributed leases and coordination are needed before expanding that topology.
 
 Logging is bounded best-effort diagnostics, not a lossless external queue. Diagnostic capture may retain sanitized user text; redaction is not anonymization. Public Agent API and Agent Control MCP payload policies differ; consult their respective topic documents.
+
+The independent [Hermes RPC sandbox runtime](./HERMES_RPC_RUNTIME.md) uses platform single-model/resource bindings; managed Hermes is unchanged.

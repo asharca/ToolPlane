@@ -262,6 +262,7 @@ function runtimeLabel(kind: string | null | undefined): string {
   if (kind === 'claude-code') return 'Claude Code';
   if (kind === 'dsh') return 'DeepSeek Harness';
   if (kind === 'hermes') return 'Hermes';
+  if (kind === 'hermes-rpc') return 'Hermes RPC';
   return 'Pi';
 }
 

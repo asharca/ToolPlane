@@ -290,7 +290,7 @@ describe('agents mutations', () => {
     });
     const before = await db.agent.count({ where: { workspaceId } });
 
-    for (const runtime of ['pi', 'claude-code', 'dsh'] as const) {
+    for (const runtime of ['pi', 'claude-code', 'dsh', 'hermes-rpc'] as const) {
       const selectedProviderId = runtime === 'claude-code' ? anthropic.id : providerId;
       await expect(createConfiguredAgent(workspaceId, cfg(selectedProviderId), tools([dockerOne.id, dockerTwo.id]), { runtime }))
         .rejects.toThrow('requires exactly one Docker sandbox');

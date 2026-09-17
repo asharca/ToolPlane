@@ -1081,6 +1081,8 @@ model Conversation {
   // even though its database primary key must be new.
   runtimeSessionId      String?
   runtimeSessionKey     String?
+  // Independent binding for sandbox Hermes RPC; never replaces channel routing keys.
+  hermesRpcBinding      String?
   // null profile means Hermes' default profile. null provider/model means the
   // conversation follows that profile's configured default model.
   hermesProfile         String?

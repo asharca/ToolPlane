@@ -137,7 +137,7 @@ tests/                         单元、集成测试及替身
 
 `Deployment.mcpToolExposure` / `mcpAllowedTools` 决定工具暴露范围；`publicInvocable` 是公共调用的额外闸门。`ApiToken` 可以限定到 Toolkit；不要把它等同于账户级 Token。
 
-运行时标识由 [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) 定义为 `pi`、`claude-code`、`dsh`、`hermes`。文件名 `native.ts` 并不代表存在一个可选的 `native` runtime。
+运行时标识由 [`runtime-kind.ts`](../src/lib/agents/runtime-kind.ts) 定义为 `pi`、`claude-code`、`dsh`、`hermes`、`hermes-rpc`。文件名 `native.ts` 并不代表存在一个可选的 `native` runtime。
 
 ## 6. 认证与会话
 
@@ -256,3 +256,5 @@ pnpm connector:dev  # 用户主机侧 Connector
 Agent 公共 API 只支持一个拥有 runtime 的应用进程；进程内 supervisor、执行队列和维护闸门并不因使用 Postgres 就变为多副本安全。工作区删除的去重和清理同样有单进程边界，扩展部署前需补充分布式租约与协调。
 
 日志是有界、尽力而为的诊断存储，不是无损外部队列。诊断抓取可能保存经过脱敏的用户文本；脱敏不等于匿名化。公共 Agent API 与 Agent Control MCP 的载荷策略不同，分别以对应专题说明为准。
+
+独立的 [Hermes RPC 沙箱运行时](./HERMES_RPC_RUNTIME.zh-CN.md)使用平台单模型与资源绑定，原托管 Hermes 保持不变。

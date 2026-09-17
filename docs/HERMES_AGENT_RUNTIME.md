@@ -8,9 +8,11 @@
 
 ToolPlane 拥有 workspace、权限、模型服务商配置、MCP/Skill 选择、频道凭据、生命周期、审计和 UI。Hermes 作为一种可选 runtime，负责会话、长期记忆、工具循环、文件工作区、Skills、Cron 和其他 Hermes 原生能力。
 
-平台当前 runtime 标识为 `pi`、`claude-code`、`dsh`、`hermes`，不是旧的 Native/Hermes 二选一。Pi、Claude Code、DSH 使用专属沙箱；Hermes 为每个 Agent 创建专属容器、持久卷和 runtime 凭据。内部 `native.ts` 文件不代表可选择 `runtime: "native"`。完整清单见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+平台当前 runtime 标识为 `pi`、`claude-code`、`dsh`、`hermes`、`hermes-rpc`，不是旧的 Native/Hermes 二选一。Pi、Claude Code、DSH 使用专属沙箱；Hermes 为每个 Agent 创建专属容器、持久卷和 runtime 凭据。内部 `native.ts` 文件不代表可选择 `runtime: "native"`。完整清单见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 Hermes 不是 ToolPlane 的数据库或授权源。容器不获得 Postgres 访问或用户级 ToolPlane API Token；但是所选模型服务商的密钥会写入该 Agent 的私有 Hermes 配置卷。这与“不向公共接口暴露凭据”是两个不同边界。
+
+另有独立的 [`hermes-rpc` 沙箱模式](./HERMES_RPC_RUNTIME.zh-CN.md)，不复用本文的专属资源和配置路径。
 
 ## 2. 创建与升级
 

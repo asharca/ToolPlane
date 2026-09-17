@@ -72,7 +72,7 @@ describe('buildAgentToolSet', () => {
     expect(Object.keys(set).sort()).toEqual(['skill_list_attached', 'skill_read_file', 'skill_run_script']);
   });
 
-  it.each(['pi', 'claude-code', 'dsh'])('delegates %s through the sandbox runner with the prompt', async (runtimeKind) => {
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('delegates %s through the sandbox runner with the prompt', async (runtimeKind) => {
     const runModel = vi.fn<RunDeps['runModel']>(async () => 'FROM_SUB');
     const runSandboxModel = vi.fn<NonNullable<RunDeps['runSandboxModel']>>(async () => 'FROM_SUB');
     const set = await buildAgentToolSet(

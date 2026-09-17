@@ -1,0 +1,41 @@
+name: hermes-rpc
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/*hermes-rpc*'
+      - 'src/lib/agents/hermes-rpc*'
+      - 'tests/**/hermes-rpc*'
+      - '.github/workflows/hermes-rpc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-rpc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify cold installation and native protocol in an isolated Docker sandbox
+        shell: bash
+        run: |
+          docker run --rm --init --cpus=2 --memory=3g --pids-limit=512 \
+            --security-opt=no-new-privileges \
+            -v "$PWD:/opt/toolplane:ro" \
+            mcr.microsoft.com/devcontainers/javascript-node:24-bookworm \
+            bash -euc '
+              root=/workspace/.toolplane/runtime-packages/hermes-rpc-3c27eb6234bf91b8ceee9e9071591b31e9b148cb
+              mkdir -p "$root"
+              flock -n "$root/.install.lock" node /opt/toolplane/scripts/install-hermes-rpc.mjs "$root"
+              HERMES_RPC_SOURCE="$root/source" \
+              HERMES_RPC_PYTHONPATH="$root/source/.venv/lib/python3.13/site-packages" \
+              "$root/source/.venv/bin/python" /opt/toolplane/tests/fixtures/hermes-rpc-native-check.py
+            '

@@ -29,7 +29,7 @@ describe('production capabilities and bilingual documentation contracts', () => 
     await expect(executeAgentControlTool({ workspaceId: 'ws', workspaceSlug: 'acme' }, request.params.name, request.params.arguments)).resolves.toEqual({ id: 'example-agent' });
     expect(control.create).toHaveBeenLastCalledWith('ws', 'acme', expect.objectContaining({ runtime: 'pi', maxSteps: 100 }));
   });
-  it.each(['native', 'claude-code', 'dsh'])('keeps unsupported Control MCP creation runtime %s rejected', async (runtime) => {
+  it.each(['native', 'claude-code', 'dsh', 'hermes-rpc'])('keeps unsupported Control MCP creation runtime %s rejected', async (runtime) => {
     control.create.mockClear();
     await expect(executeAgentControlTool({ workspaceId: 'ws', workspaceSlug: 'acme' }, 'create_agent', { name: 'No side effect', runtime })).rejects.toMatchObject({ code: 'invalid_arguments' });
     expect(control.create).not.toHaveBeenCalled();
@@ -40,7 +40,7 @@ describe('production capabilities and bilingual documentation contracts', () => 
     expect(create.inputSchema.properties.runtime.enum).toEqual(AGENT_CONTROL_RUNTIME_KINDS);
     expect(agentRuntimeCapabilities('native')).toBeNull();
     expect(agentRuntimeCapabilities('hermes')).toMatchObject({ attachments: true, providerBinding: 'multiple' });
-    for (const kind of ['pi', 'claude-code', 'dsh']) expect(agentRuntimeCapabilities(kind)).toMatchObject({ attachments: false, providerBinding: 'single' });
+    for (const kind of ['pi', 'claude-code', 'dsh', 'hermes-rpc']) expect(agentRuntimeCapabilities(kind)).toMatchObject({ attachments: false, providerBinding: 'single' });
   });
   it.each(['TOOLKIT_SYNC.md', 'TOOLKIT_SYNC.en.md'])('applies the documented full snapshot in %s using the actual sync client', (file) => {
     const examples = [...read(file).matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));

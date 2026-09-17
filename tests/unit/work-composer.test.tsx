@@ -31,7 +31,7 @@ async function customize(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('Work composer', () => {
-  it.each(['pi', 'claude-code', 'dsh'])('offers only %s commands through /, completes without executing, and keeps + unchanged', async (runtimeKind) => {
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('offers only %s commands through /, completes without executing, and keeps + unchanged', async (runtimeKind) => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(<Composer runtimeKind={runtimeKind} onSubmit={onSubmit} />);

@@ -1,4 +1,5 @@
 import 'server-only';
+import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
 import { db } from '@/lib/db';
 import { appendWorkSessionInput } from '@/lib/work/sessions';
 import { getAgentForRun } from './queries';
@@ -45,7 +46,7 @@ export async function executeRuntimeCommand(input: {
       kickWorkCoordinator();
       return { kind: 'queued' as const, workSessionId: work.id };
     }
-    if (kind !== 'dsh' && kind !== 'claude-code' && kind !== 'pi') throw new RuntimeCommandError('unsupportedCommand');
+    if (!isDedicatedSandboxRuntimeKind(kind)) throw new RuntimeCommandError('unsupportedCommand');
     const sandboxId = input.sandboxId ?? agent.sandboxes[0]?.sandboxId;
     const resolved = resolveAgentTools(agent, sandboxId);
     let commands = sessionRuntimeCommands(kind, conversation.messages);

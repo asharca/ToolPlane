@@ -403,6 +403,27 @@ describe('AgentsBrowser', () => {
     expect(formData.getAll('sandboxId')).toEqual([]);
   });
 
+  it('creates Hermes RPC with a selected ordinary sandbox without using managed Hermes settings', async () => {
+    const user = userEvent.setup();
+    render(<AgentsBrowser slug="acme" agents={[]} createOptions={{ ...configuredCreateOptions,
+      sandboxes: [{ id: 'sandbox-available', label: 'Selected Linux sandbox' }],
+      deployments: [{ id: 'mcp-1', label: 'Selected MCP' }], skills: [{ id: 'skill-1', label: 'Selected Skill' }],
+    }} />);
+    await openBlankCreate(user);
+    await user.click(screen.getByRole('radio', { name: /Hermes RPC/ }));
+    await user.type(screen.getByLabelText('Name'), 'Native Hermes');
+    await user.selectOptions(screen.getByRole('combobox', { name: /Runtime sandbox/ }), 'sandbox-available');
+    await advanceToCreate(user);
+    await user.click(screen.getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
+    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
+    expect(formData.get('runtime')).toBe('hermes-rpc');
+    expect(formData.getAll('sandboxId')).toEqual(['sandbox-available']);
+    expect(formData.get('providerId')).toBe('provider-1');
+    expect(formData.get('model')).toBe('gpt-4.1');
+    expect(formData.has('hermesImage')).toBe(false);
+  });
+
   it('includes an optional system prompt for a Pi agent', async () => {
     const user = userEvent.setup();
     render(

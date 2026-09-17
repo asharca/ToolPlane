@@ -336,6 +336,9 @@ for (const [entry, description] of [
   ['scripts/mcp-server.mjs', 'built-in MCP runtime'],
   ['scripts/mcp-http-bridge.mjs', 'remote MCP runtime'],
   ['scripts/sandbox-mcp-server.mjs', 'sandbox MCP runtime'],
+  ['scripts/install-hermes-rpc.mjs', 'pinned Hermes RPC sandbox installer'],
+  ['scripts/hermes-rpc-session.mjs', 'Hermes RPC protocol adapter'],
+  ['scripts/hermes-rpc-bootstrap.py', 'Hermes RPC isolated native bootstrap'],
   ['packages/connector/bin/runtime.mjs', 'connector package runtime'],
   ['prisma/schema.prisma', 'Prisma schema'],
 ]) {

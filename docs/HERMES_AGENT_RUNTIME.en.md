@@ -8,9 +8,11 @@ This document explains configuration ownership, persistence, networking, and ope
 
 ToolPlane owns workspaces, permissions, provider configuration, MCP/Skill selection, channel credentials, lifecycle, auditing, and UI. Hermes is one optional runtime responsible for sessions, long-term memory, the tool loop, its file workspace, Skills, Cron, and other Hermes-native capabilities.
 
-The current platform runtime identifiers are `pi`, `claude-code`, `dsh`, and `hermes`, not the former Native/Hermes pair. Pi, Claude Code, and DSH use dedicated sandboxes; Hermes gets a dedicated container, persistent volume, and runtime credentials per agent. The internal `native.ts` filename does not make `runtime: "native"` selectable. See [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) for the full inventory.
+The current platform runtime identifiers are `pi`, `claude-code`, `dsh`, `hermes`, and `hermes-rpc`, not the former Native/Hermes pair. Pi, Claude Code, and DSH use dedicated sandboxes; Hermes gets a dedicated container, persistent volume, and runtime credentials per agent. The internal `native.ts` filename does not make `runtime: "native"` selectable. See [ARCHITECTURE.en.md](./ARCHITECTURE.en.md) for the full inventory.
 
 Hermes is not ToolPlane's database or authorization source. Containers receive neither Postgres access nor user-level ToolPlane API tokens. Selected model-provider keys are, however, written into the agent's private Hermes configuration volume. This is a different boundary from not exposing credentials through public APIs.
+
+An independent [`hermes-rpc` sandbox mode](./HERMES_RPC_RUNTIME.md) does not reuse the dedicated resources or configuration paths described here.
 
 ## 2. Creation and Upgrades
 
