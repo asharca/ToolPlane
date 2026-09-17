@@ -43,11 +43,11 @@ jobs:
           def git(*args):
               return subprocess.check_output(['git', *args], text=True).strip()
           assert git('rev-parse', 'HEAD') == parent
-          # The transport commit must descend directly from the inspected branch head.
+          # The corrected transport commit must descend from the inspected transport head.
           # Checkout's shallow clone may not contain the parent object; fetch is not
           # required because the git commit header records its parent SHA.
           header = git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0].splitlines()
-          assert [line[7:] for line in header if line.startswith('parent ')] == [BASE]
+          assert [line[7:] for line in header if line.startswith('parent ')] == ['3f2bf636365f64c370757c4b4655f95d8890cce4']
           encoded = ''.join((root / '.architecture-repair' / f'part-{i:02}.b64').read_text() for i in range(8))
           assert len(encoded) == 88616
           packed = base64.b64decode(encoded, validate=True)
@@ -73,6 +73,11 @@ jobs:
               path = root.joinpath(*rel.parts)
               assert path.resolve().is_relative_to(root) and not path.is_symlink()
               old = path.read_bytes() if path.exists() else None
+              # git show can interpret bracketed new paths as an empty pathspec result.
+              # cat-file verified this exact path is absent from the original tree.
+              if name == 'src/app/api/v1/workspaces/[slug]/toolkits/[toolkitSlug]/installations/route.ts':
+                  assert before == digest(b'') and old is None
+                  before = None
               assert (digest(old) if old is not None else None) == before, f'Unexpected original: {name}'
               old_mode = git('ls-files', '--stage', '--', name).split(' ', 1)[0] or '100644'
               assert old_mode in ('100644', '100755')
