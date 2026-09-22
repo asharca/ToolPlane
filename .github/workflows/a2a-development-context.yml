@@ -23,7 +23,7 @@ jobs:
       - name: Prepare source and pinned SDK without production credentials
         run: |
           pnpm install --frozen-lockfile
-          pnpm add --save-exact @a2a-js/sdk@1.2.0
+          pnpm add -w --save-exact @a2a-js/sdk@1.2.0
           pnpm exec prisma generate
           mkdir -p /tmp/a2a-context
           git archive HEAD | tar -x -C /tmp/a2a-context
