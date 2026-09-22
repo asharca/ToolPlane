@@ -26,7 +26,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/a2a-source"
           git archive HEAD | tar -x -C "$RUNNER_TEMP/a2a-source"
           cd "$RUNNER_TEMP/a2a-source"
-          pnpm add --save-exact --ignore-scripts @a2a-js/sdk@1.2.0
+          pnpm add -w --save-exact --ignore-scripts @a2a-js/sdk@1.2.0
           pnpm db:generate
           tar -czf "$RUNNER_TEMP/a2a-development.tgz" .
       - uses: actions/upload-artifact@v4
