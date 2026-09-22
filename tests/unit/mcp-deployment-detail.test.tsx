@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   listMcpTools: vi.fn(),
   listSandboxes: vi.fn(),
   sandboxFindFirst: vi.fn(),
+  getDeploymentRuntimeLogChunk: vi.fn(),
+  getDeploymentRuntimeSnapshot: vi.fn(),
   redirect: vi.fn(),
   status: 'running',
 }));
@@ -55,7 +57,8 @@ vi.mock('@/lib/db', () => ({
 }));
 vi.mock('@/lib/process/supervisor', () => ({
   effectiveStatus: () => mocks.status,
-  getDeploymentRuntimeSnapshot: vi.fn(),
+  getDeploymentRuntimeLogChunk: mocks.getDeploymentRuntimeLogChunk,
+  getDeploymentRuntimeSnapshot: mocks.getDeploymentRuntimeSnapshot,
 }));
 vi.mock('@/lib/process/mcp-client', () => ({ listMcpTools: mocks.listMcpTools }));
 vi.mock('@/lib/sandboxes/queries', () => ({ listSandboxes: mocks.listSandboxes }));
@@ -86,7 +89,11 @@ vi.mock('@/components/dashboard/VariablesEditor', () => ({ VariablesEditor: () =
 vi.mock('@/components/dashboard/McpJsonConfigEditor', () => ({ McpJsonConfigEditor: () => null }));
 vi.mock('@/components/dashboard/RuntimeFilesEditor', () => ({ RuntimeFilesEditor: () => null }));
 vi.mock('@/components/dashboard/DeploymentLogs', () => ({ DeploymentLogs: () => null }));
-vi.mock('@/components/dashboard/ContainerLogs', () => ({ ContainerLogs: () => null }));
+vi.mock('@/components/dashboard/ContainerLogs', () => ({
+  ContainerLogs: ({ initialLogs }: { initialLogs?: { text?: string } }) => (
+    <pre data-testid="runtime-logs">{initialLogs?.text}</pre>
+  ),
+}));
 vi.mock('@/components/dashboard/ProvisioningRefresher', () => ({ ProvisioningRefresher: () => null }));
 vi.mock('@/components/dashboard/SafeStreamdown', () => ({ SafeStreamdown: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/dashboard/SubmitButton', () => ({ SubmitButton: ({ children }: { children: React.ReactNode }) => <button>{children}</button> }));
@@ -136,6 +143,14 @@ describe('workspace MCP deployment detail', () => {
     mocks.listMcpTools.mockResolvedValue(tools);
     mocks.listSandboxes.mockResolvedValue([]);
     mocks.sandboxFindFirst.mockResolvedValue(null);
+    mocks.getDeploymentRuntimeLogChunk.mockReturnValue({
+      generation: null,
+      cursor: 0,
+      nextCursor: 0,
+      reset: false,
+      text: '',
+    });
+    mocks.getDeploymentRuntimeSnapshot.mockReturnValue(null);
   });
 
   it('shows catalog metadata and the saved tool count without querying the runtime', async () => {
@@ -178,6 +193,27 @@ describe('workspace MCP deployment detail', () => {
       '/app/acme/mcp/deployment-1/tools/search_products',
     );
     expect(screen.getByText('Playground')).toBeInTheDocument();
+  });
+
+  it('renders captured runtime output on the initial logs page', async () => {
+    mocks.getDeploymentRuntimeLogChunk.mockReturnValue({
+      generation: 'generation-1',
+      cursor: 0,
+      nextCursor: 15,
+      reset: false,
+      text: 'startup failed\n',
+    });
+
+    render(await DeploymentInspectorPage({
+      params: Promise.resolve({ workspace: 'acme', deploymentId: 'deployment-1' }),
+      searchParams: Promise.resolve({ tab: 'logs' }),
+    }));
+
+    expect(screen.getByTestId('runtime-logs')).toHaveTextContent('startup failed');
+    expect(mocks.getDeploymentRuntimeLogChunk).toHaveBeenCalledWith(
+      'deployment-1',
+      { limit: 64 * 1024 },
+    );
   });
 
   it('uses the managed runtime for a self-created remote MCP without an inspector', async () => {

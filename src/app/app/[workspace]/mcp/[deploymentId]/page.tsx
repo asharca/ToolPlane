@@ -22,6 +22,7 @@ import { db } from '@/lib/db';
 import { originFromHeaders } from '@/lib/http/origin';
 import {
   effectiveStatus,
+  getDeploymentRuntimeLogChunk,
   getDeploymentRuntimeSnapshot,
 } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
@@ -245,6 +246,9 @@ export default async function DeploymentInspectorPage({
   const logs = current === 'logs' ? await getDeploymentLogs(ws.id, deploymentId, 100, user.id) : [];
   const runtimeSnapshot = current === 'logs'
     ? getDeploymentRuntimeSnapshot(deploymentId)
+    : null;
+  const initialRuntimeLogs = current === 'logs'
+    ? getDeploymentRuntimeLogChunk(deploymentId, { limit: 64 * 1024 })
     : null;
   const playgroundAvailable = dep.source === 'remote' || running;
   const inspectorSandboxes = current === 'tools' && playgroundAvailable && !defaultRemoteRuntime
@@ -792,6 +796,7 @@ export default async function DeploymentInspectorPage({
                 key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
                 deploymentId={deploymentId}
                 initialSnapshot={runtimeSnapshot}
+                initialLogs={initialRuntimeLogs}
                 initialStatus={status}
                 title={t('runtimeLogs')}
                 refreshLabel={t('refreshLogs')}

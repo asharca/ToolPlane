@@ -67,6 +67,7 @@ function keepRecentLogText(value: string): { text: string; trimmed: boolean } {
 export function ContainerLogs({
   deploymentId,
   initialSnapshot,
+  initialLogs,
   initialStatus,
   title,
   refreshLabel,
@@ -81,6 +82,7 @@ export function ContainerLogs({
 }: {
   deploymentId: string;
   initialSnapshot: DeploymentRuntimeSnapshotView | null;
+  initialLogs: DeploymentRuntimeLogChunkView | null;
   initialStatus: string;
   title: string;
   refreshLabel: string;
@@ -96,11 +98,14 @@ export function ContainerLogs({
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<DeploymentRuntimeSnapshotView | null>(initialSnapshot);
   const [runtimeStatus, setRuntimeStatus] = useState(initialSnapshot?.status ?? initialStatus);
-  const [logView, setLogView] = useState<RuntimeLogView>({ text: '', truncated: false });
+  const [logView, setLogView] = useState<RuntimeLogView>({
+    text: initialLogs?.text ?? '',
+    truncated: Boolean(initialLogs?.truncated),
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState(false);
-  const generationRef = useRef<string | null>(initialSnapshot?.generation ?? null);
-  const cursorRef = useRef(0);
+  const generationRef = useRef<string | null>(initialLogs?.generation ?? initialSnapshot?.generation ?? null);
+  const cursorRef = useRef(initialLogs?.nextCursor ?? 0);
   const statusRef = useRef(initialSnapshot?.status ?? initialStatus);
   const inFlightRef = useRef(false);
   const hasLogs = Boolean(logView.text.trim());
@@ -228,7 +233,11 @@ export function ContainerLogs({
       </div>
 
       {hasLogs ? (
-        <pre className="max-h-[32rem] overflow-auto rounded-lg border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-200 dark:border-zinc-800">
+        <pre
+          tabIndex={0}
+          aria-label={title}
+          className="max-h-[32rem] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-200 dark:border-zinc-800"
+        >
           {logView.text}
         </pre>
       ) : (

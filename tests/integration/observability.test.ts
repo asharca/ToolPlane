@@ -139,9 +139,35 @@ describe('getObservability', () => {
   });
 
   it('keeps deployment request logs within the requested workspace', async () => {
+    const traceId = `deployment-activity-${stamp}`;
+    await db.logEvent.create({ data: {
+      workspaceId, deploymentId, domain: 'mcp', eventName: 'gateway.request', message: 'echo',
+      traceId, spanId: 'gateway-tool', rpcMethod: 'tools/call', toolName: 'echo', durationMs: 12,
+      detail: { create: {
+        data: { payload: { request: { name: 'echo', arguments: { text: 'hello' } }, response: { content: [{ type: 'text', text: 'hello' }] } } },
+        expiresAt: new Date(Date.now() + 60_000),
+      } },
+    } });
+    await db.logEvent.createMany({ data: [
+      {
+        workspaceId, deploymentId, domain: 'mcp', eventName: 'mcp.rpc', message: 'mcp.rpc',
+        traceId, spanId: 'rpc-tool', rpcMethod: 'tools/call', toolName: 'echo', durationMs: 10,
+      },
+      {
+        workspaceId, deploymentId, domain: 'mcp', eventName: 'mcp.rpc', message: 'mcp.rpc',
+        traceId: `${traceId}-list`, spanId: 'rpc-list', rpcMethod: 'tools/list', durationMs: 8,
+      },
+    ] });
+
     const logs = await getDeploymentLogs(workspaceId, deploymentId, 100, userId);
 
-    expect(logs).toHaveLength(56);
+    expect(logs).toHaveLength(58);
+    expect(logs.filter((log) => log.traceId === traceId)).toHaveLength(1);
+    const toolLog = logs.find((log) => log.traceId === traceId)!;
+    expect(JSON.parse(toolLog.requestBody!)).toEqual({ name: 'echo', arguments: { text: 'hello' } });
+    expect(JSON.parse(toolLog.responseBody!)).toEqual({ content: [{ type: 'text', text: 'hello' }] });
+    expect(toolLog).not.toHaveProperty('detail');
+    expect(logs.some((log) => log.eventName === 'mcp.rpc' && log.rpcMethod === 'tools/list')).toBe(true);
     expect(logs.some((log) => log.path.includes('should_not_leak'))).toBe(false);
   });
 });

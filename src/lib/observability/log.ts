@@ -16,7 +16,7 @@ export async function logRequest(entry: {
   outcome?: LogOutcome; error?: unknown; response?: Response; payloadPolicy?: PayloadPolicy; payload?: () => unknown;
 }): Promise<void> {
   enrichLogContext({ workspaceId: entry.workspaceId });
-  const policy = entry.payloadPolicy ?? (entry.path.includes('/agents/mcp') || entry.path.includes('#tools/call') ? 'agent-content' : 'diagnostic');
+  const policy = entry.payloadPolicy ?? (entry.path.includes('/agents/mcp') ? 'agent-content' : 'diagnostic');
   const metadataBody = entry.responseBody ?? (!entry.outcome && entry.response ? await boundedResponseText(entry.response) : null);
   const inspection = inspectMcpLog({ ...entry, responseBody: metadataBody });
   const parse = (text?: string | null) => { try { return text ? JSON.parse(text) : null; } catch { return '[INVALID OR TRUNCATED JSON]'; } };
@@ -34,18 +34,49 @@ export async function logRequest(entry: {
   });
 }
 
-function view(log: LogEvent) {
-  return { ...log, method: log.method ?? '', path: log.path ?? '', statusCode: log.httpStatus ?? 0,
-    durationMs: log.durationMs ?? 0, requestBody: null, responseBody: null,
+type LogWithDetail = LogEvent & { detail?: { data: Prisma.JsonValue } | null };
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function payloadText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value) ?? null;
+}
+
+function view(log: LogWithDetail) {
+  const { detail, ...event } = log;
+  const payload = jsonRecord(jsonRecord(detail?.data)?.payload);
+  return { ...event, method: log.method ?? 'MCP', path: log.path ?? '', statusCode: log.httpStatus ?? 0,
+    durationMs: log.durationMs ?? 0, requestBody: payloadText(payload?.request), responseBody: payloadText(payload?.response),
     errorSummary: log.outcome !== 'success' ? log.message : null };
+}
+
+function requestKey(log: LogEvent): string {
+  return JSON.stringify([log.traceId, log.deploymentId, log.rpcMethod, log.toolName]);
 }
 
 export async function getDeploymentLogs(workspaceId: string, deploymentId: string, limit = 100, userId?: string) {
   if (!userId) throw new Error('An authenticated log reader is required');
   await authorizeLogs({ workspaceId, userId });
-  const logs = await db.logEvent.findMany({ where: { workspaceId, deploymentId, eventName: 'gateway.request' },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: Math.min(100, Math.max(1, limit)) });
-  return logs.map(view);
+  const boundedLimit = Math.min(100, Math.max(1, limit));
+  const logs = await db.logEvent.findMany({
+    where: { workspaceId, deploymentId, eventName: { in: ['gateway.request', 'mcp.rpc'] } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: boundedLimit * 2,
+    include: { detail: { where: { expiresAt: { gt: new Date() } }, select: { data: true } } },
+  });
+  const gatewayRequests = new Set(logs
+    .filter((log) => log.eventName === 'gateway.request')
+    .map(requestKey));
+  return logs
+    .filter((log) => log.eventName === 'gateway.request' || !gatewayRequests.has(requestKey(log)))
+    .slice(0, boundedLimit)
+    .map(view);
 }
 
 export type HourBucket = { hour: string; total: number; errors: number };

@@ -1946,7 +1946,7 @@
       "removeMcpDescription": "Permanently delete this MCP deployment.",
       "removeMcpWarning": "This stops the runtime and removes its deployment record and runtime files. This cannot be undone.",
       "removeMcpPrompt": "Remove {name}? This cannot be undone.",
-      "requestLogsDescription": "Recent gateway requests, including tool calls, latency, and failures."
+      "requestLogsDescription": "Recent MCP requests, including tool discovery, tool calls, latency, and failures."
     },
     "skills": {
       "title": "Skills",

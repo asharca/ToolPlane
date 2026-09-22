@@ -268,6 +268,7 @@ export function McpRequestLogs({
           <div className="divide-y divide-border">
             {filtered.map(({ log, inspection }) => {
               const expanded = open.has(log.id);
+              const hasDetails = Boolean(log.path || log.requestBody || log.responseBody);
               const Icon = operationIcons[inspection.operation];
               const detailsId = `mcp-log-details-${log.id}`;
               const isError = inspection.outcome === 'error';
@@ -282,9 +283,9 @@ export function McpRequestLogs({
                 <article key={log.id} className={isError ? 'bg-red-500/[0.025]' : undefined}>
                   <button
                     type="button"
-                    onClick={() => toggle(log.id)}
-                    aria-expanded={expanded}
-                    aria-controls={detailsId}
+                    onClick={() => hasDetails && toggle(log.id)}
+                    aria-expanded={hasDetails ? expanded : undefined}
+                    aria-controls={hasDetails ? detailsId : undefined}
                     aria-label={rowLabel}
                     className="group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                   >
@@ -334,7 +335,9 @@ export function McpRequestLogs({
                         <Clock3 className="size-3.5" />
                         {log.durationMs}{t('ms')}
                       </span>
-                      <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                      {hasDetails ? (
+                        <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                      ) : null}
                     </span>
                   </button>
 
@@ -354,7 +357,7 @@ export function McpRequestLogs({
                       <Clock3 className="size-3.5" />
                       {log.durationMs}{t('ms')}
                     </span>
-                    <span>{t('httpStatus', { status: log.statusCode })}</span>
+                    {log.statusCode > 0 ? <span>{t('httpStatus', { status: log.statusCode })}</span> : null}
                     {showServer && log.deploymentName ? (
                       <>
                         <span aria-hidden="true">·</span>
@@ -376,11 +379,11 @@ export function McpRequestLogs({
                     </p>
                   ) : null}
 
-                  {expanded ? (
+                  {expanded && hasDetails ? (
                     <div id={detailsId} className="border-t border-border bg-muted/[0.18] px-4 py-4">
                       <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span><span className="font-medium text-foreground">{t('rawEndpoint')}:</span> <code className="break-all font-mono">{log.path}</code></span>
-                        <span><span className="font-medium text-foreground">{t('status')}:</span> {t('httpStatus', { status: log.statusCode })}</span>
+                        {log.path ? <span><span className="font-medium text-foreground">{t('rawEndpoint')}:</span> <code className="break-all font-mono">{log.path}</code></span> : null}
+                        {log.statusCode > 0 ? <span><span className="font-medium text-foreground">{t('status')}:</span> {t('httpStatus', { status: log.statusCode })}</span> : null}
                         <span><span className="font-medium text-foreground">{t('duration')}:</span> {log.durationMs}{t('ms')}</span>
                       </div>
                       <div className="grid gap-4 lg:grid-cols-2">

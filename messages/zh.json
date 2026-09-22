@@ -1946,7 +1946,7 @@
       "removeMcpDescription": "永久删除此 MCP 部署。",
       "removeMcpWarning": "这会停止运行时，并移除部署记录和运行时文件。此操作无法撤销。",
       "removeMcpPrompt": "确定移除 {name}？此操作无法撤销。",
-      "requestLogsDescription": "近期网关请求，包括工具调用、延迟和失败情况。"
+      "requestLogsDescription": "近期 MCP 请求，包括工具发现、工具调用、延迟和失败情况。"
     },
     "skills": {
       "title": "技能",
