@@ -49,12 +49,14 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
       },
     });
     if (activeRuns > 0) return null;
+    if (await tx.a2AContext.count({ where: { runtimeAllocationId: current.id } })) return null;
     const claimed = await tx.agentEndpointRuntime.updateMany({
       where: {
         id: current.id,
         status: current.status,
         updatedAt: current.updatedAt,
         conversations: { none: { deletingAt: null } },
+        a2aContexts: { none: {} },
       },
       data: {
         status: 'deleting',
@@ -86,6 +88,7 @@ export async function cleanupAgentEndpointRuntimeIfUnused(allocationId: string):
         id: allocation.id,
         operationId,
         conversations: { none: { deletingAt: null } },
+        a2aContexts: { none: {} },
       },
     });
     return deleted.count === 1;
@@ -139,6 +142,7 @@ export async function stopAgentEndpointRuntimeIfIdle(
       },
     });
     if (activeRuns > 0) return null;
+    if (await tx.a2ATask.count({ where: { context: { runtimeAllocationId: current.id }, state: { in: [1, 2] } } })) return null;
     const claimed = await tx.agentEndpointRuntime.updateMany({
       where: { id: current.id, status: current.status, updatedAt: current.updatedAt },
       data: {
@@ -201,6 +205,9 @@ export async function cleanupAgentEndpointRuntimesForSource(
     await tx.$queryRaw`SELECT "id" FROM "AgentEndpoint" WHERE "id" = ${endpoint.id} FOR UPDATE`;
     await tx.agentEndpoint.update({ where: { id: endpoint.id }, data: { status: 'disabled' } });
   });
+  // Disabling stops A2A authorization. Do not destroy a runtime until its worker
+  // has actually stopped; an administrator may retry cleanup after draining.
+  if (await db.a2ATask.count({ where: { context: { endpointId: endpoint.id }, state: { in: [1, 2] } } })) return false;
   const activeRuns = await db.agentRun.findMany({
     where: { endpointId: endpoint.id, status: { in: ['provisioning', 'running'] } },
     select: { id: true, publicId: true },

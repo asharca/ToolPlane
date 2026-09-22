@@ -389,13 +389,15 @@ export async function prepareAgentResponse(
       clientStored: lockedClient.maxStoredCharacters,
     });
 
-    const [endpointActive, clientActive] = await Promise.all([
+    const [endpointActive, clientActive, a2aEndpointActive, a2aClientActive] = await Promise.all([
       tx.agentRun.count({ where: { endpointId: endpoint.id, status: { in: [...ACTIVE_RUN_STATUSES] } } }),
       tx.agentRun.count({ where: { clientId: client.id, status: { in: [...ACTIVE_RUN_STATUSES] } } }),
+      tx.a2ATask.count({ where: { context: { endpointId: endpoint.id }, state: { in: [1, 2] } } }),
+      tx.a2ATask.count({ where: { context: { clientId: client.id }, state: { in: [1, 2] } } }),
     ]);
     if (
-      endpointActive >= lockedEndpoint.maxConcurrent
-      || clientActive >= lockedClient.maxConcurrent
+      endpointActive + a2aEndpointActive >= lockedEndpoint.maxConcurrent
+      || clientActive + a2aClientActive >= lockedClient.maxConcurrent
     ) {
       throw new AgentApiError(
         'concurrency_limit_exceeded',

@@ -21,6 +21,8 @@
 | [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |
 | [公共 Agent API](./AGENT_PUBLIC_API.zh-CN.md) · [English](./AGENT_PUBLIC_API.md) | 发布 Endpoint、鉴权与限额 |
+| [原生 A2A 1.0](./A2A_NATIVE.zh-CN.md) · [English](./A2A_NATIVE.md) | 标准任务、事件订阅、独立执行与发布授权 |
+| [A2A 内部协作](./A2A_LOCAL_COLLABORATION.zh-CN.md) · [English](./A2A_LOCAL_COLLABORATION.md) | 本地身份、原生委派、父任务等待与恢复 |
 | [消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) · [English](./AGENT_MESSAGING_PLATFORMS.md) | Telegram、飞书、QQ、微信、Discord、Slack |
 | [工作区管理](./WORKSPACES.md) · [English](./WORKSPACES.en.md) | 成员、邀请、所有权与删除 |
 

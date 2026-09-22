@@ -25,6 +25,7 @@
     "connector:dev": "node packages/connector/bin/connector.mjs"
   },
   "dependencies": {
+    "@a2a-js/sdk": "1.2.0",
     "@ai-sdk/react": "4.0.96",
     "@asharca/ui": "0.2.1",
     "@assistant-ui/react": "0.15.18",

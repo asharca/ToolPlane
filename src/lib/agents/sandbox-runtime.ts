@@ -1,4 +1,5 @@
 import 'server-only';
+import { withSandboxExecutionLease } from './sandbox-execution-gate';
 import { runHermesRpcTurn } from './hermes-rpc';
 import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
 import { spawn } from 'node:child_process';
@@ -1814,6 +1815,10 @@ async function runDsh(
 }
 
 export async function runSandboxAgentTurn(options: RunSandboxAgentTurnOptions): Promise<string> {
+  return withSandboxExecutionLease(options.sandboxId, () => runExclusiveSandboxAgentTurn(options));
+}
+
+async function runExclusiveSandboxAgentTurn(options: RunSandboxAgentTurnOptions): Promise<string> {
   if (!options.runtimeAccessToken || options.runtimeAccessToken.length > 8_192 || /[\0\r\n]/.test(options.runtimeAccessToken)) {
     throw new Error('Invalid sandbox runtime access token.');
   }

@@ -139,6 +139,14 @@ async function registerNodeOwned() {
     systemLog('error', '[work] startup reconcile failed', error);
   }
 
+  try {
+    const { startA2AWorker } = await import('@/lib/a2a/worker');
+    await startA2AWorker();
+  } catch {
+    failed = true;
+    systemLog('error', '[a2a] startup recovery failed');
+  }
+
   if (!g.__agentApiMaintenanceTimer) {
     let running = false;
     const maintain = async () => {
