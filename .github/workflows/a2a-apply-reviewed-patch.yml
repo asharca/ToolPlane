@@ -51,6 +51,8 @@ jobs:
                   data = archive.extractfile(member).read()
                   assert hashlib.sha256(data).hexdigest() == digest
                   (root / name).write_bytes(data)
+          migration = root / 'prisma/migrations/20260922000000_a2a_native_tasks/migration.sql'
+          migration.write_bytes(migration.read_bytes().rstrip(b'\r\n') + b'\n')
           for i in range(1, 7):
               (root / f'.a2a-reviewed.{i}').unlink()
           for name in ['a2a-development-context.yml', 'a2a-apply-reviewed-patch.yml']:
