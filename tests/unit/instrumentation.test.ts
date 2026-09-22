@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/runtime/owner', () => ({ startRuntimeOwner: async (recover: () => Promise<void>) => {
   try { await recover(); mocks.ownerReady(); } catch (error) { mocks.ownerFailed(error); throw error; }
 } }));
+vi.mock('@/lib/a2a/worker', () => ({ startA2AWorker: vi.fn(async () => undefined) }));
 vi.mock('@/lib/work/coordinator', () => ({ startWorkCoordinator: async () => undefined }));
 vi.mock('@/lib/sandboxes/connector-broker', () => ({
   ensureConnectorBroker: mocks.ensureConnectorBroker,
