@@ -5,7 +5,7 @@ import { toJsonRpcError, JsonRpcRequestMalformedError, A2A_ERROR_CODE } from '@a
 import { withLogContext } from '@/lib/observability/context';
 import { AgentApiError } from '@/lib/agents/public-api/errors';
 import { A2A_LIMITS, A2A_PROTOCOL_VERSION } from './model';
-import { A2AHttpError, resolveA2AGrant, permits } from './principal';
+import { A2AHttpError, resolveA2AGrant, permits, type TaskGrant } from './principal';
 import { buildAgentCard, NativeA2AHandler } from './handler';
 import { Rpc, validateParams } from './validation';
 import { ObservationLimiter } from './transport-limits';
@@ -64,12 +64,13 @@ function httpFailure(error: unknown, id: RpcId, headers: Headers) {
   }
   return response(rpcError(id, error), headers);
 }
-export async function handleA2ARpc(req: Request, endpointId: string) {
+export async function handleA2ARpc(req: Request, endpointId: string,
+  resolve: (req: Request, id: string) => Promise<{ grant: TaskGrant; rateHeaders: Headers }> = resolveA2AGrant) {
   return withLogContext({ suppressPayload: true }, async () => {
     let id: RpcId = null; const headers = baseHeaders();
     let releaseObservation: (() => void) | undefined;
     try {
-      const { grant, rateHeaders } = await resolveA2AGrant(req, endpointId);
+      const { grant, rateHeaders } = await resolve(req, endpointId);
       rateHeaders.forEach((v, k) => headers.set(k, v));
       if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new A2AHttpError(415, 'Content-Type must be application/json.');
       let raw: unknown;

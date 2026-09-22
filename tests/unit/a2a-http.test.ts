@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({ resolve: vi.fn(), live: vi.fn(), submit: vi.fn
   events: vi.fn(), list: vi.fn(), cancel: vi.fn(), endpoint: vi.fn(), wake: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { agentEndpoint: { findFirstOrThrow: mocks.endpoint } } }));
 vi.mock('@/lib/a2a/principal', () => ({ resolveA2AGrant: mocks.resolve, assertLiveGrant: mocks.live,
+  isLocalGrant: () => false,
   permits: (grant: { scopes: string[] }, op: string) => grant.scopes.includes(`a2a:${op}`),
   A2AHttpError: class extends Error { constructor(readonly status: number, message: string) { super(message); } },
 }));

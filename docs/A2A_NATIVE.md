@@ -109,8 +109,10 @@ cannot extend it. Terminal contexts are cleaned in bounded batches after retenti
 and storage quota integration needs separate acceptance before production rollout.
 
 Only JSONRPC, streaming and text/plain are advertised. REST, gRPC, push callbacks,
-extended Cards, binary/structured input, remote registry, automatic parent continuation
-and internal Agent delegation migration are **not** part of this increment.
+extended Cards, binary/structured input and a remote registry are not implemented.
+[Native local collaboration](A2A_LOCAL_COLLABORATION.md) now uses this same task core
+with parent joins and continuation. Legacy chat/Work/delegation entries are not
+automatically migrated; native per-tool approval bridging remains unimplemented.
 Unsupported capabilities return standard errors. Input file URLs are never fetched.
 
 Apply migration 20260922000000_a2a_native_tasks and regenerate Prisma Client using the

@@ -8,11 +8,15 @@ import { db } from '@/lib/db';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 import { A2A_PROTOCOL_VERSION, A2A_LIMITS, historyView, settled, terminal, taskEvent } from './model';
-import { assertLiveGrant, type A2AGrant, type A2AOperation } from './principal';
+import { assertLiveGrant, isLocalGrant, type TaskGrant, type A2AOperation } from './principal';
 import * as store from './store';
 import { wakeA2AWorker } from './worker';
 
-export async function buildAgentCard(grant: A2AGrant): Promise<AgentCard> {
+export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
+  if (isLocalGrant(grant)) {
+    const { localAgentCard } = await import('./local-http');
+    return localAgentCard(grant);
+  }
   const endpoint = await db.agentEndpoint.findFirstOrThrow({ where: { id: grant.endpointId,
     a2aEnabled: true, status: 'active', workspaceId: grant.workspaceId },
     select: { name: true, publicId: true, currentRevision: { select: { version: true } } } });
@@ -32,11 +36,11 @@ export async function buildAgentCard(grant: A2AGrant): Promise<AgentCard> {
   });
 }
 export class NativeA2AHandler implements A2ARequestHandler {
-  constructor(private readonly grant: A2AGrant, private readonly card: AgentCard, private readonly signal?: AbortSignal,
+  constructor(private readonly grant: TaskGrant, private readonly card: AgentCard, private readonly signal?: AbortSignal,
     private readonly wake: () => void = wakeA2AWorker) {}
   async getAgentCard() { return this.card; }
   private async authorize(context: ServerCallContext, operation: A2AOperation) {
-    if (context.tenant && context.tenant !== this.grant.endpointPublicId) throw new TaskNotFoundError();
+    if (context.tenant && context.tenant !== (isLocalGrant(this.grant) ? this.grant.agentId : this.grant.endpointPublicId)) throw new TaskNotFoundError();
     await assertLiveGrant(this.grant, operation);
   }
   async sendMessage(params: SendMessageRequest, context: ServerCallContext) {

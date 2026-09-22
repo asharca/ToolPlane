@@ -16,3 +16,20 @@ export class ObservationLimiter {
     };
   }
 }
+
+/** Bounded per-identity request admission; no credentials or message content in keys. */
+export class WindowLimiter {
+  private readonly entries = new Map<string, { count: number; until: number }>();
+  constructor(private readonly perMinute: number, private readonly capacity: number) {}
+  take(key: string, now = Date.now()) {
+    if (this.entries.size >= this.capacity) {
+      for (const [id, entry] of this.entries) if (entry.until <= now) this.entries.delete(id);
+    }
+    const current = this.entries.get(key);
+    if (!current || current.until <= now) {
+      if (!current && this.entries.size >= this.capacity) throw new A2AHttpError(429, 'Request admission is full.');
+      this.entries.set(key, { count: 1, until: now + 60_000 }); return;
+    }
+    if (++current.count > this.perMinute) throw new A2AHttpError(429, 'Too many A2A requests.');
+  }
+}

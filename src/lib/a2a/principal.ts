@@ -14,10 +14,21 @@ export type A2AGrant = {
   clientId: string; keyId: string | null; ownerKey: string; expiresAt: number | null;
   scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;
 };
+export type LocalA2AGrant = {
+  kind: 'local'; workspaceId: string; agentId: string; actorId: string;
+  targetBinding: string; ownerKey: string; expiresAt: number;
+  scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;
+  ancestorTaskIds: string[]; ancestorAgentIds: string[];
+  parentTaskId?: string; rootTaskId?: string;
+};
+export type TaskGrant = A2AGrant | LocalA2AGrant;
+export function isLocalGrant(grant: TaskGrant): grant is LocalA2AGrant {
+  return 'kind' in grant && grant.kind === 'local';
+}
 export class A2AHttpError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
-export function permits(grant: A2AGrant, operation: A2AOperation) {
+export function permits(grant: Pick<TaskGrant, 'scopes'>, operation: A2AOperation) {
   const required = operation === 'cancel' ? ['a2a:cancel', 'a2a:read'] : [`a2a:${operation}`];
   return hasAgentApiScope(grant.scopes, required);
 }
@@ -50,8 +61,12 @@ export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
   return { grant, rateHeaders: rate.headers };
 }
 /** Rechecked during execution and subscriptions, so revocation is not admission-only. */
-export async function assertLiveGrant(grant: A2AGrant, operation: A2AOperation = 'read') {
+export async function assertLiveGrant(grant: TaskGrant, operation: A2AOperation = 'read') {
   if (!permits(grant, operation) || (grant.expiresAt !== null && grant.expiresAt <= Date.now())) throw new TaskNotFoundError();
+  if (isLocalGrant(grant)) {
+    const { assertLocalGrant } = await import('./local-policy');
+    return assertLocalGrant(grant);
+  }
   const client = await db.agentApiClient.findFirst({ where: { id: grant.clientId, endpointId: grant.endpointId,
     status: 'active', endpoint: { workspaceId: grant.workspaceId, a2aEnabled: true, status: 'active', currentRevisionId: { not: null },
       workspace: { status: 'active', owner: { status: 'active' } } } }, select: { scopes: true } });

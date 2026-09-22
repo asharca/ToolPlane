@@ -13,6 +13,8 @@ export type AgentRuntimeTokenPayload = {
   providerId: string;
   deploymentIds: string[];
   exp: number;
+  a2aTaskId?: string;
+  a2aLeaseToken?: string;
   traceId?: string;
   parentSpanId?: string;
 };
@@ -43,7 +45,9 @@ export async function createAgentRuntimeToken(
 ): Promise<string> {
   const issuedAt = Math.floor(now / 1000);
   if (
-    !validId(payload.workspaceId)
+    ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined)
+      && (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken)))
+    || !validId(payload.workspaceId)
     || !validId(payload.agentId)
     || !validId(payload.sandboxId)
     || !validId(payload.providerId)
@@ -56,6 +60,7 @@ export async function createAgentRuntimeToken(
   }
 
   return new SignJWT({
+    ...(payload.a2aTaskId ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: payload.a2aLeaseToken } : {}),
     workspaceId: payload.workspaceId,
     agentId: payload.agentId,
     sandboxId: payload.sandboxId,
@@ -87,7 +92,9 @@ export async function verifyAgentRuntimeToken(
     const issuedAt = payload.iat;
     const expiresAt = payload.exp;
     if (
-      !validId(payload.workspaceId)
+      ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined)
+      && (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken)))
+    || !validId(payload.workspaceId)
       || !validId(payload.agentId)
       || !validId(payload.sandboxId)
       || !validId(payload.providerId)
@@ -101,6 +108,7 @@ export async function verifyAgentRuntimeToken(
     ) return null;
 
     return {
+      ...(typeof payload.a2aTaskId === 'string' ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: String(payload.a2aLeaseToken) } : {}),
       workspaceId: payload.workspaceId,
       agentId: payload.agentId,
       sandboxId: payload.sandboxId,

@@ -6,6 +6,10 @@ import { isDedicatedSandboxRuntimeKind } from './runtime-kind';
 export async function isAgentRuntimeGrantCurrent(
   token: AgentRuntimeTokenPayload,
 ): Promise<boolean> {
+  if (token.a2aTaskId) {
+    const { assertLocalRuntimeToken } = await import('@/lib/a2a/local-runtime');
+    try { await assertLocalRuntimeToken(token); } catch { return false; }
+  }
   const agent = await db.agent.findFirst({
     where: {
       id: token.agentId,

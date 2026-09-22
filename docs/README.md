@@ -22,6 +22,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |
 | [Public Agent API](./AGENT_PUBLIC_API.md) · [中文](./AGENT_PUBLIC_API.zh-CN.md) | Publishing Endpoints, authentication, and limits |
 | [Native A2A 1.0](./A2A_NATIVE.md) · [中文](./A2A_NATIVE.zh-CN.md) | Standard tasks, subscriptions, independent execution and publication authorization |
+| [Local A2A collaboration](./A2A_LOCAL_COLLABORATION.md) · [中文](./A2A_LOCAL_COLLABORATION.zh-CN.md) | Local identities, native delegation, durable parent joins and continuation |
 | [Messaging channels](./AGENT_MESSAGING_PLATFORMS.md) · [中文](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) | Telegram, Feishu/Lark, QQ, WeChat, Discord, and Slack |
 | [Workspace management](./WORKSPACES.en.md) · [中文](./WORKSPACES.md) | Members, invitations, ownership, and deletion |
 

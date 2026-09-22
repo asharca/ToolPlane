@@ -117,7 +117,7 @@ agentId 作为授权。读、继续、取消和订阅都限制到 Endpoint、客
 只声明 JSONRPC、streaming 和 text/plain。REST、gRPC、Push Notification、扩展 Card、
 文件与结构化输入均未声明实现；不支持的能力返回标准错误，不伪造成功。
 没有自动注册任意外部 URL，不会抓取调用方提供的文件 URL。
-旧内部 Agent 委派尚未迁移到此核心，父任务自动续轮、运行时原生审批桥接也不是本版能力。
+内部 Agent 现在可以通过独立的[原生协作入口](A2A_LOCAL_COLLABORATION.zh-CN.md)使用同一任务核心，支持父任务等待与续轮。旧聊天/Work/委派入口尚未自动迁移，运行时原生审批桥接仍未实现。
 
 升级前按平台单所有者流程应用 `20260922000000_a2a_native_tasks` 并重新生成 Prisma Client。
 此迁移新增独立表、索引和显式开关，不迁移/重放旧会话或旧协作任务。

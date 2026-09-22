@@ -7,16 +7,18 @@ import { withLogContext } from '@/lib/observability/context';
 import { systemLog } from '@/lib/observability/system';
 import { ACTIVE, A2A_LIMITS } from './model';
 import { claimTask, finishTask, interruptTask } from './store';
-import { assertLiveGrant, type A2AGrant } from './principal';
-import { executePublishedTask, type TaskExecutor } from './executor';
+import { assertLiveGrant, isLocalGrant, type TaskGrant } from './principal';
+import { withSandboxExecutionLease, SandboxExecutionBusyError } from '@/lib/agents/sandbox-execution-gate';
+import { localTarget } from './local-policy';
+import { executeTask, type TaskExecutor } from './executor';
 
 type State = { active: Map<string, AbortController>; ticking: boolean; stopped: boolean; timer?: ReturnType<typeof setInterval>; prunedAt: number };
 const globalState = globalThis as typeof globalThis & { __nativeA2AWorker?: State };
 const state: State = globalState.__nativeA2AWorker ??= { active: new Map(), ticking: false, stopped: false, prunedAt: 0 };
-export function executeA2ATask(id: string, executor: TaskExecutor = executePublishedTask) {
+export function executeA2ATask(id: string, executor: TaskExecutor = executeTask) {
   if (state.stopped || !runtimeCanOperate() || state.active.has(id) || state.active.size >= A2A_LIMITS.workerConcurrency) return Promise.resolve();
   const controller = new AbortController(); state.active.set(id, controller);
-  return trackRuntimeOperation(async () => {
+  const operation = async () => {
     let claimed: Awaited<ReturnType<typeof claimTask>> = null;
     let release: (() => void) | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -25,7 +27,7 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executePubli
     try {
       claimed = await claimTask(id); if (!claimed) return;
       const row = claimed;
-      const grant = row.grant as unknown as A2AGrant;
+      const grant = row.grant as unknown as TaskGrant;
       release = beginWorkspaceOperation(grant.workspaceId);
       if (!release) throw new Error('Workspace closing');
       await assertLiveGrant(grant, 'send');
@@ -57,15 +59,31 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executePubli
       if (timeout) clearTimeout(timeout); if (watchdog) clearInterval(watchdog);
       release?.(); state.active.delete(id);
     }
+  };
+  return trackRuntimeOperation(async () => {
+    const queued = await db.a2ATask.findUnique({ where: { id } });
+    if (!queued) return;
+    const grant = queued.grant as unknown as TaskGrant;
+    if (!isLocalGrant(grant)) return operation();
+    try {
+      const target = await localTarget(db, grant.workspaceId, grant.agentId);
+      // Reserve before claiming: a busy sandbox leaves the task safely queued, without any execution replay.
+      return await withSandboxExecutionLease(target.sandboxId, operation);
+    } catch (error) {
+      if (error instanceof SandboxExecutionBusyError) return;
+      await interruptTask(id, 'Local execution is unavailable.');
+    }
   }).finally(() => state.active.delete(id));
 }
 export async function tickA2AWorker() {
   if (state.ticking || state.stopped || !runtimeCanOperate()) return;
   state.ticking = true;
   try {
-    const expired = await db.a2ATask.findMany({ where: { deadlineAt: { lte: new Date() }, state: { in: [1, 6, 8] } }, take: 50, select: { id: true } });
+    const { reconcileLocalWaits } = await import('./local-continuation');
+    await reconcileLocalWaits();
+    const expired = await db.a2ATask.findMany({ where: { deadlineAt: { lte: new Date() }, OR: [{ state: { in: [1, 6, 8] } }, { state: 2, phase: { in: ['waiting', 'resumable'] } }] }, take: 50, select: { id: true } });
     for (const task of expired) await interruptTask(task.id, 'Task deadline exceeded.');
-    const queued = await db.a2ATask.findMany({ where: { state: TaskState.TASK_STATE_SUBMITTED }, orderBy: { createdAt: 'asc' }, take: 16, select: { id: true } });
+    const queued = await db.a2ATask.findMany({ where: { OR: [{ state: TaskState.TASK_STATE_SUBMITTED }, { state: TaskState.TASK_STATE_WORKING, phase: 'resumable' }] }, orderBy: [{ depth: 'desc' }, { createdAt: 'asc' }], take: 16, select: { id: true } });
     for (const row of queued) {
       if (state.active.size >= A2A_LIMITS.workerConcurrency) break;
       void executeA2ATask(row.id).catch(() => systemLog('error', 'A2A task could not be settled.'));
@@ -82,7 +100,7 @@ export async function startA2AWorker() {
   // The runtime owner has recovered external processes first. Never re-run an uncertain side effect.
   let rows;
   do {
-    rows = await db.a2ATask.findMany({ where: { state: TaskState.TASK_STATE_WORKING }, take: 50, select: { id: true } });
+    rows = await db.a2ATask.findMany({ where: { state: TaskState.TASK_STATE_WORKING, phase: 'executing' }, take: 50, select: { id: true } });
     for (const row of rows) await interruptTask(row.id, 'Execution was interrupted by a process restart.');
   } while (rows.length === 50);
   state.stopped = false;

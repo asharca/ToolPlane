@@ -169,6 +169,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  a2aContexts A2AContext[]
   agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
@@ -519,6 +520,8 @@ model ProviderModel {
 }
 
 model Agent {
+  a2aInternalEnabled Boolean @default(false)
+  a2aContexts A2AContext[]
   uploadReservations AgentUploadReservation[]
   id                      String                   @id @default(cuid())
   workspaceId             String
@@ -1510,13 +1513,20 @@ model AgentUploadReservation {
 // A2A v1 native task ledger. No AgentRun / Conversation / legacy delegation IDs.
 model A2AContext {
   id                  String               @id @default(uuid())
-  endpointId          String
-  endpoint            AgentEndpoint        @relation(fields: [endpointId], references: [id], onDelete: Cascade)
-  revisionId          String
-  revision            AgentEndpointRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
-  clientId            String
-  client              AgentApiClient       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  targetKind          String               @default("published")
+  workspaceId         String
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId             String?
+  agent               Agent?               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  targetBinding       String?
+  endpointId          String?
+  endpoint            AgentEndpoint?       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  revisionId          String?
+  revision            AgentEndpointRevision? @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  clientId            String?
+  client              AgentApiClient?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   ownerKey            String
+  @@index([workspaceId, agentId])
   runtimeAllocationId String?
   runtimeAllocation   AgentEndpointRuntime? @relation(fields: [runtimeAllocationId], references: [id], onDelete: SetNull)
   tasks               A2ATask[]
@@ -1532,6 +1542,16 @@ model A2ATask {
   id                String       @id @default(uuid())
   contextId         String
   context           A2AContext   @relation(fields: [contextId], references: [id], onDelete: Cascade)
+  // Internal scheduling phase is not an additional A2A wire state.
+  phase             String       @default("queued")
+  parentTaskId      String?
+  rootTaskId        String?
+  depth             Int          @default(0)
+  resumeCount       Int          @default(0)
+  waitForTaskIds    String[]     @default([])
+  pendingQuestion   String?
+  @@index([rootTaskId, parentTaskId])
+  @@index([state, phase])
   // Numeric enum from the pinned official SDK; wire serialization is ProtoJSON.
   state             Int
   statusAt          DateTime     @default(now())
