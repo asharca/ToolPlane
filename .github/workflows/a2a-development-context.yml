@@ -1,0 +1,40 @@
+name: a2a-development-context
+on:
+  push:
+    branches: [feat/a2a-native-core]
+    paths: [.github/workflows/a2a-development-context.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare source and pinned SDK without production credentials
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm add --save-exact @a2a-js/sdk@1.2.0
+          pnpm exec prisma generate
+          mkdir -p /tmp/a2a-context
+          git archive HEAD | tar -x -C /tmp/a2a-context
+          cp package.json pnpm-lock.yaml /tmp/a2a-context/
+          cp -a node_modules /tmp/a2a-context/
+          git clone --depth=1 --branch v1.2.0 https://github.com/a2aproject/a2a-js.git /tmp/a2a-sdk
+          rm -rf /tmp/a2a-sdk/.git
+          mv /tmp/a2a-sdk /tmp/a2a-context/upstream-sdk
+          tar -C /tmp/a2a-context -czf /tmp/a2a-context.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a2a-development-context
+          path: /tmp/a2a-context.tar.gz
+          retention-days: 1
