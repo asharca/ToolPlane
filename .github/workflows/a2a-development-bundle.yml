@@ -1,0 +1,36 @@
+name: a2a-development-bundle
+on:
+  push:
+    branches: [feat/a2a-native]
+    paths: [.github/workflows/a2a-development-bundle.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Assemble clean source and locked dependencies
+        env:
+          DATABASE_URL: postgresql://unused:unused@127.0.0.1:5433/unused
+        run: |
+          mkdir -p "$RUNNER_TEMP/a2a-source"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/a2a-source"
+          cd "$RUNNER_TEMP/a2a-source"
+          pnpm add --save-exact --ignore-scripts @a2a-js/sdk@1.2.0
+          pnpm db:generate
+          tar -czf "$RUNNER_TEMP/a2a-development.tgz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a2a-development
+          path: ${{ runner.temp }}/a2a-development.tgz
+          retention-days: 1
