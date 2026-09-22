@@ -4,7 +4,8 @@
 
 The administrator console at `/admin/logs` reads structured events, independently
 of workspace business records. Workspace observability remains restricted to the
-signed-in user's workspace and never includes diagnostic payloads.
+signed-in user's workspace. The deployment Logs tab can read sanitized MCP
+request/response details for that deployment; aggregate observability does not.
 
 ## Storage
 
@@ -59,6 +60,8 @@ a database administrator.
 ## Capture and Retention
 
 Defaults are 30 days for events, 7 days for details and 180 days for audit.
+Sanitized, bounded payloads for non-Agent MCP deployment requests are retained as
+details so workspace members can inspect them from the deployment Logs tab.
 Administrators can enable a 15-minute diagnostic capture for an existing
 workspace, deployment or agent. Capture start, stop and retention changes are
 audited. Public Agent API payloads remain suppressed even when capture is on.
@@ -122,5 +125,7 @@ pnpm lint
 Events declare `metadata-only` (default), `diagnostic`, `agent-content`, or `forbidden`. A diagnostic capture does not automatically enable Agent content. An administrator must explicitly select `includeAgentContent` for the named resource, with the existing time limit and access audit. Agent-content details retain for at most 24 hours (or less if configured); exports remain metadata-only.
 
 A lazy detail reader runs only after policy and capture checks. Response readers stop at 32 KiB or 200 ms and do not capture SSE. Sensitive Agent events keep only their generic event name/error category in metadata, omit arbitrary attributes and error text from stderr, and do not copy payloads merely to determine success. Parent `suppressPayload` is monotonic: children cannot turn it off. `forbidden` and public Endpoint suppression override every capture.
+
+Non-Agent `gateway.request` and `mcp.rpc` events scoped to both a workspace and deployment retain their sanitized payload by default for the deployment Logs tab. Agent contexts and public endpoints are excluded from this default.
 
 Content redaction does not anonymize arbitrary business text. Opt-in captures still require restricted administrator access and minimal retention.

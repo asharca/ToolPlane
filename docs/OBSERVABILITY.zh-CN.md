@@ -3,7 +3,8 @@
 > **English**: [OBSERVABILITY.md](./OBSERVABILITY.md)
 
 管理后台的 `/admin/logs` 读取结构化事件，与工作区业务记录相互独立。工作区可观测性仍
-仅限于登录用户自己的工作区，且绝不包含诊断载荷。
+仅限于登录用户自己的工作区。部署的“日志”页可以读取该部署已脱敏的 MCP 请求/响应
+详情；聚合可观测性不返回这些详情。
 
 ## 存储
 
@@ -45,7 +46,8 @@ provider 凭据、账户 API token 和 Agent API key、分类编辑、目录元�
 ## 抓取与保留
 
 默认保留期：事件 30 天、detail 7 天、审计 180 天。管理员可以为现有的工作区、部署或
-Agent 开启 15 分钟的诊断抓取。抓取的开始、停止和保留期变更都会记审计。即使抓取开
+Agent 开启 15 分钟的诊断抓取。非 Agent 的 MCP 部署请求会默认保留已脱敏且限长的详情，
+供工作区成员在部署“日志”页排查。抓取的开始、停止和保留期变更都会记审计。即使抓取开
 启，公共 Agent API 的载荷仍然被抑制。密码、凭据、Cookie、Authorization 头、已知
 runtime/provider 密钥和常见 token 模式在写入数据库或 stderr 前脱敏。任意用户文本不保
 证匿名；只在运维必要时开启载荷抓取，并相应限制管理员访问。
@@ -97,5 +99,7 @@ pnpm lint
 事件声明 `metadata-only`（默认）、`diagnostic`、`agent-content` 或 `forbidden`。普通诊断采集不会自动启用 Agent 内容；管理员必须为指定资源显式选择 `includeAgentContent`，仍受时间限制与访问审计约束。Agent 内容详情最多保留 24 小时，配置更短时从短；导出仍只包含元数据。
 
 惰性详情读取器仅在策略和采集检查允许后执行。响应读取最多 32 KiB 或 200 ms，不采集 SSE。敏感 Agent 事件在元数据仅保留通用事件名/错误类别，不把任意 attributes 或错误文本写入 stderr，也不为判断成功而复制完整载荷。父上下文 `suppressPayload` 单向继承，子级不能关闭；`forbidden` 与公共 Endpoint 禁止策略优先于所有采集开关。
+
+同时具备工作区和部署范围、且不属于 Agent 上下文的 `gateway.request` 与 `mcp.rpc` 事件，会默认保留脱敏后的载荷供部署“日志”页读取；Agent 上下文和公共 Endpoint 不适用此默认行为。
 
 脱敏不等于任意业务文本的匿名化；即使显式开启，也须限制管理员访问并缩短保留时间。

@@ -56,4 +56,23 @@ describe('McpRequestLogs', () => {
     expect(screen.getByText('/mcp/memory/rpc#tools/call:remember')).toBeInTheDocument();
     expect(screen.getByText('Raw endpoint:')).toBeInTheDocument();
   });
+
+  it('shows internal MCP requests without fake HTTP metadata or empty details', () => {
+    render(<McpRequestLogs logs={[{
+      id: 'internal-list',
+      method: 'MCP',
+      path: '',
+      statusCode: 0,
+      durationMs: 18,
+      requestBody: null,
+      responseBody: null,
+      time: 'Aug 12, 1:11 PM',
+      rpcMethod: 'tools/list',
+      outcome: 'success',
+    }]} />);
+
+    const row = screen.getByRole('button', { name: /list tools/i });
+    expect(row).not.toHaveAttribute('aria-expanded');
+    expect(screen.queryByText('HTTP 0')).not.toBeInTheDocument();
+  });
 });

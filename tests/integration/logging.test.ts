@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { recordEvent } from '@/lib/observability/events';
+import { logRequest } from '@/lib/observability/log';
 import { withLogContext } from '@/lib/observability/context';
 import { getErrorGroups, getLogEvent, getLogTrace, listLogEvents, logFilterSchema, LogAccessError } from '@/lib/observability/queries';
 import { LOG_SETTINGS_KEY, invalidateLogSettings } from '@/lib/observability/settings';
@@ -17,12 +18,14 @@ let adminId: string;
 let userId: string;
 let foreignId: string;
 let workspaceId: string;
+let deploymentId: string;
 let previousSetting: string | null;
 beforeAll(async () => {
   adminId = (await db.user.create({ data: { email: `logs-admin-${stamp}@test.dev`, passwordHash: 'x', role: 'admin' } })).id;
   userId = (await db.user.create({ data: { email: `logs-user-${stamp}@test.dev`, passwordHash: 'x' } })).id;
   foreignId = (await db.user.create({ data: { email: `logs-other-${stamp}@test.dev`, passwordHash: 'x' } })).id;
   workspaceId = (await db.workspace.create({ data: { slug: `logs-${stamp}`, name: 'Log test', ownerId: userId } })).id;
+  deploymentId = (await db.deployment.create({ data: { workspaceId, name: 'Log MCP', source: 'config' } })).id;
   previousSetting = (await db.systemSetting.findUnique({ where: { key: LOG_SETTINGS_KEY } }))?.value ?? null;
 });
 afterAll(async () => {
@@ -78,6 +81,34 @@ describe('durable scoped logging', () => {
     expect(utc.until.toISOString()).toBe('2026-09-07T01:00:00.000Z');
     const precise = logFilterSchema.parse({ since: '2026-09-06T01:00:00.123', until: '2026-09-07T01:00:59.987' });
     expect(precise.until.toISOString()).toBe('2026-09-07T01:00:59.987Z');
+  });
+
+  it('stores sanitized workspace MCP payloads without exposing Agent content', async () => {
+    await db.systemSetting.update({ where: { key: LOG_SETTINGS_KEY }, data: { value: JSON.stringify({ captures: [] }) } });
+    invalidateLogSettings();
+    await withLogContext({ workspaceId, secrets: ['fixture-private-key'] }, () => logRequest({
+      workspaceId, deploymentId, method: 'POST', path: `/mcp/${deploymentId}/rpc#tools/call:workspace-payload`,
+      statusCode: 200, durationMs: 1,
+      requestBody: JSON.stringify({ value: 'fixture-private-key', safe: 'yes' }),
+      responseBody: JSON.stringify({ ok: true }),
+    }));
+    const captured = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, toolName: 'workspace-payload' },
+      include: { detail: true },
+    });
+    expect(captured.detail?.data).toMatchObject({ payload: {
+      request: { value: '[REDACTED]', safe: 'yes' }, response: { ok: true },
+    } });
+
+    await withLogContext({ workspaceId, agentId: 'agent-fixture' }, () => recordEvent({
+      domain: 'mcp', eventName: 'mcp.rpc', deploymentId, toolName: 'agent-payload',
+      detail: { request: 'private-agent-content' },
+    }));
+    const suppressed = await db.logEvent.findFirstOrThrow({
+      where: { workspaceId, toolName: 'agent-payload' },
+      include: { detail: true },
+    });
+    expect(suppressed.detail).toBeNull();
   });
 
   it('never captures public run payloads and never serves expired details', async () => {

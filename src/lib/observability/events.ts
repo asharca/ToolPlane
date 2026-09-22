@@ -99,10 +99,17 @@ async function persistEvent(entry: LogEntry): Promise<void> {
           : typeof safe.channelId === 'string' ? await tx.agentChannelConnection.findUnique({ where: { id: safe.channelId }, select: { workspaceId: true } }) : null;
         if (resource) safe.workspaceId = resource.workspaceId;
       }
-      const capture = !(contextSuppressPayload || suppressPayload)
+      const workspaceMcpPayload = !sensitive
+        && entry.domain === 'mcp'
+        && (entry.eventName === 'gateway.request' || entry.eventName === 'mcp.rpc')
+        && typeof safe.workspaceId === 'string'
+        && typeof safe.deploymentId === 'string';
+      const capture = workspaceMcpPayload || (
+        !(contextSuppressPayload || suppressPayload)
         && payloadPolicy !== 'forbidden' && payloadPolicy !== 'metadata-only'
         && settings.captures.some((item) => new Date(item.expiresAt).getTime() > Date.now() && safe[item.field] === item.id
-          && (payloadPolicy !== 'agent-content' || item.includeAgentContent === true));
+          && (payloadPolicy !== 'agent-content' || item.includeAgentContent === true))
+      );
       const payload = capture && typeof detail === 'function' ? await detail() : detail;
       const safeError = sensitive ? (error ? { name: errorType } : undefined) : error;
       const details = sanitizeLog({ ...(safeError ? { error: safeError } : {}), ...(capture && detail !== undefined ? { payload } : {}) }, secrets);
