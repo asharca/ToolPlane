@@ -1,0 +1,21 @@
+name: a2a-source-snapshot
+on:
+  push:
+    branches: [feat/a2a-native-core]
+    paths: [.github/workflows/a2a-source-snapshot.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive HEAD -o /tmp/a2a-source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a2a-source
+          path: /tmp/a2a-source.tar
+          retention-days: 1
