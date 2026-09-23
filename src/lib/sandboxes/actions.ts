@@ -36,6 +36,7 @@ import {
   sandboxConfigWithEnv,
 } from './env';
 import { resolveSandboxImage } from './images';
+import { sshTargetIdFromConfig } from './ssh-targets';
 import {
   connectorFromConfig,
   connectorServerUrlFromHeaders,
@@ -309,6 +310,7 @@ function installCfgForSandbox(sandbox: {
     network: sandbox.network,
     volumeName: sandboxVolumeName(sandbox.id),
     connector: connector ?? undefined,
+    ...(sandbox.kind === 'ssh' ? { sshTargetId: sshTargetIdFromConfig(sandbox.config) ?? '' } : {}),
     env,
     allowSudo: readSandboxAllowSudo(sandbox.config),
   };
@@ -908,7 +910,7 @@ export async function updateSandboxEnvAction(formData: FormData) {
           workspaceId: ctx.ws.id,
         });
       }
-    } else if (sandbox.kind === 'connector' && connectorFromConfig(config) && wasActive) {
+    } else if (((sandbox.kind === 'connector' && connectorFromConfig(config)) || sandbox.kind === 'ssh') && wasActive) {
       await restartProcess(sandbox.deploymentId, resolveSpawnSpec(updatedDeployment), {
         awaitReady: false,
         workspaceId: ctx.ws.id,
@@ -964,7 +966,8 @@ export async function startSandboxAction(formData: FormData) {
       revalidatePath(`/app/${slug}/agents/${agentId}`);
       return;
     }
-    if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
+    if (sandbox.kind === 'host') return;
+    if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) return;
     if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
     await startProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
       awaitReady: false,
@@ -1056,7 +1059,8 @@ export async function restartSandboxAction(formData: FormData) {
     const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
     if (!sandbox || sandbox.kind === 'hermes') return;
     if (sandboxLifecycleBlocked(sandbox)) return;
-    if (sandbox.kind === 'host' || sandbox.kind === 'ssh') return;
+    if (sandbox.kind === 'host') return;
+    if (sandbox.kind === 'ssh' && !sshTargetIdFromConfig(sandbox.config)) return;
     if (sandbox.kind === 'connector' && !connectorFromConfig(sandbox.config)) return;
     await restartProcess(sandbox.deploymentId, resolveSpawnSpec(sandbox.deployment), {
       awaitReady: false,
