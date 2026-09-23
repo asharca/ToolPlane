@@ -129,7 +129,8 @@ export async function runAgentChannelMessage(params: {
       where: { agentId: agent.id, runtimeSessionKey: sessionKey }, orderBy: { createdAt: 'desc' },
       include: { messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
-    const commands = sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []);
+    // Native channel ingress must not advertise legacy commands that bypass its task core.
+    const commands = isDedicatedSandboxRuntimeKind(agent.runtimeKind) ? [] : sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []);
     let conversationId = prior?.id ?? '';
     let message: string;
     if (name === 'help') {
