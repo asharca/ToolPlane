@@ -277,6 +277,10 @@ await copyRuntimePackage(
   ],
 );
 await copyRuntimePackage('undici');
+// A2A is also imported by runtime scripts, outside Next's traced server bundle.
+// Copy the complete locked package and its production dependencies, not just
+// the files Next happened to trace for a particular route.
+await copyRuntimePackage('@a2a-js/sdk');
 const streamdownNodeModules = enclosingNodeModules(
   await realpath(path.join(root, 'node_modules', '@streamdown', 'code')),
 );
@@ -308,6 +312,13 @@ await Promise.all([
   'client/streamableHttp.js',
   'types.js',
 ].map((entry) => import(pathToFileURL(path.join(remoteMcpSdkRoot, entry)).href)));
+const a2aSdkRoot = path.join(outputRoot, 'node_modules/@a2a-js/sdk/dist');
+await Promise.all([
+  'index.js',
+  'client/index.js',
+  'server/index.js',
+  'errors/index.js',
+].map((entry) => import(pathToFileURL(path.join(a2aSdkRoot, entry)).href)));
 await pruneNodePty(outputRoot);
 
 await writeFile(
@@ -326,6 +337,10 @@ for (const [entry, description] of [
   ['public', 'public assets directory'],
   ['node_modules/node-pty', 'sandbox PTY runtime'],
   ['node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', 'remote MCP client runtime'],
+  ['node_modules/@a2a-js/sdk/dist/index.js', 'A2A protocol runtime'],
+  ['node_modules/@a2a-js/sdk/dist/client/index.js', 'A2A client runtime'],
+  ['node_modules/@a2a-js/sdk/dist/server/index.js', 'A2A server runtime'],
+  ['node_modules/@a2a-js/sdk/dist/errors/index.js', 'A2A error runtime'],
   ['node_modules/undici/index.js', 'remote MCP HTTP runtime'],
   ['node_modules/ws', 'connector WebSocket runtime'],
   ['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim'],
