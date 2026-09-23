@@ -13,6 +13,7 @@ import {
   type RuntimeFileDraft,
 } from './RuntimeFileDraftsInput';
 import { SubmitButton } from './SubmitButton';
+import { RemoteMcpTransportNotice } from './RemoteMcpTransportNotice';
 
 const JSON_CONFIG_EXAMPLES = {
   npxConfig: `{
@@ -130,6 +131,7 @@ export function DeployCustomMcpDialog({
       return {
         name: parsed.name,
         source: parsed.source,
+        ref: parsed.ref,
         command: parsed.installCfg && 'command' in parsed.installCfg
           ? parsed.installCfg.command
           : null,
@@ -322,6 +324,7 @@ export function DeployCustomMcpDialog({
                             aria-describedby={configError ? 'config-error' : undefined}
                             className={`${field} min-h-48 resize-y py-3 font-mono text-xs leading-5`}
                           />
+                          {configIsRemote ? <RemoteMcpTransportNotice url={parsedConfig?.ref} showHelp /> : null}
                           {configError ? (
                             <p id="config-error" role="alert" className="text-xs text-red-600 dark:text-red-400">
                               {configError}
