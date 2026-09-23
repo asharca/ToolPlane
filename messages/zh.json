@@ -1506,7 +1506,23 @@
         "openWorkbench": "打开 A2A 工作台",
         "taskHistory": "任务消息历史",
         "historyUser": "调用方 / 任务上下文",
-        "historyAgent": "Agent"
+        "historyAgent": "Agent",
+        "approvals": {
+          "title": "工具执行审批",
+          "hint": "批准仅适用于当前轮次的这一次调用和显示的完整参数。拒绝或超时不会执行该调用；已开始的外部操作无法回滚。",
+          "failed": "无法确认审批状态，请刷新。不会自动重试批准操作。",
+          "refresh": "刷新审批",
+          "approve": "批准这一次",
+          "deny": "拒绝",
+          "pending": "待审批：{count}"
+        },
+        "channelOperator": {
+          "title": "消息渠道执行身份",
+          "hint": "明确授权此渠道使用当前账户执行原生任务。渠道发送者不会变成平台用户；工具审批由被授权的账户在控制台处理。",
+          "confirm": "确定修改此渠道的原生执行授权吗？关闭后将停止后续执行授权。",
+          "enable": "授权当前账户",
+          "disable": "移除执行授权"
+        }
       }
     },
     "conversationOperations": {

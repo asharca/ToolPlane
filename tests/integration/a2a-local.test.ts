@@ -6,6 +6,7 @@ import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { db } from '@/lib/db';
+import { checkNativeToolApproval, decideNativeToolApproval, listNativeToolApprovals, nativeApprovalHash } from '@/lib/a2a/tool-approvals';
 import { publishLocalArtifact } from '@/lib/a2a/local-artifacts';
 import { getConsoleTaskTree } from '@/lib/a2a/console-tasks';
 import { createLocalRootGrant, childGrant, assertLocalGrant, LOCAL_LIMITS } from '@/lib/a2a/local-policy';
@@ -418,5 +419,213 @@ describe('native daily workbench persistence', () => {
     await expect(getConsoleTaskTree({ ...actor, actorId: otherUser }, parent.id, parent.id, 32)).rejects.toThrow();
     await expect(getConsoleTaskTree(actor, delegated.row.id, delegated.row.id, 32)).rejects.toThrow();
     await expect(getConsoleTaskTree(actor, parent.id, parent.id, 33)).rejects.toThrow();
+  });
+});
+
+
+describe('native tool approval decisions', () => {
+  const actor = () => ({ workspaceId: ws, actorId: user, agentId: agents[0], slug: 'local-test' });
+  async function pending() {
+    const row = await root();
+    const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    await checkNativeToolApproval(token, { action: 'ready' });
+    const input = { action: 'check' as const, callId: randomUUID(), toolName: 'bash', input: { command: 'touch approved-only.txt' } };
+    const result = await checkNativeToolApproval(token, input);
+    if (!result.approvalId || !result.inputHash) throw new Error('Missing approval');
+    return { row, token, input, result: { ...result, approvalId: result.approvalId, inputHash: result.inputHash } };
+  }
+  it('blocks model/runtime access until the pre-tool hook is registered', async () => {
+    const row = await root(); const token = { ...runtimeToken(row), a2aApprovalRequired: true as const };
+    await expect(assertLocalRuntimeToken(token)).rejects.toThrow();
+    await checkNativeToolApproval(token, { action: 'ready' });
+    await expect(assertLocalRuntimeToken(token)).resolves.toBeDefined();
+  });
+  it('remains pending without a human and never turns an agent message into permission', async () => {
+    const value = await pending();
+    expect(value.result.status).toBe('pending');
+    expect((await checkNativeToolApproval(value.token, value.input)).status).toBe('pending');
+    await expect(submitTask(grant, request('I approve', { taskId: value.row.id }))).rejects.toThrow();
+    expect((await getTask(grant, value.row.id)).status?.state).toBe(TaskState.TASK_STATE_WORKING);
+  });
+  it('consumes an approval once for exactly the current call and arguments', async () => {
+    const value = await pending();
+    await decideNativeToolApproval(actor(), { rootTaskId: value.row.id, taskId: value.row.id, approvalId: value.result.approvalId,
+      inputHash: value.result.inputHash, decision: 'approved' });
+    expect((await checkNativeToolApproval(value.token, value.input)).status).toBe('allow');
+    expect((await checkNativeToolApproval(value.token, value.input)).status).toBe('deny');
+    await expect(checkNativeToolApproval(value.token, { ...value.input, input: { command: 'rm approved-only.txt' } })).rejects.toThrow();
+  });
+  it('denial and expired decisions never grant execution', async () => {
+    const value = await pending();
+    await decideNativeToolApproval(actor(), { rootTaskId: value.row.id, taskId: value.row.id, approvalId: value.result.approvalId,
+      inputHash: value.result.inputHash, decision: 'denied' });
+    expect((await checkNativeToolApproval(value.token, value.input)).status).toBe('deny');
+    const second = await pending();
+    await db.a2AToolApproval.update({ where: { id: second.result.approvalId }, data: { expiresAt: new Date(0) } });
+    await expect(decideNativeToolApproval(actor(), { rootTaskId: second.row.id, taskId: second.row.id,
+      approvalId: second.result.approvalId, inputHash: second.result.inputHash, decision: 'approved' })).rejects.toThrow();
+    expect((await checkNativeToolApproval(second.token, second.input)).status).toBe('deny');
+  });
+  it('rejects another user, a wrong root and stale input hashes', async () => {
+    const value = await pending();
+    const decision = { rootTaskId: value.row.id, taskId: value.row.id, approvalId: value.result.approvalId,
+      inputHash: value.result.inputHash, decision: 'approved' as const };
+    await expect(decideNativeToolApproval({ ...actor(), actorId: otherUser }, decision)).rejects.toThrow();
+    await expect(decideNativeToolApproval(actor(), { ...decision, rootTaskId: randomUUID() })).rejects.toThrow();
+    await expect(decideNativeToolApproval(actor(), { ...decision, inputHash: '0'.repeat(64) })).rejects.toThrow();
+    await expect(listNativeToolApprovals({ ...actor(), actorId: otherUser }, value.row.id, value.row.id)).rejects.toThrow();
+  });
+  it('denies approved calls after cancel, configuration changes or a stale lease', async () => {
+    const value = await pending();
+    await decideNativeToolApproval(actor(), { rootTaskId: value.row.id, taskId: value.row.id, approvalId: value.result.approvalId,
+      inputHash: value.result.inputHash, decision: 'approved' });
+    await expect(checkNativeToolApproval({ ...value.token, a2aLeaseToken: 'stale' }, value.input)).rejects.toThrow();
+    await requestCancellation(grant, value.row.id);
+    await expect(checkNativeToolApproval(value.token, value.input)).rejects.toThrow();
+    const second = await pending();
+    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    await expect(checkNativeToolApproval(second.token, second.input)).rejects.toThrow();
+  });
+  it('supports parallel decisions without granting a sibling call or reopening the task', async () => {
+    const value = await pending();
+    const otherInput = { ...value.input, callId: randomUUID(), input: { command: 'another-action' } };
+    const other = await checkNativeToolApproval(value.token, otherInput);
+    await decideNativeToolApproval(actor(), { rootTaskId: value.row.id, taskId: value.row.id, approvalId: value.result.approvalId,
+      inputHash: value.result.inputHash, decision: 'approved' });
+    expect((await checkNativeToolApproval(value.token, value.input)).status).toBe('allow');
+    expect((await checkNativeToolApproval(value.token, otherInput)).status).toBe('pending');
+    expect(other.status).toBe('pending');
+    await expect(assertLocalRuntimeToken(value.token)).resolves.toBeDefined();
+  });
+  it('cannot mark successful completion while an approval is unresolved', async () => {
+    const value = await pending();
+    await finishTask(value.row.id, value.row.leaseToken!, TaskState.TASK_STATE_COMPLETED);
+    expect((await getTask(grant, value.row.id)).status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    await expect(checkNativeToolApproval(value.token, value.input)).rejects.toThrow();
+  });
+  it('binds a delegated approval to the initiating user and the owned root tree', async () => {
+    const parent = await root(); const delegated = await child(parent); const row = (await claimTask(delegated.row.id))!;
+    const token = { ...runtimeToken(row, 1), a2aApprovalRequired: true as const };
+    await checkNativeToolApproval(token, { action: 'ready' });
+    const input = { action: 'check' as const, callId: randomUUID(), toolName: 'write', input: { path: 'result.txt', content: 'approved' } };
+    const result = await checkNativeToolApproval(token, input); if (!result.approvalId || !result.inputHash) throw new Error();
+    await requestLocalWait(parent.id, parent.leaseToken!, [row.id]); await finishTask(parent.id, parent.leaseToken!, 3);
+    await reconcileLocalWaits(); expect((await getTaskRow(grant, parent.id)).phase).toBe('waiting');
+    expect((await listNativeToolApprovals(actor(), parent.id, row.id)).length).toBe(1);
+    await decideNativeToolApproval(actor(), { rootTaskId: parent.id, taskId: row.id, approvalId: result.approvalId, inputHash: result.inputHash, decision: 'approved' });
+    expect((await checkNativeToolApproval(token, input)).status).toBe('allow');
+  });
+  it('canonicalizes object key order but not array order', () => {
+    expect(nativeApprovalHash('tool', { a: 1, b: 2 })).toBe(nativeApprovalHash('tool', { b: 2, a: 1 }));
+    expect(nativeApprovalHash('tool', [1, 2])).not.toBe(nativeApprovalHash('tool', [2, 1]));
+    expect(() => nativeApprovalHash('tool', 'x'.repeat(17000))).toThrow();
+  });
+});
+
+describe('unified native ingress mappings', () => {
+  const actor = () => ({ workspaceId: ws, actorId: user, agentId: agents[0], slug: 'local-test' });
+  async function entry(kind: 'chat' | 'control' | 'work' = 'chat') {
+    const conversation = await db.conversation.create({ data: { agentId: agents[0], title: 'Existing conversation',
+      messages: { create: [{ role: 'user', parts: [{ type: 'text', text: 'Historical message' }] },
+        { role: 'assistant', parts: [{ type: 'tool-call', toolName: 'old-dangerous-operation' }] }] } } });
+    let sourceId = conversation.id;
+    if (kind === 'work') sourceId = (await db.workSession.create({ data: { workspaceId: ws, agentId: agents[0],
+      sandboxId: sandboxes[0], conversationId: conversation.id, a2aActorId: user, runtimeKind: 'pi', status: 'running',
+      runtimeSnapshot: { workingDirectory: '.', deploymentIds: [], installedSkillIds: [] } } })).id;
+    return { kind, sourceId, workspaceId: ws, agentId: agents[0], actorId: user, messageId: randomUUID(), text: 'New task only' };
+  }
+  it.each(['chat', 'control', 'work'] as const)('maps %s to Task and Context without executing old history', async (kind) => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry(kind);
+    const count = await db.conversation.count({ where: { agentId: agents[0] } });
+    const accepted = await submitNativeEntry(input, vi.fn());
+    expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+    expect((accepted.row.grant as unknown as LocalA2AGrant).entryPolicy?.kind).toBe(kind);
+    expect(Task.fromJSON(accepted.row.snapshot).history).toHaveLength(1);
+    expect(JSON.stringify(accepted.row.snapshot)).not.toContain('old-dangerous-operation');
+    expect(await db.conversation.count({ where: { agentId: agents[0] } })).toBe(count);
+    expect(await db.a2AEntryBinding.count({ where: { lastTaskId: accepted.row.id } })).toBe(1);
+    expect(await db.a2AEntryReceipt.count({ where: { taskId: accepted.row.id } })).toBe(1);
+  });
+  it('retries the initial message after acceptance without manufacturing different context identifiers', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const first = await submitNativeEntry(input, vi.fn()); const duplicate = await submitNativeEntry(input, vi.fn());
+    expect(duplicate.row.id).toBe(first.row.id); expect(duplicate.replay).toBe(true);
+    await expect(submitNativeEntry({ ...input, text: 'changed' }, vi.fn())).rejects.toThrow();
+    await expect(submitNativeEntry({ ...input, messageId: randomUUID() }, vi.fn())).rejects.toThrow();
+    expect(await db.a2AEntryReceipt.count({ where: { taskId: first.row.id } })).toBe(1);
+  });
+  it('creates a new terminal follow-up in the same context and preserves the original receipt', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const first = await submitNativeEntry(input, vi.fn()); const claimed = (await claimTask(first.row.id))!;
+    await finishTask(claimed.id, claimed.leaseToken!, 3, undefined, textArtifact('completed'));
+    const next = await submitNativeEntry({ ...input, messageId: randomUUID(), text: 'Follow up' }, vi.fn());
+    expect(next.row.id).not.toBe(first.row.id); expect(next.row.contextId).toBe(first.row.contextId);
+    expect((await submitNativeEntry(input, vi.fn())).row.id).toBe(first.row.id);
+    expect((await getTask(grant, first.row.id)).status?.state).toBe(3);
+  });
+  it('continues INPUT_REQUIRED with the same task and original deadline', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const first = await submitNativeEntry(input, vi.fn()); const claimed = (await claimTask(first.row.id))!;
+    await finishTask(claimed.id, claimed.leaseToken!, TaskState.TASK_STATE_INPUT_REQUIRED, 'Which branch?');
+    const next = await submitNativeEntry({ ...input, messageId: randomUUID(), text: 'main' }, vi.fn());
+    expect(next.row.id).toBe(first.row.id); expect(next.row.deadlineAt).toEqual(first.row.deadlineAt);
+  });
+  it('does not accept another workspace, target, or an unrecorded Work operator', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry('work');
+    await expect(submitNativeEntry({ ...input, actorId: otherUser }, vi.fn())).rejects.toThrow();
+    await expect(submitNativeEntry({ ...input, agentId: agents[1] }, vi.fn())).rejects.toThrow();
+    await expect(submitNativeEntry({ ...input, workspaceId: 'unrelated' }, vi.fn())).rejects.toThrow();
+    await db.workSession.update({ where: { id: input.sourceId }, data: { a2aActorId: null } });
+    await expect(submitNativeEntry(input, vi.fn())).rejects.toThrow();
+  });
+  it('rechecks a Work cancellation for root and child tools rather than inheriting old authority', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry('work');
+    const accepted = await submitNativeEntry(input, vi.fn()); const claimed = (await claimTask(accepted.row.id))!;
+    const child = await childGrant(claimed.id, claimed.leaseToken!, agents[1]);
+    await db.workSession.update({ where: { id: input.sourceId }, data: { cancelRequestedAt: new Date() } });
+    await expect(assertLocalGrant(accepted.grant)).rejects.toThrow(); await expect(assertLocalGrant(child)).rejects.toThrow();
+    await expect(listNativeToolApprovals(actor(), claimed.id, claimed.id)).rejects.toThrow();
+  });
+  it('separates different users on a shared conversation without borrowing their context', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const first = await submitNativeEntry(input, vi.fn());
+    const second = await submitNativeEntry({ ...input, actorId: otherUser }, vi.fn());
+    expect(second.row.contextId).not.toBe(first.row.contextId);
+    await expect(getTask(second.grant, first.row.id)).rejects.toThrow();
+  });
+  it('binds channels to an explicit operator and revokes the whole delegated chain', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress');
+    const channel = await db.agentChannelConnection.create({ data: { workspaceId: ws, agentId: agents[0], platform: 'telegram',
+      name: 'Fixture', status: 'running', inboundTokenHash: randomUUID(), inboundTokenSecret: {}, inboundTokenPrefix: 'test' } });
+    const conversation = await db.conversation.create({ data: { agentId: agents[0], runtimeSessionKey: `channel:${channel.id}:telegram:chat` } });
+    const input = { kind: 'channel' as const, sourceId: conversation.id, channelId: channel.id,
+      workspaceId: ws, agentId: agents[0], actorId: user, messageId: 'channel-message', text: 'New task' };
+    await expect(submitNativeEntry(input, vi.fn())).rejects.toThrow();
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: user } });
+    const accepted = await submitNativeEntry(input, vi.fn()); const claimed = (await claimTask(accepted.row.id))!;
+    const child = await childGrant(claimed.id, claimed.leaseToken!, agents[1]);
+    const credential = { ...runtimeToken(claimed), a2aApprovalRequired: true };
+    await checkNativeToolApproval(credential, { action: 'ready' });
+    await checkNativeToolApproval(credential, { action: 'check', callId: 'channel-tool', toolName: 'read', input: { secretPath: 'fixture' } });
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: null } });
+    await expect(assertLocalGrant(accepted.grant)).rejects.toThrow(); await expect(assertLocalGrant(child)).rejects.toThrow();
+    await expect(listNativeToolApprovals(actor(), claimed.id, claimed.id)).rejects.toThrow();
+  });
+  it('rolls back bindings and receipts when native admission fails', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const real = db.$transaction.bind(db); const spy = vi.spyOn(db, '$transaction');
+    spy.mockImplementationOnce(((fn: (tx: unknown) => Promise<unknown>) => real(async (tx) => {
+      const original = tx.a2AEntryReceipt.create; tx.a2AEntryReceipt.create = vi.fn().mockRejectedValue(new Error('disk failure'));
+      try { return await fn(tx); } finally { tx.a2AEntryReceipt.create = original; }
+    })) as typeof db.$transaction);
+    await expect(submitNativeEntry(input, vi.fn())).rejects.toThrow('disk failure'); spy.mockRestore();
+    expect(await db.a2AEntryBinding.count({ where: { sourceId: input.sourceId } })).toBe(0);
+    expect(await db.a2ATask.count({ where: { context: { workspaceId: ws } } })).toBe(0);
+  });
+  it('rejects silent attachment dropping and never reports a failed task as success', async () => {
+    const { latestEntryText, nativeEntryResult } = await import('@/lib/a2a/ingress');
+    expect(() => latestEntryText({ role: 'user', parts: [{ type: 'text', text: 'hello' }, { type: 'file', url: 'secret' }] })).toThrow();
+    expect(latestEntryText({ role: 'user', parts: [{ type: 'text', text: 'hello' }] })).toBe('hello');
+    expect(() => nativeEntryResult(Task.fromJSON({ id: 'failed', status: { state: 'TASK_STATE_FAILED' } }), '/task')).toThrow();
   });
 });

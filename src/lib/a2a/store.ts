@@ -64,10 +64,13 @@ export function transition(task: Task, state: TaskState, detail?: string) {
 }
 /** Admit and queue atomically. No execution or HTTP response lifecycle in this transaction. */
 export async function submitTask(grant: TaskGrant, request: SendMessageRequest, admission: { parentLeaseToken?: string } = {}) {
+  return db.$transaction((tx) => submitTaskInTransaction(tx, grant, request, admission));
+}
+/** Used by authenticated ingress adapters so binding, receipt and Task commit together. */
+export async function submitTaskInTransaction(tx: Tx, grant: TaskGrant, request: SendMessageRequest, admission: { parentLeaseToken?: string } = {}) {
   validateSend(request, isLocalGrant(grant) ? LOCAL_OUTPUT_MODES : ['text/plain']);
   const message = request.message!;
   const contentHash = digest({ message: Message.toJSON(message), metadata: request.metadata });
-  return db.$transaction(async (tx) => {
     const workspaceCall = isWorkspaceGrant(grant);
     if (workspaceCall) {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
@@ -159,7 +162,6 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
     await tx.a2ARequest.create({ data: { ownerKey: grant.ownerKey, messageId: message.messageId, contentHash, taskId: id } });
     await refreshTaskStorage(tx, id);
     return row;
-  });
 }
 export async function requestCancellation(grant: TaskGrant, id: string) {
   await getTaskRow(grant, id);
@@ -207,6 +209,12 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
     const task = Task.fromJSON(row.snapshot);
     const grant = row.grant as unknown as TaskGrant;
     const local = isLocalGrant(grant);
+    if (local && await tx.a2AToolApproval.count({ where: { taskId: id, leaseToken,
+      status: { in: ['pending', 'approved'] } } })) {
+      state = TaskState.TASK_STATE_FAILED;
+      detail = 'Executor ended with unresolved native tool approvals.';
+      artifact = undefined;
+    }
     if (local && [TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED].includes(state)
       && !row.cancelRequestedAt && row.deadlineAt > new Date()) await assertLocalGrant(grant, tx);
     if (local && state === TaskState.TASK_STATE_COMPLETED && !row.cancelRequestedAt && row.deadlineAt > new Date()) {

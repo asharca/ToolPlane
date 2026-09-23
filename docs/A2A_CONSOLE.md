@@ -94,7 +94,7 @@ administrator authority inside the transaction.
 The public and server-side local A2A wire endpoints remain Bearer-only; they do not gain
 cookie or cross-origin browser support. The BFF does not fabricate an account token or call
 legacy Responses/collaboration workers. Playground tasks are not Work approval sessions;
-existing Work, chat and messaging entry points are not automatically migrated.
+supported classic entry adapters now use [unified ingress](A2A_INGRESS_APPROVALS.md); channels require explicit operators and old records are not replayed.
 
 The public connection section also includes the [native MCP bridge](A2A_MCP_BRIDGE.md),
 using the same explicitly granted A2A service credential. Its connection object is an

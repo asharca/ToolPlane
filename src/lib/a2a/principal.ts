@@ -15,6 +15,7 @@ export type A2AGrant = {
   scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;
 };
 export type LocalA2AGrant = {
+  entryPolicy?: { kind: 'chat' | 'work' | 'channel' | 'control'; sourceId: string; sourceAgentId: string; channelId?: string; binding: string; workingDirectory?: string };
   kind: 'local'; workspaceId: string; agentId: string; actorId: string;
   targetBinding: string; ownerKey: string; expiresAt: number;
   scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;

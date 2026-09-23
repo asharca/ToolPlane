@@ -13,7 +13,7 @@ export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/re
   const { workSessionId } = await params;
   const work = await getWorkSessionForUser(user.id, workSessionId);
   if (!work) return Response.json({ error: 'Not found' }, { status: 404 });
-  const result = await resumeWorkSession(work.workspaceId, work.id);
+  const result = await resumeWorkSession(work.workspaceId, work.id, user.id);
   if (!result.ok) {
     return Response.json(
       { error: result.reason === 'invalid_transition' ? `Cannot resume ${result.status} work` : 'Not found' },

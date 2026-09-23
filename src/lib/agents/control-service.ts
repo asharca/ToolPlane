@@ -519,11 +519,13 @@ export async function createAgentFromControl(
 export async function sendAgentControlMessage(
   workspaceId: string,
   input: { agentId: string; message: string; conversationId?: string },
+  actorId?: string,
 ) {
   const sourceId = randomUUID();
   let result: Awaited<ReturnType<typeof runWorkspaceAgentMessage>>;
   try {
     result = await runWorkspaceAgentMessage({
+      userId: actorId,
       workspaceId,
       agentId: input.agentId,
       rawBody: {

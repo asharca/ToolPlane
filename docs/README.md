@@ -46,3 +46,5 @@ Start with the [project overview and quick start](../README.md), then choose a t
 - Maintain one Chinese/English pair per topic, cross-link it at the top, and register both versions in both indexes. Link rather than duplicate content elsewhere.
 - Code defines behavior. Update both languages in the same PR as implementation changes. Prefer Mermaid for architecture and flow diagrams.
 - Place new topics at the root of `docs/`, pairing `TOPIC_NAME.md` with `.en.md` or `.zh-CN.md`, and open with the purpose and intended audience.
+
+- [Unified ingress and pre-execution approvals](./A2A_INGRESS_APPROVALS.md)

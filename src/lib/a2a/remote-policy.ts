@@ -30,6 +30,7 @@ export async function assertRemoteGrant(grant: RemoteA2AGrant, tx: Prisma.Transa
   if (JSON.stringify(grant.ancestorTaskIds) !== JSON.stringify([...authority.ancestorTaskIds, parent.id])
     || JSON.stringify(grant.ancestorAgentIds) !== JSON.stringify([...authority.ancestorAgentIds, authority.agentId])
     || grant.expiresAt > Math.min(authority.expiresAt, parent.deadlineAt.getTime())) throw missing();
+  if (authority.entryPolicy) await (await import('./entry-policy')).assertEntryPolicy(tx, authority);
   if (cancellation) {
     // A stopped parent may still cancel a known remote task, but never authorize new work.
     if ((await localTarget(tx, grant.workspaceId, authority.agentId)).binding !== authority.targetBinding) throw missing();

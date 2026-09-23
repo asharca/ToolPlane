@@ -26,7 +26,10 @@ export async function refreshTaskStorage(tx: Tx, id: string, permitFailureSettle
       + COALESCE((SELECT SUM(octet_length(e.payload::text)) FROM "A2AEvent" e WHERE e."taskId"=t.id), 0)
       + COALESCE(octet_length(t."remoteTaskId"), 0) + COALESCE(octet_length(t."remoteContextId"), 0)
       + COALESCE(octet_length(t."remoteMessageId"), 0)
-      + 512 * (SELECT COUNT(*) FROM "A2ARequest" r WHERE r."taskId"=t.id) AS bytes, t.sequence
+      + 512 * (SELECT COUNT(*) FROM "A2ARequest" r WHERE r."taskId"=t.id)
+      + 1024 * (SELECT COUNT(*) FROM "A2AEntryReceipt" r WHERE r."taskId"=t.id)
+      + 1024 * (SELECT COUNT(*) FROM "A2AEntryBinding" b WHERE b."lastTaskId"=t.id)
+      + COALESCE((SELECT SUM(octet_length(a.input::text) + 1024) FROM "A2AToolApproval" a WHERE a."taskId"=t.id), 0) AS bytes, t.sequence
     FROM "A2ATask" t WHERE t.id=${id}`;
   const row = rows[0];
   if (!row) throw new Error('Task storage record disappeared.');

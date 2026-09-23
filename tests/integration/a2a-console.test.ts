@@ -131,3 +131,17 @@ describe('A2A console management persists scoped configuration', () => {
     expect((await db.agentApiKey.findUniqueOrThrow({ where: { id: key.id } })).revokedAt).not.toBeNull();
   });
 });
+
+
+it('requires an administrator to bind the current human as channel operator, never an arbitrary actor', async () => {
+  await mutateA2AConsole(local, { action: 'set-local', enabled: true });
+  const channel = await db.agentChannelConnection.create({ data: { workspaceId, agentId: local.agentId, platform: 'telegram',
+    name: 'Operator fixture', status: 'running', inboundTokenHash: randomUUID(), inboundTokenSecret: {}, inboundTokenPrefix: 'fixture' } });
+  await expect(mutateA2AConsole({ ...local, actorId: member }, { action: 'set-channel-operator', connectionId: channel.id, enabled: true })).rejects.toMatchObject({ status: 403 });
+  expect((await db.agentChannelConnection.findUniqueOrThrow({ where: { id: channel.id } })).a2aActorId).toBeNull();
+  await mutateA2AConsole(local, { action: 'set-channel-operator', connectionId: channel.id, enabled: true });
+  expect((await db.agentChannelConnection.findUniqueOrThrow({ where: { id: channel.id } })).a2aActorId).toBe(owner);
+  expect((await getA2AConsoleView({ ...local, actorId: member })).channels).toEqual([]);
+  await mutateA2AConsole(local, { action: 'set-channel-operator', connectionId: channel.id, enabled: false });
+  expect((await db.agentChannelConnection.findUniqueOrThrow({ where: { id: channel.id } })).a2aActorId).toBeNull();
+});

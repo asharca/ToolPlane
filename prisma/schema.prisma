@@ -44,6 +44,8 @@ model Server {
 }
 
 model User {
+  nativeWorkSessions WorkSession[] @relation("NativeWorkActor")
+  nativeChannelConnections AgentChannelConnection[] @relation("NativeChannelActor")
   toolkitInstallations ToolkitInstallation[]
   id                     String                @id @default(cuid())
   email                  String                @unique
@@ -882,6 +884,8 @@ model WorkspaceAttachment {
 }
 
 model AgentChannelConnection {
+  a2aActorId String?
+  a2aActor User? @relation("NativeChannelActor", fields: [a2aActorId], references: [id], onDelete: SetNull)
   id                 String    @id @default(cuid())
   workspaceId        String
   workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -961,6 +965,8 @@ model AgentSandbox {
 }
 
 model WorkSession {
+  a2aActorId String?
+  a2aActor User? @relation("NativeWorkActor", fields: [a2aActorId], references: [id], onDelete: SetNull)
   id                 String         @id @default(cuid())
   workspaceId        String
   workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1513,6 +1519,7 @@ model AgentUploadReservation {
 
 // A2A v1 native task ledger. No AgentRun / Conversation / legacy delegation IDs.
 model A2AContext {
+  entryBindings A2AEntryBinding[]
   remoteAgentId       String?
   remoteAgent         RemoteA2AAgent? @relation(fields: [remoteAgentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   id                  String               @id @default(uuid())
@@ -1542,6 +1549,10 @@ model A2AContext {
 }
 
 model A2ATask {
+  entryReceipts A2AEntryReceipt[]
+  latestEntries A2AEntryBinding[]
+  approvalReadyLease String?
+  toolApprovals A2AToolApproval[]
   remoteTaskId        String?
   remoteContextId     String?
   remoteMessageId     String?
@@ -1623,4 +1634,51 @@ model RemoteA2AAgent {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   @@index([workspaceId, enabled])
+}
+
+// A decision authorizes one native call in one live execution lease, not a task retry.
+model A2AToolApproval {
+  id String @id @default(cuid())
+  taskId String
+  task A2ATask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  leaseToken String
+  callId String
+  toolName String
+  input Json
+  inputHash String
+  status String @default("pending")
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  decidedAt DateTime?
+  decidedBy String?
+  consumedAt DateTime?
+  @@unique([taskId, leaseToken, callId])
+  @@index([taskId, status])
+}
+
+// Compatibility records are projections. Task/Context remains the execution authority.
+model A2AEntryBinding {
+  id String @id @default(cuid())
+  ownerKey String
+  kind String
+  sourceId String
+  contextId String
+  context A2AContext @relation(fields: [contextId], references: [id], onDelete: Cascade)
+  lastTaskId String
+  lastTask A2ATask @relation(fields: [lastTaskId], references: [id], onDelete: Cascade)
+  receipts A2AEntryReceipt[]
+  createdAt DateTime @default(now())
+  @@unique([ownerKey, kind, sourceId])
+}
+model A2AEntryReceipt {
+  id String @id @default(cuid())
+  bindingId String
+  binding A2AEntryBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  messageId String
+  inputHash String
+  taskId String
+  task A2ATask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([bindingId, messageId])
+  @@index([taskId])
 }

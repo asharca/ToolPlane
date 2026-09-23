@@ -137,6 +137,7 @@ export const POST = withRequestLogging("/api/v1/work-sessions", async function P
   let work: Awaited<ReturnType<typeof createWorkSession>>;
   try {
     work = await createWorkSession({
+      a2aActorId: user.id,
       workspaceId: agent.workspaceId,
       agentId: agent.id,
       sandboxId: body.sandboxId,

@@ -20,9 +20,9 @@ MCP、Skill、Toolkit 和已配置沙箱。`Context.id` 是独立的原生会话
 有权使用这些资源的工作区成员开启。托管 `hermes` 保持公开执行适配，不自动加入内部协作。
 
 新链路直接接原生沙箱执行端口，不调用旧 `runAgentTurn`、旧协作 Worker、Responses API
-或 `runDedicatedSandboxTurn`。普通聊天、Work、消息渠道和 Control MCP **尚未自动切换**
-到新根任务入口；也没有把原来的 Work 审批绕开后接进新链路。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)
-已提供显式启用、连接示例和本地任务调试。控制台现有受权限限制的父子任务树；旧入口的显式迁移仍需后续完善。
+或 `runDedicatedSandboxTurn`。受支持运行时的经典聊天、Work、Control MCP 和显式授权渠道
+现在通过[统一入口与执行前审批](A2A_INGRESS_APPROVALS.zh-CN.md)使用同一核心；托管 Hermes
+仍有兼容路径，历史数据不自动重放。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)提供开关、连接示例和任务树。
 
 ## 显式启用和调用
 
@@ -136,8 +136,7 @@ application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 
 不会启动后再重试可能带副作用的执行。同一配置沙箱的不同原生会话也不能同时改写配置。
 
 这些不是金额或精确 Token 预算。聚合准入计数见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。
-大文件或二进制输入上传、原生逐工具审批、自动跨入口迁移与分布式执行
-仍不在支持范围。
+大文件/二进制输入、自动历史记忆迁移和分布式执行仍未支持。原生审批的运行时限制见[专门说明](A2A_INGRESS_APPROVALS.zh-CN.md)。
 
 ## 迁移与验证
 

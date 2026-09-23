@@ -2,7 +2,7 @@
 
 > [中文](A2A_LOCAL_COLLABORATION.zh-CN.md)
 
-The console now provides opt-in controls, connection information and a local task playground. See [console integration](A2A_CONSOLE.md). The Bearer API below is unchanged; existing Work/chat entry points are not automatically migrated.
+The console now provides opt-in controls, connection information and a local task playground. See [console integration](A2A_CONSOLE.md). The Bearer API below is unchanged; supported classic entry adapters are described in [unified ingress](A2A_INGRESS_APPROVALS.md).
 
 For Agent configuration and runtime maintainers. Local collaboration shares the
 A2A 1.0 Handler, Context, Task, request deduplication, events and Worker with
@@ -23,12 +23,11 @@ models, MCPs, Skills and Toolkits. Context.id identifies a separate native sessi
 sandbox files and native memory. Enable this only for workspace users authorized to
 use those resources. Managed `hermes` stays on its public execution port.
 
-The new runtime port does not call runAgentTurn, the old collaboration Worker,
-Responses execution, runDedicatedSandboxTurn or a private Conversation. Existing
-chat, Work, messaging and Control MCP entries are **not automatically switched**;
-Work approval must not be bypassed by such a switch. The [A2A console](A2A_CONSOLE.md)
-now provides explicit enablement, connection examples and a local task playground.
-The console now includes a scoped parent/child task monitor. Explicit migration of the old entries remains separate work.
+The runtime port does not call runAgentTurn, the old collaboration Worker,
+Responses execution or runDedicatedSandboxTurn. Supported classic chat, Work,
+Control MCP and explicitly authorized channel adapters now use the same core;
+managed Hermes remains a compatibility path. See [unified ingress and approvals](A2A_INGRESS_APPROVALS.md).
+The [console](A2A_CONSOLE.md) provides opt-in controls, connection details and scoped task trees.
 
 ## Opt-in and root invocation
 
@@ -154,8 +153,8 @@ and A2A; a busy sandbox leaves an A2A task queued rather than executing and retr
 side effects. Different native sessions cannot rewrite the same sandbox concurrently.
 
 These are task, execution and time limits, not a precise token/currency budget.
-Large/binary input uploads, native per-tool approval bridging, automatic
-migration of old entry points and distributed execution are not advertised. Aggregate
+Large/binary input, automatic historical memory migration and distributed execution remain unsupported.
+Native approval constraints are documented in [unified ingress](A2A_INGRESS_APPROVALS.md). Aggregate
 admission accounting is documented in [resource limits](A2A_RESOURCE_LIMITS.md).
 
 Apply 20260922010000_a2a_local_collaboration after the native core migration, then

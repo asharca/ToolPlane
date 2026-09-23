@@ -14,7 +14,7 @@ export type ConsoleTaskTree = {
   rootTaskId: string;
   restricted: boolean;
   nodes: Array<{ id: string; parentTaskId: string | null; agentId: string; name: string;
-    state: string; phase: string; cancelRequested: boolean; resumeCount: number; updatedAt: string }>;
+    state: string; phase: string; pendingApprovals?: number; cancelRequested: boolean; resumeCount: number; updatedAt: string }>;
   selectedTask: Record<string, unknown>;
 };
 
@@ -72,8 +72,9 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
     visible.set(row.id, row);
     const task = Task.fromJSON(row.snapshot);
     const status = jsonTask(task).status as { state?: string } | undefined;
+    const pendingApprovals = row.leaseToken ? await db.a2AToolApproval.count({ where: { taskId: row.id, leaseToken: row.leaseToken, status: 'pending', expiresAt: { gt: new Date() } } }) : 0;
     nodes.push({ id: row.id, parentTaskId: row.parentTaskId, agentId: grant.agentId, name: target.name,
-      state: status?.state ?? 'TASK_STATE_UNSPECIFIED', phase: row.phase,
+      state: status?.state ?? 'TASK_STATE_UNSPECIFIED', phase: row.phase, pendingApprovals,
       cancelRequested: Boolean(row.cancelRequestedAt), resumeCount: row.resumeCount, updatedAt: row.statusAt.toISOString() });
   }
   if (!visible.has(root.id) || !visible.has(selectedId)) throw new TaskNotFoundError();

@@ -122,6 +122,16 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
         }}>{t(view.local.enabled ? 'disableLocal' : 'enableLocal')}</Button>
           <a className="text-sm underline underline-offset-4" href={`?settings=subAgents`}>{t('configureTargets')}</a></div>
       </section>
+      {view.canManage && view.channels?.length ? <section className={cardClass} aria-labelledby="a2a-channel-operator-heading">
+        <h3 id="a2a-channel-operator-heading" className="font-semibold">{t('channelOperator.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('channelOperator.hint')}</p>
+        {view.channels.map((channel) => <div key={channel.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3">
+          <span className="text-sm">{channel.name} · {channel.platform}</span>
+          <Button type="button" size="sm" variant="secondary" disabled={busy || (!channel.enabled && !view.local.enabled)} onClick={() => {
+            if (window.confirm(t('channelOperator.confirm'))) void mutate({ action: 'set-channel-operator', connectionId: channel.id, enabled: !channel.enabled });
+          }}>{t(channel.enabled ? 'channelOperator.disable' : 'channelOperator.enable')}</Button>
+        </div>)}
+      </section> : null}
       <section className={cardClass} aria-labelledby="a2a-public-heading">
         <div className="flex items-start justify-between gap-3"><div><h3 id="a2a-public-heading" className="font-semibold">{t('publicTitle')}</h3><p className="mt-1 text-sm text-muted-foreground">{t('publicDescription')}</p></div>
           <Badge tone={view.endpoint?.enabled ? 'success' : 'neutral'}>{t(view.endpoint?.enabled ? 'enabled' : 'disabled')}</Badge></div>

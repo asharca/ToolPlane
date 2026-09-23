@@ -15,6 +15,7 @@ type Tx = Prisma.TransactionClient;
 export type ConsoleActor = { workspaceId: string; actorId: string; agentId: string; slug: string };
 const Id = z.string().min(1).max(200);
 export const A2AConsoleAction = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('set-channel-operator'), connectionId: Id, enabled: z.boolean() }).strict(),
   z.object({ action: z.literal('set-local'), enabled: z.boolean() }).strict(),
   z.object({ action: z.literal('set-public'), enabled: z.boolean() }).strict(),
   z.object({ action: z.literal('create-client'), name: z.string().trim().min(1).max(100) }).strict(),
@@ -48,7 +49,10 @@ export async function getA2AConsoleView(ctx: ConsoleActor): Promise<A2AConsoleVi
   catch { /* Return a safe configuration warning, not Host-derived URLs. */ }
   const supported = isDedicatedSandboxRuntimeKind(agent.runtimeKind);
   const sandbox = agent.sandboxes.length === 1 ? agent.sandboxes[0].sandbox : null;
-  return { canManage: manager, connections,
+  const channels = manager && supported ? await db.agentChannelConnection.findMany({ where: { workspaceId: ctx.workspaceId, agentId: ctx.agentId },
+    take: 100, orderBy: { name: 'asc' }, select: { id: true, name: true, platform: true, a2aActorId: true } }) : [];
+  return { canManage: manager, connections, channels: channels.map((channel) => ({ id: channel.id, name: channel.name,
+    platform: channel.platform, enabled: Boolean(channel.a2aActorId), mine: channel.a2aActorId === ctx.actorId })),
     local: { enabled: agent.a2aInternalEnabled, supported,
       ready: supported && Boolean(agent.providerId && agent.model && sandbox?.kind === 'docker' && sandbox.network !== 'none' && sandbox.workspaceId === ctx.workspaceId) },
     endpoint: endpoint ? { id: endpoint.publicId, enabled: endpoint.a2aEnabled,
@@ -65,6 +69,15 @@ export async function mutateA2AConsole(ctx: ConsoleActor, input: A2AConsoleActio
     if (!await canManage(tx, ctx)) throw new A2AHttpError(403, 'Workspace owner or administrator required.');
     const agent = await tx.agent.findFirst({ where: { ...ORDINARY_AGENT_FILTER, id: ctx.agentId, workspaceId: ctx.workspaceId }, select: { id: true } });
     if (!agent) throw new A2AHttpError(404, 'Agent unavailable.');
+    if (input.action === 'set-channel-operator') {
+      const channel = await tx.agentChannelConnection.findFirst({ where: { id: input.connectionId, workspaceId: ctx.workspaceId, agentId: ctx.agentId }, select: { id: true } });
+      if (!channel) throw new A2AHttpError(404, 'Channel unavailable.');
+      if (input.enabled) await localTarget(tx, ctx.workspaceId, ctx.agentId);
+      await tx.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: input.enabled ? ctx.actorId : null } });
+      await writeAudit(tx, { actorId: ctx.actorId, workspaceId: ctx.workspaceId, action: 'agent.a2a.channel_operator', targetType: 'AgentChannelConnection',
+        targetId: channel.id, changes: { enabled: input.enabled, actorId: input.enabled ? ctx.actorId : null } });
+      return {};
+    }
     if (input.action === 'set-local') {
       await tx.agent.update({ where: { id: agent.id }, data: { a2aInternalEnabled: input.enabled } });
       // Validate after setting within this transaction; invalid capability configuration rolls back.

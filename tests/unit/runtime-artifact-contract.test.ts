@@ -38,6 +38,10 @@ describe('minimal runtime artifact contract', () => {
     expect(runtimeAssembler).toContain('requireFromRuntime.resolve(shikiRuntimeAlias)');
     expect(runtimeAssembler).toContain("await mkdir(path.join(outputRoot, 'public'), { recursive: true })");
     expect(runtimeAssembler).toContain("['public', 'public assets directory']");
+    expect(runtimeAssembler).toContain("['scripts/a2a-native-approval.mjs', 'native A2A execution approval bridge']");
+    expect(runtimeAssembler).toContain("['scripts/a2a-hermes-approval.py', 'Hermes pre-execution approval middleware']");
+    expect(readRepoFile('scripts/a2a-native-approval.mjs')).toContain('approval');
+    expect(readRepoFile('scripts/a2a-hermes-approval.py')).toContain('tool_execution');
     expect(ciWorkflow).toContain(
       'tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null',
     );

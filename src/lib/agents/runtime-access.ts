@@ -15,6 +15,7 @@ export type AgentRuntimeTokenPayload = {
   exp: number;
   a2aTaskId?: string;
   a2aLeaseToken?: string;
+  a2aApprovalRequired?: boolean;
   traceId?: string;
   parentSpanId?: string;
 };
@@ -47,6 +48,7 @@ export async function createAgentRuntimeToken(
   if (
     ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined)
       && (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken)))
+    || (payload.a2aApprovalRequired !== undefined && (payload.a2aApprovalRequired !== true || !payload.a2aTaskId))
     || !validId(payload.workspaceId)
     || !validId(payload.agentId)
     || !validId(payload.sandboxId)
@@ -61,6 +63,7 @@ export async function createAgentRuntimeToken(
 
   return new SignJWT({
     ...(payload.a2aTaskId ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: payload.a2aLeaseToken } : {}),
+    ...(payload.a2aApprovalRequired === true ? { a2aApprovalRequired: true } : {}),
     workspaceId: payload.workspaceId,
     agentId: payload.agentId,
     sandboxId: payload.sandboxId,
@@ -94,6 +97,7 @@ export async function verifyAgentRuntimeToken(
     if (
       ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined)
       && (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken)))
+    || (payload.a2aApprovalRequired !== undefined && (payload.a2aApprovalRequired !== true || !payload.a2aTaskId))
     || !validId(payload.workspaceId)
       || !validId(payload.agentId)
       || !validId(payload.sandboxId)
@@ -109,6 +113,7 @@ export async function verifyAgentRuntimeToken(
 
     return {
       ...(typeof payload.a2aTaskId === 'string' ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: String(payload.a2aLeaseToken) } : {}),
+      ...(payload.a2aApprovalRequired === true ? { a2aApprovalRequired: true } : {}),
       workspaceId: payload.workspaceId,
       agentId: payload.agentId,
       sandboxId: payload.sandboxId,

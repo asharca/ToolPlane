@@ -339,6 +339,8 @@ for (const [entry, description] of [
   ['scripts/install-hermes-rpc.mjs', 'pinned Hermes RPC sandbox installer'],
   ['scripts/hermes-rpc-session.mjs', 'Hermes RPC protocol adapter'],
   ['scripts/hermes-rpc-bootstrap.py', 'Hermes RPC isolated native bootstrap'],
+  ['scripts/a2a-native-approval.mjs', 'native A2A execution approval bridge'],
+  ['scripts/a2a-hermes-approval.py', 'Hermes pre-execution approval middleware'],
   ['packages/connector/bin/runtime.mjs', 'connector package runtime'],
   ['prisma/schema.prisma', 'Prisma schema'],
 ]) {

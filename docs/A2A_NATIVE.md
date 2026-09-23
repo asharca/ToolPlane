@@ -113,8 +113,8 @@ cannot extend it. Terminal contexts are cleaned in bounded batches after retenti
 Only JSONRPC, streaming and text/plain are advertised. REST, gRPC, push callbacks,
 extended Cards and binary/structured input are not implemented by the public service.
 [Native local collaboration](A2A_LOCAL_COLLABORATION.md) now uses this same task core
-with parent joins and continuation. Legacy chat/Work/delegation entries are not
-automatically migrated; native per-tool approval bridging remains unimplemented.
+with parent joins and continuation. See [unified ingress and approvals](A2A_INGRESS_APPROVALS.md)
+for supported classic adapters and remaining managed Hermes/native interactive approval limits.
 Unsupported capabilities return standard errors. Input file URLs are never fetched.
 
 Apply migration 20260922000000_a2a_native_tasks and regenerate Prisma Client using the

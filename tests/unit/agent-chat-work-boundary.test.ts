@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   messageFindMany: vi.fn(),
   resolveAgentTools: vi.fn(),
   runDedicatedSandboxTurn: vi.fn(),
+  runNativeEntry: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestUser: mocks.resolveRequestUser }));
@@ -51,6 +52,9 @@ vi.mock('@/lib/agents/sandbox-turn', () => ({
   runDedicatedSandboxTurn: mocks.runDedicatedSandboxTurn,
 }));
 
+vi.mock('@/lib/a2a/ingress', async (importOriginal) => ({ ...(await importOriginal<object>()), runNativeEntry: mocks.runNativeEntry }));
+
+import { Task } from '@a2a-js/sdk';
 import { POST } from '@/app/api/v1/agents/[agentId]/chat/route';
 
 const context = { params: Promise.resolve({ agentId: 'agent-1' }) };
@@ -79,7 +83,7 @@ describe('Chat and Work execution boundary', () => {
     mocks.conversationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.messageFindMany.mockResolvedValue([]);
     mocks.resolveAgentTools.mockReturnValue({ skills: [], deploymentIds: [] });
-    mocks.runDedicatedSandboxTurn.mockResolvedValue('done');
+    mocks.runNativeEntry.mockResolvedValue({ task: Task.fromJSON({ id: 'native-1', contextId: 'context-1', status: { state: 'TASK_STATE_COMPLETED' }, artifacts: [{ artifactId: 'result', parts: [{ text: 'OK' }] }] }), path: '/native-task' });
   });
 
   it('persists and snapshots the selected reasoning effort for Hermes', async () => {
@@ -266,7 +270,7 @@ describe('Chat and Work execution boundary', () => {
     expect(await response.text()).toBe('Attachments require a saved conversation.');
   });
 
-  it('does not persist a failed sandbox turn as an empty assistant reply', async () => {
+  it('does not persist a failed native task as an empty assistant reply', async () => {
     mocks.conversationFindFirst.mockResolvedValue({
       id: 'conversation-1',
       title: null,
@@ -274,7 +278,7 @@ describe('Chat and Work execution boundary', () => {
       publicApiConversation: null,
       workSession: null,
     });
-    mocks.runDedicatedSandboxTurn.mockRejectedValue(new Error('Runtime failed'));
+    mocks.runNativeEntry.mockRejectedValue(new Error('Runtime failed'));
 
     const response = await POST(request({
       conversationId: 'conversation-1',
@@ -285,7 +289,7 @@ describe('Chat and Work execution boundary', () => {
     expect(mocks.appendMessage).not.toHaveBeenCalled();
   });
 
-  it('persists a completed sandbox turn', async () => {
+  it('persists a completed native task projection', async () => {
     mocks.conversationFindFirst.mockResolvedValue({
       id: 'conversation-1',
       title: null,
@@ -293,10 +297,7 @@ describe('Chat and Work execution boundary', () => {
       publicApiConversation: null,
       workSession: null,
     });
-    mocks.runDedicatedSandboxTurn.mockImplementation(async ({ onTextDelta }) => {
-      await onTextDelta?.('OK');
-      return 'OK';
-    });
+
 
     const response = await POST(request({
       conversationId: 'conversation-1',
@@ -312,7 +313,7 @@ describe('Chat and Work execution boundary', () => {
     );
   });
 
-  it('uses the saved compaction instead of replaying full client history into DSH', async () => {
+  it('submits only fresh input to native DSH without replaying old compacted tool history', async () => {
     mocks.getAgentForRequest.mockResolvedValue({ id: 'agent-1', workspaceId: 'workspace-1', runtimeKind: 'dsh', provider: { id: 'provider-1' }, model: 'model-1', modelProviders: [] });
     mocks.conversationFindFirst.mockResolvedValue({ id: 'conversation-1', title: null, workSession: null, publicApiConversation: null });
     const old = { id: 'old-user', role: 'user', parts: [{ type: 'text', text: 'Old detailed history' }] };
@@ -325,9 +326,11 @@ describe('Chat and Work execution boundary', () => {
     const next = { id: 'new-user', role: 'user', parts: [{ type: 'text', text: 'Continue' }] };
     const response = await POST(request({ conversationId: 'conversation-1', messages: [old, next] }), context);
     await response.text();
-    const sent = mocks.runDedicatedSandboxTurn.mock.calls.at(-1)![0].messages;
-    expect(JSON.stringify(sent)).toContain('Saved concise context');
-    expect(JSON.stringify(sent)).not.toContain('Old detailed history');
-    expect(sent.at(-1)).toEqual(next);
+    expect(mocks.runNativeEntry).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'chat', actorId: 'user-1', agentId: 'agent-1', sourceId: 'conversation-1', messageId: 'new-user', text: 'Continue',
+    }));
+    expect(mocks.runDedicatedSandboxTurn).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.runNativeEntry.mock.calls[0][0])).not.toContain('Old detailed history');
+    expect(JSON.stringify(mocks.runNativeEntry.mock.calls[0][0])).not.toContain('Saved concise context');
   });
 });

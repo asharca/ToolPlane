@@ -67,7 +67,7 @@ export async function runHermesRpcTurn(options: RunSandboxAgentTurnOptions, cont
   active.add(key);
   const id = randomUUID();
   const temporary = `/workspace/.toolplane/runtime-tmp/${id}-hermes-rpc`;
-  const paths = [`${temporary}.json`, `${temporary}.mjs`, `${temporary}.py`, `${temporary}-install.mjs`];
+  const paths = [`${temporary}.json`, `${temporary}.mjs`, `${temporary}.py`, `${temporary}-install.mjs`, `${temporary}-approval.py`];
   try {
     options.signal?.throwIfAborted();
     await io.write(context.container, paths[3]!, await readFile(`${process.cwd()}/scripts/install-hermes-rpc.mjs`, 'utf8'), options.signal);
@@ -81,6 +81,7 @@ export async function runHermesRpcTurn(options: RunSandboxAgentTurnOptions, cont
       home: `${context.stateRoot}/home`, cwd: context.workdir, source: `${HERMES_RPC_PACKAGE_ROOT}/source`,
       python: `${HERMES_RPC_PACKAGE_ROOT}/source/.venv/bin/python`, bootstrap: paths[2],
       config, modelBase, toolsets, token: options.runtimeAccessToken,
+      ...(options.nativeApprovalUrl ? { approvalUrl: options.nativeApprovalUrl, approvalScript: paths[4] } : {}),
       sessionId: options.runtimeSessionId ?? `ephemeral-${id}`, provider: 'custom:toolplane-rpc', model: options.modelId,
       binding: createHash('sha256').update(JSON.stringify({ sandboxId: options.sandboxId, agentId: options.agentId, providerId: options.provider.id, model: options.modelId, format: options.provider.format, cwd: context.workdir })).digest('hex'),
       history: context.history, message: context.message, command: options.command, timeoutMs,
@@ -88,6 +89,7 @@ export async function runHermesRpcTurn(options: RunSandboxAgentTurnOptions, cont
     await io.write(context.container, paths[0]!, JSON.stringify(input), options.signal);
     await io.write(context.container, paths[1]!, await readFile(`${process.cwd()}/scripts/hermes-rpc-session.mjs`, 'utf8'), options.signal);
     await io.write(context.container, paths[2]!, await readFile(`${process.cwd()}/scripts/hermes-rpc-bootstrap.py`, 'utf8'), options.signal);
+    if (options.nativeApprovalUrl) await io.write(context.container, paths[4]!, await readFile(`${process.cwd()}/scripts/a2a-hermes-approval.py`, 'utf8'), options.signal);
     let buffer = '', result: string | undefined, failure: string | undefined;
     const consume = async (line: string) => {
       if (!line.trim()) return;

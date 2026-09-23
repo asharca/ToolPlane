@@ -1506,7 +1506,23 @@
         "openWorkbench": "Open A2A workbench",
         "taskHistory": "Task message history",
         "historyUser": "Caller / task context",
-        "historyAgent": "Agent"
+        "historyAgent": "Agent",
+        "approvals": {
+          "title": "Native tool approvals",
+          "hint": "Approve only this invocation, its displayed arguments and its current execution lease. Denial or expiry prevents this invocation. Already started side effects cannot be rolled back.",
+          "failed": "Approval status is unknown. Refresh before deciding; approval is never automatically retried.",
+          "refresh": "Refresh approvals",
+          "approve": "Approve once",
+          "deny": "Deny",
+          "pending": "Awaiting approval: {count}"
+        },
+        "channelOperator": {
+          "title": "Channel execution operator",
+          "hint": "Explicitly delegate channel execution to your authenticated account. Channel senders never become platform users. Native tool approvals must be decided by this account in the console.",
+          "confirm": "Change the native execution operator for this channel? Disabling stops subsequent execution authorization.",
+          "enable": "Authorize my account",
+          "disable": "Remove operator"
+        }
       }
     },
     "conversationOperations": {

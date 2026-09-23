@@ -59,6 +59,7 @@ export async function assertLocalGrant(grant: LocalA2AGrant, tx: Database = db) 
   if (grant.expiresAt <= Date.now() || grant.ancestorTaskIds.length > LOCAL_LIMITS.depth
     || grant.ancestorTaskIds.length !== grant.ancestorAgentIds.length) throw missing();
   await assertLocalActor(tx, grant.workspaceId, grant.actorId);
+  if (grant.entryPolicy) await (await import('./entry-policy')).assertEntryPolicy(tx, grant);
   if ((await localTarget(tx, grant.workspaceId, grant.agentId)).binding !== grant.targetBinding) throw missing();
   for (let index = 0; index < grant.ancestorTaskIds.length; index++) {
     const ancestor = await tx.a2ATask.findUnique({ where: { id: grant.ancestorTaskIds[index] } });

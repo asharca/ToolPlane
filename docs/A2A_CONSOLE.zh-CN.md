@@ -80,7 +80,7 @@ GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 
 公开 A2A 和服务端本地协议入口保持原有 Bearer 验证，不因此接受 Cookie 或浏览器跨域请求。
 控制台不伪造账户 Token，也不绕回旧 Responses/协作 Worker。调试任务不属于 Work 审批流程；
-原有 Work、聊天和消息渠道并未自动迁移。
+受支持经典入口通过[统一适配](A2A_INGRESS_APPROVALS.zh-CN.md)进入原生核心；渠道需要显式绑定真实操作人，旧记录不自动重放。
 
 对外连接区还提供[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)，复用显式授予 A2A 权限的服务凭据。
 连接对象是示例，不是所有客户端都通用的配置文件。

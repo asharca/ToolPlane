@@ -72,9 +72,9 @@ Restored access requires an explicit read again.
 This is an **explicit native mode** of `/work`, not a rename of old records. Existing `w` and `c` URLs keep opening classic
 Work/chat; combining them with `mode=a2a` is rejected. Returning to classic Work does not migrate, delete or replay old sessions.
 
-Native execution uses the explicitly enabled Agent's configured capability scope and does not inherit classic Work's
-per-tool approval UI. The workbench always displays this distinction. This increment does not switch all classic Work, chat
-or messaging channels, bypass their approval checks, add native per-tool approvals, or migrate their stored conversations.
+Native execution uses the explicitly enabled Agent's scope and new one-call approvals, not old WorkApproval records.
+Supported classic adapters now use [unified ingress](A2A_INGRESS_APPROVALS.md). Managed Hermes, some native
+interactive approval callbacks and full historical memory migration remain outside this increment.
 Local/remote delegation uses existing restricted runtime tools. Remote access still requires the deployment allowlist,
 admin registration/enablement and per-Agent grants. See [remote Agents](A2A_REMOTE_AGENTS.md) and
 [local collaboration](A2A_LOCAL_COLLABORATION.md).

@@ -35,6 +35,7 @@ export function a2aCurlExample(url: string, mode: 'local' | 'public', method: 'c
 }
 
 export type A2AConsoleView = {
+  channels?: Array<{ id: string; name: string; platform: string; enabled: boolean; mine: boolean }>;
   canManage: boolean;
   local: { enabled: boolean; supported: boolean; ready: boolean };
   endpoint: null | { id: string; enabled: boolean; ready: boolean; revision: number | null;
