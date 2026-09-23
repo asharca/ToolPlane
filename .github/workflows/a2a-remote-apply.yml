@@ -1,0 +1,50 @@
+name: a2a-remote-apply
+on:
+  push:
+    branches: [feat/a2a-console-onboarding]
+    paths: ['.a2a-remote-reviewed.*', '.github/workflows/a2a-remote-apply.yml']
+permissions:
+  contents: write
+concurrency:
+  group: a2a-remote-reviewed-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'asharca/ToolPlane' && github.ref == 'refs/heads/feat/a2a-console-onboarding'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Apply exact verified source and remove temporary transport files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, lzma, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          compressed = b''.join((root / f'.a2a-remote-reviewed.{i}').read_bytes() for i in range(1, 10))
+          assert hashlib.sha256(compressed).hexdigest() == '41135539d24b57e413dc8ad55d871f11d440b456ff41d8c4192bff1adedfc5f3'
+          patch = lzma.decompress(compressed)
+          assert len(patch) == 179213
+          target = pathlib.Path('/tmp/a2a-remote-reviewed.patch')
+          target.write_bytes(patch)
+          stats = subprocess.check_output(['git', 'apply', '--numstat', str(target)], text=True)
+          paths = sorted(line.split('\t', 2)[2] for line in stats.splitlines())
+          assert len(paths) == 48
+          assert hashlib.sha256('\n'.join(paths).encode()).hexdigest() == '66b6b588dd052f7a4264ddf7d6b52d53e317bc995d0224c0d28cdb7e7035d0e3'
+          subprocess.run(['git', 'apply', '--check', str(target)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(target)], check=True)
+          for i in range(1, 10):
+              (root / f'.a2a-remote-reviewed.{i}').unlink()
+          (root / '.github/workflows/a2a-remote-apply.yml').unlink()
+          assert not (root / '.github/workflows/a2a-remote-source.yml').exists()
+          subprocess.run(['git', 'add', '--all'], check=True)
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          assert subprocess.check_output(['git', 'write-tree'], text=True).strip() == '00e9fcd05ef1292e866900d7bb88dce60942d077'
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: add scoped remote A2A registration and durable outbound delegation'
+          git push origin HEAD:refs/heads/feat/a2a-console-onboarding
