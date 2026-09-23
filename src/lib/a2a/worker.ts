@@ -8,7 +8,7 @@ import { withLogContext } from '@/lib/observability/context';
 import { systemLog } from '@/lib/observability/system';
 import { ACTIVE, A2A_LIMITS } from './model';
 import { claimTask, finishTask, interruptTask } from './store';
-import { assertLiveGrant, isLocalGrant, type TaskGrant } from './principal';
+import { assertLiveGrant, isLocalGrant, isRemoteGrant, type TaskGrant } from './principal';
 import { withSandboxExecutionLease, SandboxExecutionBusyError } from '@/lib/agents/sandbox-execution-gate';
 import { localTarget } from './local-policy';
 import { executeTask, type TaskExecutor } from './executor';
@@ -48,6 +48,10 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executeTask)
         })();
       }, 1000);
       const result = await withLogContext({ workspaceId: grant.workspaceId, suppressPayload: true }, () => executor(row, signal));
+      if (result.deferred) {
+        if (!isRemoteGrant(grant)) throw new Error('Only remote observations can defer an execution');
+        return;
+      }
       signal.throwIfAborted(); await assertLiveGrant(grant, 'send');
       if (![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED,
         TaskState.TASK_STATE_AUTH_REQUIRED, TaskState.TASK_STATE_REJECTED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('Invalid executor state');
@@ -55,6 +59,9 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executeTask)
     } catch (error) {
       if (!claimed && error instanceof A2AQuotaError) { await interruptTask(id, 'Execution was not started because the Agent resource quota was exhausted.'); return; }
       // Native exception text may contain prompts, files or upstream credentials.
+      if (claimed && isRemoteGrant(claimed.grant as unknown as TaskGrant)) {
+        await interruptTask(id, 'The remote operation was interrupted without automatic replay.'); return;
+      }
       if (claimed?.leaseToken) await finishTask(id, claimed.leaseToken, TaskState.TASK_STATE_FAILED,
         'Task execution stopped or failed. No automatic replay was performed.');
     } finally {
@@ -83,6 +90,8 @@ export async function tickA2AWorker() {
   try {
     const { reconcileLocalWaits } = await import('./local-continuation');
     await reconcileLocalWaits();
+    const { reconcileRemoteTasks } = await import('./remote-executor');
+    void reconcileRemoteTasks().catch(() => systemLog('error', 'Remote A2A observation failed.'));
     const expired = await db.a2ATask.findMany({ where: { deadlineAt: { lte: new Date() }, OR: [{ state: { in: [1, 6, 8] } }, { state: 2, phase: { in: ['waiting', 'resumable'] } }] }, take: 50, select: { id: true } });
     for (const task of expired) await interruptTask(task.id, 'Task deadline exceeded.');
     const queued = await db.a2ATask.findMany({ where: { OR: [{ state: TaskState.TASK_STATE_SUBMITTED }, { state: TaskState.TASK_STATE_WORKING, phase: 'resumable' }] }, orderBy: [{ depth: 'desc' }, { createdAt: 'asc' }], take: 16, select: { id: true } });
@@ -103,7 +112,13 @@ export async function startA2AWorker() {
   let rows;
   do {
     rows = await db.a2ATask.findMany({ where: { state: TaskState.TASK_STATE_WORKING, phase: 'executing' }, take: 50, select: { id: true } });
-    for (const row of rows) await interruptTask(row.id, 'Execution was interrupted by a process restart.');
+    for (const row of rows) {
+      const task = await db.a2ATask.findUnique({ where: { id: row.id } });
+      if (task?.remoteTaskId && isRemoteGrant(task.grant as unknown as TaskGrant)) {
+        // Only read an already-known remote task after restart. Never replay SendMessage.
+        await db.a2ATask.update({ where: { id: row.id }, data: { phase: 'remote-waiting', leaseToken: null, remotePollAt: new Date() } });
+      } else await interruptTask(row.id, 'Execution was interrupted by a process restart.');
+    }
   } while (rows.length === 50);
   state.stopped = false;
   state.timer = setInterval(() => { void tickA2AWorker().catch(() => systemLog('error', 'A2A scheduling failed.')); }, 500);

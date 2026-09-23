@@ -111,7 +111,7 @@ cannot extend it. Terminal contexts are cleaned in bounded batches after retenti
 [resource limits](A2A_RESOURCE_LIMITS.md).
 
 Only JSONRPC, streaming and text/plain are advertised. REST, gRPC, push callbacks,
-extended Cards, binary/structured input and a remote registry are not implemented.
+extended Cards and binary/structured input are not implemented by the public service.
 [Native local collaboration](A2A_LOCAL_COLLABORATION.md) now uses this same task core
 with parent joins and continuation. Legacy chat/Work/delegation entries are not
 automatically migrated; native per-tool approval bridging remains unimplemented.
@@ -131,3 +131,5 @@ end-to-end acceptance or official TCK certification.
 External MCP clients may use the [native MCP bridge](A2A_MCP_BRIDGE.md) over this same task core, not the legacy Responses executor.
 
 This increment also requires `20260923050000_a2a_storage_accounting`; see [resource limits and migration](A2A_RESOURCE_LIMITS.md).
+
+Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.

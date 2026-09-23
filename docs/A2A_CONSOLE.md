@@ -101,3 +101,5 @@ example, not a universal client configuration format.
 Remote-Agent registration, large file uploads, OAuth discovery, token streaming and
 arbitrary URL network probing are not provided. See [Public A2A](A2A_NATIVE.md) and
 [Internal collaboration](A2A_LOCAL_COLLABORATION.md) for the protocol contract.
+
+Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.

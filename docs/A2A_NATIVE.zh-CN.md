@@ -139,3 +139,5 @@ PostgreSQL 并发、真实 Hermes/CLI/模型端到端验收或官方 TCK 认证�
 外部 MCP 客户端可通过[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)使用同一任务核心，不经过旧 Responses 执行链。
 
 本版还需应用 `20260923050000_a2a_storage_accounting`，参见[资源限额与迁移](A2A_RESOURCE_LIMITS.zh-CN.md)。
+
+内部任务现在可通过[远程 Agent 注册与委派](A2A_REMOTE_AGENTS.zh-CN.md)调用经过单独批准的外部 A2A 服务。部署来源白名单、工作区注册和发起方 Agent 授权都必须显式配置；不自动开放私人资源。

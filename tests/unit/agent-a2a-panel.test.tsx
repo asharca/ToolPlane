@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentA2APanel } from '@/components/dashboard/agents/AgentA2APanel';
 import type { A2AConsoleView } from '@/lib/a2a/connection-info';
+vi.mock('@/components/dashboard/agents/AgentA2ARemotes', () => ({ AgentA2ARemotes: () => <div>Remote connections</div> }));
 vi.mock('@/components/dashboard/agents/AgentA2ATaskMonitor', () => ({ AgentA2ATaskMonitor: () => <div>Task tree</div> }));
 vi.mock('@/components/dashboard/CopyButton', () => ({ CopyButton: ({ text, label }: { text: string; label: string }) => <button type="button" data-copy={text}>{label}</button> }));
 const view: A2AConsoleView = {

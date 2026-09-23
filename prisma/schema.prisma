@@ -169,6 +169,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
   agentUploadReservations AgentUploadReservation[]
   id                     String                   @id @default(cuid())
@@ -1512,6 +1513,8 @@ model AgentUploadReservation {
 
 // A2A v1 native task ledger. No AgentRun / Conversation / legacy delegation IDs.
 model A2AContext {
+  remoteAgentId       String?
+  remoteAgent         RemoteA2AAgent? @relation(fields: [remoteAgentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   id                  String               @id @default(uuid())
   targetKind          String               @default("published")
   workspaceId         String
@@ -1539,6 +1542,14 @@ model A2AContext {
 }
 
 model A2ATask {
+  remoteTaskId        String?
+  remoteContextId     String?
+  remoteMessageId     String?
+  remoteDispatchedAt  DateTime?
+  remotePollAt        DateTime?
+  remotePollFailures  Int @default(0)
+  remoteCancelSentAt  DateTime?
+  @@index([phase, remotePollAt])
   id                String       @id @default(uuid())
   contextId         String
   context           A2AContext   @relation(fields: [contextId], references: [id], onDelete: Cascade)
@@ -1593,4 +1604,23 @@ model A2AEvent {
   payload   Json
   createdAt DateTime @default(now())
   @@id([taskId, sequence])
+}
+
+model RemoteA2AAgent {
+  @@unique([id, workspaceId])
+  id              String @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name            String
+  cardUrl         String
+  rpcUrl          String
+  card            Json
+  credential      Json?
+  enabled         Boolean @default(false)
+  revision        Int @default(1)
+  allowedAgentIds String[] @default([])
+  contexts        A2AContext[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([workspaceId, enabled])
 }

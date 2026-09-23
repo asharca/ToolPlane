@@ -205,7 +205,8 @@ describe('local Agents use native A2A tasks', () => {
       } });
     const client = new Client({ name: 'local-a2a-test', version: '1' });
     try {
-      await client.connect(transport); const tools = await client.listTools(); expect(tools.tools).toHaveLength(7);
+      await client.connect(transport); const tools = await client.listTools(); expect(tools.tools).toHaveLength(9);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['a2a_list_remote_agents', 'a2a_send_remote_message']));
       const result = await client.callTool({ name: 'a2a_send_message', arguments: { agentId: agents[1], request: SendMessageRequest.toJSON(request()) } });
       expect(result.isError).toBe(false);
       expect(JSON.stringify(result)).toContain('TASK_STATE_SUBMITTED'); expect(JSON.stringify(result)).not.toContain('fixture-secret');

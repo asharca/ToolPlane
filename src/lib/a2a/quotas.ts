@@ -2,7 +2,7 @@ import 'server-only';
 import { AGENT_API_MAX_INPUT_CHARACTERS, AGENT_API_MAX_OUTPUT_CHARACTERS } from '@/lib/agents/public-api/body';
 import { Prisma } from '@prisma/client';
 import { JsonRpcTransportError } from '@a2a-js/sdk/errors';
-import type { TaskGrant } from './principal';
+import { isWorkspaceGrant, type TaskGrant } from './principal';
 import { A2A_LIMITS } from './model';
 
 export const A2A_TASK_STORAGE_BYTES = 4 * 1024 * 1024;
@@ -15,7 +15,7 @@ type Scope = { workspaceId: string; endpointId?: string; clientId?: string };
 export class A2AQuotaError extends JsonRpcTransportError {
   constructor() { super({ jsonrpc: '2.0', id: null, error: { code: A2A_QUOTA_ERROR, message: 'Agent resource quota exhausted.' } }); }
 }
-const isLocal = (grant: TaskGrant) => 'kind' in grant && grant.kind === 'local';
+const isLocal = isWorkspaceGrant;
 export const outputBucket = (kind: 'workspace' | 'endpoint' | 'client', id: string) => `a2a-output:${kind}:${id}`;
 const dayStart = (now: Date) => new Date(Math.floor(now.getTime() / DAY) * DAY);
 
@@ -24,6 +24,8 @@ export async function refreshTaskStorage(tx: Tx, id: string, permitFailureSettle
   const rows = await tx.$queryRaw<Array<{ bytes: bigint | number; sequence: number }>>`
     SELECT octet_length(t.snapshot::text)::bigint + octet_length(t.request::text) + octet_length(t.grant::text)
       + COALESCE((SELECT SUM(octet_length(e.payload::text)) FROM "A2AEvent" e WHERE e."taskId"=t.id), 0)
+      + COALESCE(octet_length(t."remoteTaskId"), 0) + COALESCE(octet_length(t."remoteContextId"), 0)
+      + COALESCE(octet_length(t."remoteMessageId"), 0)
       + 512 * (SELECT COUNT(*) FROM "A2ARequest" r WHERE r."taskId"=t.id) AS bytes, t.sequence
     FROM "A2ATask" t WHERE t.id=${id}`;
   const row = rows[0];
@@ -58,7 +60,7 @@ export async function readNativeQuotaCharges(tx: Tx, scope: Scope, now = new Dat
 
 async function serviceLimits(tx: Tx, grant: TaskGrant) {
   if (isLocal(grant)) return null;
-  const service = grant as Exclude<TaskGrant, { kind: 'local' }>;
+  const service = grant;
   const endpoint = await tx.agentEndpoint.findUniqueOrThrow({ where: { id: service.endpointId },
     select: { workspaceId: true, maxStoredCharacters: true, dailyOutputCharacterLimit: true } });
   const client = await tx.agentApiClient.findUniqueOrThrow({ where: { id: service.clientId },

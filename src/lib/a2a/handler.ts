@@ -8,7 +8,7 @@ import { db } from '@/lib/db';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 import { A2A_PROTOCOL_VERSION, A2A_LIMITS, historyView, settled, terminal, taskEvent } from './model';
-import { assertLiveGrant, isLocalGrant, type TaskGrant, type A2AOperation } from './principal';
+import { assertLiveGrant, isLocalGrant, isRemoteGrant, grantTargetId, type TaskGrant, type A2AOperation } from './principal';
 import * as store from './store';
 import { wakeA2AWorker } from './worker';
 
@@ -17,6 +17,7 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
     const { localAgentCard } = await import('./local-http');
     return localAgentCard(grant);
   }
+  if (isRemoteGrant(grant)) throw new UnsupportedOperationError('Remote targets are private delegation bindings, not republished Agent Cards.');
   const endpoint = await db.agentEndpoint.findFirstOrThrow({ where: { id: grant.endpointId,
     a2aEnabled: true, status: 'active', workspaceId: grant.workspaceId },
     select: { name: true, publicId: true, currentRevision: { select: { version: true } } } });
@@ -40,7 +41,7 @@ export class NativeA2AHandler implements A2ARequestHandler {
     private readonly wake: () => void = wakeA2AWorker) {}
   async getAgentCard() { return this.card; }
   private async authorize(context: ServerCallContext, operation: A2AOperation) {
-    if (context.tenant && context.tenant !== (isLocalGrant(this.grant) ? this.grant.agentId : this.grant.endpointPublicId)) throw new TaskNotFoundError();
+    if (context.tenant && context.tenant !== grantTargetId(this.grant)) throw new TaskNotFoundError();
     await assertLiveGrant(this.grant, operation);
   }
   async sendMessage(params: SendMessageRequest, context: ServerCallContext) {
@@ -76,7 +77,7 @@ export class NativeA2AHandler implements A2ARequestHandler {
     while (true) {
       this.signal?.throwIfAborted(); await assertLiveGrant(this.grant, operation);
       const task = await store.getTask(this.grant, id, historyLength);
-      if (task.status && settled(task.status.state)) return task;
+      if (task.status && (operation === 'cancel' ? terminal(task.status.state) : settled(task.status.state))) return task;
       await delay(A2A_LIMITS.pollMs, undefined, { signal: this.signal });
     }
   }

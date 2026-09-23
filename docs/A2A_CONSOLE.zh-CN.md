@@ -83,5 +83,7 @@ GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 对外连接区还提供[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)，复用显式授予 A2A 权限的服务凭据。
 连接对象是示例，不是所有客户端都通用的配置文件。
 
-本页不包含远程 Agent 注册、大文件上传、OAuth 自动发现、逐 Token 流或任意网络连通性探测。
+本页不包含大文件上传、OAuth 自动发现、逐 Token 流或任意网络连通性探测。
 完整协议说明见[公开 A2A](A2A_NATIVE.zh-CN.md)与[内部协作](A2A_LOCAL_COLLABORATION.zh-CN.md)。
+
+内部任务现在可通过[远程 Agent 注册与委派](A2A_REMOTE_AGENTS.zh-CN.md)调用经过单独批准的外部 A2A 服务。部署来源白名单、工作区注册和发起方 Agent 授权都必须显式配置；不自动开放私人资源。

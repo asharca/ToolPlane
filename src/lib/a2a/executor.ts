@@ -7,16 +7,16 @@ import { ensureAgentEndpointRuntime } from '@/lib/agents/public-api/runtime';
 import { acquireHermesRuntimeWriteLease } from '@/lib/agents/hermes/runtime';
 import { runHermesTextStream } from '@/lib/agents/hermes/client';
 import { A2A_LIMITS, textArtifact } from './model';
-import { assertLiveGrant, isLocalGrant, type A2AGrant, type TaskGrant } from './principal';
+import { assertLiveGrant, isLocalGrant, isRemoteGrant, type A2AGrant, type TaskGrant } from './principal';
 
-export type ExecutionResult = { state: TaskState; message?: string; artifact?: Artifact };
+export type ExecutionResult = { state: TaskState; message?: string; artifact?: Artifact; deferred?: true };
 export type TaskExecutor = (task: A2ATask, signal: AbortSignal) => Promise<ExecutionResult>;
 /**
  * Runtime port only: no AgentRun, Responses API, old conversations or delegation runner.
  * Reuses the audited clean-runtime materializer, not its legacy execution lifecycle.
  */
 export const executePublishedTask: TaskExecutor = async (row, signal) => {
-  if (isLocalGrant(row.grant as unknown as TaskGrant)) throw new Error('Published executor requires a published target.');
+  if (isLocalGrant(row.grant as unknown as TaskGrant) || isRemoteGrant(row.grant as unknown as TaskGrant)) throw new Error('Published executor requires a published target.');
   const grant = row.grant as unknown as A2AGrant;
   await assertLiveGrant(grant, 'send'); signal.throwIfAborted();
   const context = await db.a2AContext.findFirstOrThrow({ where: { id: row.contextId,
@@ -53,6 +53,10 @@ export const executePublishedTask: TaskExecutor = async (row, signal) => {
 
 /** Target dispatch belongs to the native task core, never the legacy Responses lifecycle. */
 export const executeTask: TaskExecutor = async (row, signal) => {
+  if (isRemoteGrant(row.grant as unknown as TaskGrant)) {
+    const { executeRemoteTask } = await import('./remote-executor');
+    return executeRemoteTask(row, signal);
+  }
   const { isLocalGrant } = await import('./principal');
   if (isLocalGrant(row.grant as unknown as import('./principal').TaskGrant)) {
     const { executeLocalTask } = await import('./local-executor');

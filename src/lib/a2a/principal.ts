@@ -21,7 +21,20 @@ export type LocalA2AGrant = {
   ancestorTaskIds: string[]; ancestorAgentIds: string[];
   parentTaskId?: string; rootTaskId?: string;
 };
-export type TaskGrant = A2AGrant | LocalA2AGrant;
+export type RemoteA2AGrant = Omit<LocalA2AGrant, 'kind' | 'agentId'> & {
+  kind: 'remote'; remoteAgentId: string; sourceAgentId: string;
+  parentTaskId: string; rootTaskId: string;
+};
+export type TaskGrant = A2AGrant | LocalA2AGrant | RemoteA2AGrant;
+export function isRemoteGrant(grant: TaskGrant): grant is RemoteA2AGrant {
+  return 'kind' in grant && grant.kind === 'remote';
+}
+export function isWorkspaceGrant(grant: TaskGrant): grant is LocalA2AGrant | RemoteA2AGrant {
+  return isLocalGrant(grant) || isRemoteGrant(grant);
+}
+export function grantTargetId(grant: TaskGrant) {
+  return isLocalGrant(grant) ? grant.agentId : isRemoteGrant(grant) ? grant.remoteAgentId : grant.endpointPublicId;
+}
 export function isLocalGrant(grant: TaskGrant): grant is LocalA2AGrant {
   return 'kind' in grant && grant.kind === 'local';
 }
@@ -64,6 +77,10 @@ export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
 /** Rechecked during execution and subscriptions, so revocation is not admission-only. */
 export async function assertLiveGrant(grant: TaskGrant, operation: A2AOperation = 'read') {
   if (!permits(grant, operation) || (grant.expiresAt !== null && grant.expiresAt <= Date.now())) throw new TaskNotFoundError();
+  if (isRemoteGrant(grant)) {
+    const { assertRemoteGrant } = await import('./remote-policy');
+    return assertRemoteGrant(grant, undefined, operation === 'cancel');
+  }
   if (isLocalGrant(grant)) {
     const { assertLocalGrant } = await import('./local-policy');
     return assertLocalGrant(grant);

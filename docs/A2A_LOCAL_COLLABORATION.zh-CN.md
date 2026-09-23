@@ -136,7 +136,7 @@ application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 
 不会启动后再重试可能带副作用的执行。同一配置沙箱的不同原生会话也不能同时改写配置。
 
 这些不是金额或精确 Token 预算。聚合准入计数见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。
-大文件或二进制输入上传、外部 Agent 注册、原生逐工具审批、自动跨入口迁移与分布式执行
+大文件或二进制输入上传、原生逐工具审批、自动跨入口迁移与分布式执行
 仍不在支持范围。
 
 ## 迁移与验证
@@ -156,3 +156,5 @@ pnpm exec tsc --noEmit
 正确性证据。尚未完成四种真实 CLI/模型、浏览器端到端验收或官方 A2A TCK 认证。
 
 本版还需应用 `20260923050000_a2a_storage_accounting`，参见[资源限额与迁移](A2A_RESOURCE_LIMITS.zh-CN.md)。
+
+内部任务现在可通过[远程 Agent 注册与委派](A2A_REMOTE_AGENTS.zh-CN.md)调用经过单独批准的外部 A2A 服务。部署来源白名单、工作区注册和发起方 Agent 授权都必须显式配置；不自动开放私人资源。

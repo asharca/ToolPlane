@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Alert, Badge, Button, Input, Textarea } from '@asharca/ui';
 import { ArrowUpRight, BookOpen, KeyRound, Network, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AgentA2ARemotes } from './AgentA2ARemotes';
 import { AgentA2ATaskMonitor } from './AgentA2ATaskMonitor';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { A2A_DOCS, a2aCurlExample, a2aMcpConnectionExample, type A2AConsoleView } from '@/lib/a2a/connection-info';
@@ -192,6 +193,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
         </div> : null}
       </section> : null}
     </>}
+    {view?.local.supported ? <AgentA2ARemotes key={base} base={base} /> : null}
     <footer className={cardClass}>
       <h3 className="flex items-center gap-2 font-semibold"><BookOpen className="size-4" />{t('docs')}</h3>
       <div className="flex flex-wrap gap-4 text-sm">{(['console', 'public', 'local'] as const).map((key) => <a key={key} href={doc(key)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 underline underline-offset-4">{t(key === 'console' ? 'consoleDocs' : key === 'public' ? 'publicDocs' : 'localDocs')}<ArrowUpRight className="size-3" /></a>)}</div>

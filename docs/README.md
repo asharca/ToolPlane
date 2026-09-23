@@ -24,6 +24,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | [A2A console integration](./A2A_CONSOLE.md) · [中文](./A2A_CONSOLE.zh-CN.md) | Enable access, copy examples, manage credentials and inspect local tasks |
 | [A2A MCP bridge](./A2A_MCP_BRIDGE.md) · [中文](./A2A_MCP_BRIDGE.zh-CN.md) | Native tasks from external MCP clients |
 | [A2A resource limits](./A2A_RESOURCE_LIMITS.md) · [中文](./A2A_RESOURCE_LIMITS.zh-CN.md) | Payload storage, output reservation and migration |
+| [Remote A2A Agents](./A2A_REMOTE_AGENTS.md) · [中文](./A2A_REMOTE_AGENTS.zh-CN.md) | Registration, egress policy, remote delegation and recovery |
 | [Native A2A 1.0](./A2A_NATIVE.md) · [中文](./A2A_NATIVE.zh-CN.md) | Standard tasks, subscriptions, independent execution and publication authorization |
 | [Local A2A collaboration](./A2A_LOCAL_COLLABORATION.md) · [中文](./A2A_LOCAL_COLLABORATION.zh-CN.md) | Local identities, native delegation, durable parent joins and continuation |
 | [Messaging channels](./AGENT_MESSAGING_PLATFORMS.md) · [中文](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) | Telegram, Feishu/Lark, QQ, WeChat, Discord, and Slack |

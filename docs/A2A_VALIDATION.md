@@ -68,3 +68,20 @@ The console tree and artifact/download tests use React DOM tests, not a real bro
 against real model runtimes. Official MCP transport tests use the real SDK with
 controlled server dependencies, not an arbitrary third-party client's certification.
 The official A2A TCK has not been executed against this implementation.
+
+## Remote delegation profile
+
+See [remote integration](A2A_REMOTE_AGENTS.md). The new migration
+`20260923060000_a2a_remote_agents` follows the storage-accounting migration.
+`tests/integration/a2a-remote-migration.test.ts` validates populated old tables,
+preserved payloads, target-shape checks and composite workspace foreign keys.
+`a2a-remote.test.ts` checks registration authority, encrypted credential binding,
+native parent/child joins, input continuation, cancellation confirmation, revocation,
+read-only recovery and uncertain submissions. Real PostgreSQL concurrent claiming
+is explicitly skipped only under the local PGlite flag.
+
+`a2a-remote-network.test.ts` mocks DNS/HTTPS, checks pinned lookup, origin approval,
+reserved-address denial, redirects and transport bounds. `a2a-remote-client.test.ts`
+checks the supported wire profile before protobuf decoding. These tests do not
+establish live network/TLS/peer, model/CLI or browser acceptance. The integration
+client and protocol transport use the unchanged official SDK; network I/O is replaced.

@@ -1474,7 +1474,35 @@
         "mcpConnection": "MCP 客户端连接",
         "mcpConnectionHint": "使用同一专用 A2A 服务凭据。此示例是连接说明，不是所有客户端通用的配置格式。四个工具用于提交、查询、列出和取消原生任务；在客户端的秘密配置中设置请求头，不要使用个人账户 Token。",
         "downloadArtifact": "下载文件",
-        "artifactDownloadWarning": "{bytes} 字节。Agent 交付的文件是不可信数据，请确认任务来源后再下载；平台不会自动预览或执行。"
+        "artifactDownloadWarning": "{bytes} 字节。Agent 交付的文件是不可信数据，请确认任务来源后再下载；平台不会自动预览或执行。",
+        "remote": {
+          "title": "远程 A2A Agent",
+          "refresh": "刷新远程连接",
+          "boundary": "仅管理员可以注册和授权远程服务。委派会把任务文本发送给外部服务，不会传递平台账户或运行凭据。",
+          "allowlist": "部署者须先配置 TOOLPLANE_A2A_REMOTE_ORIGINS（HTTPS Origin 的 JSON 数组）。内网地址、重定向和跨来源凭据转发均禁止。",
+          "name": "远程服务名称",
+          "card": "远程 Agent Card 地址",
+          "rpc": "远程 JSON-RPC 地址",
+          "token": "远程 Bearer 密钥（可选）",
+          "replacementKey": "新的远程 Bearer 密钥",
+          "register": "验证并注册（默认关闭）",
+          "saveKey": "保存替换密钥",
+          "dismiss": "放弃更换",
+          "empty": "当前没有可用的远程 Agent。",
+          "enabled": "已启用",
+          "disabled": "已关闭",
+          "allowed": "已授权当前 Agent",
+          "denied": "未授权当前 Agent",
+          "enable": "启用远程服务",
+          "disable": "关闭远程服务",
+          "allow": "授权当前 Agent",
+          "revoke": "撤销当前 Agent 授权",
+          "replaceKey": "更换远程密钥",
+          "failed": "远程操作失败。请刷新列表确认结果后再重试，不要重复提交。",
+          "confirm": "此操作会变更外部服务连接或数据发送权限；注册时将请求指定的 Agent Card。配置变更会使正在运行的旧授权失效。确认继续？",
+          "workflow": "在原生 A2A 任务中使用 a2a_list_remote_agents 和 a2a_send_remote_message。远程任务会出现在同一任务树，父任务可等待和继续；消息提交不会自动重试。仅支持 A2A 1.0 JSONRPC 与文本。"
+        },
+        "phase_remote-waiting": "等待远程 Agent"
       }
     },
     "conversationOperations": {

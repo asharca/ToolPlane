@@ -25,7 +25,7 @@ function failure(error: unknown) {
   return reply({ error: 'A2A operation failed. Refresh the client list before retrying credential creation.' }, 500);
 }
 /** A separate same-origin browser BFF, never an auth fallback on the A2A wire endpoint. */
-async function sessionActor(req: Request, slug: string, agentId: string): Promise<ConsoleActor> {
+export async function sessionActor(req: Request, slug: string, agentId: string): Promise<ConsoleActor> {
   if (req.headers.has('authorization')) throw new A2AHttpError(401, 'Use the console session, not an API credential.');
   const site = req.headers.get('sec-fetch-site');
   if (site && !['same-origin', 'none'].includes(site)) throw new A2AHttpError(403, 'Same-origin request required.');

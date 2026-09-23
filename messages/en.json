@@ -1474,7 +1474,35 @@
         "mcpConnection": "MCP client connection",
         "mcpConnectionHint": "Use the same dedicated A2A service credential. This is a connection description, not a universal client config. Four tools submit, get, list and cancel native tasks; configure secret headers in your client. Do not use a personal account token.",
         "downloadArtifact": "Download file",
-        "artifactDownloadWarning": "{bytes} bytes. Untrusted file from an Agent; download only after reviewing the task. Files are not previewed or executed."
+        "artifactDownloadWarning": "{bytes} bytes. Untrusted file from an Agent; download only after reviewing the task. Files are not previewed or executed.",
+        "remote": {
+          "title": "Remote A2A Agents",
+          "refresh": "Refresh remote connections",
+          "boundary": "Only administrators can register and authorize remote services. Delegation sends task text outside ToolPlane, never account or runtime credentials.",
+          "allowlist": "The deployment administrator must configure TOOLPLANE_A2A_REMOTE_ORIGINS as a JSON array of HTTPS origins. Private addresses, redirects and cross-origin credential forwarding are prohibited.",
+          "name": "Remote service name",
+          "card": "Remote Agent Card URL",
+          "rpc": "Remote JSON-RPC URL",
+          "token": "Remote Bearer key (optional)",
+          "replacementKey": "New remote Bearer key",
+          "register": "Verify & register (disabled)",
+          "saveKey": "Save replacement key",
+          "dismiss": "Discard replacement",
+          "empty": "No remote Agent is available.",
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "allowed": "Current Agent authorized",
+          "denied": "Current Agent not authorized",
+          "enable": "Enable remote service",
+          "disable": "Disable remote service",
+          "allow": "Authorize current Agent",
+          "revoke": "Revoke current Agent",
+          "replaceKey": "Replace remote key",
+          "failed": "Remote operation failed. Refresh to verify the outcome before retrying; do not duplicate the submission.",
+          "confirm": "This changes an external connection or data-sharing authorization. Registration fetches the specified Agent Card. Configuration changes invalidate active grants. Continue?",
+          "workflow": "Use a2a_list_remote_agents and a2a_send_remote_message inside a native A2A task. Remote children share the task tree and parent continuation lifecycle. Submissions are never automatically retried. A2A 1.0 JSONRPC and text only."
+        },
+        "phase_remote-waiting": "Waiting for remote Agent"
       }
     },
     "conversationOperations": {

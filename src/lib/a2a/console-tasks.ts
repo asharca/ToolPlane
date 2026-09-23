@@ -3,7 +3,8 @@ import { Task } from '@a2a-js/sdk';
 import { TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { db } from '@/lib/db';
 import { createLocalRootGrant, LOCAL_LIMITS, localTarget } from './local-policy';
-import { isLocalGrant, type TaskGrant } from './principal';
+import { isLocalGrant, isRemoteGrant, isWorkspaceGrant, type TaskGrant } from './principal';
+import { remoteTarget } from './remote-policy';
 import { getTaskRow } from './store';
 import { historyView, jsonTask } from './model';
 import type { ConsoleActor } from './console-service';
@@ -23,7 +24,7 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
   const root = await getTaskRow(authority, rootId);
   if (root.parentTaskId || root.rootTaskId !== root.id) throw new TaskNotFoundError();
   const rows = await db.a2ATask.findMany({ where: {
-    rootTaskId: root.id, context: { targetKind: 'local', workspaceId: ctx.workspaceId, expiresAt: { gt: new Date() } },
+    rootTaskId: root.id, context: { targetKind: { in: ['local', 'remote'] }, workspaceId: ctx.workspaceId, expiresAt: { gt: new Date() } },
   }, orderBy: [{ depth: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }], take: LOCAL_LIMITS.tasksPerRoot + 1 });
   if (rows.length > LOCAL_LIMITS.tasksPerRoot) throw new UnsupportedOperationError('Task tree exceeds its configured limit.');
   const visible = new Map<string, typeof rows[number]>();
@@ -31,9 +32,9 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
   const nodes: ConsoleTaskTree['nodes'] = [];
   for (const row of rows) {
     const grant = row.grant as unknown as TaskGrant;
-    if (!isLocalGrant(grant) || grant.actorId !== ctx.actorId || grant.workspaceId !== ctx.workspaceId) continue;
+    if (!isWorkspaceGrant(grant) || grant.actorId !== ctx.actorId || grant.workspaceId !== ctx.workspaceId) continue;
     if (row.id === root.id) {
-      if (grant.agentId !== ctx.agentId || grant.ancestorTaskIds.length) continue;
+      if (!isLocalGrant(grant) || grant.agentId !== ctx.agentId || grant.ancestorTaskIds.length) continue;
     } else {
       const parent = row.parentTaskId ? visible.get(row.parentTaskId) : undefined;
       if (!parent || grant.rootTaskId !== root.id || grant.parentTaskId !== parent.id
@@ -42,11 +43,23 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
       const parentGrant = parent.grant as unknown as TaskGrant;
       if (!isLocalGrant(parentGrant)) continue;
       const parentTarget = targets.get(parentGrant.agentId);
-      if (!parentTarget?.targets.includes(grant.agentId)) continue;
+      if (isLocalGrant(grant) ? !parentTarget?.targets.includes(grant.agentId) : grant.sourceAgentId !== parentGrant.agentId) continue;
       if (grant.ancestorTaskIds.some((id, i) => {
         const ancestor = visible.get(id)?.grant as unknown as TaskGrant | undefined;
         return !ancestor || !isLocalGrant(ancestor) || ancestor.agentId !== grant.ancestorAgentIds[i];
       })) continue;
+    }
+    if (isRemoteGrant(grant)) {
+      try {
+        const target = await remoteTarget(db, ctx.workspaceId, grant.sourceAgentId, grant.remoteAgentId);
+        if (target.binding !== grant.targetBinding) continue;
+        visible.set(row.id, row);
+        const task = Task.fromJSON(row.snapshot), status = jsonTask(task).status as { state?: string };
+        nodes.push({ id: row.id, parentTaskId: row.parentTaskId, agentId: grant.remoteAgentId, name: target.name,
+          state: status?.state ?? 'TASK_STATE_UNSPECIFIED', phase: row.phase, cancelRequested: Boolean(row.cancelRequestedAt),
+          resumeCount: row.resumeCount, updatedAt: row.statusAt.toISOString() });
+      } catch { /* Revoked remote targets are not readable through a guessed child ID. */ }
+      continue;
     }
     let target = targets.get(grant.agentId);
     if (!target) {

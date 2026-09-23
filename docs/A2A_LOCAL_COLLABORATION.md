@@ -154,7 +154,7 @@ and A2A; a busy sandbox leaves an A2A task queued rather than executing and retr
 side effects. Different native sessions cannot rewrite the same sandbox concurrently.
 
 These are task, execution and time limits, not a precise token/currency budget.
-Large/binary input uploads, remote registries, native per-tool approval bridging, automatic
+Large/binary input uploads, native per-tool approval bridging, automatic
 migration of old entry points and distributed execution are not advertised. Aggregate
 admission accounting is documented in [resource limits](A2A_RESOURCE_LIMITS.md).
 
@@ -176,3 +176,5 @@ lock semantics. Live CLI/model/browser end-to-end acceptance and official A2A TC
 certification have not been completed.
 
 This increment also requires `20260923050000_a2a_storage_accounting`; see [resource limits and migration](A2A_RESOURCE_LIMITS.md).
+
+Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.
