@@ -25,6 +25,7 @@ function admit(id: string) {
   return ++entry.count <= 120;
 }
 const toolError = (message: string) => ({ content: [{ type: 'text' as const, text: message }], isError: true });
+const unconfirmedReply = () => toolError('Sandbox reply unavailable. The operation may have executed; inspect state before retrying. Do not retry mutations blindly.');
 
 // Machine-to-machine, stateless Streamable HTTP. This is NOT an arbitrary
 // reverse proxy to the sandbox's terminal, private runtime or dashboard routes.
@@ -81,20 +82,27 @@ export function handleSandboxMcp(req: Request, sandboxId: string): Promise<Respo
         return toolError('Sandbox is stopped, unavailable or under maintenance. No command was submitted.');
       }
       const release = beginWorkspaceOperation(grant.sandbox.workspaceId);
-      if (!release) return toolError('Workspace is unavailable.');
+      if (!release) return toolError('Workspace is unavailable. No command was submitted.');
+      let dispatchAttempted = false;
       try {
         return await withSandboxExecutionLease(sandboxId, async () => {
           // Never automatically retry shell/file mutations after a lost reply.
           // The underlying runtime bounds commands to 120 seconds; leave room
           // for its cleanup instead of cutting the public request at 30 seconds.
+          // A rejected RPC does not prove the remote operation never started.
+          dispatchAttempted = true;
           const result = await mcpRpc(grant.sandbox.deploymentId, 'tools/call', {
             name, arguments: request.params.arguments ?? {},
           }, 180_000, { maxRequestBytes: 4_000_000, maxResponseBytes: 8_000_000 });
           const parsed = CallToolResultSchema.safeParse(result);
-          return parsed.success ? parsed.data : toolError('Sandbox reply unavailable. The command may have executed; inspect state before retrying.');
+          return parsed.success ? parsed.data : unconfirmedReply();
         });
-      } catch { return toolError('Sandbox is busy or unavailable.'); }
-      finally { release(); }
+      } catch {
+        // Only pre-dispatch rejection can safely promise no command was sent.
+        // Never expose raw transport errors, credentials or remote paths.
+        return dispatchAttempted ? unconfirmedReply()
+          : toolError('Sandbox is busy or unavailable. No command was submitted.');
+      } finally { release(); }
     });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     try {
