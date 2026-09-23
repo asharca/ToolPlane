@@ -109,7 +109,9 @@ describe('sandbox MCP transport failure boundaries', () => {
   );
 
   it('treats malformed runtime results as uncertain and releases the lease', async () => {
-    mocks.rpc.mockResolvedValueOnce({ invalid: 'not a CallToolResult' });
+    // Supply an invalid content type, not just an unknown field: the SDK can
+    // legitimately default missing content to an empty array.
+    mocks.rpc.mockResolvedValueOnce({ content: 'not a content array' });
     await withClient(async (client) => {
       const failed = await client.callTool({ name: 'write_file', arguments: {} });
       expect(failed.isError).toBe(true);
