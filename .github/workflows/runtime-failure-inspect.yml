@@ -5,28 +5,60 @@ on:
     paths: [.github/workflows/runtime-failure-inspect.yml]
 permissions:
   contents: read
-  actions: read
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      AUTH_SECRET: test-auth-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: 1
+      TOOLPLANE_VERSION: ${{ github.sha }}
     steps:
-      - name: Extract only failed full-CI step
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p /tmp/runtime-inspect
-          gh run view 35877552896 --repo asharca/ToolPlane --job 107237406459 --log-failed > /tmp/runtime-failed.log 2>&1
-          python3 - <<'PY'
-          import pathlib, re
-          text = pathlib.Path('/tmp/runtime-failed.log').read_text(errors='replace')
-          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
-          lines = text.splitlines()
-          bounded = '\n'.join(line[:1000] for line in lines[-100:])[-24000:]
-          pathlib.Path('/tmp/runtime-inspect/failure.txt').write_text(bounded + '\n')
-          PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          name: full-ci-runtime-failure
-          path: /tmp/runtime-inspect/failure.txt
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install and build exact source
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec prisma generate
+          pnpm build > /tmp/runtime-build.log 2>&1
+      - name: Trace identical CI artifact verification
+        shell: bash
+        run: |
+          exec > /tmp/runtime-gates.log 2>&1
+          set -euxo pipefail
+          pnpm runtime:assemble
+          find dist/release/app -type f -printf '%s %p\n' | sort > /tmp/runtime-before.txt
+          tar -C dist/release -czf /tmp/before.tar.gz app
+          stat -c 'before validation compressed bytes: %s' /tmp/before.tar.gz
+          dist/release/app/node_modules/.bin/prisma validate
+          find dist/release/app -type f -printf '%s %p\n' | sort > /tmp/runtime-after.txt
+          diff -u /tmp/runtime-before.txt /tmp/runtime-after.txt || true
+          node --check dist/release/app/node_modules/.toolplane-runtime/server.cjs
+          test -L dist/release/app/packages
+          test -L dist/release/app/messages
+          tar -C dist/release -czf /tmp/toolplane-runtime-linux-amd64.tar.gz app
+          tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
+          artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
+          echo "final compressed bytes: $artifact_size"
+          sort -nr /tmp/runtime-after.txt | head -n 35 || true
+          test "$artifact_size" -le $((100 * 1024 * 1024))
+      - name: Bound evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/runtime-evidence
+          tail -n 140 /tmp/runtime-gates.log > /tmp/runtime-evidence/gates.txt 2>/dev/null || true
+          tail -n 30 /tmp/runtime-build.log > /tmp/runtime-evidence/build.txt 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-gate-delta
+          path: /tmp/runtime-evidence/
           retention-days: 1
