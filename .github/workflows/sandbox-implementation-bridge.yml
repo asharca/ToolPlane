@@ -1,0 +1,38 @@
+name: sandbox-implementation-bridge
+on:
+  push:
+    branches: [codex/sandbox-mcp-chatgpt-ssh]
+    paths:
+      - '.github/workflows/sandbox-implementation-bridge.yml'
+      - '.toolplane-patch/**'
+permissions:
+  contents: write
+concurrency:
+  group: sandbox-implementation-bridge
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'asharca/ToolPlane'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply reviewed implementation to this feature branch only
+        if: hashFiles('.toolplane-patch/apply.py') != ''
+        run: |
+          test "$GITHUB_REF" = 'refs/heads/codex/sandbox-mcp-chatgpt-ssh'
+          python3 .toolplane-patch/apply.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: export scoped sandbox MCP with ChatGPT OAuth and SSH runtime'
+          git push origin HEAD:refs/heads/codex/sandbox-mcp-chatgpt-ssh
+      - name: Export tracked source for implementation review
+        run: git archive --format=tar HEAD -o /tmp/toolplane-source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolplane-source
+          path: /tmp/toolplane-source.tar
+          retention-days: 1
