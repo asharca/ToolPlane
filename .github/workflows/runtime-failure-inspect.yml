@@ -1,0 +1,32 @@
+name: runtime-failure-inspect
+on:
+  push:
+    branches: [feat/a2a-console-onboarding]
+    paths: [.github/workflows/runtime-failure-inspect.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Extract only failed full-CI step
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/runtime-inspect
+          gh run view 35877552896 --repo asharca/ToolPlane --job 107237406459 --log-failed > /tmp/runtime-failed.log 2>&1
+          python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('/tmp/runtime-failed.log').read_text(errors='replace')
+          text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+          lines = text.splitlines()
+          bounded = '\n'.join(line[:1000] for line in lines[-100:])[-24000:]
+          pathlib.Path('/tmp/runtime-inspect/failure.txt').write_text(bounded + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-ci-runtime-failure
+          path: /tmp/runtime-inspect/failure.txt
+          retention-days: 1
