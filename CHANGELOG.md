@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.31.0](https://github.com/asharca/ToolPlane/compare/v0.30.0...v0.31.0) (2026-09-23)
+
+
+### Features
+
+* export sandbox MCP for ChatGPT OAuth and add SSH sandboxes ([#148](https://github.com/asharca/ToolPlane/issues/148)) ([cb71998](https://github.com/asharca/ToolPlane/commit/cb71998c66dfaa53d76b80fb52273680b62414cf))
+
+
+### Bug Fixes
+
+* preserve work page through workspace login ([#150](https://github.com/asharca/ToolPlane/issues/150)) ([af61f9a](https://github.com/asharca/ToolPlane/commit/af61f9a296ed0e121455f7db6632e9760614fe4f))
+
 ## [0.30.0](https://github.com/asharca/ToolPlane/compare/v0.29.0...v0.30.0) (2026-09-23)
 
 
