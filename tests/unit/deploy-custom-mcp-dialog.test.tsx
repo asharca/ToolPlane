@@ -137,6 +137,31 @@ describe('DeployCustomMcpDialog', () => {
     expect(document.querySelector<HTMLInputElement>('input[name="runtimeFiles"]')).toHaveValue('[]');
   });
 
+  it('warns about HTTP credentials and upstream traffic before deployment, not HTTPS', async () => {
+    render(<DeployCustomMcpDialog slug="acme" />);
+    await openDialog();
+    const config = screen.getByLabelText('MCP JSON config');
+    const remote = (url: string) => JSON.stringify({
+      mcpServers: { audit: { type: 'http', url, headers: { Authorization: 'Bearer test-token' } } },
+    });
+    await userEvent.click(config);
+    await userEvent.paste(remote('http://mcp.example.com:8000/mcp'));
+
+    const notice = screen.getByTestId('remote-mcp-transport-notice');
+    expect(within(notice).getByRole('alert')).toBeInTheDocument();
+    expect(within(notice).getByText('Unencrypted HTTP connection')).toBeInTheDocument();
+    expect(within(notice).getByText(/Bearer tokens.*intercepted or modified/i)).toBeInTheDocument();
+    expect(within(notice).getByText(/internal network is not automatically safe/i)).toBeInTheDocument();
+    expect(within(notice).getByText(/website does not protect this upstream HTTP connection/i)).toBeInTheDocument();
+    expect(notice).not.toHaveTextContent('test-token');
+    expect(screen.getByRole('button', { name: 'Deploy MCP' })).toBeEnabled();
+
+    await userEvent.clear(config);
+    await userEvent.paste(remote('https://mcp.example.com:8443/mcp'));
+    expect(screen.queryByText('Unencrypted HTTP connection')).not.toBeInTheDocument();
+    expect(screen.getByTestId('remote-mcp-transport-notice')).toHaveTextContent('HTTPS (recommended)');
+  });
+
   it('keeps optional runtime files collapsed, submits them, and updates file path guidance by command', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();
@@ -211,7 +236,7 @@ describe('DeployCustomMcpDialog', () => {
     }));
     await userEvent.click(screen.getByRole('button', { name: 'Deploy MCP' }));
 
-    expect(screen.getByText(/remote HTTP MCP url must be an HTTPS URL/i)).toBeInTheDocument();
+    expect(screen.getByText(/remote HTTP MCP url must be an allowed HTTP or HTTPS URL/i)).toBeInTheDocument();
     expect(screen.queryByText('test-token')).not.toBeInTheDocument();
   });
 });
