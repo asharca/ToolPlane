@@ -1,8 +1,10 @@
-# 远程 MCP：HTTP 支持与风险 / Remote MCP HTTP risks
+# Remote MCP: HTTP compatibility and transport risks
 
-远程 MCP 支持 `https://`（推荐）和 `http://`，以及 1–65535 范围内的显式端口。JSON 配置中的 `"type": "http"` 表示 Streamable HTTP 传输，不代表地址必须使用明文 HTTP；HTTPS 地址仍使用这个 type。
+> **中文**：[REMOTE_MCP_HTTP.zh-CN.md](./REMOTE_MCP_HTTP.zh-CN.md)
 
-## HTTP 示例
+This guide is for users and administrators connecting ToolPlane to a remote MCP server. Remote MCP supports `https://` (recommended), `http://`, and explicit ports from 1 to 65535. In JSON configuration, `"type": "http"` selects Streamable HTTP; it does not require an unencrypted URL. HTTPS endpoints use the same type.
+
+## HTTP example
 
 ```json
 {
@@ -15,30 +17,22 @@
 }
 ```
 
-需要认证时，JSON 导入仍支持 `headers.Authorization` 的 Bearer 认证。但凭据存入 ToolPlane 的受管变量，不代表它在 HTTP 网络链路上被加密。
+For authenticated servers, JSON import still supports Bearer authentication through `headers.Authorization`. Storing credentials in ToolPlane's managed variables does not encrypt the upstream HTTP connection.
 
-## 必须知道的风险
+## Risks users must understand
 
-**HTTP 不提供 TLS 加密、服务器身份校验或传输完整性保护。** ToolPlane 到远程 MCP 的 Bearer Token、其他认证头、工具参数和返回数据可能被窃听或篡改；泄露的凭据可能被盗用。攻击者篡改工具返回内容也可能影响 Agent 后续行为。
+**HTTP provides no TLS encryption, server identity verification, or transport integrity.** Bearer tokens, other authentication headers, tool arguments, and results exchanged between ToolPlane and the remote MCP server may be intercepted or modified. Stolen credentials may be reused; modified tool results can also influence subsequent Agent behavior.
 
-优先使用 HTTPS。确实需要 HTTP 时，只应在经过评估的可信隔离网络，或覆盖完整链路的加密隧道内使用。内网并非天然安全，不建议经明文 HTTP 发送生产凭据或敏感数据。
+Prefer HTTPS. Use HTTP only after assessing a trusted, isolated network or an encrypted tunnel covering the entire connection. An internal network is not automatically safe. Avoid sending production credentials or sensitive data over unencrypted HTTP.
 
-**ToolPlane 网页使用 HTTPS，不会自动保护 ToolPlane → 上游 MCP 的 HTTP 连接。** 页面锁标志不能证明上游链路安全。
+**HTTPS on the ToolPlane website does not protect the ToolPlane → upstream MCP HTTP connection.** A browser's secure-connection indicator says nothing about that upstream link.
 
-自定义 MCP 部署界面会针对 HTTP 地址显示中英文风险提示；HTTPS 示例仍作为默认推荐。HTTP bridge 启动日志也会发出不包含端点地址或认证值的警告。此提示不会禁止用户继续使用 HTTP。
+The custom MCP deployment dialog displays a localized warning for HTTP URLs without blocking deployment. HTTPS remains the recommended example. The HTTP bridge also emits a startup warning that contains neither the endpoint URL nor authentication values.
 
-## 安全边界未放开
+## Security boundaries remain enforced
 
-支持 HTTP 不等于允许任意目标。私有地址仍需管理员私网目标白名单批准；localhost、回环、链路本地/云元数据和其他受限地址仍被拦截。DNS 解析校验与固定、请求同源限制及禁止重定向保持不变。URL 仍不能包含用户名、密码、查询参数或片段；SSE 服务器返回的同源会话 POST 地址保留原有查询参数例外。
+HTTP support does not allow arbitrary destinations. Private targets still require the administrator's private-host allowlist; localhost, loopback, link-local/cloud metadata, and other restricted addresses remain blocked. DNS validation and pinning, same-origin requests, and redirect rejection are unchanged.
 
-这是一项显式配置的 HTTP 兼容功能，不会将失败的 HTTPS 连接自动降级到 HTTP，也没有修改 OAuth 的 TLS 要求。
+Endpoint URLs cannot contain a username, password, query parameters, or a fragment. The existing query-parameter exception is limited to same-origin session POST URLs returned by SSE servers.
 
-## English
-
-Remote MCP accepts HTTPS (recommended), HTTP, and explicit ports from 1 to 65535. The JSON `type: "http"` selects Streamable HTTP and also works with HTTPS URLs.
-
-HTTP has no TLS encryption, server authentication, or transport integrity. Authentication headers, tool arguments, and results can be intercepted or modified; stolen credentials can be reused. Managed credential storage does not encrypt the upstream HTTP connection. HTTPS on the ToolPlane website does not protect that connection either.
-
-Prefer HTTPS. Use HTTP only after assessing a trusted isolated network or an encrypted tunnel covering the entire path; an internal network is not automatically safe. Avoid production credentials and sensitive data. The custom-deployment UI displays a localized warning without blocking deployment, and the bridge emits a credential-free startup warning.
-
-Private targets still require administrator allowlisting. Loopback, link-local/metadata, and other restricted destinations remain blocked. DNS validation/pinning, same-origin requests, and redirect rejection are unchanged. No automatic HTTPS-to-HTTP fallback or OAuth TLS relaxation is introduced.
+This is compatibility for explicitly configured HTTP endpoints, not an automatic HTTPS-to-HTTP fallback. OAuth TLS requirements are unchanged.
