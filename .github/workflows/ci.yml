@@ -126,6 +126,7 @@ jobs:
 
       - name: Assemble and verify runtime artifact
         run: |
+          set -euxo pipefail
           pnpm runtime:assemble
           dist/release/app/node_modules/.bin/prisma validate
           node --check dist/release/app/node_modules/.toolplane-runtime/server.cjs
@@ -134,6 +135,7 @@ jobs:
           tar -C dist/release -czf /tmp/toolplane-runtime-linux-amd64.tar.gz app
           tar -tzf /tmp/toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
           artifact_size=$(stat -c %s /tmp/toolplane-runtime-linux-amd64.tar.gz)
+          printf 'Runtime archive: %s bytes; limit: %s bytes\n' "$artifact_size" "$((100 * 1024 * 1024))"
           test "$artifact_size" -le $((100 * 1024 * 1024))
 
   release-metadata:

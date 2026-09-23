@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pruneMigrationMetadata } from './runtime-metadata.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputRoot = path.resolve(
@@ -366,6 +367,17 @@ for (const [entry, description] of [
 ]) {
   await assertPath(path.join(outputRoot, entry), description);
 }
+
+// Prisma lazily downloads its native schema engine on first CLI use. Materialize
+// it now so the Docker image and release archive contain the same complete,
+// validated migrator and the size budget includes that required binary.
+const migratorMetadata = await pruneMigrationMetadata(
+  path.join(embeddedRuntimeRoot, 'migrator', 'node_modules'),
+);
+console.log(`Removed ${migratorMetadata.files} migration metadata files (${(migratorMetadata.bytes / 1024 / 1024).toFixed(1)} MiB)`);
+await run(path.join(outputRoot, 'node_modules', '.bin', 'prisma'), ['validate'], {
+  CHECKPOINT_DISABLE: '1',
+});
 
 const runtimeBytes = await directorySize(outputRoot);
 const runtimeMiB = runtimeBytes / 1024 / 1024;
