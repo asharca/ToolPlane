@@ -63,7 +63,9 @@ export function handleSandboxMcp(req: Request, sandboxId: string): Promise<Respo
         && grant.allowedTools.includes(tool.name) && isMcpToolExposedToAi(policy, tool.name)).map((tool) => ({
           ...tool, annotations: sandboxToolAnnotations(tool.name),
           securitySchemes: [{ type: 'oauth2', scopes: [toolOAuthScope(tool.name)] }],
-          _meta: { ...tool._meta, securitySchemes: [{ type: 'oauth2', scopes: [toolOAuthScope(tool.name)] }] },
+          // Export authorization metadata is owned by the gateway, not the
+          // upstream runtime. McpToolDefinition deliberately exposes no _meta.
+          _meta: { securitySchemes: [{ type: 'oauth2', scopes: [toolOAuthScope(tool.name)] }] },
         })) };
     });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
