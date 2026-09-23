@@ -184,7 +184,8 @@ describe('sandbox OAuth with PostgreSQL and genuine MCP SDK', () => {
       expect((await client.listTools()).tools).toHaveLength(0);
     } finally { await client.close(); }
   });
-  it('discovers PRM/AS, registers dynamically and completes PKCE using the SDK OAuth client', async () => {
+  it.each([undefined, 'sandbox:read offline_access'])(
+    'discovers PRM/AS, registers dynamically and completes SDK PKCE (scope: %s)', async (scope) => {
     let info: OAuthClientInformationFull | undefined; let tokens: OAuthTokens | undefined;
     let codeVerifier = ''; let browserUrl: URL | undefined;
     const provider: OAuthClientProvider = {
@@ -206,12 +207,21 @@ describe('sandbox OAuth with PostgreSQL and genuine MCP SDK', () => {
       if (path.endsWith('/token')) return handleSandboxOAuth(req, 'token');
       throw new Error(`Unexpected SDK request: ${path}`);
     };
-    const options = { serverUrl: new URL(sandboxMcpResource(sandboxId)), fetchFn: fetcher, scope: 'sandbox:read offline_access' };
+    // Exercise discovery without a client-selected scope as well as the explicit
+    // read-only path. Consent, not advertised supported scopes, grants authority.
+    const options = { serverUrl: new URL(sandboxMcpResource(sandboxId)), fetchFn: fetcher,
+      ...(scope === undefined ? {} : { scope }) };
     expect(await auth(provider, options)).toBe('REDIRECT');
     expect(browserUrl).toBeDefined();
     const { code } = await browserConsent(browserUrl!.href);
     expect(await auth(provider, { ...options, authorizationCode: code })).toBe('AUTHORIZED');
-    expect(tokens?.refresh_token).toBeTruthy(); expect(await resolveSandboxMcpGrant(sandboxId, tokens!.access_token)).not.toBeNull();
+    expect(tokens?.refresh_token).toBeTruthy();
+    expect(tokens?.scope?.split(' ').sort()).toEqual(['offline_access', 'sandbox:read']);
+    const grant = await resolveSandboxMcpGrant(sandboxId, tokens!.access_token);
+    expect(grant).not.toBeNull();
+    expect(grant?.allowedTools).toContain('read_file');
+    expect(grant?.allowedTools).not.toContain('write_file');
+    expect(grant?.allowedTools).not.toContain('shell_exec');
   });
   it('does not accept a sandbox token for grant management, even with a session cookie', async () => {
     const token = await tokenFor(); mocks.principal.mockResolvedValue(null);
