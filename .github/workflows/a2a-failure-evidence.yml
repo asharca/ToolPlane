@@ -22,12 +22,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/a2a-failure-evidence
-          gh api repos/asharca/ToolPlane/actions/jobs/107177974891/logs > /tmp/a2a-raw-job.log
+          gh api --allow-escape-sequences repos/asharca/ToolPlane/actions/jobs/107177974891/logs > /tmp/a2a-raw-job.log
           git rev-parse HEAD > /tmp/a2a-failure-evidence/revision.txt
           git ls-tree HEAD package.json tests/integration/a2a-local.test.ts tests/integration/messaging.test.ts tests/integration/agent-messaging.test.ts .github/workflows/ci.yml > /tmp/a2a-failure-evidence/source-objects.txt
           python3 - <<'PY'
           import pathlib,re,json
-          lines=pathlib.Path('/tmp/a2a-raw-job.log').read_text().splitlines()
+          raw=pathlib.Path('/tmp/a2a-raw-job.log').read_text()
+          raw=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',raw)
+          lines=raw.splitlines()
           keep=set()
           for i,line in enumerate(lines):
               if any(marker in line for marker in ['FAIL ', 'Failed Tests', 'AssertionError', 'PrismaClientKnownRequestError', 'Test Files', 'Tests  ', '> toolplane@', '> vitest', '> pnpm test', '::error', 'Process completed']):
