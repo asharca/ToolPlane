@@ -19,7 +19,8 @@ export type ConsoleTaskTree = {
 };
 
 /** Knowing a child ID never authorizes it: enter through an owned, non-delegated root. */
-export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, selectedId = rootId): Promise<ConsoleTaskTree> {
+export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, selectedId = rootId, historyLength = 0): Promise<ConsoleTaskTree> {
+  if (!Number.isSafeInteger(historyLength) || historyLength < 0 || historyLength > 32) throw new UnsupportedOperationError('Invalid history length.');
   const authority = await createLocalRootGrant(ctx.workspaceId, ctx.agentId, ctx.actorId);
   const root = await getTaskRow(authority, rootId);
   if (root.parentTaskId || root.rootTaskId !== root.id) throw new TaskNotFoundError();
@@ -77,5 +78,5 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
   }
   if (!visible.has(root.id) || !visible.has(selectedId)) throw new TaskNotFoundError();
   return { rootTaskId: root.id, nodes, restricted: visible.size !== rows.length,
-    selectedTask: jsonTask(historyView(Task.fromJSON(visible.get(selectedId)!.snapshot), 0)) };
+    selectedTask: jsonTask(historyView(Task.fromJSON(visible.get(selectedId)!.snapshot), historyLength)) };
 }

@@ -89,10 +89,10 @@ describe('task tree browser boundary', () => {
     mocks.tree.mockResolvedValue({ rootTaskId: 'root', nodes: [], selectedTask: {} });
     const response = await handleA2AConsoleTasks(new Request('https://tp.example/api/tree?rootTaskId=root&selectedTaskId=child'), 'ws', 'a');
     expect(response.status).toBe(200);
-    expect(mocks.tree).toHaveBeenCalledWith({ workspaceId: 'w', actorId: 'u', agentId: 'a', slug: 'ws' }, 'root', 'child');
+    expect(mocks.tree).toHaveBeenCalledWith({ workspaceId: 'w', actorId: 'u', agentId: 'a', slug: 'ws' }, 'root', 'child', 0);
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
-  it.each(['rootTaskId=root&rootTaskId=other', 'rootTaskId=root&actorId=owner', 'rootTaskId=', 'selectedTaskId=child'])('rejects malformed query %s', async (query) => {
+  it.each(['rootTaskId=root&rootTaskId=other', 'rootTaskId=root&actorId=owner', 'rootTaskId=', 'selectedTaskId=child', 'rootTaskId=root&historyLength=33', 'rootTaskId=root&historyLength=-1', 'rootTaskId=root&historyLength=1e1', 'rootTaskId=root&historyLength=', 'rootTaskId=root&historyLength=1&historyLength=2'])('rejects malformed query %s', async (query) => {
     expect((await handleA2AConsoleTasks(new Request('https://tp.example/api/tree?' + query), 'ws', 'a')).status).toBe(400);
     expect(mocks.tree).not.toHaveBeenCalled();
   });
@@ -103,4 +103,11 @@ describe('task tree browser boundary', () => {
     }
     expect(mocks.tree).not.toHaveBeenCalled();
   });
+});
+
+it('uses bounded opt-in history on the existing scoped tree endpoint', async () => {
+  mocks.tree.mockResolvedValue({ nodes: [] });
+  const response = await handleA2AConsoleTasks(new Request('https://tp.example/api/console/tasks?rootTaskId=root&selectedTaskId=child&historyLength=32'), 'ws', 'a');
+  expect(response.status).toBe(200);
+  expect(mocks.tree).toHaveBeenCalledWith({ workspaceId: 'w', actorId: 'u', agentId: 'a', slug: 'ws' }, 'root', 'child', 32);
 });

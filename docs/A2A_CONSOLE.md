@@ -2,6 +2,8 @@
 
 > [中文](A2A_CONSOLE.zh-CN.md)
 
+For day-to-day goals and context follow-ups, open the [native A2A workbench](A2A_WORKBENCH.md) rather than using the settings playground. Existing Work/chat records are not migrated automatically.
+
 For workspace users. Open **Agent settings → A2A integration**, or navigate to
 `/app/{workspace}/agents/{agentId}?settings=a2a`. The page uses the native A2A 1.0
 core; never paste an account token into the browser.

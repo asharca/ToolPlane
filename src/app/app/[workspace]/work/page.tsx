@@ -10,6 +10,9 @@ import {
   listWorkSessions,
   workSessionWorkingDirectory,
 } from '@/lib/work/sessions';
+import { A2AWorkbench } from '@/components/dashboard/work/A2AWorkbench';
+import { listWorkbenchAgents } from '@/lib/a2a/workbench';
+import { parseWorkbenchSelection } from '@/lib/a2a/workbench-client';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
 import { WorkspaceWelcome } from '@/components/dashboard/WorkspaceWelcome';
@@ -99,12 +102,24 @@ export default async function WorkspaceWorkPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ w?: string; agent?: string; c?: string; welcome?: string }>;
+  searchParams: Promise<{ w?: string; agent?: string; c?: string; welcome?: string; mode?: string; task?: string }>;
 }) {
-  const [{ workspace: slug }, { w, c, agent: requestedAgentId, welcome }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
+  const [{ workspace: slug }, { w, c, agent: requestedAgentId, welcome, mode, task }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
   if (!user) redirect('/app/login');
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
+  // Explicit native entry: never turn a saved Work/chat link into a different execution mode.
+  if (mode === 'a2a') {
+    const selection = parseWorkbenchSelection({ agent: requestedAgentId, task });
+    if (!selection.success || w || c || workspace.status !== 'active') return notFound();
+    const candidates = await listWorkbenchAgents(workspace.id, user.id);
+    const selected = selection.data.agent
+      ? candidates.find((agent) => agent.id === selection.data.agent)
+      : candidates.find((agent) => agent.enabled && agent.configured) ?? candidates[0];
+    if (selection.data.agent && !selected) return notFound();
+    return <A2AWorkbench key={`${workspace.id}:${user.id}:${selected?.id ?? ''}:${task ?? ''}`} slug={slug}
+      agents={candidates} agentId={selected?.id ?? ''} initialTaskId={selection.data.task} />;
+  }
   const titlePending = Boolean(w && !c && isWorkSessionTitlePending(w));
   const [agents, providers, sessions, selectedSession, conversation, cookieStore] = await Promise.all([
     listAgents(workspace.id),

@@ -2,6 +2,8 @@
 
 > [English](A2A_CONSOLE.md)
 
+日常任务和 Context 续写可从此页进入[原生 A2A 工作台](A2A_WORKBENCH.zh-CN.md)，不再只依赖设置页调试区。旧 Work/聊天记录不会自动迁移。
+
 面向工作区使用者。打开 **Agent 设置 → A2A 接入**，也可进入
 `/app/{workspace}/agents/{agentId}?settings=a2a`。
 页面使用原生 A2A 1.0 核心，不需要在浏览器粘贴账户 Token。

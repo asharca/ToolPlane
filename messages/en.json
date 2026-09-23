@@ -1502,7 +1502,11 @@
           "confirm": "This changes an external connection or data-sharing authorization. Registration fetches the specified Agent Card. Configuration changes invalidate active grants. Continue?",
           "workflow": "Use a2a_list_remote_agents and a2a_send_remote_message inside a native A2A task. Remote children share the task tree and parent continuation lifecycle. Submissions are never automatically retried. A2A 1.0 JSONRPC and text only."
         },
-        "phase_remote-waiting": "Waiting for remote Agent"
+        "phase_remote-waiting": "Waiting for remote Agent",
+        "openWorkbench": "Open A2A workbench",
+        "taskHistory": "Task message history",
+        "historyUser": "Caller / task context",
+        "historyAgent": "Agent"
       }
     },
     "conversationOperations": {
@@ -2806,7 +2810,8 @@
       "statusRunning": "Running",
       "statusCompleted": "Completed",
       "statusFailed": "Failed",
-      "statusArchived": "Archived"
+      "statusArchived": "Archived",
+      "nativeA2A": "A2A workbench"
     },
     "workspaces": {
       "title": "Workspaces",
@@ -3258,6 +3263,49 @@
       "yourListings": "Your listings (",
       "youHavenapostPublishedAnySkillsYet": "You haven&apos;t published any skills yet.",
       "view": "View"
+    },
+    "a2aWorkbench": {
+      "title": "A2A workbench",
+      "subtitle": "Native tasks, shared context and Agent collaboration",
+      "legacy": "Classic Work & history",
+      "agent": "Task Agent",
+      "noAgents": "No supported Agents",
+      "disabled": "not enabled",
+      "settings": "A2A settings and permissions",
+      "newSession": "New context",
+      "recent": "My recent tasks",
+      "refresh": "Refresh task list",
+      "listFailed": "Task list could not be refreshed. No work was resubmitted.",
+      "noTasks": "No tasks loaded for this Agent.",
+      "more": "Load more tasks",
+      "boundary": "This mode uses the enabled Agent’s sandbox and tools. It is not the classic Work approval flow. Existing Work sessions and channel conversations are not migrated or replayed. Opening this page never starts a task.",
+      "notReady": "Enable internal A2A and configure a supported Agent with its own model and networked Docker sandbox first. Actual admission rechecks current permissions and configuration.",
+      "loading": "Loading task…",
+      "readFailed": "This task is unavailable to your current identity. No new task was created. Refresh the page or select another task.",
+      "copyLink": "Copy task path",
+      "emptyTitle": "Start a native task",
+      "emptyHint": "Describe the goal. The Agent can collaborate with explicitly authorized local or remote Agents. Progress and deliverables stay attached to the task.",
+      "accepted": "Task accepted. This is not a completion confirmation; progress is shown below.",
+      "sendUncertain": "Submission could not be confirmed. It may already have been accepted. Check recent tasks or explicitly retry the exact saved message below; no automatic resubmission occurs.",
+      "pendingHint": "The message ID and request are retained only in this page’s memory. Retries reuse both unchanged. Do not start another request for the same work before checking its status.",
+      "leavePending": "The last submission may already exist. Discarding this local request does not cancel it. Check recent tasks before submitting the work again. Continue?",
+      "discardPending": "Discard local retry request",
+      "prompt": "Task goal",
+      "followUp": "Follow-up message",
+      "answer": "Additional information",
+      "placeholder": "Describe the goal, constraints and expected deliverable…",
+      "authorizationRequired": "Authorization is required. A message is not approval; use the appropriate authenticated approval process.",
+      "working": "The task is still active. Wait for a result or an explicit request for input before sending another message.",
+      "terminalHint": "A follow-up creates a new task in this context and references this result. The completed task will not be reopened.",
+      "sendHint": "Submitting may use model and tool resources. Closing the page does not cancel accepted tasks.",
+      "retry": "Retry the same message",
+      "send": "Submit task",
+      "sendAnswer": "Send additional information",
+      "sendFollowUp": "Create follow-up task",
+      "cancel": "Request cancellation",
+      "cancelConfirm": "Request cancellation of this task and its descendants? Already completed external actions cannot be undone.",
+      "cancelCheck": "Check task progress for the final cancellation outcome. The request is not proof that every execution has stopped.",
+      "retryRead": "Retry task lookup"
     }
   },
   "sell": {

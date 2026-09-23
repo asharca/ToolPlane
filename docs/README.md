@@ -22,6 +22,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |
 | [Public Agent API](./AGENT_PUBLIC_API.md) · [中文](./AGENT_PUBLIC_API.zh-CN.md) | Publishing Endpoints, authentication, and limits |
 | [A2A console integration](./A2A_CONSOLE.md) · [中文](./A2A_CONSOLE.zh-CN.md) | Enable access, copy examples, manage credentials and inspect local tasks |
+| [A2A workbench](./A2A_WORKBENCH.md) · [中文](./A2A_WORKBENCH.zh-CN.md) | Daily native tasks, context follow-ups and recoverable task links |
 | [A2A MCP bridge](./A2A_MCP_BRIDGE.md) · [中文](./A2A_MCP_BRIDGE.zh-CN.md) | Native tasks from external MCP clients |
 | [A2A resource limits](./A2A_RESOURCE_LIMITS.md) · [中文](./A2A_RESOURCE_LIMITS.zh-CN.md) | Payload storage, output reservation and migration |
 | [Remote A2A Agents](./A2A_REMOTE_AGENTS.md) · [中文](./A2A_REMOTE_AGENTS.zh-CN.md) | Registration, egress policy, remote delegation and recovery |

@@ -1502,7 +1502,11 @@
           "confirm": "此操作会变更外部服务连接或数据发送权限；注册时将请求指定的 Agent Card。配置变更会使正在运行的旧授权失效。确认继续？",
           "workflow": "在原生 A2A 任务中使用 a2a_list_remote_agents 和 a2a_send_remote_message。远程任务会出现在同一任务树，父任务可等待和继续；消息提交不会自动重试。仅支持 A2A 1.0 JSONRPC 与文本。"
         },
-        "phase_remote-waiting": "等待远程 Agent"
+        "phase_remote-waiting": "等待远程 Agent",
+        "openWorkbench": "打开 A2A 工作台",
+        "taskHistory": "任务消息历史",
+        "historyUser": "调用方 / 任务上下文",
+        "historyAgent": "Agent"
       }
     },
     "conversationOperations": {
@@ -2806,7 +2810,8 @@
       "statusRunning": "运行中",
       "statusCompleted": "已完成",
       "statusFailed": "失败",
-      "statusArchived": "已归档"
+      "statusArchived": "已归档",
+      "nativeA2A": "A2A 工作台"
     },
     "workspaces": {
       "title": "工作空间",
@@ -3258,6 +3263,49 @@
       "yourListings": "你的上架（",
       "youHavenapostPublishedAnySkillsYet": "你还没有发布任何技能。",
       "view": "查看"
+    },
+    "a2aWorkbench": {
+      "title": "A2A 工作台",
+      "subtitle": "原生任务、连续上下文与 Agent 协作",
+      "legacy": "传统 Work 与历史会话",
+      "agent": "执行 Agent",
+      "noAgents": "暂无支持的 Agent",
+      "disabled": "未启用",
+      "settings": "A2A 配置与授权",
+      "newSession": "新建上下文",
+      "recent": "我的近期任务",
+      "refresh": "刷新任务列表",
+      "listFailed": "任务列表刷新失败，没有重新提交任何任务。",
+      "noTasks": "尚未加载此 Agent 的任务。",
+      "more": "加载更多任务",
+      "boundary": "此模式使用已启用 Agent 的沙箱和工具，不属于传统 Work 审批流程。已有 Work 和消息渠道会话不会迁移或重放，打开页面不会启动任务。",
+      "notReady": "请先为支持的 Agent 配置模型与独占联网 Docker 沙箱，并显式启用内部 A2A。实际提交仍会检查最新权限与配置。",
+      "loading": "正在读取任务……",
+      "readFailed": "当前身份无法读取此任务，没有创建新任务。请刷新页面或选择其他任务。",
+      "copyLink": "复制任务路径",
+      "emptyTitle": "开始一个原生任务",
+      "emptyHint": "描述目标后，Agent 可与明确授权的本地或远程 Agent 协作。进度和交付物会保存在任务中。",
+      "accepted": "任务已接受，不代表已完成；请查看后续状态。",
+      "sendUncertain": "无法确认提交结果，任务可能已被接受。请先检查近期任务，或明确重试下方保存的同一条消息；系统不会自动重提。",
+      "pendingHint": "消息 ID 和请求仅保存在本页面内存中。重试会原样复用二者，请先确认状态再为同一工作发起其他请求。",
+      "leavePending": "上一次提交可能已经生效。丢弃本地请求不会取消任务，再次提交同一工作前请先检查近期任务。继续吗？",
+      "discardPending": "丢弃本地重试请求",
+      "prompt": "任务目标",
+      "followUp": "后续消息",
+      "answer": "补充信息",
+      "placeholder": "描述目标、约束和预期交付物……",
+      "authorizationRequired": "任务需要授权。发送消息不代表批准，请使用相应的身份验证审批流程。",
+      "working": "任务仍在进行中，请等待结果或明确的补充信息请求后再发送消息。",
+      "terminalHint": "后续消息会在此上下文创建新任务并引用当前结果，不会重新打开已终结任务。",
+      "sendHint": "提交可能消耗模型和工具资源，关闭页面不会取消已接受的任务。",
+      "retry": "重试同一条消息",
+      "send": "提交任务",
+      "sendAnswer": "发送补充信息",
+      "sendFollowUp": "创建后续任务",
+      "cancel": "请求取消",
+      "cancelConfirm": "请求取消此任务及其后代吗？已经完成的外部操作无法撤销。",
+      "cancelCheck": "请查看任务状态确认最终取消结果。提出请求并不代表所有执行已经停止。",
+      "retryRead": "重新查询任务"
     }
   },
   "sell": {

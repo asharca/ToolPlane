@@ -13,6 +13,8 @@ import { type LocalA2AGrant } from '@/lib/a2a/principal';
 import { submitTask, claimTask, finishTask, getTask, getTaskRow, requestCancellation, eventsAfter } from '@/lib/a2a/store';
 import { requestLocalWait, requestLocalInput, reconcileLocalWaits } from '@/lib/a2a/local-continuation';
 import { textArtifact } from '@/lib/a2a/model';
+import { workbenchMessage } from '@/lib/a2a/workbench-client';
+import { listWorkbenchAgents } from '@/lib/a2a/workbench';
 import { executeA2ATask, startA2AWorker, stopA2AWorker } from '@/lib/a2a/worker';
 import { createAgentRuntimeToken, type AgentRuntimeTokenPayload } from '@/lib/agents/runtime-access';
 import { assertLocalRuntimeToken } from '@/lib/a2a/local-runtime';
@@ -362,5 +364,59 @@ describe('scoped native task artifacts', () => {
     const missing = (await claimTask((await submitTask(grant, { ...input, message: { ...input.message!, messageId: randomUUID() } })).id))!;
     await finishTask(missing.id, missing.leaseToken!, 3, undefined, textArtifact('{"not":"parsed"}'));
     expect((await getTask(grant, missing.id)).status?.state).toBe(4);
+  });
+});
+
+
+describe('native daily workbench persistence', () => {
+  it('lists only workspace navigation metadata and rechecks actor access', async () => {
+    const found = await listWorkbenchAgents(ws, user);
+    expect(found.map((item) => item.id)).toEqual(expect.arrayContaining(agents));
+    expect(found.every((item) => item.enabled && item.configured)).toBe(true);
+    expect(Object.keys(found[0]).sort()).toEqual(['configured', 'enabled', 'id', 'name', 'runtimeKind']);
+    expect(JSON.stringify(found)).not.toContain('fixture-secret');
+    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    expect((await listWorkbenchAgents(ws, otherUser)).find((item) => item.id === agents[0])?.enabled).toBe(false);
+    await expect(listWorkbenchAgents('other-workspace', user)).rejects.toThrow();
+    await db.user.update({ where: { id: user }, data: { status: 'suspended' } });
+    await expect(listWorkbenchAgents(ws, user)).rejects.toThrow();
+  });
+  it('creates follow-ups in one context, retains the old terminal task and deduplicates retries', async () => {
+    const first = await submitTask(grant, SendMessageRequest.fromJSON(workbenchMessage('Review', null, 'workbench-first')));
+    const running = (await claimTask(first.id))!;
+    await finishTask(first.id, running.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('First report'));
+    const previous = await getTask(grant, first.id);
+    const nextRequest = SendMessageRequest.fromJSON(workbenchMessage('Refine the report', previous, 'workbench-next'));
+    const next = await submitTask(grant, nextRequest);
+    const replay = await submitTask(grant, nextRequest);
+    expect(next.id).not.toBe(first.id); expect(replay.id).toBe(next.id); expect(next.contextId).toBe(first.contextId);
+    expect((await getTask(grant, first.id)).status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    expect((await getTask(grant, first.id)).artifacts).toEqual(previous.artifacts);
+    expect(await db.conversation.count({ where: { agent: { workspaceId: ws } } })).toBe(0);
+    expect(await db.workSession.count({ where: { workspaceId: ws } })).toBe(0);
+  });
+  it('answers an input-required task without renewing its deadline or replacing its task ID', async () => {
+    const first = await root();
+    await requestLocalInput(first.id, first.leaseToken!, 'Which branch?');
+    await finishTask(first.id, first.leaseToken!, TaskState.TASK_STATE_COMPLETED);
+    const waiting = await getTask(grant, first.id);
+    expect(waiting.status?.state).toBe(TaskState.TASK_STATE_INPUT_REQUIRED);
+    const reply = SendMessageRequest.fromJSON(workbenchMessage('main', waiting, 'workbench-answer'));
+    const continued = await submitTask(grant, reply);
+    expect(continued.id).toBe(first.id); expect(continued.contextId).toBe(first.contextId); expect(continued.deadlineAt).toEqual(first.deadlineAt);
+    expect((await submitTask(grant, reply)).id).toBe(first.id);
+    const run = (await claimTask(first.id))!;
+    await finishTask(run.id, run.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('Reviewed main'));
+    expect((await getTask(grant, first.id)).history.some((message) => message.parts.some((part) => part.content?.$case === 'text' && part.content.value === 'main'))).toBe(true);
+  });
+  it('returns bounded task history only through the authorized root and excludes it by default', async () => {
+    const parent = await root(); const delegated = await child(parent);
+    const actor = { workspaceId: ws, actorId: user, agentId: agents[0], slug: 'test' };
+    expect((await getConsoleTaskTree(actor, parent.id)).selectedTask.history ?? []).toEqual([]);
+    const viewed = await getConsoleTaskTree(actor, parent.id, parent.id, 32);
+    expect(Task.fromJSON(viewed.selectedTask).history[0].parts[0].content?.value).toBe('Do this task');
+    await expect(getConsoleTaskTree({ ...actor, actorId: otherUser }, parent.id, parent.id, 32)).rejects.toThrow();
+    await expect(getConsoleTaskTree(actor, delegated.row.id, delegated.row.id, 32)).rejects.toThrow();
+    await expect(getConsoleTaskTree(actor, parent.id, parent.id, 33)).rejects.toThrow();
   });
 });

@@ -82,10 +82,11 @@ export async function handleA2AConsoleTasks(req: Request, slug: string, agentId:
       const ctx = await sessionActor(req, slug, agentId);
       const query = new URL(req.url).searchParams;
       if ([...query.keys()].some((key) => query.getAll(key).length !== 1)) throw new A2AHttpError(400, 'Invalid task query.');
-      const parsed = z.object({ rootTaskId: z.string().min(1).max(200), selectedTaskId: z.string().min(1).max(200).optional() })
+      const parsed = z.object({ rootTaskId: z.string().min(1).max(200), selectedTaskId: z.string().min(1).max(200).optional(),
+        historyLength: z.string().regex(/^(?:[0-9]|[12][0-9]|3[0-2])$/).transform(Number).optional() })
         .strict().safeParse(Object.fromEntries(query));
       if (!parsed.success) throw new A2AHttpError(400, 'Invalid task query.');
-      return reply(await getConsoleTaskTree(ctx, parsed.data.rootTaskId, parsed.data.selectedTaskId));
+      return reply(await getConsoleTaskTree(ctx, parsed.data.rootTaskId, parsed.data.selectedTaskId, parsed.data.historyLength ?? 0));
     } catch (error) { return failure(error); }
   });
 }

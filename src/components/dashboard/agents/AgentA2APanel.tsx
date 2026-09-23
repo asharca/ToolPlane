@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { workbenchHref } from '@/lib/a2a/workbench-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Alert, Badge, Button, Input, Textarea } from '@asharca/ui';
@@ -172,6 +174,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
         </div>)}
       </section> : null}
       {view.local.supported ? <section className={cardClass} aria-labelledby="a2a-tasks-heading">
+        <Link href={workbenchHref(slug, agentId)} prefetch={false} className="inline-flex items-center gap-2 text-sm font-medium underline underline-offset-4">{t('openWorkbench')}<ArrowUpRight className="size-4" /></Link>
         <h3 id="a2a-tasks-heading" className="font-semibold">{t('tasksTitle')}</h3><p className="text-sm text-muted-foreground">{t('taskWarning')}</p>
         <label className="block text-sm">{t('taskMessage')}<Textarea className="mt-2" rows={3} maxLength={20000} value={prompt} onChange={(e) => setPrompt(e.target.value)} /></label>
         <div className="flex flex-wrap gap-2"><Button disabled={busy || !view.local.enabled || !view.local.ready || !prompt.trim()} onClick={() => void send()}>{t('sendTask')}</Button>

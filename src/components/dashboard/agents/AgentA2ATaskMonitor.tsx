@@ -7,12 +7,13 @@ import { Alert, Badge, Button } from '@asharca/ui';
 import type { ConsoleTaskTree } from '@/lib/a2a/console-tasks';
 
 type ResultTask = { id: string; status?: { state?: string; message?: { parts?: Array<{ text?: string }> } };
+  history?: Array<{ messageId: string; role: string; parts?: A2AWirePart[] }>;
   artifacts?: Array<{ artifactId: string; name?: string; parts?: A2AWirePart[] }> };
 const terminal = (state: string) => ['TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED'].includes(state);
 
 /** Read-only task monitoring never resubmits work, even after a network failure. */
-export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState }: {
-  base: string; rootTaskId: string; onRootState: (state: string) => void;
+export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState, onUnavailable, showHistory = false }: {
+  base: string; rootTaskId: string; onRootState: (state: string) => void; onUnavailable?: () => void; showHistory?: boolean;
 }) {
   const t = useTranslations('console.agents.a2a');
   const [tree, setTree] = useState<ConsoleTaskTree | null>(null);
@@ -21,6 +22,8 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState }: {
   const [failed, setFailed] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const notify = useRef(onRootState);
+  const unavailable = useRef(onUnavailable);
+  useEffect(() => { unavailable.current = onUnavailable; }, [onUnavailable]);
   useEffect(() => { notify.current = onRootState; }, [onRootState]);
   useEffect(() => {
     let stopped = false;
@@ -35,7 +38,14 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState }: {
       const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
       try {
         const query = new URLSearchParams({ rootTaskId, selectedTaskId: selectedId });
+        if (showHistory) query.set('historyLength', '32');
         const response = await fetch(`${base}/tasks?${query}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+        if ([401, 403, 404].includes(response.status)) {
+          if (!stopped && !controller.signal.aborted) {
+            done = true; setTree(null); setFailed(true); unavailable.current?.();
+          }
+          return;
+        }
         if (!response.ok) throw new Error('Task tree unavailable');
         const value = await response.json() as ConsoleTaskTree;
         if (stopped || controller.signal.aborted) return;
@@ -62,7 +72,7 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState }: {
     document.addEventListener('visibilitychange', visibility);
     void load();
     return () => { stopped = true; if (timer) clearTimeout(timer); flight?.abort(); document.removeEventListener('visibilitychange', visibility); };
-  }, [base, rootTaskId, selectedId, automatic, refresh]);
+  }, [base, rootTaskId, selectedId, automatic, refresh, showHistory]);
 
   const selected = tree?.selectedTask as ResultTask | undefined;
   const depthOf = (id: string) => {
@@ -92,6 +102,7 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState }: {
     </li>)}</ul>
     {selected ? <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3" role="region" aria-label={t('taskResult')}>
       <code className="block break-all text-xs">{selected.id}</code>
+      {showHistory && selected.history?.length ? <ol className="space-y-3" aria-label={t('taskHistory')}>{selected.history.map((message) => <li key={message.messageId} className="rounded-lg border border-border p-3"><p className="mb-2 text-xs font-medium text-muted-foreground">{t(message.role === 'ROLE_USER' ? 'historyUser' : 'historyAgent')}</p><A2AArtifactParts name={message.messageId} parts={message.parts ?? []} /></li>)}</ol> : null}
       {selected.status?.message?.parts?.map((part, index) => part.text ? <p key={index} className="whitespace-pre-wrap break-words text-sm">{part.text}</p> : null)}
       {selected.artifacts?.map((artifact) => <div key={artifact.artifactId}><h5 className="text-sm font-medium">{artifact.name || artifact.artifactId}</h5>
         <A2AArtifactParts name={artifact.name || artifact.artifactId} parts={artifact.parts ?? []} /></div>)}

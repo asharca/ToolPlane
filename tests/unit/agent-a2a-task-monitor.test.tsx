@@ -64,3 +64,27 @@ describe('read-only A2A task monitoring', () => {
     resolve!(new Response(JSON.stringify(tree()))); await flush(); expect(notify).not.toHaveBeenCalled();
   });
 });
+
+
+describe('workbench history and revoked access', () => {
+  it('loads bounded history explicitly and renders messages without interpreting markup', async () => {
+    const value = tree('TASK_STATE_COMPLETED');
+    value.selectedTask.history = [{ messageId: 'm1', role: 'ROLE_USER', parts: [{ text: '<img src=x onerror=alert(1)>' }] }];
+    fetcher.mockImplementation(async () => Response.json(value));
+    render(<AgentA2ATaskMonitor base="/api/console" rootTaskId="root" onRootState={notify} showHistory />);
+    await flush();
+    expect(fetcher.mock.lastCall![0]).toContain('historyLength=32');
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('list', { name: 'Task message history' })).toBeInTheDocument();
+  });
+  it.each([401, 403, 404])('drops the last snapshot and stops automatic reads after access status %s', async (status) => {
+    const missing = vi.fn();
+    render(<AgentA2ATaskMonitor base="/api/console" rootTaskId="root" onRootState={notify} onUnavailable={missing} />);
+    await flush(); expect(screen.getByText('Coordinator')).toBeInTheDocument();
+    fetcher.mockImplementation(async () => Response.json({ error: 'unavailable' }, { status }));
+    await flush(2500); const count = fetcher.mock.calls.length;
+    expect(screen.queryByText('Coordinator')).not.toBeInTheDocument(); expect(missing).toHaveBeenCalledTimes(1);
+    await flush(30_000); expect(fetcher).toHaveBeenCalledTimes(count);
+  });
+});
