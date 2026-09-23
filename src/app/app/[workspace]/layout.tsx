@@ -25,7 +25,7 @@ export default async function WorkspaceLayout({
 }) {
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
-  if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/market`)}`);
+  if (!user) redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/work`)}`);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app?view=workspaces&notice=unavailable');
   const [workspaces, messages, cookieStore] = await Promise.all([
