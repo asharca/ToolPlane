@@ -6,6 +6,8 @@ import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { db } from '@/lib/db';
+import { publishLocalArtifact } from '@/lib/a2a/local-artifacts';
+import { getConsoleTaskTree } from '@/lib/a2a/console-tasks';
 import { createLocalRootGrant, childGrant, assertLocalGrant, LOCAL_LIMITS } from '@/lib/a2a/local-policy';
 import { type LocalA2AGrant } from '@/lib/a2a/principal';
 import { submitTask, claimTask, finishTask, getTask, getTaskRow, requestCancellation, eventsAfter } from '@/lib/a2a/store';
@@ -203,7 +205,7 @@ describe('local Agents use native A2A tasks', () => {
       } });
     const client = new Client({ name: 'local-a2a-test', version: '1' });
     try {
-      await client.connect(transport); const tools = await client.listTools(); expect(tools.tools).toHaveLength(6);
+      await client.connect(transport); const tools = await client.listTools(); expect(tools.tools).toHaveLength(7);
       const result = await client.callTool({ name: 'a2a_send_message', arguments: { agentId: agents[1], request: SendMessageRequest.toJSON(request()) } });
       expect(result.isError).toBe(false);
       expect(JSON.stringify(result)).toContain('TASK_STATE_SUBMITTED'); expect(JSON.stringify(result)).not.toContain('fixture-secret');
@@ -287,4 +289,77 @@ describe('local Agents use native A2A tasks', () => {
     stopA2AWorker();
   });
 
+});
+
+describe('console task tree authorization', () => {
+  const actor = () => ({ workspaceId: ws, actorId: user, agentId: agents[0], slug: 'unused' });
+  it('shows owned root and descendants without execution grants or private prompts', async () => {
+    const parent = await root(); const delegated = await child(parent);
+    const tree = await getConsoleTaskTree(actor(), parent.id, delegated.row.id);
+    expect(tree.nodes.map((n) => n.id)).toEqual([parent.id, delegated.row.id]);
+    expect(tree.selectedTask).toMatchObject({ id: delegated.row.id, status: { state: 'TASK_STATE_SUBMITTED' } });
+    expect(tree.selectedTask.history ?? []).toEqual([]);
+    expect(tree.restricted).toBe(false);
+    for (const value of [parent.leaseToken!, 'fixture-secret', 'targetBinding', 'ancestorAgentIds']) expect(JSON.stringify(tree)).not.toContain(value);
+  });
+  it('denies another member, foreign root and direct delegated entry', async () => {
+    const parent = await root(); const delegated = await child(parent);
+    await expect(getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(getConsoleTaskTree(actor(), delegated.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+    const second = await root();
+    await expect(getConsoleTaskTree(actor(), second.id, delegated.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it('withholds a disabled child and its details while keeping the authorized root', async () => {
+    const parent = await root(); const delegated = await child(parent);
+    await db.agent.update({ where: { id: agents[1] }, data: { a2aInternalEnabled: false } });
+    const tree = await getConsoleTaskTree(actor(), parent.id);
+    expect(tree.nodes).toHaveLength(1); expect(tree.restricted).toBe(true);
+    expect(JSON.stringify(tree)).not.toContain(delegated.row.id);
+    await expect(getConsoleTaskTree(actor(), parent.id, delegated.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it('uses current read authority, not an expired execution credential, for history', async () => {
+    const parent = await root(); const delegated = await child(parent);
+    await requestCancellation(grant, parent.id);
+    await finishTask(parent.id, parent.leaseToken!, TaskState.TASK_STATE_CANCELED);
+    const stored = await db.a2ATask.findUniqueOrThrow({ where: { id: delegated.row.id } });
+    await db.a2ATask.update({ where: { id: stored.id }, data: { grant: { ...delegated.grant, expiresAt: 1 } } });
+    expect((await getConsoleTaskTree(actor(), parent.id, stored.id)).selectedTask.id).toBe(stored.id);
+  });
+});
+
+
+describe('scoped native task artifacts', () => {
+  it('publishes standard JSON and binary artifacts atomically and makes retries idempotent', async () => {
+    const task = await root();
+    const data = { artifactId: 'report-v1', name: 'review.json', parts: [{ data: { z: 'last', a: 'first' } }] };
+    await publishLocalArtifact(task.id, task.leaseToken!, data);
+    const count = (await eventsAfter(grant, task.id, 0)).length;
+    expect(await publishLocalArtifact(task.id, task.leaseToken!, { ...data, parts: [{ data: { a: 'first', z: 'last' } }] })).toMatchObject({ replay: true });
+    expect((await eventsAfter(grant, task.id, 0)).length).toBe(count);
+    await expect(publishLocalArtifact(task.id, task.leaseToken!, { ...data, parts: [{ text: 'changed' }] })).rejects.toThrow();
+    await publishLocalArtifact(task.id, task.leaseToken!, { artifactId: 'patch-v1', name: 'fix.patch', parts: [{ raw: Buffer.from('diff --git').toString('base64'), mediaType: 'text/x-diff' }] });
+    const wire = Task.toJSON(await getTask(grant, task.id)) as { artifacts: Array<{ parts: unknown[] }> };
+    expect(wire.artifacts[0].parts[0]).toMatchObject({ data: { a: 'first', z: 'last' }, mediaType: 'application/json' });
+    expect(wire.artifacts[1].parts[0]).toMatchObject({ raw: Buffer.from('diff --git').toString('base64'), mediaType: 'text/x-diff' });
+    const reader = await createLocalRootGrant(ws, agents[0], otherUser);
+    await expect(getTask(reader, task.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it('rejects stale execution leases and attempts to publish after suspension', async () => {
+    const task = await root(); const data = { artifactId: 'x', name: 'report.txt', parts: [{ text: 'report' }] };
+    await expect(publishLocalArtifact(task.id, 'stale', data)).rejects.toBeInstanceOf(TaskNotFoundError);
+    await requestLocalInput(task.id, task.leaseToken!, 'Which branch?');
+    await expect(publishLocalArtifact(task.id, task.leaseToken!, data)).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it('honors caller output modes without guessing JSON from ordinary model text', async () => {
+    const input = request(); input.configuration!.acceptedOutputModes = ['application/json'];
+    const task = (await claimTask((await submitTask(grant, input)).id))!;
+    await expect(publishLocalArtifact(task.id, task.leaseToken!, { artifactId: 'no', name: 'no.txt', parts: [{ text: 'not accepted' }] })).rejects.toThrow();
+    await publishLocalArtifact(task.id, task.leaseToken!, { artifactId: 'yes', name: 'report.json', parts: [{ data: { ok: true } }] });
+    await finishTask(task.id, task.leaseToken!, 3, undefined, textArtifact('Completed review'));
+    const result = await getTask(grant, task.id); expect(result.status?.state).toBe(3);
+    expect(result.artifacts).toHaveLength(1); expect(result.artifacts[0].artifactId).toBe('yes');
+    const missing = (await claimTask((await submitTask(grant, { ...input, message: { ...input.message!, messageId: randomUUID() } })).id))!;
+    await finishTask(missing.id, missing.leaseToken!, 3, undefined, textArtifact('{"not":"parsed"}'));
+    expect((await getTask(grant, missing.id)).status?.state).toBe(4);
+  });
 });

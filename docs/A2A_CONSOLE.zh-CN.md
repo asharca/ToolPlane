@@ -19,13 +19,19 @@
 
 “本地任务调试”使用当前登录成员的身份向同一 A2A Handler 发起请求：
 提交新任务、查看自己最近 20 个任务、按 Task ID 查询、为 INPUT_REQUIRED 任务补充信息，
-以及请求取消。列表是有界预览，不是工作区所有人的任务列表；列表结果不附交付物，
-选中后点击“查询任务”获取当前状态和文本结果。其他成员、工作区和委派专属任务的 ID
-不能凭空获得访问权限。
+以及请求取消。列表是有界预览，不是工作区所有人的任务列表；列表结果不附交付物。
+选择自己拥有的根任务后显示父子任务树，每次检查当前用户、目标配置和委派关系；
+失效或无权访问的子树不返回。点击可见子任务查看结果，知道其他人的任务 ID 不代表有权限。
 
 提交会消耗模型与工具资源，不会在打开页面时自动执行。显示“已接受”不代表“已完成”；
-页面当前使用手动查询，不是自动流式聊天。离开页面不会取消任务。取消请求可能先返回
-WORKING，实际停止后才进入终态。已终结任务不能原地重开。
+任务树正常每 2.5 秒只读刷新，页面隐藏时暂停，全部可见任务终结后停止。可手动暂停、
+恢复或刷新。单次请求最多 15 秒，连续网络错误会退避并在三次后停止，不会重复提交任务。
+这是状态轮询，不是逐 Token 流。离开页面不会取消任务；取消请求可能先返回 WORKING，
+实际停止后才进入终态。已终结任务不能原地重开。
+
+文本和 JSON 以转义文本显示。小型内联文件必须点击下载，以附件数据处理，不预览 HTML；
+文件名会清理，临时对象地址会回收，也不会抓取远程文件 URL。格式与大小见
+[内部协作交付物](A2A_LOCAL_COLLABORATION.zh-CN.md#交付物)。
 
 ## 对外服务和凭据
 
@@ -63,6 +69,7 @@ SubscribeToTask、CancelTask 的 curl 示例。地址来自部署配置 `NEXT_PU
 GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console
 POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console
 POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/rpc
+GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 ```
 
 这是 ToolPlane 的控制台接口，不是新定义的 A2A 标准传输。浏览器写入必须具备有效登录态和
@@ -73,5 +80,8 @@ POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/rpc
 控制台不伪造账户 Token，也不绕回旧 Responses/协作 Worker。调试任务不属于 Work 审批流程；
 原有 Work、聊天和消息渠道并未自动迁移。
 
-本页不包含远程 Agent 导入、文件交付、OAuth 自动发现、逐 Token 流或任意网络连通性探测。
+对外连接区还提供[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)，复用显式授予 A2A 权限的服务凭据。
+连接对象是示例，不是所有客户端都通用的配置文件。
+
+本页不包含远程 Agent 注册、大文件上传、OAuth 自动发现、逐 Token 流或任意网络连通性探测。
 完整协议说明见[公开 A2A](A2A_NATIVE.zh-CN.md)与[内部协作](A2A_LOCAL_COLLABORATION.zh-CN.md)。

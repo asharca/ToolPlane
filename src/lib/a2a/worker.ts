@@ -1,4 +1,5 @@
 import 'server-only';
+import { A2AQuotaError } from './quotas';
 import { TaskState } from '@a2a-js/sdk';
 import { db } from '@/lib/db';
 import { assertRuntimeOwner, runtimeAbortSignal, runtimeCanOperate, trackRuntimeOperation } from '@/lib/runtime/ownership-state';
@@ -51,7 +52,8 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executeTask)
       if (![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED,
         TaskState.TASK_STATE_AUTH_REQUIRED, TaskState.TASK_STATE_REJECTED, TaskState.TASK_STATE_FAILED].includes(result.state)) throw new Error('Invalid executor state');
       await finishTask(id, row.leaseToken!, result.state, result.message, result.artifact);
-    } catch {
+    } catch (error) {
+      if (!claimed && error instanceof A2AQuotaError) { await interruptTask(id, 'Execution was not started because the Agent resource quota was exhausted.'); return; }
       // Native exception text may contain prompts, files or upstream credentials.
       if (claimed?.leaseToken) await finishTask(id, claimed.leaseToken, TaskState.TASK_STATE_FAILED,
         'Task execution stopped or failed. No automatic replay was performed.');

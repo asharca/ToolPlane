@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentA2APanel } from '@/components/dashboard/agents/AgentA2APanel';
 import type { A2AConsoleView } from '@/lib/a2a/connection-info';
+vi.mock('@/components/dashboard/agents/AgentA2ATaskMonitor', () => ({ AgentA2ATaskMonitor: () => <div>Task tree</div> }));
 vi.mock('@/components/dashboard/CopyButton', () => ({ CopyButton: ({ text, label }: { text: string; label: string }) => <button type="button" data-copy={text}>{label}</button> }));
 const view: A2AConsoleView = {
   canManage: true, local: { enabled: true, supported: true, ready: true },
   endpoint: { id: 'agep_test', enabled: true, ready: true, revision: 1, clients: [] },
-  connections: { localRpc: 'https://tp.example/local', localCard: 'https://tp.example/local', publicRpc: 'https://tp.example/a2a', publicCard: 'https://tp.example/a2a/card' },
+  connections: { localRpc: 'https://tp.example/local', localCard: 'https://tp.example/local', publicRpc: 'https://tp.example/a2a', publicCard: 'https://tp.example/a2a/card', publicMcp: 'https://tp.example/a2a/mcp' },
 };
 let current: A2AConsoleView;
 const fetchMock = vi.fn();

@@ -1,4 +1,5 @@
 import 'server-only';
+import { A2A_QUOTA_ERROR } from './quotas';
 import { AgentCard } from '@a2a-js/sdk';
 import { JsonRpcTransportHandler, ServerCallContext, validateVersion } from '@a2a-js/sdk/server';
 import { toJsonRpcError, JsonRpcRequestMalformedError, A2A_ERROR_CODE } from '@a2a-js/sdk/errors';
@@ -92,7 +93,7 @@ export async function handleA2ARpc(req: Request, endpointId: string,
       const operation = rpc.method === 'SendMessage' || rpc.method === 'SendStreamingMessage' ? 'send'
         : rpc.method === 'CancelTask' ? 'cancel' : 'read';
       if (!permits(grant, operation)) throw new A2AHttpError(403, 'Required A2A permission is missing.');
-      validateParams(rpc.method, rpc.params);
+      validateParams(rpc.method, rpc.params, card.defaultOutputModes);
       const credential = req.headers.get('authorization')?.replace(/^Bearer /i, '');
       if (credential && credential.length > 20 && JSON.stringify(rpc.params ?? {}).includes(credential)) {
         throw new JsonRpcRequestMalformedError({ envelopeCode: A2A_ERROR_CODE.INVALID_PARAMS, message: 'Credentials must not be included in message content.' });
@@ -104,7 +105,12 @@ export async function handleA2ARpc(req: Request, endpointId: string,
       const signal = AbortSignal.any([req.signal, subscription.signal]);
       const handler = new NativeA2AHandler(grant, card, signal);
       const result = await new JsonRpcTransportHandler(handler).handle(rpc, new ServerCallContext({ requestedVersion: version }));
-      if (!(Symbol.asyncIterator in result)) return response(sanitizeEnvelope(result), headers);
+      if (!(Symbol.asyncIterator in result)) {
+        const quota = 'error' in result && result.error && typeof result.error === 'object'
+          && 'code' in result.error && result.error.code === A2A_QUOTA_ERROR;
+        if (quota) headers.set('retry-after', '60');
+        return response(sanitizeEnvelope(result), headers, quota ? 429 : 200);
+      }
       headers.set('content-type', 'text/event-stream'); headers.set('x-accel-buffering', 'no');
       const release = releaseObservation; releaseObservation = undefined;
       const iterator = result[Symbol.asyncIterator]();

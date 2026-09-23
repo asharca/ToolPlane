@@ -1,5 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { z } from 'zod';
+import { getConsoleTaskTree } from './console-tasks';
 import { resolveRequestPrincipal } from '@/lib/auth/request-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { runtimeEnv } from '@/lib/runtime-env';
@@ -68,6 +70,22 @@ export async function handleA2AConsoleRpc(req: Request, slug: string, agentId: s
       return await handleA2ARpc(req, agentId, async () => ({
         grant: await createLocalRootGrant(ctx.workspaceId, ctx.agentId, ctx.actorId), rateHeaders: new Headers(),
       }));
+    } catch (error) { return failure(error); }
+  });
+}
+
+/** Bounded tree reads reuse the browser session boundary, never a delegated runtime credential. */
+export async function handleA2AConsoleTasks(req: Request, slug: string, agentId: string) {
+  return withLogContext({ suppressPayload: true }, async () => {
+    try {
+      if (req.method !== 'GET') return reply({ error: 'Method not allowed.' }, 405);
+      const ctx = await sessionActor(req, slug, agentId);
+      const query = new URL(req.url).searchParams;
+      if ([...query.keys()].some((key) => query.getAll(key).length !== 1)) throw new A2AHttpError(400, 'Invalid task query.');
+      const parsed = z.object({ rootTaskId: z.string().min(1).max(200), selectedTaskId: z.string().min(1).max(200).optional() })
+        .strict().safeParse(Object.fromEntries(query));
+      if (!parsed.success) throw new A2AHttpError(400, 'Invalid task query.');
+      return reply(await getConsoleTaskTree(ctx, parsed.data.rootTaskId, parsed.data.selectedTaskId));
     } catch (error) { return failure(error); }
   });
 }

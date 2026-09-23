@@ -7,10 +7,11 @@ import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } f
 import { db } from '@/lib/db';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { ACTIVE, A2A_LIMITS, assertCancelable, assertTransition, historyView, jsonEvent, jsonTask,
-  taskEvent, statusEvent, agentMessage, terminal } from './model';
+  taskEvent, statusEvent, agentMessage, terminal, LOCAL_OUTPUT_MODES, acceptsOutput } from './model';
 import { isLocalGrant, type TaskGrant } from './principal';
 import { assertLocalGrant, LOCAL_LIMITS } from './local-policy';
 import { validateSend } from './validation';
+import { refreshTaskStorage, assertNativeStorageCapacity, reserveNativeExecutionOutput } from './quotas';
 
 type Tx = Prisma.TransactionClient;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -36,8 +37,8 @@ export async function getTask(grant: TaskGrant, id: string, historyLength?: numb
 export async function lockTask(tx: Tx, id: string) {
   const initial = await tx.a2ATask.findUnique({ where: { id }, include: { context: true } });
   if (!initial) throw notFound();
-  // All local graph writes acquire workspace before task locks, including settlement.
-  if (initial.context.targetKind === 'local') await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
+  // All task writes share the workspace-first lock order with public Responses admission.
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
   await tx.$queryRaw`SELECT id FROM "A2ATask" WHERE id=${id} FOR UPDATE`;
   return tx.a2ATask.findUniqueOrThrow({ where: { id } });
 }
@@ -49,6 +50,7 @@ export async function persist(tx: Tx, row: A2ATask, task: Task, event: StreamRes
     ...(terminal(task.status!.state) ? { completedAt: new Date(), leaseToken: null, phase: 'done', waitForTaskIds: [], pendingQuestion: null } : {}),
   } });
   await tx.a2AEvent.create({ data: { taskId: row.id, sequence, payload: json(jsonEvent(event)) } });
+  await refreshTaskStorage(tx, row.id, [TaskState.TASK_STATE_FAILED, TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED].includes(task.status!.state));
   return updated;
 }
 export function transition(task: Task, state: TaskState, detail?: string) {
@@ -59,7 +61,7 @@ export function transition(task: Task, state: TaskState, detail?: string) {
 }
 /** Admit and queue atomically. No execution or HTTP response lifecycle in this transaction. */
 export async function submitTask(grant: TaskGrant, request: SendMessageRequest, admission: { parentLeaseToken?: string } = {}) {
-  validateSend(request);
+  validateSend(request, isLocalGrant(grant) ? LOCAL_OUTPUT_MODES : ['text/plain']);
   const message = request.message!;
   const contentHash = digest({ message: Message.toJSON(message), metadata: request.metadata });
   return db.$transaction(async (tx) => {
@@ -73,6 +75,7 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
           || !parent.leaseToken || parent.leaseToken !== admission.parentLeaseToken || parent.cancelRequestedAt || parent.waitForTaskIds.length || parent.pendingQuestion) throw notFound();
       }
     } else {
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
       await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${grant.endpointId} FOR UPDATE`;
       if (!await tx.agentEndpoint.count({ where: { id: grant.endpointId,
         workspaceId: grant.workspaceId, status: 'active', a2aEnabled: true } })) throw notFound();
@@ -116,6 +119,7 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
     }
     if (context && await tx.a2ATask.count({ where: { contextId: context.id, state: { in: ACTIVE } } })) throw new UnsupportedOperationError('This context already has an executing task.');
     if (context && !previous && await tx.a2ATask.count({ where: { contextId: context.id } }) >= A2A_LIMITS.tasksPerContext) throw new UnsupportedOperationError('Context task limit reached.');
+    await assertNativeStorageCapacity(tx, grant, !previous);
     if (!context) {
       if (await tx.a2AContext.count({ where: isLocalGrant(grant) ? scope(grant) : { clientId: grant.clientId } }) >= A2A_LIMITS.contextsPerClient) throw new UnsupportedOperationError('Owner context limit reached.');
       context = await tx.a2AContext.create({ data: { id: randomUUID(), workspaceId: grant.workspaceId,
@@ -148,6 +152,7 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
         events: { create: { sequence: 1, payload: json(jsonEvent(taskEvent(task))) } } } });
     }
     await tx.a2ARequest.create({ data: { ownerKey: grant.ownerKey, messageId: message.messageId, contentHash, taskId: id } });
+    await refreshTaskStorage(tx, id);
     return row;
   });
 }
@@ -175,6 +180,8 @@ export async function claimTask(id: string) {
     if (row.cancelRequestedAt || row.deadlineAt <= new Date()) return null;
     const resume = row.state === TaskState.TASK_STATE_WORKING && row.phase === 'resumable';
     if (row.state !== TaskState.TASK_STATE_SUBMITTED && !resume) return null;
+    await assertNativeStorageCapacity(tx, row.grant as unknown as TaskGrant, false);
+    await reserveNativeExecutionOutput(tx, row.grant as unknown as TaskGrant, row.deadlineAt);
     const task = Task.fromJSON(row.snapshot);
     if (resume) {
       const { resumeMessage } = await import('./local-continuation');
@@ -198,6 +205,14 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
       const { suspendLocalTurn } = await import('./local-continuation');
       if (await suspendLocalTurn(tx, row, task, artifact)) return;
       if (row.pendingQuestion) { state = TaskState.TASK_STATE_INPUT_REQUIRED; detail = row.pendingQuestion; artifact = undefined; }
+    }
+    if (local && state === TaskState.TASK_STATE_COMPLETED && artifact) {
+      const modes = SendMessageRequest.fromJSON(row.request).configuration?.acceptedOutputModes ?? [];
+      if (artifact.parts.some((part) => !acceptsOutput(modes, part.mediaType || 'text/plain'))) {
+        // A non-text result requested by the caller must be published explicitly, not guessed from model prose.
+        artifact = undefined;
+        if (!task.artifacts.length) { state = TaskState.TASK_STATE_FAILED; detail = 'The executor did not publish an artifact in the requested output format.'; }
+      }
     }
     // Cancellation/deadline wins over a racing successful executor return.
     const actual = row.cancelRequestedAt ? TaskState.TASK_STATE_CANCELED

@@ -60,9 +60,13 @@ export class NativeA2AHandler implements A2ARequestHandler {
   async listTasks(params: ListTasksRequest, context: ServerCallContext) {
     await this.authorize(context, 'read'); return store.listTasks(this.grant, params);
   }
-  async cancelTask(params: CancelTaskRequest, context: ServerCallContext) {
+  async requestTaskCancellation(params: CancelTaskRequest, context: ServerCallContext) {
     assertRuntimeOwner(); await this.authorize(context, 'cancel');
-    await store.requestCancellation(this.grant, params.id); this.wake();
+    const task = await store.requestCancellation(this.grant, params.id); this.wake();
+    return task;
+  }
+  async cancelTask(params: CancelTaskRequest, context: ServerCallContext) {
+    await this.requestTaskCancellation(params, context);
     return this.waitForTask(params.id, 'cancel');
   }
   async *resubscribe(params: SubscribeToTaskRequest, context: ServerCallContext) {

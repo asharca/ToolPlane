@@ -1,4 +1,5 @@
 import 'server-only';
+import { LOCAL_OUTPUT_MODES } from './model';
 import { AgentCard } from '@a2a-js/sdk';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -35,7 +36,7 @@ export async function localAgentCard(grant: LocalA2AGrant) {
   const url = new URL(`/api/v1/workspaces/${encodeURIComponent(workspace.slug)}/agents/${encodeURIComponent(grant.agentId)}/a2a/local`, origin).href;
   return AgentCard.fromJSON({ name: target.name, description: 'Explicitly enabled workspace-local Agent.', version: target.binding,
     supportedInterfaces: [{ url, protocolBinding: 'JSONRPC', protocolVersion: A2A_PROTOCOL_VERSION }],
-    capabilities: { streaming: true }, defaultInputModes: ['text/plain'], defaultOutputModes: ['text/plain'],
+    capabilities: { streaming: true }, defaultInputModes: ['text/plain'], defaultOutputModes: LOCAL_OUTPUT_MODES,
     skills: [{ id: 'execute', name: target.name, description: 'Run a local task and cooperate with approved Agents.', tags: ['agent'] }],
     securitySchemes: { bearer: { httpAuthSecurityScheme: { scheme: 'Bearer', bearerFormat: 'ToolPlane account token' } } },
     securityRequirements: [{ schemes: { bearer: { list: [] } } }] });

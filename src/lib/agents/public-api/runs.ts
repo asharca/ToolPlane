@@ -1,4 +1,5 @@
 import 'server-only';
+import { readNativeQuotaCharges } from '@/lib/a2a/quotas';
 import { recordEvent } from '@/lib/observability/events';
 import { enrichLogContext, withLogContext } from '@/lib/observability/context';
 
@@ -226,7 +227,8 @@ async function assertPublicResourceBudgets(
          AND r."status" IN ('provisioning', 'running')) AS "workspaceActive"
   `;
   if (!row) throw new AgentApiError('internal_error', publicErrorMessage('internal_error'), 500);
-  const value = (field: keyof BudgetRow) => Number(row[field]);
+  const native = await readNativeQuotaCharges(tx, input, now);
+  const value = (field: keyof BudgetRow) => Number(row[field]) + (field in native ? native[field as keyof typeof native] : 0);
   const exceedsOutput = (
     value('endpointOutput') + (value('endpointActive') + 1) * AGENT_API_MAX_OUTPUT_CHARACTERS
       > input.endpointDailyOutput

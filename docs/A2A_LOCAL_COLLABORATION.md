@@ -28,7 +28,7 @@ Responses execution, runDedicatedSandboxTurn or a private Conversation. Existing
 chat, Work, messaging and Control MCP entries are **not automatically switched**;
 Work approval must not be bypassed by such a switch. The [A2A console](A2A_CONSOLE.md)
 now provides explicit enablement, connection examples and a local task playground.
-A full collaboration tree and explicit migration of the old entries remain separate work.
+The console now includes a scoped parent/child task monitor. Explicit migration of the old entries remains separate work.
 
 ## Opt-in and root invocation
 
@@ -78,6 +78,7 @@ native A2A core, not another task database or a nonstandard A2A wire binding.
 | a2a_cancel_task | Request cancellation of a child and its descendants |
 | a2a_await_tasks | Persist a join on direct children, then end the current turn normally |
 | a2a_request_input | Record a question, then end normally; never approve an operation |
+| a2a_publish_artifact | Publish an immutable, bounded text/JSON/inline-file artifact to this task |
 
 Caller, root, parent, depth, deadlines and authorization are server-derived, not
 model-controlled metadata. Signed runtime credentials bind both Task and execution
@@ -108,6 +109,36 @@ canceled only after its executor stops; prior external effects are not rolled ba
 Restart preserves waiting/resumable records, but fails previously executing tasks
 whose side effects are uncertain. It does not automatically replay them.
 
+## Artifacts
+
+Local Agent Cards now declare text/plain, text/markdown, text/x-diff, application/json
+and application/octet-stream outputs. Inputs remain text/plain. The published Hermes
+profile still declares text/plain only; capabilities are not automatically widened.
+
+A running local Agent can call `a2a_publish_artifact`:
+
+```json
+{
+  "artifactId": "review-v1",
+  "name": "review.json",
+  "parts": [{ "data": { "approved": false, "findings": [] }, "mediaType": "application/json" }]
+}
+```
+
+Each part contains exactly one standard A2A `text`, `data` or `raw` value. `raw` is
+canonical base64 and requires an allowed mediaType; `data` is a JSON object. At most
+8 parts and 32 KiB of decoded/UTF-8 content are accepted per artifact. Filesystem paths,
+remote URLs and the old `file` shape are rejected. Names are labels, not paths.
+
+An artifactId is immutable within a task: identical retries add no event; conflicting
+content requires a new ID. At most 15 explicit artifacts leave one slot for the final
+result. Snapshot, journal and workspace quotas still apply. Publishing does not complete
+the task. A task's lease must still be executing, authorized, uncanceled and not suspended.
+
+`acceptedOutputModes` is enforced. For JSON-only requests the Agent must explicitly
+publish a JSON artifact; final prose is not guessed into JSON or returned as a successful
+format match. Children and tools treat delivered content as untrusted task data.
+
 ## Capacity and operations
 
 A root allows at most 16 tasks and three delegation edges; a parent resumes at most
@@ -123,8 +154,9 @@ and A2A; a busy sandbox leaves an A2A task queued rather than executing and retr
 side effects. Different native sessions cannot rewrite the same sandbox concurrently.
 
 These are task, execution and time limits, not a precise token/currency budget.
-Binary artifacts, remote registries, native per-tool approval bridging, automatic
-migration of old entry points and distributed execution are not advertised.
+Large/binary input uploads, remote registries, native per-tool approval bridging, automatic
+migration of old entry points and distributed execution are not advertised. Aggregate
+admission accounting is documented in [resource limits](A2A_RESOURCE_LIMITS.md).
 
 Apply 20260922010000_a2a_local_collaboration after the native core migration, then
 regenerate Prisma Client. Existing published Context ownership is backfilled and
@@ -142,3 +174,5 @@ tests use a replacement executor. MCP interoperability uses the unmodified offic
 client. PGlite deliberately skips real PostgreSQL concurrency tests and cannot prove
 lock semantics. Live CLI/model/browser end-to-end acceptance and official A2A TCK
 certification have not been completed.
+
+This increment also requires `20260923050000_a2a_storage_accounting`; see [resource limits and migration](A2A_RESOURCE_LIMITS.md).

@@ -2,7 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import { decodeJwt } from 'jose';
 import { db } from '@/lib/db';
-import { resolveAgentApiPrincipal, AGENT_CLIENT_TOKEN_PREFIX, hasAgentApiScope } from '@/lib/agents/public-api/auth';
+import { resolveAgentApiPrincipal, AGENT_CLIENT_TOKEN_PREFIX } from '@/lib/agents/public-api/auth';
 import { takeAgentApiPrincipalRateLimit } from '@/lib/agents/public-api/rate-limit';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 
@@ -30,14 +30,15 @@ export class A2AHttpError extends Error {
 }
 export function permits(grant: Pick<TaskGrant, 'scopes'>, operation: A2AOperation) {
   const required = operation === 'cancel' ? ['a2a:cancel', 'a2a:read'] : [`a2a:${operation}`];
-  return hasAgentApiScope(grant.scopes, required);
+  // Opt-in is explicit: an old wildcard/Responses client must not silently gain A2A access.
+  return required.every((scope) => grant.scopes.includes(scope));
 }
 export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
   // Direct server-to-server profile. Browser support needs a separate CORS/OAuth design.
   if (req.headers.has('origin')) throw new A2AHttpError(403, 'Browser origins are not supported by this A2A interface.');
   const principal = await resolveAgentApiPrincipal(req, endpointPublicId);
   if (!principal) throw new A2AHttpError(401, 'A valid Agent Endpoint credential is required.');
-  if (!A2A_SCOPES.some((scope) => hasAgentApiScope(principal.scopes, scope))) throw new A2AHttpError(403, 'A2A permission is required.');
+  if (!A2A_SCOPES.some((scope) => principal.scopes.includes(scope))) throw new A2AHttpError(403, 'A2A permission is required.');
   const endpoint = await db.agentEndpoint.findFirst({ where: { id: principal.endpointId,
     a2aEnabled: true, status: 'active', workspace: { status: 'active' } }, select: { id: true } });
   if (!endpoint) throw new A2AHttpError(404, 'Agent service not found.');

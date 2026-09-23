@@ -112,7 +112,7 @@ agentId 作为授权。读、继续、取消和订阅都限制到 Endpoint、客
 1,000 个保留任务；Worker 最多四个执行；每身份八个、全局 64 个观察连接。
 任务最长 840 秒，实际取 Endpoint 超时、凭据寿命和 Context 到期时间中的最小值；补充
 信息不会延长原截止时间。Context 最多保留 30 天，终结后按有限批次清理。
-这些不等于精确的金额或 Token 预算；聚合输出/存储额度仍需独立验收。
+聚合输出预留和载荷存储准入已加入，见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。它们不是精确金额或 Token 计费。
 
 ## 支持范围与验证
 
@@ -135,3 +135,7 @@ pnpm lint
 集成测试使用隔离数据库和替身执行器；`TOOLPLANE_TEST_PGLITE=1` 仅用于本地嵌入数据库，
 明确跳过真实 PostgreSQL 并发锁验证。CI 不应设置该标记。不能把此模式结果当成真实
 PostgreSQL 并发、真实 Hermes/CLI/模型端到端验收或官方 TCK 认证。
+
+外部 MCP 客户端可通过[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)使用同一任务核心，不经过旧 Responses 执行链。
+
+本版还需应用 `20260923050000_a2a_storage_accounting`，参见[资源限额与迁移](A2A_RESOURCE_LIMITS.zh-CN.md)。

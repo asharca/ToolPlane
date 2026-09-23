@@ -36,7 +36,8 @@ data.
 ## Migration and rollout gates
 
 Apply `20260922000000_a2a_native_tasks` before
-`20260922010000_a2a_local_collaboration`, then regenerate Prisma Client. In an
+`20260922010000_a2a_local_collaboration` and
+`20260923050000_a2a_storage_accounting`, then regenerate Prisma Client. In an
 isolated populated database, verify that public Context workspace backfill keeps
 its client, published revision and task snapshot; local/public target constraints
 reject mixed identities; execution phases are backfilled; Agent deletion has the
@@ -53,3 +54,17 @@ to those resources.
 Keep both public and local A2A opt-in. Do not interpret a green build, a passing
 SDK mock, or an internal MCP bridge as authorization to enable an Agent, deploy
 migrations, expose a private sandbox, or bypass Work approvals.
+
+## Console, native MCP and resource checks
+
+Run `a2a-console-http`, `agent-a2a-task-monitor`, `a2a-artifact-parts`,
+`a2a-local-artifacts`, `a2a-service-mcp` and the native/local integration suites.
+`a2a-storage-migration.test.ts` applies the actual migration to a filled temporary
+old-shape schema and rolls the DDL transaction back. Standard CI schema push does
+not substitute for this migration test. Output reservations and storage charges
+are conservative quotas, not measured billing.
+
+The console tree and artifact/download tests use React DOM tests, not a real browser
+against real model runtimes. Official MCP transport tests use the real SDK with
+controlled server dependencies, not an arbitrary third-party client's certification.
+The official A2A TCK has not been executed against this implementation.

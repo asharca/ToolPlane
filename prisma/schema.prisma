@@ -1556,6 +1556,7 @@ model A2ATask {
   state             Int
   statusAt          DateTime     @default(now())
   snapshot          Json
+  storageBytes      Int          @default(0)
   sequence          Int          @default(1)
   request           Json
   // Verified identity metadata only. Never a bearer token or provider credential.

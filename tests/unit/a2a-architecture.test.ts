@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ObservationLimiter, WindowLimiter } from '@/lib/a2a/transport-limits';
 
 describe('native A2A boundaries', () => {
-  it.each(['model', 'store', 'handler', 'worker', 'executor', 'http', 'local-continuation', 'local-executor', 'local-http', 'local-mcp', 'local-policy', 'local-runtime'])('%s never calls legacy Responses/delegation execution', (name) => {
+  it.each(['model', 'store', 'handler', 'worker', 'executor', 'http', 'local-continuation', 'local-executor', 'local-http', 'local-mcp', 'local-policy', 'local-runtime', 'local-artifacts', 'console-tasks', 'quotas', 'service-mcp'])('%s never calls legacy Responses/delegation execution', (name) => {
     const source = readFileSync(resolve('src/lib/a2a', `${name}.ts`), 'utf8');
     expect(source).not.toMatch(/from\s+['"][^'"]*(?:public-api\/runs|agents\/collaboration|agents\/run)['"]/);
     expect(source).not.toMatch(/\b(?:prepareAgentResponse|executePreparedAgentResponse|runAgentTurn)\s*\(/);

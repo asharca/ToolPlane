@@ -19,7 +19,7 @@ export function a2aConnectionInfo(origin: string, slug: string, agentId: string,
   const base = a2aDeploymentOrigin(origin);
   const local = new URL(`/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/local`, base).href;
   const rpc = endpointId ? new URL(`/api/v1/agent-endpoints/${encodeURIComponent(endpointId)}/a2a`, base).href : null;
-  return { localRpc: local, localCard: local, publicRpc: rpc, publicCard: rpc ? `${rpc}/.well-known/agent-card.json` : null };
+  return { localRpc: local, localCard: local, publicRpc: rpc, publicCard: rpc ? `${rpc}/.well-known/agent-card.json` : null, publicMcp: rpc ? `${rpc}/mcp` : null };
 }
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -43,3 +43,12 @@ export type A2AConsoleView = {
     }> }> };
   connections: ReturnType<typeof a2aConnectionInfo> | null;
 };
+
+/** A connection example, not a universal client config format. Supply the key through the client's secret store. */
+export function a2aMcpConnectionExample(url: string): string {
+  const parsed = new URL(url);
+  a2aDeploymentOrigin(parsed.origin);
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('Invalid MCP URL');
+  return JSON.stringify({ transport: 'streamable-http', url: parsed.href,
+    headers: { Authorization: 'Bearer <TOOLPLANE_A2A_TOKEN>' } }, null, 2);
+}

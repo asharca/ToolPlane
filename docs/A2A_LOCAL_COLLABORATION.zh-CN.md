@@ -22,7 +22,7 @@ MCP、Skill、Toolkit 和已配置沙箱。`Context.id` 是独立的原生会话
 新链路直接接原生沙箱执行端口，不调用旧 `runAgentTurn`、旧协作 Worker、Responses API
 或 `runDedicatedSandboxTurn`。普通聊天、Work、消息渠道和 Control MCP **尚未自动切换**
 到新根任务入口；也没有把原来的 Work 审批绕开后接进新链路。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)
-已提供显式启用、连接示例和本地任务调试。完整协作任务树与旧入口的显式迁移仍需后续完善。
+已提供显式启用、连接示例和本地任务调试。控制台现有受权限限制的父子任务树；旧入口的显式迁移仍需后续完善。
 
 ## 显式启用和调用
 
@@ -70,6 +70,7 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 | `a2a_cancel_task` | 请求取消直接子任务及其后代 |
 | `a2a_await_tasks` | 记录要等待的直接子任务 ID，然后正常结束本轮 |
 | `a2a_request_input` | 记录追问，然后正常结束本轮；不能批准操作 |
+| `a2a_publish_artifact` | 向当前任务发布不可变、有界的文本、JSON 或内联文件交付物 |
 
 模型不能提供调用用户、父任务、根任务、委派深度、截止时间或授权凭据来覆盖服务端状态。
 签名运行凭据同时绑定任务与本轮执行租约，不能拿普通模型代理 Token 委派任务。
@@ -96,6 +97,33 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 停止后才确认取消；已经发生的外部操作不会回滚。服务重启保留持久等待/可恢复记录，但
 原先正在执行且结果不确定的任务失败终结，不自动重放其副作用。
 
+## 交付物
+
+本地 Agent Card 声明 text/plain、text/markdown、text/x-diff、application/json 和
+application/octet-stream 输出；输入仍只接受 text/plain。公开 Hermes 执行配置仍为文本输出，
+不会因本地支持新格式而自动扩大公开能力。
+
+运行中的本地 Agent 可调用 `a2a_publish_artifact`：
+
+```json
+{
+  "artifactId": "review-v1",
+  "name": "review.json",
+  "parts": [{ "data": { "approved": false, "findings": [] }, "mediaType": "application/json" }]
+}
+```
+
+每个 Part 只能有标准 A2A 的 `text`、`data`、`raw` 之一。`raw` 必须是规范 Base64，且指定
+受支持的 mediaType；`data` 是 JSON 对象。每个交付物最多八个 Part，解码后的文件或 UTF-8
+内容合计不超过 32 KiB。拒绝文件系统路径、远程 URL 和旧版 `file` 结构；名称不是文件路径。
+
+同一任务内 artifactId 不可覆盖：相同内容重试不新增事件，不同内容需使用新 ID。最多发布
+十五个显式交付物，为最终结果预留一个位置；还受快照、事件记录与工作区限额约束。
+发布不代表任务完成。只有尚在执行、授权有效、未取消或暂停的当轮租约才能发布。
+
+会检查 `acceptedOutputModes`。要求 JSON 时，Agent 必须显式发布 JSON 交付物；不能把
+最后一段普通文本猜成 JSON 并伪报格式满足。交付内容始终是任务数据，不是新权限。
+
 ## 调度与限制
 
 任务根链最多 16 个任务、3 条委派边；父任务最多恢复 16 次。后代共享根截止时间，最长
@@ -107,8 +135,9 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 不占执行槽。原生沙箱写入互斥同时覆盖聊天、Work 与 A2A；沙箱繁忙时 A2A 保持排队，
 不会启动后再重试可能带副作用的执行。同一配置沙箱的不同原生会话也不能同时改写配置。
 
-这些是执行、任务和时间边界，不是统一金额或精确 Token 预算。二进制交付、外部 Agent
-注册、原生逐工具审批桥接、自动跨入口迁移与分布式执行仍不在支持范围。
+这些不是金额或精确 Token 预算。聚合准入计数见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。
+大文件或二进制输入上传、外部 Agent 注册、原生逐工具审批、自动跨入口迁移与分布式执行
+仍不在支持范围。
 
 ## 迁移与验证
 
@@ -125,3 +154,5 @@ pnpm exec tsc --noEmit
 运行时适配测试覆盖四种 dedicated runtime 的投影；任务循环测试使用替身执行器，MCP
 互通使用官方未修改客户端。PGlite 模式跳过真实 PostgreSQL 并发测试，不能作为并发锁
 正确性证据。尚未完成四种真实 CLI/模型、浏览器端到端验收或官方 A2A TCK 认证。
+
+本版还需应用 `20260923050000_a2a_storage_accounting`，参见[资源限额与迁移](A2A_RESOURCE_LIMITS.zh-CN.md)。

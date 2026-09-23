@@ -1,14 +1,15 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ principal: vi.fn(), workspace: vi.fn(), active: vi.fn(), view: vi.fn(), mutate: vi.fn(), grant: vi.fn(), rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ principal: vi.fn(), workspace: vi.fn(), active: vi.fn(), view: vi.fn(), mutate: vi.fn(), grant: vi.fn(), rpc: vi.fn(), tree: vi.fn() }));
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestPrincipal: mocks.principal }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.workspace }));
 vi.mock('@/lib/db', () => ({ db: { user: { count: mocks.active } } }));
 vi.mock('@/lib/observability/context', () => ({ withLogContext: (_ctx: unknown, fn: () => unknown) => fn() }));
 vi.mock('@/lib/a2a/console-service', async (original) => ({ ...await original<typeof import('@/lib/a2a/console-service')>(), getA2AConsoleView: mocks.view, mutateA2AConsole: mocks.mutate }));
 vi.mock('@/lib/a2a/local-policy', () => ({ createLocalRootGrant: mocks.grant }));
+vi.mock('@/lib/a2a/console-tasks', () => ({ getConsoleTaskTree: mocks.tree }));
 vi.mock('@/lib/a2a/http', () => ({ handleA2ARpc: mocks.rpc }));
-import { handleA2AConsole, handleA2AConsoleRpc } from '@/lib/a2a/console-http';
+import { handleA2AConsole, handleA2AConsoleRpc, handleA2AConsoleTasks } from '@/lib/a2a/console-http';
 function req(method = 'GET', body?: unknown, headers: Record<string, string> = {}) {
   return new Request('https://tp.example/api/console', { method,
     headers: { ...(method === 'POST' ? { origin: 'https://tp.example', 'content-type': 'application/json' } : {}), ...headers },
@@ -79,5 +80,27 @@ describe('same-origin A2A console boundary', () => {
   it('does not let the playground bypass CSRF', async () => {
     expect((await handleA2AConsoleRpc(req('POST', {}, { origin: 'https://evil.example' }), 'ws', 'a')).status).toBe(403);
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('task tree browser boundary', () => {
+  it('uses the current session actor and never trusts query identity', async () => {
+    mocks.tree.mockResolvedValue({ rootTaskId: 'root', nodes: [], selectedTask: {} });
+    const response = await handleA2AConsoleTasks(new Request('https://tp.example/api/tree?rootTaskId=root&selectedTaskId=child'), 'ws', 'a');
+    expect(response.status).toBe(200);
+    expect(mocks.tree).toHaveBeenCalledWith({ workspaceId: 'w', actorId: 'u', agentId: 'a', slug: 'ws' }, 'root', 'child');
+    expect(response.headers.get('cache-control')).toContain('no-store');
+  });
+  it.each(['rootTaskId=root&rootTaskId=other', 'rootTaskId=root&actorId=owner', 'rootTaskId=', 'selectedTaskId=child'])('rejects malformed query %s', async (query) => {
+    expect((await handleA2AConsoleTasks(new Request('https://tp.example/api/tree?' + query), 'ws', 'a')).status).toBe(400);
+    expect(mocks.tree).not.toHaveBeenCalled();
+  });
+  it('rejects cross-site reads and API credentials even if cookies are present', async () => {
+    for (const headers of [{ 'sec-fetch-site': 'cross-site' }, { authorization: 'Bearer anything' }] as Record<string, string>[]) {
+      const response = await handleA2AConsoleTasks(new Request('https://tp.example/api/tree?rootTaskId=root', { headers }), 'ws', 'a');
+      expect([401, 403]).toContain(response.status);
+    }
+    expect(mocks.tree).not.toHaveBeenCalled();
   });
 });

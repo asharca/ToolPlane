@@ -22,14 +22,23 @@ when the native core rechecks authority. Completed external side effects do not 
 The local playground runs as the signed-in member, using the same native Handler:
 submit a task, list your latest 20 tasks, get a task by ID, supply input to an
 INPUT_REQUIRED task, or request cancellation. The bounded list is not an all-user
-workspace list and omits artifacts; select a task and use **Get task** to retrieve
-its current status and text result. Knowing another user's, workspace's or delegated
-task's ID does not confer access.
+workspace list and omits artifacts. Selecting an owned root starts a bounded parent/child
+monitor. Current actor, target configuration and every delegation edge are rechecked;
+knowing another user's or unrelated delegated task ID does not confer access. Removed
+or inaccessible subtrees are withheld. Select a visible child to inspect its result.
 
 Submitting can consume model credits and use tools. Opening the page never starts a
-task. Accepted is not completed; the playground currently uses manual queries, not
-automatic chat streaming. Leaving the page does not cancel accepted work. A cancellation
-request may return WORKING until execution actually stops. Terminal tasks cannot reopen.
+task. Accepted is not completed. Read-only monitoring normally refreshes every 2.5 seconds,
+pauses while the document is hidden, stops after all visible tasks terminate, and offers
+explicit pause/resume/refresh controls. A request times out after 15 seconds; network
+failures back off and stop after three consecutive failures. Reads never resubmit work.
+This is state polling, not a token stream. Leaving the page does not cancel accepted work.
+Cancellation may return WORKING until execution stops. Terminal tasks cannot reopen.
+
+Text and JSON artifacts are rendered as escaped text. Small inline files require an
+explicit download and are forced to attachment data, never active HTML previews. File
+names are sanitized and object URLs revoked; no remote artifact URL is fetched. See
+[local artifacts](A2A_LOCAL_COLLABORATION.md#artifacts) for supported formats and limits.
 
 ## Published services and credentials
 
@@ -72,6 +81,7 @@ The console uses a separate same-origin BFF:
 GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console
 POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console
 POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/rpc
+GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 ```
 
 These are ToolPlane browser endpoints, not a new A2A transport. Writes require a valid
@@ -84,6 +94,10 @@ cookie or cross-origin browser support. The BFF does not fabricate an account to
 legacy Responses/collaboration workers. Playground tasks are not Work approval sessions;
 existing Work, chat and messaging entry points are not automatically migrated.
 
-No remote-Agent import, file transfer, OAuth discovery, token streaming or arbitrary URL
-network probing is provided. See [Public A2A](A2A_NATIVE.md) and
+The public connection section also includes the [native MCP bridge](A2A_MCP_BRIDGE.md),
+using the same explicitly granted A2A service credential. Its connection object is an
+example, not a universal client configuration format.
+
+Remote-Agent registration, large file uploads, OAuth discovery, token streaming and
+arbitrary URL network probing are not provided. See [Public A2A](A2A_NATIVE.md) and
 [Internal collaboration](A2A_LOCAL_COLLABORATION.md) for the protocol contract.

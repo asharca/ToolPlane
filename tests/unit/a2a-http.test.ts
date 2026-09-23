@@ -15,6 +15,7 @@ vi.mock('@/lib/a2a/worker', () => ({ wakeA2AWorker: mocks.wake }));
 vi.mock('@/lib/a2a/store', () => ({ submitTask: mocks.submit, getTask: mocks.get, getTaskRow: mocks.row,
   eventsAfter: mocks.events, listTasks: mocks.list, requestCancellation: mocks.cancel }));
 vi.mock('@/lib/runtime/ownership-state', () => ({ assertRuntimeOwner: vi.fn() }));
+import { A2AQuotaError } from '@/lib/a2a/quotas';
 import { handleA2ARpc, handleA2ACard } from '@/lib/a2a/http';
 import { buildAgentCard } from '@/lib/a2a/handler';
 import { A2AHttpError, type A2AGrant } from '@/lib/a2a/principal';
@@ -48,6 +49,13 @@ beforeEach(() => {
 });
 
 describe('standard A2A JSON-RPC HTTP binding', () => {
+  it('maps service-specific resource exhaustion to a bounded HTTP 429 response', async () => {
+    mocks.submit.mockRejectedValue(new A2AQuotaError());
+    const response = await handleA2ARpc(request('SendMessage', { message: userMessage, configuration: { returnImmediately: true } }), 'agep_test');
+    expect(response.status).toBe(429); expect(response.headers.get('retry-after')).toBe('60');
+    expect((await response.json()).error.code).toBe(-32099); expect(mocks.wake).not.toHaveBeenCalled();
+  });
+
   it('returns a real versioned Agent Card without private configuration', async () => {
     const res = await handleA2ACard(new Request('https://untrusted-host.test/card'), 'agep_test');
     const card = await res.json();

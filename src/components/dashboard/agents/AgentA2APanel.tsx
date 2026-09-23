@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Alert, Badge, Button, Input, Textarea } from '@asharca/ui';
 import { ArrowUpRight, BookOpen, KeyRound, Network, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AgentA2ATaskMonitor } from './AgentA2ATaskMonitor';
 import { CopyButton } from '@/components/dashboard/CopyButton';
-import { A2A_DOCS, a2aCurlExample, type A2AConsoleView } from '@/lib/a2a/connection-info';
+import { A2A_DOCS, a2aCurlExample, a2aMcpConnectionExample, type A2AConsoleView } from '@/lib/a2a/connection-info';
 import type { A2AConsoleAction } from '@/lib/a2a/console-service';
 
 type WireTask = { id: string; contextId?: string; status?: { state?: string; message?: { parts?: Array<{ text?: string }> } };
@@ -143,6 +144,11 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
             return <details key={`${mode}:${method}`} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{method === 'card' ? t('getCard') : method}</summary>
               <div className="mt-3 flex justify-end"><CopyButton text={code} label={t('copy')} /></div><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">{code}</pre></details>;
           })}
+          {mode === 'public' && view.connections?.publicMcp ? <details className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{t('mcpConnection')}</summary>
+            <p className="mt-3 text-xs text-muted-foreground">{t('mcpConnectionHint')}</p>
+            <div className="mt-3 flex justify-end"><CopyButton text={a2aMcpConnectionExample(view.connections.publicMcp)} label={t('copy')} /></div>
+            <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-xs">{a2aMcpConnectionExample(view.connections.publicMcp)}</pre>
+          </details> : null}
           <p className="text-xs text-muted-foreground">{t('exampleWarning')}</p>
         </> : <p className="text-sm text-muted-foreground">{t('connectionUnavailable')}</p>}
       </section>
@@ -179,8 +185,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
           })}>{t('getTask')}</Button></div>
         {tasks.length ? <div className="max-h-48 space-y-1 overflow-auto" aria-label={t('myTasks')}>{tasks.map((task) => <button key={task.id} type="button" className="block w-full rounded-md border border-border p-2 text-left text-xs hover:bg-muted" onClick={() => selectTask(task)}><span className="break-all">{task.id}</span><span className="mt-1 block text-muted-foreground">{task.status?.state}</span></button>)}</div> : null}
         {selected ? <div className="space-y-3 rounded-lg bg-muted/40 p-3"><p className="break-all font-mono text-xs">{selected.id}</p><Badge>{active ?? '—'}</Badge>
-          {selected.status?.message?.parts?.map((part, index) => part.text ? <p key={index} className="whitespace-pre-wrap break-words text-sm">{part.text}</p> : null)}
-          {selected.artifacts?.map((artifact) => <div key={artifact.artifactId}><h4 className="text-sm font-medium">{artifact.name || artifact.artifactId}</h4>{artifact.parts?.map((part, index) => part.text ? <pre key={index} className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{part.text}</pre> : null)}</div>)}
+          <AgentA2ATaskMonitor key={selected.id} base={base} rootTaskId={selected.id} onRootState={(state) => setSelected((task) => task && task.id === selected.id ? { ...task, status: { ...task.status, state } } : task)} />
           {!terminal ? <Button size="sm" variant="danger-secondary" disabled={busy} onClick={() => {
             if (window.confirm(t('cancelConfirm'))) void operation(async () => { const result = await rpc('CancelTask', { id: selected.id }); if (mounted.current) selectTask(result); });
           }}>{t('cancelTask')}</Button> : null}
