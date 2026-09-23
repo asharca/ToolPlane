@@ -194,6 +194,7 @@ const BUILTIN = path.join(process.cwd(), 'scripts', 'mcp-server.mjs');
 const BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-stdio-bridge.mjs');
 const REMOTE_BRIDGE = path.join(process.cwd(), 'scripts', 'mcp-http-bridge.mjs');
 const SANDBOX_SERVER = path.join(process.cwd(), 'scripts', 'sandbox-mcp-server.mjs');
+import { resolveSshTargetForWorkspace } from '@/lib/sandboxes/ssh-targets';
 const REGISTRY_DIR = process.env.TOOLPLANE_SUPERVISOR_DIR || path.join(os.tmpdir(), 'toolplane-supervisor');
 
 // The bridge uses progress-aware idle and overall budgets. This supervisor
@@ -1328,6 +1329,12 @@ async function launchProcess(
   const connectorBroker = spec.kind === 'sandbox' && spec.sandboxKind === 'connector'
     ? await ensureConnectorBroker()
     : null;
+  const sshWorkspaceId = spec.kind === 'sandbox' && spec.sandboxKind === 'ssh'
+    ? workspaceId ?? (await db.deployment.findUnique({ where: { id: deploymentId }, select: { workspaceId: true } }))?.workspaceId
+    : undefined;
+  const sshTarget = spec.kind === 'sandbox' && spec.sandboxKind === 'ssh'
+    ? resolveSshTargetForWorkspace(spec.sshTargetId ?? '', sshWorkspaceId ?? '')
+    : null;
   if (launchPrevented(deploymentId, workspaceId)) return { ready: null };
   const releaseLaunchLock = acquireLaunchLock(deploymentId);
   if (!releaseLaunchLock) {
@@ -1449,6 +1456,7 @@ async function launchProcess(
             MCP_NAME: managedSpec.name,
             SANDBOX_ID: managedSpec.sandboxId,
             SANDBOX_KIND: managedSpec.sandboxKind,
+            SANDBOX_SSH_CONFIG: sshTarget ? JSON.stringify(sshTarget) : '',
             SANDBOX_IMAGE: managedSpec.image ?? '',
             SANDBOX_VOLUME: managedSpec.volumeName ?? '',
             SANDBOX_NETWORK: managedSpec.network,

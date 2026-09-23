@@ -26,6 +26,8 @@ import { effectiveStatus } from '@/lib/process/supervisor';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
+import { sshTargetIdFromConfig } from '@/lib/sandboxes/ssh-targets';
+import { SshSandboxCreate } from '@/components/dashboard/sandboxes/SshSandboxCreate';
 import { SandboxCreateForm } from '@/components/dashboard/sandboxes/SandboxCreateForm';
 import { SandboxConnectorStatus } from '@/components/dashboard/sandboxes/SandboxConnectorStatus';
 import { HermesRuntimeDialogLauncher } from '@/components/dashboard/agents/HermesRuntimeDialog';
@@ -96,7 +98,7 @@ function backingStore(
       ? t('connectorBackingStore', { root: connector.remoteRoot })
       : t('connectorConfigMissing');
   }
-  if (sandbox.kind === 'ssh') return t('legacySshDisabled');
+  if (sandbox.kind === 'ssh') return sshTargetIdFromConfig(sandbox.config) ?? t('legacySshDisabled');
   if (sandbox.kind === 'host') return t('legacyHostDisabled');
   const image = sandbox.image ?? DEFAULT_SANDBOX_IMAGE;
   const option = findSandboxImageOption(image);
@@ -105,7 +107,7 @@ function backingStore(
 
 function modeLabel(kind: string, t: Awaited<ReturnType<typeof getTranslations>>): string {
   if (kind === 'connector') return t('connectorMode');
-  if (kind === 'ssh') return t('legacySshMode');
+  if (kind === 'ssh') return t('sshMode');
   if (kind === 'host') return t('disabledHostMode');
   return t('docker');
 }
@@ -244,11 +246,14 @@ export default async function SandboxesPage({
       <DashboardPage>
         <DashboardToolbar
           actions={
+            <div className="flex flex-wrap items-start gap-2">
+            <SshSandboxCreate workspaceId={ws.id} />
             <SandboxCreateForm
               workspace={slug}
               hermesArchiveMaxUploadMiB={systemSettings.hermesArchiveMaxUploadMiB}
               hermesImages={hermesImages}
             />
+            </div>
           }
         >
           <p className="text-sm text-muted-foreground">
@@ -401,7 +406,7 @@ export default async function SandboxesPage({
                 const running = status === 'running' || status === 'provisioning';
                 const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
                 const connector = connectorFromConfig(s.config);
-                const disabledLegacy = s.kind === 'host' || s.kind === 'ssh' || (s.kind === 'connector' && !connector);
+                const disabledLegacy = s.kind === 'host' || (s.kind === 'ssh' && !sshTargetIdFromConfig(s.config)) || (s.kind === 'connector' && !connector);
                 const agent = s.agentLinks[0]?.agent;
                 return (
                   <tr key={s.id}>

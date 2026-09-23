@@ -1,0 +1,8 @@
+# Optional override. Replace the host directory with your reviewed secret mount.
+# Do not commit real private keys or a populated secret directory.
+services:
+  app:
+    environment:
+      TOOLPLANE_SSH_TARGETS_FILE: /run/toolplane-ssh/targets.json
+    volumes:
+      - /etc/toolplane/ssh:/run/toolplane-ssh:ro

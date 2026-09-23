@@ -61,3 +61,7 @@ e2e/skill-import-failure.png
 .worktree/
 .worktrees/
 .remember/
+
+# Python SSH worker/test bytecode
+__pycache__/
+*.py[cod]

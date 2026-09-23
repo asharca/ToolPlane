@@ -1,0 +1,13 @@
+[
+  {
+    "id": "linux-worker",
+    "name": "Approved Linux worker",
+    "workspaceIds": ["REPLACE_WITH_ACTUAL_WORKSPACE_ID_NOT_SLUG"],
+    "host": "192.0.2.10",
+    "port": 22,
+    "username": "sandbox",
+    "root": "/srv/toolplane/workspace",
+    "identityFile": "/run/toolplane-ssh/id_ed25519",
+    "knownHostsFile": "/run/toolplane-ssh/known_hosts"
+  }
+]

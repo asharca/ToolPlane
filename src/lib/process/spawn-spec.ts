@@ -6,6 +6,7 @@ import {
   type McpNetwork,
 } from './sandbox';
 import { commandArgsNeedGit } from './git-source';
+import { sshTargetIdFromConfig } from '@/lib/sandboxes/ssh-targets';
 import { connectorFromConfig, type SandboxConnectorConfig } from '@/lib/sandboxes/connector';
 import { isValidRemoteMcpUrl } from '@/lib/remote-mcp/url';
 import { parseDockerJsonArgs } from '@/lib/workspace/docker-json-command';
@@ -40,7 +41,8 @@ export type SpawnSpec =
       kind: 'sandbox';
       name: string;
       sandboxId: string;
-      sandboxKind: 'docker' | 'connector' | 'hermes';
+      sandboxKind: 'docker' | 'connector' | 'hermes' | 'ssh';
+      sshTargetId?: string;
       image?: string;
       volumeName?: string;
       network: McpNetwork;
@@ -85,12 +87,6 @@ const REMOTE_BLOCKED_HEADERS = new Set([
   '__proto__',
 ]);
 
-function hasExplicitPort(value: string): boolean {
-  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
-  const host = authority.slice(authority.lastIndexOf('@') + 1);
-  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
-}
-
 function readRemoteCfg(
   sourceRef: string | null,
   installCfg: unknown,
@@ -101,9 +97,11 @@ function readRemoteCfg(
   } catch {
     throw new Error('Remote MCP URL is invalid.');
   }
-  if (url.protocol !== 'https:') throw new Error('Remote MCP URL must use HTTPS.');
-  if (url.username || url.password || hasExplicitPort(sourceRef ?? '') || url.search || url.hash) {
-    throw new Error('Remote MCP URL cannot contain credentials, a custom port, query parameters, or a fragment.');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('Remote MCP URL must use HTTP or HTTPS.');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error('Remote MCP URL cannot contain credentials, query parameters, or a fragment.');
   }
   if (!isValidRemoteMcpUrl(sourceRef ?? '')) throw new Error('Remote MCP URL is not allowed.');
 
@@ -315,7 +313,8 @@ function readCfg(installCfg: unknown): {
 
 function readSandboxCfg(installCfg: unknown): {
   sandboxId: string;
-  kind: 'docker' | 'connector' | 'hermes';
+  kind: 'docker' | 'connector' | 'hermes' | 'ssh';
+  sshTargetId?: string;
   image?: string;
   volumeName?: string;
   network: McpNetwork;
@@ -337,7 +336,9 @@ function readSandboxCfg(installCfg: unknown): {
     allowSudo?: boolean;
   };
   const connector = connectorFromConfig(installCfg);
-  const kind = c.kind === 'hermes' && c.runtimeId
+  const sshTargetId = sshTargetIdFromConfig(installCfg);
+  if (c.kind === 'ssh' && !sshTargetId) throw new Error('Legacy SSH configuration is disabled; select an approved SSH target.');
+  const kind = c.kind === 'ssh' && sshTargetId ? 'ssh' : c.kind === 'hermes' && c.runtimeId
     ? 'hermes'
     : c.kind === 'connector' && connector
       ? 'connector'
@@ -345,6 +346,7 @@ function readSandboxCfg(installCfg: unknown): {
   return {
     sandboxId: c.sandboxId ?? '',
     kind,
+    ...(sshTargetId ? { sshTargetId } : {}),
     image: c.image,
     volumeName: c.volumeName,
     network: c.network === 'none' ? 'none' : 'isolated',
@@ -364,6 +366,7 @@ export function resolveSpawnSpec(d: DeploymentForSpawn, rebuild = false): SpawnS
       name: d.name ?? 'Sandbox',
       sandboxId: cfg.sandboxId,
       sandboxKind: cfg.kind,
+      ...(cfg.sshTargetId ? { sshTargetId: cfg.sshTargetId } : {}),
       network: cfg.network,
       env: cfg.env,
       ...(cfg.image ? { image: cfg.image } : {}),
