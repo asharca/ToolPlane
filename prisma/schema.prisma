@@ -278,6 +278,8 @@ model DeploymentConfigFile {
 }
 
 model Sandbox {
+  mcpTokens SandboxMcpToken[]
+  mcpOAuthCodes SandboxMcpOAuthCode[]
   id                 String              @id @default(cuid())
   workspaceId        String
   workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1592,4 +1594,65 @@ model A2AEvent {
   payload   Json
   createdAt DateTime @default(now())
   @@id([taskId, sequence])
+}
+
+
+// Scoped external sandbox credentials. Issuer membership is checked at use time.
+model SandboxMcpToken {
+  id           String   @id @default(cuid())
+  sandboxId    String
+  sandbox      Sandbox  @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  userId       String
+  name         String
+  oauthClientId String?
+  oauthResource String?
+  oauthScopes String[] @default([])
+  oauthExpiresAt DateTime?
+  refreshTokens SandboxMcpOAuthRefresh[]
+  tokenHash    String   @unique
+  prefix       String
+  allowedTools String[]
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([sandboxId])
+}
+
+// OAuth clients have exact registered redirect URIs, never wildcard patterns.
+model SandboxMcpOAuthClient {
+  id String @id
+  name String
+  redirectUris String[]
+  tokenEndpointAuthMethod String
+  secretHash String?
+  createdAt DateTime @default(now())
+  codes SandboxMcpOAuthCode[]
+}
+
+model SandboxMcpOAuthCode {
+  codeHash String @id
+  clientId String
+  client SandboxMcpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sandboxId String
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  userId String
+  redirectUri String
+  resource String
+  scopes String[]
+  codeChallenge String
+  expiresAt DateTime
+  consumedAt DateTime?
+  @@index([expiresAt])
+}
+
+// Retain consumed refresh hashes until expiry to detect reuse of any generation.
+model SandboxMcpOAuthRefresh {
+  tokenHash String @id
+  grantId String
+  grant SandboxMcpToken @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  consumedAt DateTime?
+  @@index([grantId])
+  @@index([expiresAt])
 }

@@ -8,9 +8,10 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import pty from 'node-pty';
+import { createSshSandbox } from './ssh-sandbox-adapter.mjs';
 
 const NAME = process.env.MCP_NAME || 'sandbox';
-const KIND = ['connector', 'hermes'].includes(process.env.SANDBOX_KIND)
+const KIND = ['connector', 'hermes', 'ssh'].includes(process.env.SANDBOX_KIND)
   ? process.env.SANDBOX_KIND
   : 'docker';
 const SANDBOX_ID = process.env.SANDBOX_ID || 'sandbox';
@@ -23,6 +24,9 @@ const CONNECTOR_BROKER_URL = (process.env.SANDBOX_CONNECTOR_BROKER_URL || 'http:
 const CONNECTOR_BROKER_TOKEN = process.env.SANDBOX_CONNECTOR_BROKER_TOKEN || '';
 const CONTAINER = `toolplane-sandbox-${SANDBOX_ID.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 const USER_ENV = parseEnvJson(process.env.SANDBOX_ENV_JSON || '{}');
+const SSH = KIND === 'ssh'
+  ? createSshSandbox(JSON.parse(process.env.SANDBOX_SSH_CONFIG || '{}'), { id: SANDBOX_ID, name: NAME })
+  : null;
 const HERMES_RUNTIME_ID = process.env.HERMES_RUNTIME_ID || '';
 const HERMES_RUNTIME_API_KEY = process.env.HERMES_RUNTIME_API_KEY || '';
 const HERMES_RUNTIME_DASHBOARD_TOKEN = process.env.HERMES_RUNTIME_DASHBOARD_TOKEN || '';
@@ -646,6 +650,7 @@ async function ensureDockerContainer() {
 }
 
 async function ensureRuntime() {
+  if (SSH) return SSH.ready();
   if (KIND === 'connector') return;
   await ensureDockerContainer();
 }
@@ -887,7 +892,8 @@ function createTerminal(cols = 80, rows = 24, cwd = '.') {
   // No --user: interactive sessions run as the image default user (root in the
   // Hermes image), matching the MCP shell/file tools. The hermes_cli wrapper
   // re-drops to the service user for Hermes state changes.
-  const term = pty.spawn('docker', [
+  const sshTerminal = SSH?.terminal(cwd);
+  const term = pty.spawn(sshTerminal?.command ?? 'docker', sshTerminal?.args ?? [
     'exec',
     '-it',
     '-w',
@@ -899,7 +905,7 @@ function createTerminal(cols = 80, rows = 24, cwd = '.') {
     cols: safeCols,
     rows: safeRows,
     cwd: process.cwd(),
-    env: { ...dockerEnv(), ...terminalEnv() },
+    env: { ...(sshTerminal?.env ?? dockerEnv()), ...terminalEnv() },
   });
   const session = {
     id,
@@ -1071,6 +1077,19 @@ async function handleRuntimeFiles(req, res) {
   const rel = safeRel(url.searchParams.get('path'));
   if (!rel) {
     sendJson(res, 400, { error: 'A safe relative path is required.' });
+    return true;
+  }
+  if (SSH) {
+    try {
+      const body = await readUploadBuffer(req, MAX_WRITE);
+      const result = await SSH.callTool('write_file', {
+        path: rel, content: body.toString('base64'), encoding: 'base64',
+      }, USER_ENV);
+      if (!result || result.isError) sendJson(res, 409, { error: 'SSH file upload failed.' });
+      else sendJson(res, 201, { path: rel, relativePath: rel, size: body.length });
+    } catch {
+      sendJson(res, 413, { error: 'SSH uploads are limited to 2000000 bytes.' });
+    }
     return true;
   }
   const requestedLimit = Number(req.headers['x-toolplane-max-upload-bytes']);
@@ -1578,6 +1597,7 @@ async function sandboxInfoResult() {
 }
 
 async function callTool(name, args = {}) {
+  if (SSH) return SSH.callTool(name, args, USER_ENV);
   switch (name) {
     case 'sandbox_info':
       return sandboxInfoResult();
@@ -1679,6 +1699,7 @@ let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  SSH?.close();
   for (const session of terminalSessions.values()) session.term.kill();
   server.close();
   if (KIND === 'hermes') {
