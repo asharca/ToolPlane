@@ -9,24 +9,48 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      AUTH_SECRET: test-auth-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: 1
     steps:
-      - name: Extract failed artifact verification
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p /tmp/runtime-diagnostics
-          gh run view 35872307672 --repo asharca/ToolPlane --job 107219263284 --log-failed > /tmp/runtime-failed.log 2>&1 || true
-          python3 - <<'PY'
-          import pathlib, re
-          text = pathlib.Path('/tmp/runtime-failed.log').read_text(errors='replace')
-          text = re.sub(r'\x1b\[[0-9;]*m', '', text)
-          lines = text.splitlines()
-          bounded = '\n'.join(line[:1000] for line in lines[-100:])[-20000:]
-          pathlib.Path('/tmp/runtime-diagnostics/failure.txt').write_text(bounded + '\n')
-          PY
+      - uses: actions/checkout@v4
+      - name: Export exact tracked source
+        run: git archive HEAD -o /tmp/runtime-repair-source.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: runtime-failure-bounded
-          path: /tmp/runtime-diagnostics/failure.txt
+          name: runtime-repair-source
+          path: /tmp/runtime-repair-source.tar.gz
+          retention-days: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile && pnpm exec prisma generate
+      - name: Reproduce isolated package verification
+        run: |
+          set -o pipefail
+          pnpm build > /tmp/runtime-build.log 2>&1
+          pnpm runtime:assemble > /tmp/runtime-assemble.log 2>&1
+          tar -C dist/release -czf /tmp/toolplane-runtime.tar.gz app
+          stat -c 'compressed bytes: %s' /tmp/toolplane-runtime.tar.gz >> /tmp/runtime-assemble.log
+          test "$(stat -c %s /tmp/toolplane-runtime.tar.gz)" -le $((100 * 1024 * 1024))
+      - name: Bound diagnostic output
+        if: always()
+        run: |
+          mkdir -p /tmp/runtime-diagnostics
+          for stage in build assemble; do
+            tail -n 100 "/tmp/runtime-$stage.log" > "/tmp/runtime-diagnostics/$stage.txt" 2>/dev/null || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-package-result
+          path: /tmp/runtime-diagnostics/
           retention-days: 1
