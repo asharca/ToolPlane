@@ -371,7 +371,7 @@ function parseRemoteHttpMcpConfig(
   if (unknownKey) return configError('remote HTTP MCP supports only type, url, and headers.');
   if (config.type !== 'http') return configError('remote HTTP MCP type must be "http".');
   if (typeof config.url !== 'string' || config.url !== config.url.trim() || !isValidRemoteMcpUrl(config.url)) {
-    return configError('remote HTTP MCP url must be an HTTPS URL without credentials, a custom port, query parameters, or a fragment.');
+    return configError('remote HTTP MCP url must be an allowed HTTP or HTTPS URL without credentials, query parameters, or a fragment; ports must be between 1 and 65535.');
   }
   if (!name || name.length > 80) return configError('the server name must be 1-80 characters.');
 

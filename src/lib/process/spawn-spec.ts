@@ -85,12 +85,6 @@ const REMOTE_BLOCKED_HEADERS = new Set([
   '__proto__',
 ]);
 
-function hasExplicitPort(value: string): boolean {
-  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
-  const host = authority.slice(authority.lastIndexOf('@') + 1);
-  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
-}
-
 function readRemoteCfg(
   sourceRef: string | null,
   installCfg: unknown,
@@ -101,9 +95,11 @@ function readRemoteCfg(
   } catch {
     throw new Error('Remote MCP URL is invalid.');
   }
-  if (url.protocol !== 'https:') throw new Error('Remote MCP URL must use HTTPS.');
-  if (url.username || url.password || hasExplicitPort(sourceRef ?? '') || url.search || url.hash) {
-    throw new Error('Remote MCP URL cannot contain credentials, a custom port, query parameters, or a fragment.');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('Remote MCP URL must use HTTP or HTTPS.');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error('Remote MCP URL cannot contain credentials, query parameters, or a fragment.');
   }
   if (!isValidRemoteMcpUrl(sourceRef ?? '')) throw new Error('Remote MCP URL is not allowed.');
 

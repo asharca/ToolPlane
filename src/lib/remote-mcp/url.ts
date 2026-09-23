@@ -1,9 +1,3 @@
-function hasExplicitHttpsPort(value: string): boolean {
-  const authority = /^https:\/\/([^/?#]+)/i.exec(value)?.[1] ?? '';
-  const host = authority.slice(authority.lastIndexOf('@') + 1);
-  return host.startsWith('[') ? /^\]:/.test(host.slice(host.indexOf(']'))) : host.includes(':');
-}
-
 function blockedIpv4(address: string): boolean {
   const octets = address.split('.').map(Number);
   if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
@@ -45,21 +39,30 @@ function blockedIpv6(address: string): boolean {
     || normalized.startsWith('2001:db8:');
 }
 
+export function isInsecureRemoteMcpUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function isValidRemoteMcpUrl(value: string): boolean {
   if (!value || value.length > 2_048) return false;
   try {
     const url = new URL(value);
     if (
-      url.protocol !== 'https:'
+      (url.protocol !== 'https:' && url.protocol !== 'http:')
       || url.username
       || url.password
       || url.search
       || url.hash
-      || url.port
-      || hasExplicitHttpsPort(value)
+      || url.port === '0'
     ) return false;
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
     if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return false;
+    // Private destinations still require the runtime's administrator allowlist,
+    // DNS validation and pinned connection. HTTP does not bypass those checks.
     return host.includes(':') ? !blockedIpv6(host) : !blockedIpv4(host);
   } catch {
     return false;

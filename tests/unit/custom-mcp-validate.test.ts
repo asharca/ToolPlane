@@ -111,6 +111,29 @@ describe('parseCustomMcpInput', () => {
     });
   });
 
+  it.each([
+    'http://mcp.example.com/mcp',
+    'http://mcp.example.com:80/mcp',
+    'http://mcp.example.com:8000/mcp',
+    'https://mcp.example.com:443/mcp',
+    'https://mcp.example.com:8443/mcp',
+    'http://10.0.10.42:8000/mcp',
+  ])('accepts %s while keeping bearer credentials in managed variables', (url) => {
+    expect(parseMcpJsonConfig(JSON.stringify({
+      mcpServers: {
+        remote: { type: 'http', url, headers: { Authorization: 'Bearer test-token' } },
+      },
+    }))).toMatchObject({
+      source: 'remote',
+      ref: url,
+      installCfg: {
+        env: { MCP_BEARER_TOKEN: 'test-token' },
+        authType: 'bearer',
+        bearerEnv: 'MCP_BEARER_TOKEN',
+      },
+    });
+  });
+
   it('accepts an unauthenticated remote HTTP MCP', () => {
     expect(parseMcpJsonConfig(JSON.stringify({
       mcpServers: {
@@ -140,8 +163,8 @@ describe('parseCustomMcpInput', () => {
     const cases: Array<[Record<string, unknown>, RegExp]> = [
       [{ type: 'sse', url: 'https://mcp.example.com/mcp' }, /type must be/],
       [{ type: 'http', url: '[https://mcp.example.com/mcp](https://mcp.example.com/mcp)' }, /url must be/],
-      [{ type: 'http', url: 'http://mcp.example.com/mcp' }, /url must be/],
-      [{ type: 'http', url: 'https://mcp.example.com:443/mcp' }, /url must be/],
+      [{ type: 'http', url: 'ftp://mcp.example.com/mcp' }, /url must be/],
+      [{ type: 'http', url: 'https://mcp.example.com:0/mcp' }, /url must be/],
       [{ type: 'http', url: 'https://mcp.example.com/mcp?token=x' }, /url must be/],
       [{ type: 'http', url: 'https://localhost./mcp' }, /url must be/],
       [{ type: 'http', url: 'https://169.254.169.254/mcp' }, /url must be/],

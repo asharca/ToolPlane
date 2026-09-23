@@ -18,6 +18,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | Document | Covers |
 |---|---|
 | [Toolkit sync](./TOOLKIT_SYNC.en.md) · [中文](./TOOLKIT_SYNC.md) | Syncing MCP and Skills to AI clients |
+| [Remote MCP HTTP](./REMOTE_MCP_HTTP.md) · [中文](./REMOTE_MCP_HTTP.zh-CN.md) | HTTP/HTTPS endpoints, plaintext risks, and preserved security boundaries |
 | [Sandboxes and connectors](./SANDBOXES.md) · [中文](./SANDBOXES.zh-CN.md) | Docker, device connections, terminals, and screens |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.md) · [中文](./AGENT_CONTROL_MCP.zh-CN.md) | Creating and invoking Agents from MCP clients |
 | [Public Agent API](./AGENT_PUBLIC_API.md) · [中文](./AGENT_PUBLIC_API.zh-CN.md) | Publishing Endpoints, authentication, and limits |
