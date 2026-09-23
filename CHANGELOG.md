@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.30.0](https://github.com/asharca/ToolPlane/compare/v0.29.0...v0.30.0) (2026-09-23)
+
+
+### Features
+
+* add independent Hermes RPC sandbox runtime ([#141](https://github.com/asharca/ToolPlane/issues/141)) ([2fe394c](https://github.com/asharca/ToolPlane/commit/2fe394cdbe8e8c1624e21b6d9175f19a958ea83a))
+* unify native A2A tasks, local Agent delegation and durable continuations ([#145](https://github.com/asharca/ToolPlane/issues/145)) ([84599a8](https://github.com/asharca/ToolPlane/commit/84599a8185988d150f68e68ba23baf3d1e9c02de))
+
+
+### Bug Fixes
+
+* harden authorization, toolkit sync, runtime ownership and attachment lifecycle ([#130](https://github.com/asharca/ToolPlane/issues/130)–[#137](https://github.com/asharca/ToolPlane/issues/137)) ([#138](https://github.com/asharca/ToolPlane/issues/138)) ([35c308e](https://github.com/asharca/ToolPlane/commit/35c308e83e75228f1b42e7660ceefdc1e459d04f))
+* **mcp:** 支持 HTTP 远程 MCP 并明确提示明文传输风险 ([#147](https://github.com/asharca/ToolPlane/issues/147)) ([f1d44d4](https://github.com/asharca/ToolPlane/commit/f1d44d40b3fdb4757168ebfb820c91d2e949c723))
+* restore MCP request payload logs ([#143](https://github.com/asharca/ToolPlane/issues/143)) ([2c0bce0](https://github.com/asharca/ToolPlane/commit/2c0bce03387337620781efbf078955179d87c53e))
+
 ## [0.29.0](https://github.com/asharca/ToolPlane/compare/v0.28.0...v0.29.0) (2026-09-10)
 
 
