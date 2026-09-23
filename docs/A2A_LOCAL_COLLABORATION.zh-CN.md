@@ -2,6 +2,8 @@
 
 > [English](A2A_LOCAL_COLLABORATION.md)
 
+控制台现在提供显式开关、连接信息与本地任务调试，见[A2A 接入指南](A2A_CONSOLE.zh-CN.md)。下面的 Bearer API 保持不变；这不表示旧 Work／聊天入口已自动迁移。
+
 本文供维护 Agent 配置、原生执行器和任务调度的开发者使用。内部任务与
 [公开 A2A 服务](A2A_NATIVE.zh-CN.md)复用同一个 A2A 1.0 Handler、Task、Context、
 消息去重、事件记录和 Worker。官方 `@a2a-js/sdk@1.2.0` 的网络类型与状态保持不变。
@@ -19,8 +21,8 @@ MCP、Skill、Toolkit 和已配置沙箱。`Context.id` 是独立的原生会话
 
 新链路直接接原生沙箱执行端口，不调用旧 `runAgentTurn`、旧协作 Worker、Responses API
 或 `runDedicatedSandboxTurn`。普通聊天、Work、消息渠道和 Control MCP **尚未自动切换**
-到新根任务入口；也没有把原来的 Work 审批绕开后接进新链路。本阶段提供 API 和运行时
-工具，新协作面板以及旧入口的显式迁移仍需后续验收。
+到新根任务入口；也没有把原来的 Work 审批绕开后接进新链路。[A2A 接入页面](A2A_CONSOLE.zh-CN.md)
+已提供显式启用、连接示例和本地任务调试。完整协作任务树与旧入口的显式迁移仍需后续完善。
 
 ## 显式启用和调用
 

@@ -38,6 +38,8 @@ const HermesProfilesPanel = dynamic(() =>
   ),
 );
 
+const AgentA2APanel = dynamic(() => import('@/components/dashboard/agents/AgentA2APanel').then((module) => module.AgentA2APanel));
+
 type SettingsData = {
   workspaceId?: string;
   name: string;
@@ -82,7 +84,7 @@ type AgentApiSettingsData = {
   canManage: boolean;
 };
 
-type SettingsTab = AgentSettingsSection | 'channels' | 'api' | 'profiles' | 'hermes' | 'terminal';
+type SettingsTab = AgentSettingsSection | 'channels' | 'api' | 'a2a' | 'profiles' | 'hermes' | 'terminal';
 type InitialSettingsTab = SettingsTab | 'agent';
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -119,6 +121,7 @@ function resolveSettingsTab({
   const requested = initialSettingsTab === 'agent'
     ? 'general'
     : initialSettingsTab ?? 'general';
+  if (requested === 'a2a') return requested;
   if (isAgentSettingsSection(requested)) return requested;
   if (requested === 'channels' && supportsChannelSettings) return requested;
   if (requested === 'api' && supportsApiSettings) return requested;
@@ -185,6 +188,7 @@ export function AgentSettings({
     { id: 'subAgents', label: t('subAgents') },
     { id: 'advanced', label: t('advanced') },
     { id: 'channels' as const, label: t('channelSettingsTab') },
+    { id: 'a2a', label: t('a2a.title') },
     ...(isHermesRuntime
       ? [
           ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab') }] : []),
@@ -274,6 +278,8 @@ export function AgentSettings({
                 ready={ready}
               />
             </div>
+          ) : settingsTab === 'a2a' ? (
+            <AgentA2APanel key={`${slug}:${agentId}`} slug={slug} agentId={agentId} runtimeKind={settings.runtimeKind} />
           ) : settingsTab === 'api' && isHermesRuntime && apiSettings ? (
             <AgentApiPanel
               key={`${apiSettings.endpoint?.id ?? 'draft'}:${apiSettings.endpoint?.revision ?? 0}`}

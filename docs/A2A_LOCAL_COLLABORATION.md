@@ -2,6 +2,8 @@
 
 > [中文](A2A_LOCAL_COLLABORATION.zh-CN.md)
 
+The console now provides opt-in controls, connection information and a local task playground. See [console integration](A2A_CONSOLE.md). The Bearer API below is unchanged; existing Work/chat entry points are not automatically migrated.
+
 For Agent configuration and runtime maintainers. Local collaboration shares the
 A2A 1.0 Handler, Context, Task, request deduplication, events and Worker with
 [public A2A services](A2A_NATIVE.md). The pinned official SDK remains
@@ -24,9 +26,9 @@ use those resources. Managed `hermes` stays on its public execution port.
 The new runtime port does not call runAgentTurn, the old collaboration Worker,
 Responses execution, runDedicatedSandboxTurn or a private Conversation. Existing
 chat, Work, messaging and Control MCP entries are **not automatically switched**;
-Work approval must not be bypassed by such a switch. This increment exposes the API
-and runtime tools. A new collaboration UI and explicit migration of old entries are
-separate acceptance work.
+Work approval must not be bypassed by such a switch. The [A2A console](A2A_CONSOLE.md)
+now provides explicit enablement, connection examples and a local task playground.
+A full collaboration tree and explicit migration of the old entries remain separate work.
 
 ## Opt-in and root invocation
 

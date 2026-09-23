@@ -2,6 +2,8 @@
 
 [中文](A2A_NATIVE.zh-CN.md)
 
+You can also enable services, create credentials and copy examples in **Agent settings → A2A integration**; see the [console guide](A2A_CONSOLE.md).
+
 This service implements the **A2A 1.0 JSON-RPC binding**, with the official
 `@a2a-js/sdk` pinned to **1.2.0**. SDK and protocol versions are not interchangeable.
 See the [normative specification](https://a2a-protocol.org/latest/specification/).

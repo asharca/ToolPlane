@@ -2,6 +2,8 @@
 
 > [English](A2A_NATIVE.md)
 
+现在也可以在 **Agent 设置 → A2A 接入** 中开启服务、创建凭据和复制示例，见[控制台指南](A2A_CONSOLE.zh-CN.md)。
+
 本功能使用 A2A **1.0** 网络协议，依赖精确锁定的官方 `@a2a-js/sdk@1.2.0`。
 协议版本与 SDK 版本不同。依据 [A2A 规范](https://a2a-protocol.org/latest/specification/)
 实现 JSON-RPC 绑定；没有启用 SDK 的 v0.3 兼容层。
