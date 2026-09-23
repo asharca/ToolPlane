@@ -1,0 +1,39 @@
+name: a2a-merge-validation-source
+on:
+  push:
+    branches: [feat/a2a-console-onboarding]
+    paths: [.github/workflows/a2a-merge-validation-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    if: github.repository == 'asharca/ToolPlane'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Export exact integration snapshots without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/a2a-merge-source
+          export_source() {
+            local label="$1" revision="$2"
+            git fetch --no-tags --depth=1 https://github.com/asharca/ToolPlane.git "$revision"
+            git archive --format=tar.gz "$revision" > "/tmp/a2a-merge-source/$label.tar.gz"
+            git ls-tree -r "$revision" > "/tmp/a2a-merge-source/$label.tree"
+            printf '%s\n' "$revision" > "/tmp/a2a-merge-source/$label.revision"
+          }
+          export_source base 84599a8185988d150f68e68ba23baf3d1e9c02de
+          export_source main cb71998c66dfaa53d76b80fb52273680b62414cf
+          export_source pr 5788121bab6979284826423f58d5a048a77a0f29
+          cd /tmp/a2a-merge-source
+          sha256sum *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a2a-merge-source
+          path: /tmp/a2a-merge-source/
+          retention-days: 1
