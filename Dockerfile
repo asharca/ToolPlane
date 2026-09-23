@@ -21,6 +21,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       gzip \
+      openssh-client \
       python3 \
       tar; \
     rm -rf /var/lib/apt/lists/*

@@ -4,6 +4,10 @@ import Link from 'next/link';
 import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
+import { sshTargetIdFromConfig } from '@/lib/sandboxes/ssh-targets';
+import { sandboxMcpResource } from '@/lib/sandboxes/oauth-policy';
+import { sandboxMcpExportable } from '@/lib/sandboxes/mcp-policy';
+import { SandboxMcpExport } from '@/components/dashboard/sandboxes/SandboxMcpExport';
 import { getSandbox } from '@/lib/sandboxes/queries';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
 import {
@@ -107,10 +111,13 @@ export default async function SandboxDetailPage({
   ]
     .includes(status);
   const connector = connectorFromConfig(sandbox.config);
+  const sshTargetId = sshTargetIdFromConfig(sandbox.config);
+  let mcpEndpoint: string | null = null;
+  try { mcpEndpoint = sandboxMcpResource(sandbox.id); } catch { /* Display configuration hint instead of a broken URL. */ }
   const mode = sandbox.kind === 'connector'
     ? t('userConnector')
     : sandbox.kind === 'ssh'
-      ? t('legacySshDisabled')
+      ? sshTargetId ? t('sshMode') : t('legacySshDisabled')
       : sandbox.kind === 'host'
         ? t('disabledHostMode')
         : t('dockerLinux');
@@ -121,9 +128,9 @@ export default async function SandboxDetailPage({
     : sandbox.kind === 'host'
       ? t('legacyHostDisabled')
       : sandbox.kind === 'ssh'
-        ? t('legacySshDisabled')
+        ? sshTargetId ? t('sshMode') : t('legacySshDisabled')
         : sandbox.image ?? '';
-  const network = sandbox.kind === 'connector'
+  const network = sandbox.kind === 'ssh' ? t('sshHostNetwork') : sandbox.kind === 'connector'
     ? connector ? t('websocketAgent') : t('missingConnector')
     : sandbox.network === 'none'
       ? t('networkNone')
@@ -138,7 +145,7 @@ export default async function SandboxDetailPage({
   const connectorWaiting = Boolean(connector && running && !connectorLive?.connected);
   const connectorRoot = connectorLive?.root ?? connector?.remoteRoot;
   const envText = sandboxEnvToText(readSandboxEnv(sandbox.config));
-  const disabledLegacy = sandbox.kind === 'host' || sandbox.kind === 'ssh' || (sandbox.kind === 'connector' && !connector);
+  const disabledLegacy = sandbox.kind === 'host' || (sandbox.kind === 'ssh' && !sshTargetId) || (sandbox.kind === 'connector' && !connector);
   const canUseConsole = status === 'running'
     && !disabledLegacy
     && (sandbox.kind !== 'connector' || Boolean(connectorLive?.connected));
@@ -303,6 +310,7 @@ export default async function SandboxDetailPage({
                 closeLabel={t('close')}
               >
                 <div className="divide-y divide-border">
+                  <SandboxMcpExport sandboxId={sandbox.id} endpoint={mcpEndpoint} exportable={sandboxMcpExportable(sandbox.kind)} />
                   <section className="pb-5">
                     <h3 className="text-sm font-semibold text-foreground">{t('generalSettings')}</h3>
                     <form action={renameSandboxAction} className="mt-3">

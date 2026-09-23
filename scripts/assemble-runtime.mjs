@@ -315,6 +315,9 @@ await writeFile(
   `${process.env.TOOLPLANE_VERSION || 'dev'}\n`,
 );
 
+await copyEntry('scripts/ssh-sandbox-adapter.mjs');
+await copyEntry('scripts/ssh-sandbox-worker.py');
+
 for (const [entry, description] of [
   ['server.js', 'standalone server'],
   ['.next/server', 'standalone server bundle'],
@@ -336,6 +339,8 @@ for (const [entry, description] of [
   ['scripts/mcp-server.mjs', 'built-in MCP runtime'],
   ['scripts/mcp-http-bridge.mjs', 'remote MCP runtime'],
   ['scripts/sandbox-mcp-server.mjs', 'sandbox MCP runtime'],
+  ['scripts/ssh-sandbox-adapter.mjs', 'SSH sandbox OpenSSH adapter'],
+  ['scripts/ssh-sandbox-worker.py', 'SSH sandbox remote worker'],
   ['scripts/install-hermes-rpc.mjs', 'pinned Hermes RPC sandbox installer'],
   ['scripts/hermes-rpc-session.mjs', 'Hermes RPC protocol adapter'],
   ['scripts/hermes-rpc-bootstrap.py', 'Hermes RPC isolated native bootstrap'],
