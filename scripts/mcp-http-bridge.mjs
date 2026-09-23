@@ -44,9 +44,9 @@ function parseConfig() {
   } catch {
     invalidConfig('invalid URL');
   }
-  if (url.protocol !== 'https:') invalidConfig('URL must use HTTPS');
-  if (url.username || url.password || url.port || url.search || url.hash) {
-    invalidConfig('URL cannot contain credentials, a custom port, query parameters, or a fragment');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') invalidConfig('URL must use HTTP or HTTPS');
+  if (url.username || url.password || url.port === '0' || url.search || url.hash) {
+    invalidConfig('URL cannot contain credentials, port zero, query parameters, or a fragment');
   }
   if (value.transport !== 'streamable-http' && value.transport !== 'sse') {
     invalidConfig('unsupported transport');
@@ -166,7 +166,7 @@ function allowlistedPrivateIp(hostname, address) {
 }
 
 function validateRemoteUrl(url, allowQuery = false) {
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || (!allowQuery && url.search) || url.hash) {
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.port === '0' || (!allowQuery && url.search) || url.hash) {
     throw new Error('Remote MCP endpoint is not allowed.');
   }
   const hostname = normalizeRemoteMcpHostname(url.hostname);
@@ -307,6 +307,10 @@ process.once('SIGINT', () => void shutdown(0));
 
 async function start() {
   try {
+    if (CONFIG.url.protocol === 'http:') {
+      // Never include endpoint URLs, headers or credentials in this warning.
+      process.stderr.write('mcp-http-bridge: WARNING: HTTP is unencrypted. Credentials, tool arguments and results can be intercepted or modified. Prefer HTTPS; use HTTP only on a trusted, protected network. ToolPlane HTTPS does not encrypt this upstream connection.\n');
+    }
     runtimePhase('initializing', 'Connecting to remote MCP.');
     const remote = await resolveRemoteUrl(CONFIG.url);
     pinnedDispatcher = createPinnedDispatcher(remote.hostname, remote.addresses);
