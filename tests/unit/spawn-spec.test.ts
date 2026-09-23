@@ -388,16 +388,39 @@ describe('resolveSpawnSpec', () => {
     });
   });
 
+  it.each([
+    ['http://mcp.example.com/mcp', 'streamable-http'],
+    ['http://mcp.example.com:8000/mcp', 'streamable-http'],
+    ['http://mcp.example.com:8000/sse', 'sse'],
+    ['https://mcp.example.com:443/mcp', 'streamable-http'],
+    ['https://mcp.example.com:8443/sse', 'sse'],
+  ])('resolves %s with %s without dropping authentication', (url, transport) => {
+    expect(resolveSpawnSpec({
+      serverId: null,
+      name: 'Remote',
+      source: 'remote',
+      sourceRef: url,
+      installCfg: { transport, authType: 'bearer', env: { TOKEN: 'test-token' }, bearerEnv: 'TOKEN' },
+    })).toEqual({
+      kind: 'remote',
+      name: 'Remote',
+      url: new URL(url).href,
+      transport,
+      headers: { authorization: 'Bearer test-token' },
+      timeoutMs: 60_000,
+    });
+  });
+
   it('rejects unsafe remote MCP URLs and missing credential references', () => {
     const deployment = {
       serverId: null,
       server: null,
       name: 'Remote',
       source: 'remote',
-      sourceRef: 'https://mcp.example.com:443/mcp',
+      sourceRef: 'https://mcp.example.com:0/mcp',
       installCfg: { authType: 'none' },
     };
-    expect(() => resolveSpawnSpec(deployment)).toThrow(/custom port/);
+    expect(() => resolveSpawnSpec(deployment)).toThrow(/not allowed/);
     expect(() => resolveSpawnSpec({
       ...deployment,
       sourceRef: 'https://mcp.example.com/mcp',
