@@ -1,0 +1,51 @@
+name: runtime-package-diagnostics
+on:
+  push:
+    branches: [feat/a2a-console-onboarding]
+    paths: [.github/workflows/runtime-package-diagnostics.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Inspect production packages without credentials or service access
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { readFile, readdir, realpath } from 'node:fs/promises';
+          import path from 'node:path';
+          const roots = ['node_modules/@a2a-js/sdk', 'node_modules/@modelcontextprotocol/sdk', 'node_modules/@streamdown/code'];
+          for (const root of roots) {
+            const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+            console.log(JSON.stringify({ package: manifest.name, version: manifest.version, root: await realpath(root), dependencies: manifest.dependencies, peers: manifest.peerDependencies }));
+          }
+          for (const entry of await readdir('node_modules/.pnpm')) {
+            if (!entry.startsWith('glob@') && !entry.startsWith('fs.realpath@')) continue;
+            const name = entry.startsWith('glob@') ? 'glob' : 'fs.realpath';
+            const root = path.join('node_modules/.pnpm', entry, 'node_modules', name);
+            const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+            console.log(JSON.stringify({ package: name, version: manifest.version, root, dependencies: manifest.dependencies }));
+            if (name === 'glob') {
+              try { console.log((await readFile(path.join(root, 'dist/esm/glob.js'), 'utf8')).slice(0, 3000)); }
+              catch (error) { if (error.code !== 'ENOENT') throw error; }
+            }
+          }
+          for (const entry of ['@a2a-js/sdk', '@a2a-js/sdk/client', '@a2a-js/sdk/server', '@a2a-js/sdk/errors', '@modelcontextprotocol/sdk/client/index.js']) {
+            console.log('LOAD', entry);
+            await import(entry);
+            console.log('OK', entry);
+          }
+          JS
