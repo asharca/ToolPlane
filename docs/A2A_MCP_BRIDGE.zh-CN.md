@@ -40,6 +40,7 @@ workspace、模型、系统提示词或工具覆盖。操作失败返回 MCP `is
 ```typescript
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const url = process.env.TOOLPLANE_A2A_MCP_URL;
@@ -50,10 +51,11 @@ await client.connect(new StreamableHTTPClientTransport(new URL(url), {
   requestInit: { headers: { Authorization: `Bearer ${token}` } },
 }));
 try {
-  const result = await client.callTool({ name: 'a2a_send_message', arguments: {
+  const rawResult = await client.callTool({ name: 'a2a_send_message', arguments: {
     message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'Review the supplied patch.' }] },
     configuration: { returnImmediately: true, historyLength: 0 },
   } });
+  const result = CallToolResultSchema.parse(rawResult);
   if (result.isError) throw new Error('Task submission failed. Inspect the safe MCP error.');
   const text = result.content.find((part) => part.type === 'text');
   if (!text || typeof text.text !== 'string') throw new Error('Missing task response.');
