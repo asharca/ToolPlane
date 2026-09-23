@@ -199,10 +199,11 @@ describe('generated Codex installer', () => {
 });
 
 describe('generated opencode installer', () => {
-  it('configures remote MCP, a toolkit command, and synced skill cache', () => {
+  it('configures remote MCP, a toolkit command, and synced skill cache', async () => {
     tmp = mkdtempSync(path.join(tmpdir(), 'toolplane-opencode-install-'));
     const bin = path.join(tmp, '.local/bin');
     mkdirSync(bin, { recursive: true });
+    symlinkSync(process.execPath, path.join(bin, 'node'));
     writeFakeCurl(bin);
     const configDir = path.join(tmp, 'opencode-config');
 
@@ -219,10 +220,31 @@ describe('generated opencode installer', () => {
       { mode: 0o755 },
     );
 
-    execFileSync('/bin/bash', [installer], {
-      env: { ...process.env, HOME: tmp, OPENCODE_CONFIG_DIR: configDir, PATH: `${bin}:${process.env.PATH ?? ''}` },
-      stdio: 'pipe',
+    // Like Codex, OpenCode starts real Node children and commits synced files.
+    // Isolate its runtime and bound the child before the enclosing test expires.
+    const { stdout, stderr } = await execFileAsync('/bin/bash', [installer], {
+      env: {
+        ...process.env,
+        HOME: tmp,
+        OPENCODE_CONFIG_DIR: configDir,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        NODE_OPTIONS: '',
+        NODE_PATH: '',
+        TOOLPLANE_MCP_CONFIG: '',
+        TOOLPLANE_SYNC_ROOT: '',
+        TOOLPLANE_SKILLS_DIR: '',
+        TOOLPLANE_SKILL_DIR_PREFIX: '',
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
     });
+    expect(stderr).toBe('');
+    expect(stdout).toContain('ToolPlane sync committed:');
+    const curlCalls = readFileSync(path.join(tmp, 'curl-calls.log'), 'utf8').trim().split('\n');
+    expect(curlCalls).toHaveLength(2);
+    expect(curlCalls[0]).toContain('/api/v1/plugin/baseline?workspace=ws&toolkit=tk');
+    expect(curlCalls[1]).toContain('/api/v1/plugin/sync-applied');
 
     const cfg = JSON.parse(readFileSync(path.join(configDir, 'opencode.json'), 'utf8')) as {
       mcp: Record<string, unknown>;
@@ -241,7 +263,7 @@ describe('generated opencode installer', () => {
     expect(cfg.command['toolplane-775ff1e300598486cd833e1c'].template).toContain('$ARGUMENTS');
     expect(readFileSync(path.join(configDir, 'toolplane/toolplane-775ff1e300598486cd833e1c/skills/alpha/SKILL.md'), 'utf8')).toContain('# Alpha');
     expect(readFileSync(path.join(configDir, 'toolplane/toolplane-775ff1e300598486cd833e1c/skills/alpha/scripts/alpha.py'), 'utf8')).toBe('print(1)');
-  });
+  }, 20_000);
 });
 
 describe('generated Hermes installer', () => {
