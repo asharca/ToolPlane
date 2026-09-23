@@ -3,12 +3,14 @@ import type { A2ATask, Prisma } from '@prisma/client';
 import { Artifact, Message, Role, Task, TaskState } from '@a2a-js/sdk';
 import { TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { db } from '@/lib/db';
-import { A2A_LIMITS, agentMessage, settled, taskEvent } from './model';
-import { assertLiveGrant, isLocalGrant, type TaskGrant } from './principal';
+import { A2A_LIMITS, agentMessage, settled, terminal, taskEvent } from './model';
+import { assertLiveGrant, isLocalGrant, isRemoteGrant, type TaskGrant } from './principal';
 import { LOCAL_LIMITS } from './local-policy';
 import { lockTask, persist, interruptTask } from './store';
 
 type Tx = Prisma.TransactionClient;
+const childSettled = (row: A2ATask) => settled(row.state)
+  && !(row.remoteDispatchedAt && row.cancelRequestedAt && !terminal(row.state));
 async function ownedChildren(tx: Tx, row: A2ATask, ids: string[]) {
   const rows = await tx.a2ATask.findMany({ where: { id: { in: ids }, parentTaskId: row.id, rootTaskId: row.rootTaskId } });
   if (rows.length !== ids.length) throw new TaskNotFoundError();
@@ -55,20 +57,32 @@ export async function suspendLocalTurn(tx: Tx, row: A2ATask, task: Task, output?
   const text = output?.parts.flatMap((part) => part.content?.$case === 'text' ? [part.content.value] : []).join('\n');
   if (text) task.history.push(agentMessage(task, text.slice(0, A2A_LIMITS.outputCharacters)));
   task.status!.timestamp = new Date().toISOString();
-  await persist(tx, row, task, taskEvent(task), { phase: children.every((r) => settled(r.state)) ? 'resumable' : 'waiting',
+  await persist(tx, row, task, taskEvent(task), { phase: children.every(childSettled) ? 'resumable' : 'waiting',
     waitForTaskIds: ids, leaseToken: null });
   return true;
 }
 export async function resumeMessage(tx: Tx, row: A2ATask): Promise<Message> {
   if (row.resumeCount >= LOCAL_LIMITS.resumes) throw new UnsupportedOperationError('Parent continuation limit reached.');
   const children = await ownedChildren(tx, row, row.waitForTaskIds);
-  if (!children.length || children.some((r) => !settled(r.state))) throw new UnsupportedOperationError('Child results are not ready.');
-  const results = children.map((r) => {
+  if (!children.length || children.some((r) => !childSettled(r))) throw new UnsupportedOperationError('Child results are not ready.');
+  const results: unknown[] = [];
+  for (const r of children) {
     const task = Task.fromJSON(r.snapshot);
     const grant = r.grant as unknown as TaskGrant;
-    return { taskId: r.id, agentId: isLocalGrant(grant) ? grant.agentId : undefined,
-      status: task.status, artifacts: task.artifacts };
-  });
+    if (isRemoteGrant(grant)) {
+      try {
+        const { remoteTarget } = await import('./remote-policy');
+        const target = await remoteTarget(tx, grant.workspaceId, grant.sourceAgentId, grant.remoteAgentId);
+        if (target.binding !== grant.targetBinding) throw new Error('Remote authorization changed');
+      } catch {
+        results.push({ taskId: r.id, result: 'Remote output is withheld because its current authorization or configuration changed.' });
+        continue;
+      }
+    }
+    results.push({ taskId: r.id, agentId: isLocalGrant(grant) ? grant.agentId : undefined,
+      remoteAgentId: isRemoteGrant(grant) ? grant.remoteAgentId : undefined,
+      status: task.status, artifacts: task.artifacts });
+  }
   // Do not upgrade another Agent's output into a system instruction. Large results remain retrievable.
   const serialized = JSON.stringify(results);
   const text = serialized.length <= A2A_LIMITS.inputCharacters - 512 ? serialized : JSON.stringify(children.map((r) => ({
@@ -89,7 +103,7 @@ export async function reconcileLocalWaits() {
         if (row.phase !== 'waiting' || row.state !== TaskState.TASK_STATE_WORKING) return;
         if (row.cancelRequestedAt) return;
         const children = await ownedChildren(tx, row, row.waitForTaskIds);
-        if (children.length && children.every((r) => settled(r.state))) {
+        if (children.length && children.every(childSettled)) {
           // Under the workspace lock: only one scheduler can mark this generation ready.
           await tx.a2ATask.update({ where: { id: row.id }, data: { phase: 'resumable' } });
         }

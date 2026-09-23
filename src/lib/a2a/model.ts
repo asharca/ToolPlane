@@ -3,9 +3,11 @@ import { RequestMalformedError, TaskNotCancelableError, UnsupportedOperationErro
 
 export const A2A_PROTOCOL_VERSION = '1.0';
 export const A2A_SDK_VERSION = '1.2.0';
+export const LOCAL_OUTPUT_MODES = ['text/plain', 'text/markdown', 'text/x-diff', 'application/json', 'application/octet-stream'];
+export const acceptsOutput = (modes: readonly string[], mediaType: string) => !modes.length || modes.some((mode) => mode === '*/*' || mode === mediaType || mode === mediaType.split('/')[0] + '/*');
 export const A2A_LIMITS = {
   bodyBytes: 262_144, inputCharacters: 20_000, outputCharacters: 65_536,
-  snapshotBytes: 524_288, messagesPerTask: 32, artifactsPerTask: 16,
+  snapshotBytes: 524_288, publishArtifactBytes: 32_768, messagesPerTask: 32, artifactsPerTask: 16,
   tasksPerContext: 128, contextsPerClient: 100, tasksPerClient: 1_000,
   workerConcurrency: 4, deadlineSeconds: 840, pollMs: 250,
 } as const;

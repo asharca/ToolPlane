@@ -1,5 +1,10 @@
 // @vitest-environment node
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { Task, TaskState } from '@a2a-js/sdk';
+import { runNativeEntry } from '@/lib/a2a/ingress';
+import { claimTask, finishTask, getTask } from '@/lib/a2a/store';
+import { textArtifact } from '@/lib/a2a/model';
 import { db } from '@/lib/db';
 import { GET, POST } from '@/app/api/v1/workspaces/[slug]/agent-channels/route';
 import { createAgentChannelConnection, decryptChannelCredentials } from '@/lib/agents/channel-connections';
@@ -26,6 +31,22 @@ vi.mock('@/lib/agents/native', () => ({ uiMessagesToPi: (value: unknown) => valu
 vi.mock('@/lib/agents/run', () => ({ buildAgentToolSet: async () => ({}) }));
 vi.mock('@/lib/agents/sandbox-turn', () => ({ runDedicatedSandboxTurn: vi.fn(async () => 'Channel reply') }));
 vi.mock('@/lib/work/coordinator', () => ({ kickWorkCoordinator: vi.fn() }));
+// Keep real task admission, policy, persistence and receipts. Only replace the
+// model/CLI wait with a deterministic execution result; no legacy turn executes.
+vi.mock('@/lib/a2a/ingress', async (original) => {
+  const actual = await original<typeof import('@/lib/a2a/ingress')>();
+  return { ...actual, runNativeEntry: vi.fn(async (input: Parameters<typeof actual.runNativeEntry>[0]) => {
+    const accepted = await actual.submitNativeEntry(input, () => {});
+    const path = `/app/channels/work?mode=a2a&agent=${input.agentId}&task=${accepted.row.id}`;
+    await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
+    if (!accepted.replay) {
+      const running = await claimTask(accepted.row.id);
+      if (!running?.leaseToken) throw new Error('Native fixture task was not claimed.');
+      await finishTask(running.id, running.leaseToken, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('Channel reply'));
+    }
+    return { task: await getTask(accepted.grant, accepted.row.id), path };
+  }) };
+});
 
 let workspace: { id: string; slug: string };
 let other: { id: string; slug: string };
@@ -60,7 +81,18 @@ async function command(body: Record<string, unknown>, slug = workspace.slug) {
 }
 async function createSandbox(workspaceId: string, name: string) {
   const deployment = await db.deployment.create({ data: { workspaceId, name, status: 'stopped' } });
-  return db.sandbox.create({ data: { workspaceId, deploymentId: deployment.id, name, slug: name.toLowerCase().replaceAll(' ', '-'), kind: 'docker' } });
+  return db.sandbox.create({ data: { workspaceId, deploymentId: deployment.id, name, slug: name.toLowerCase().replaceAll(' ', '-'), kind: 'docker', network: 'isolated' } });
+}
+
+async function enableNativeAgent(id: string, sandboxId?: string) {
+  if (!sandboxId) {
+    const sandbox = await createSandbox(workspace.id, `Native ${id}`);
+    await db.agentSandbox.create({ data: { agentId: id, sandboxId: sandbox.id, isDefault: true } });
+  }
+  await db.agent.update({ where: { id }, data: { a2aInternalEnabled: true } });
+}
+async function nativeBinding(conversationId: string) {
+  return db.a2AEntryBinding.findFirstOrThrow({ where: { kind: 'channel', sourceId: conversationId }, include: { lastTask: true, context: true } });
 }
 
 describe('workspace channels', () => {
@@ -111,57 +143,91 @@ describe('workspace channels', () => {
     await db.workSession.update({ where: { id: work.id }, data: { status: 'completed' } });
   });
 
-  it('uses the same DSH command catalog in channels and never sends unsupported commands as prompts', async () => {
+  it('does not advertise or dispatch legacy commands from native A2A channels', async () => {
     const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: 'dsh-commands', name: 'DSH commands', runtimeKind: 'dsh', providerId, model: 'test' } });
+    await enableNativeAgent(agent.id);
     const channel = (await createAgentChannelConnection({ workspaceId: workspace.id, agentId: agent.id, platform: 'weixin', name: 'DSH commands', credentials: {} })).connection!;
-    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running' } });
-    const run = (message: string) => runAgentChannelMessage({ workspaceId: workspace.id, connectionId: channel.id, agentId: agent.id, rawBody: { message, source: { chatId: 'commands', userId: 'commands' } } });
-    vi.mocked(runDedicatedSandboxTurn).mockImplementationOnce(async (options) => { await options.onCommands?.([{ name: 'goal' }, { name: 'plugin:review', description: 'Review files' }]); return 'Initial reply'; });
-    const first = await run('Begin');
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running', a2aActorId: identity.user!.id } });
+    const run = (message: string) => runAgentChannelMessage({ workspaceId: workspace.id, connectionId: channel.id, agentId: agent.id,
+      rawBody: { message, source: { chatId: 'commands-user', userId: 'commands-user', messageId: randomUUID() } } });
+    const first = await run('Hello');
+    expect(first.status).toBe(200);
     const id = (first.body as { conversationId: string }).conversationId;
+    const binding = await nativeBinding(id);
+    const legacyCalls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
+    const nativeCalls = vi.mocked(runNativeEntry).mock.calls.length;
     const help = await run('/help');
-    expect(help.body).toMatchObject({ message: expect.stringContaining('/goal') });
-    expect(help.body).toMatchObject({ message: expect.stringContaining('/plugin:review') });
-    const calls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
-    expect((await run('/usage')).body).toMatchObject({ message: expect.stringContaining('not supported') });
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(calls);
-    await run('/goal pause');
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/goal pause', runtimeSessionId: id }));
-    await run('/goal Finish the checklist');
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/goal Finish the checklist', runtimeSessionId: id }));
-    const history = await db.message.findMany({ where: { conversationId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
-    expect(activeConversationMessages(history)).toHaveLength(4);
-    expect(history).toHaveLength(5);
+    expect(help.body).toMatchObject({ message: expect.stringContaining('/new') });
+    expect(help.body).toMatchObject({ message: expect.stringContaining('/whoami') });
+    expect(help.body).not.toMatchObject({ message: expect.stringContaining('/goal') });
+    for (const line of ['/plan', '/goal pause', '/goal Finish the checklist', '/compact']) {
+      expect((await run(line)).body).toMatchObject({ message: expect.stringContaining('native workbench') });
+    }
+    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(legacyCalls);
+    expect(vi.mocked(runNativeEntry).mock.calls).toHaveLength(nativeCalls);
+    expect((await nativeBinding(id)).lastTaskId).toBe(binding.lastTaskId);
+    expect(await db.message.count({ where: { conversationId: id } })).toBe(2);
   });
 
-  it('dispatches WeChat compaction to the same native DSH session without deleting history and rotates sessions on /new', async () => {
+  it('preserves native channel history, refuses legacy compaction and starts a new A2A context on /new', async () => {
     const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: `compact-${Date.now()}`, name: 'DSH compaction', runtimeKind: 'dsh', providerId, model: 'test' } });
-    const created = await createAgentChannelConnection({ workspaceId: workspace.id, agentId: agent.id, platform: 'weixin', name: 'Compact test', credentials: {} });
-    const channel = created.connection!;
-    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running' } });
+    await enableNativeAgent(agent.id);
+    const channel = (await createAgentChannelConnection({ workspaceId: workspace.id, agentId: agent.id, platform: 'weixin', name: 'Compact test', credentials: {} })).connection!;
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running', a2aActorId: identity.user!.id } });
     const run = (message: string) => runAgentChannelMessage({ workspaceId: workspace.id, connectionId: channel.id, agentId: agent.id,
-      rawBody: { message, source: { chatId: 'compact-user', userId: 'compact-user' } } });
+      rawBody: { message, source: { chatId: 'compact-user', userId: 'compact-user', messageId: randomUUID() } } });
+    const legacyCalls = vi.mocked(runDedicatedSandboxTurn).mock.calls.length;
     const first = await run('Old detailed requirements. '.repeat(500));
     if (first.status !== 200 || !('conversationId' in first.body)) throw new Error('Missing conversation');
     const id = first.body.conversationId;
+    const initial = await nativeBinding(id);
     await run('Keep this latest exchange exactly.');
-    const before = await db.message.findMany({ where: { conversationId: id }, orderBy: { createdAt: 'asc' } });
-    const result = await run('/compact');
-    expect(result.body).toMatchObject({ conversationId: id, message: 'Channel reply' });
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/compact', runtimeSessionId: id }));
-    const after = await db.message.findMany({ where: { conversationId: id }, orderBy: { createdAt: 'asc' } });
-    expect(after.slice(0, before.length)).toEqual(before);
-    expect(after).toHaveLength(before.length + 1);
-    await run('Continue after compaction');
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(expect.objectContaining({ runtimeSessionId: id }));
+    const before = await db.message.findMany({ where: { conversationId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+    expect((await run('/compact')).body).toMatchObject({ conversationId: id, message: expect.stringContaining('native workbench') });
+    expect(await db.message.findMany({ where: { conversationId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })).toEqual(before);
+    await run('Continue without replaying history');
+    const continued = await nativeBinding(id);
+    expect(continued.contextId).toBe(initial.contextId);
+    expect(continued.lastTaskId).not.toBe(initial.lastTaskId);
     const count = await db.message.count({ where: { conversationId: id } });
-    expect((await run('/help')).body).toMatchObject({ message: expect.stringContaining('/compact') });
-    expect(await db.message.count({ where: { conversationId: id } })).toBe(count);
     const reset = await run('/new');
     expect(reset.body).toMatchObject({ conversationId: expect.not.stringMatching(id) });
-    await run('Only the new conversation');
-    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls.at(-1)![0].messages).toHaveLength(1);
+    const next = await run('Only the new conversation');
+    if (next.status !== 200 || !('conversationId' in next.body)) throw new Error('Missing new conversation');
+    const fresh = await nativeBinding(next.body.conversationId);
+    expect(fresh.contextId).not.toBe(initial.contextId);
+    const history = Task.fromJSON(fresh.lastTask!.snapshot).history;
+    expect(history.filter((message) => message.role === 1)).toHaveLength(1);
+    expect(JSON.stringify(history)).toContain('Only the new conversation');
+    expect(JSON.stringify(history)).not.toContain('Old detailed requirements');
     expect(await db.message.count({ where: { conversationId: id } })).toBe(count);
+    expect(vi.mocked(runDedicatedSandboxTurn).mock.calls).toHaveLength(legacyCalls);
+  });
+
+  it('requires explicit channel authority and stable message IDs, and deduplicates accepted native tasks', async () => {
+    const agent = await db.agent.create({ data: { workspaceId: workspace.id, slug: 'channel-authority', name: 'Channel authority', runtimeKind: 'dsh', providerId, model: 'test' } });
+    await enableNativeAgent(agent.id);
+    const channel = (await createAgentChannelConnection({ workspaceId: workspace.id, agentId: agent.id, platform: 'weixin', name: 'Authority', credentials: {} })).connection!;
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { status: 'running' } });
+    const messageId = randomUUID();
+    const run = (message = 'Authorized task', id: string | undefined = messageId) => runAgentChannelMessage({
+      workspaceId: workspace.id, connectionId: channel.id, agentId: agent.id,
+      rawBody: { message, source: { chatId: 'authority-chat', userId: 'external-user-not-a-platform-account', messageId: id } },
+    });
+    expect((await run()).status).toBe(409);
+    expect(await db.a2ATask.count({ where: { context: { agentId: agent.id } } })).toBe(0);
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: identity.user!.id } });
+    expect((await runAgentChannelMessage({ workspaceId: workspace.id, connectionId: channel.id, agentId: agent.id,
+      rawBody: { message: 'No ID', source: { chatId: 'authority-chat', userId: 'external-user-not-a-platform-account' } } })).status).toBe(400);
+    const first = await run(); expect(first.status).toBe(200);
+    const replay = await run(); expect(replay.body).toMatchObject({ message: 'Channel reply' });
+    expect(await db.a2ATask.count({ where: { context: { agentId: agent.id } } })).toBe(1);
+    const binding = await nativeBinding((first.body as { conversationId: string }).conversationId);
+    expect(binding.lastTask.grant).toMatchObject({ actorId: identity.user!.id });
+    await expect(run('Changed content')).rejects.toThrow('reused with different content');
+    await db.agentChannelConnection.update({ where: { id: channel.id }, data: { a2aActorId: null } });
+    expect((await run('After revocation', randomUUID())).status).toBe(409);
+    expect(await db.a2ATask.count({ where: { context: { agentId: agent.id } } })).toBe(1);
   });
 
   it('keeps compaction scoped, rejects busy conversations, and leaves history unchanged on model failure', async () => {
@@ -188,6 +254,7 @@ describe('workspace channels', () => {
       const sandbox = await createSandbox(workspace.id, name);
       const agent = await db.agent.create({ data: { workspaceId: workspace.id, name, slug: name.toLowerCase(), runtimeKind: 'dsh', providerId, model: 'test' } });
       await db.agentSandbox.create({ data: { agentId: agent.id, sandboxId: sandbox.id, isDefault: true } });
+      await enableNativeAgent(agent.id, sandbox.id);
       return { ...sandbox, agent };
     }));
     const [source, target] = sandboxes;
@@ -206,10 +273,10 @@ describe('workspace channels', () => {
     expect((await command({ action: 'move', connectionId, sandboxId: foreign.id })).status).toBe(400);
     expect((await command({ action: 'move', connectionId, sandboxId: target.id }, other.slug)).status).toBe(404);
 
-    await db.agentChannelConnection.update({ where: { id: connectionId }, data: { status: 'running' } });
+    await db.agentChannelConnection.update({ where: { id: connectionId }, data: { status: 'running', a2aActorId: identity.user!.id } });
     const run = (agent: string, sandbox: string, conversationId?: string) => runAgentChannelMessage({
       workspaceId: workspace.id, connectionId, agentId: agent, sandboxId: sandbox,
-      rawBody: { message: 'Hello', conversationId, source: { chatId: 'wechat-user', userId: 'wechat-user' } },
+      rawBody: { message: 'Hello', conversationId, source: { chatId: 'wechat-user', userId: 'wechat-user', messageId: randomUUID() } },
     });
     const original = await run(source.agent.id, source.id);
     expect(original.status).toBe(200);
@@ -224,11 +291,17 @@ describe('workspace channels', () => {
     const after = await db.agentChannelConnection.findUniqueOrThrow({ where: { id: connectionId } });
     expect(after).toMatchObject({ sandboxId: target.id, agentId: target.agent.id, credentials: before.credentials, config: before.config, inboundTokenHash: before.inboundTokenHash });
     expect(vi.mocked(stopAgentChannelRunner).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(startAgentChannelRunner).mock.invocationCallOrder[0]);
-    await db.agentChannelConnection.update({ where: { id: connectionId }, data: { status: 'running' } });
+    await db.agentChannelConnection.update({ where: { id: connectionId }, data: { status: 'running', a2aActorId: identity.user!.id } });
     expect((await run(source.agent.id, source.id)).status).toBe(404);
     expect((await run(target.agent.id, target.id, historyId)).status).toBe(404);
-    expect((await run(target.agent.id, target.id)).status).toBe(200);
-    expect(runDedicatedSandboxTurn).toHaveBeenLastCalledWith(expect.objectContaining({ sandboxId: target.id, agent: expect.objectContaining({ id: target.agent.id, runtimeKind: 'dsh' }) }));
+    const targetReply = await run(target.agent.id, target.id);
+    expect(targetReply.status).toBe(200);
+    const targetBinding = await nativeBinding((targetReply.body as { conversationId: string }).conversationId);
+    expect(targetBinding.context).toMatchObject({ targetKind: 'local', agentId: target.agent.id });
+    expect(targetBinding.lastTask.grant).toMatchObject({ actorId: identity.user!.id });
+    expect((await nativeBinding(historyId)).context.agentId).toBe(source.agent.id);
+    expect(runNativeEntry).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'channel', channelId: connectionId,
+      actorId: identity.user!.id, agentId: target.agent.id }));
     expect(await db.conversation.findUnique({ where: { id: historyId } })).toMatchObject({ agentId: source.agent.id });
 
     vi.mocked(startAgentChannelRunner).mockResolvedValueOnce({ error: 'Cannot connect' }).mockResolvedValue({});
@@ -307,15 +380,16 @@ describe('workspace channels', () => {
   });
 
   it('isolates two bots in the same chat, handles commands, and rejects stopped or unauthorized ingress', async () => {
+    await enableNativeAgent(agentId);
     const channels = await Promise.all(['Bot 1', 'Bot 2'].map((name) => createAgentChannelConnection({
       workspaceId: workspace.id, agentId, platform: 'telegram', name,
       credentials: { TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_ALLOWED_USERS: '42' },
     })));
     const [first, second] = channels.map((channel) => channel.connection!);
-    await db.agentChannelConnection.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { status: 'running' } });
+    await db.agentChannelConnection.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { status: 'running', a2aActorId: identity.user!.id } });
     const run = (connectionId: string, message: string, extras = {}) => runAgentChannelMessage({
       connectionId, workspaceId: workspace.id, agentId,
-      rawBody: { message, source: { userId: '42', chatId: 'same-chat', platform: 'spoofed', chatType: 'dm' }, ...extras },
+      rawBody: { message, source: { userId: '42', chatId: 'same-chat', platform: 'spoofed', chatType: 'dm', messageId: randomUUID() }, ...extras },
     });
     const a = await run(first.id, 'Hello');
     const b = await run(second.id, 'Hello');

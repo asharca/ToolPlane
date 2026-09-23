@@ -22,6 +22,11 @@
 | [沙箱与连接器](./SANDBOXES.zh-CN.md) · [English](./SANDBOXES.md) | Docker、设备连接、终端与屏幕 |
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |
 | [公共 Agent API](./AGENT_PUBLIC_API.zh-CN.md) · [English](./AGENT_PUBLIC_API.md) | 发布 Endpoint、鉴权与限额 |
+| [A2A 控制台接入](./A2A_CONSOLE.zh-CN.md) · [English](./A2A_CONSOLE.md) | 可视化启用、连接示例、凭据与本地任务调试 |
+| [A2A 工作台](./A2A_WORKBENCH.zh-CN.md) · [English](./A2A_WORKBENCH.md) | 日常原生任务、Context 续写与任务恢复链接 |
+| [A2A MCP 适配](./A2A_MCP_BRIDGE.zh-CN.md) · [English](./A2A_MCP_BRIDGE.md) | 外部 MCP 客户端使用原生任务 |
+| [A2A 资源限额](./A2A_RESOURCE_LIMITS.zh-CN.md) · [English](./A2A_RESOURCE_LIMITS.md) | 载荷存储、输出预留与迁移 |
+| [远程 A2A Agent](./A2A_REMOTE_AGENTS.zh-CN.md) · [English](./A2A_REMOTE_AGENTS.md) | 注册、出站授权、远程委派与恢复 |
 | [原生 A2A 1.0](./A2A_NATIVE.zh-CN.md) · [English](./A2A_NATIVE.md) | 标准任务、事件订阅、独立执行与发布授权 |
 | [A2A 内部协作](./A2A_LOCAL_COLLABORATION.zh-CN.md) · [English](./A2A_LOCAL_COLLABORATION.md) | 本地身份、原生委派、父任务等待与恢复 |
 | [消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md) · [English](./AGENT_MESSAGING_PLATFORMS.md) | Telegram、飞书、QQ、微信、Discord、Slack |
@@ -42,3 +47,5 @@
 - 每个主题只维护一组中英文文档，顶部互链，并在两个索引登记；其他位置使用链接引用。
 - 行为以代码为准；实现变化时，在同一 PR 更新两种语言。结构图和流程图优先使用 Mermaid。
 - 新专题放在 `docs/` 根目录，使用 `TOPIC_NAME.md` 与 `.en.md` 或 `.zh-CN.md` 配对，开头说明用途与读者。
+
+- [统一入口与执行前审批](./A2A_INGRESS_APPROVALS.zh-CN.md)

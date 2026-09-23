@@ -7,10 +7,12 @@ import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } f
 import { db } from '@/lib/db';
 import { runtimeEnv } from '@/lib/runtime-env';
 import { ACTIVE, A2A_LIMITS, assertCancelable, assertTransition, historyView, jsonEvent, jsonTask,
-  taskEvent, statusEvent, agentMessage, terminal } from './model';
-import { isLocalGrant, type TaskGrant } from './principal';
+  taskEvent, statusEvent, agentMessage, terminal, LOCAL_OUTPUT_MODES, acceptsOutput } from './model';
+import { isLocalGrant, isRemoteGrant, isWorkspaceGrant, type TaskGrant } from './principal';
+import { assertRemoteGrant } from './remote-policy';
 import { assertLocalGrant, LOCAL_LIMITS } from './local-policy';
 import { validateSend } from './validation';
+import { refreshTaskStorage, assertNativeStorageCapacity, reserveNativeExecutionOutput } from './quotas';
 
 type Tx = Prisma.TransactionClient;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -21,7 +23,9 @@ function canonical(value: unknown): unknown {
   return value;
 }
 function digest(value: unknown) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
-export const taskScope = (grant: TaskGrant) => isLocalGrant(grant)
+export const taskScope = (grant: TaskGrant) => isRemoteGrant(grant)
+  ? { ownerKey: grant.ownerKey, targetKind: 'remote', workspaceId: grant.workspaceId, remoteAgentId: grant.remoteAgentId }
+  : isLocalGrant(grant)
   ? { ownerKey: grant.ownerKey, targetKind: 'local', workspaceId: grant.workspaceId, agentId: grant.agentId }
   : { ownerKey: grant.ownerKey, targetKind: 'published', endpointId: grant.endpointId, clientId: grant.clientId };
 const scope = taskScope;
@@ -36,8 +40,8 @@ export async function getTask(grant: TaskGrant, id: string, historyLength?: numb
 export async function lockTask(tx: Tx, id: string) {
   const initial = await tx.a2ATask.findUnique({ where: { id }, include: { context: true } });
   if (!initial) throw notFound();
-  // All local graph writes acquire workspace before task locks, including settlement.
-  if (initial.context.targetKind === 'local') await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
+  // All task writes share the workspace-first lock order with public Responses admission.
+  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
   await tx.$queryRaw`SELECT id FROM "A2ATask" WHERE id=${id} FOR UPDATE`;
   return tx.a2ATask.findUniqueOrThrow({ where: { id } });
 }
@@ -49,6 +53,7 @@ export async function persist(tx: Tx, row: A2ATask, task: Task, event: StreamRes
     ...(terminal(task.status!.state) ? { completedAt: new Date(), leaseToken: null, phase: 'done', waitForTaskIds: [], pendingQuestion: null } : {}),
   } });
   await tx.a2AEvent.create({ data: { taskId: row.id, sequence, payload: json(jsonEvent(event)) } });
+  await refreshTaskStorage(tx, row.id, [TaskState.TASK_STATE_FAILED, TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED].includes(task.status!.state));
   return updated;
 }
 export function transition(task: Task, state: TaskState, detail?: string) {
@@ -59,20 +64,25 @@ export function transition(task: Task, state: TaskState, detail?: string) {
 }
 /** Admit and queue atomically. No execution or HTTP response lifecycle in this transaction. */
 export async function submitTask(grant: TaskGrant, request: SendMessageRequest, admission: { parentLeaseToken?: string } = {}) {
-  validateSend(request);
+  return db.$transaction((tx) => submitTaskInTransaction(tx, grant, request, admission));
+}
+/** Used by authenticated ingress adapters so binding, receipt and Task commit together. */
+export async function submitTaskInTransaction(tx: Tx, grant: TaskGrant, request: SendMessageRequest, admission: { parentLeaseToken?: string } = {}) {
+  validateSend(request, isLocalGrant(grant) ? LOCAL_OUTPUT_MODES : ['text/plain']);
   const message = request.message!;
   const contentHash = digest({ message: Message.toJSON(message), metadata: request.metadata });
-  return db.$transaction(async (tx) => {
-    const local = isLocalGrant(grant);
-    if (local) {
+    const workspaceCall = isWorkspaceGrant(grant);
+    if (workspaceCall) {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
-      await assertLocalGrant(grant, tx);
+      if (isRemoteGrant(grant)) await assertRemoteGrant(grant, tx);
+      else await assertLocalGrant(grant, tx);
       if (grant.parentTaskId) {
         const parent = await tx.a2ATask.findUnique({ where: { id: grant.parentTaskId } });
         if (!parent || parent.state !== TaskState.TASK_STATE_WORKING || parent.phase !== 'executing'
           || !parent.leaseToken || parent.leaseToken !== admission.parentLeaseToken || parent.cancelRequestedAt || parent.waitForTaskIds.length || parent.pendingQuestion) throw notFound();
       }
     } else {
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
       await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${grant.endpointId} FOR UPDATE`;
       if (!await tx.agentEndpoint.count({ where: { id: grant.endpointId,
         workspaceId: grant.workspaceId, status: 'active', a2aEnabled: true } })) throw notFound();
@@ -93,9 +103,9 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
     const contextId = previous?.contextId ?? message.contextId;
     let context = contextId ? await tx.a2AContext.findFirst({ where: { id: contextId, ...scope(grant), expiresAt: { gt: new Date() } } }) : null;
     if (contextId && !context) throw notFound();
-    if (isLocalGrant(grant)) {
+    if (isWorkspaceGrant(grant)) {
       const [active, retained, rootCount] = await Promise.all([
-        tx.a2ATask.count({ where: { state: { in: ACTIVE }, context: { workspaceId: grant.workspaceId, targetKind: 'local' } } }),
+        tx.a2ATask.count({ where: { state: { in: ACTIVE }, context: { workspaceId: grant.workspaceId, targetKind: { in: ['local', 'remote'] } } } }),
         tx.a2ATask.count({ where: { context: scope(grant) } }),
         grant.rootTaskId ? tx.a2ATask.count({ where: { rootTaskId: grant.rootTaskId } }) : 0,
       ]);
@@ -116,10 +126,12 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
     }
     if (context && await tx.a2ATask.count({ where: { contextId: context.id, state: { in: ACTIVE } } })) throw new UnsupportedOperationError('This context already has an executing task.');
     if (context && !previous && await tx.a2ATask.count({ where: { contextId: context.id } }) >= A2A_LIMITS.tasksPerContext) throw new UnsupportedOperationError('Context task limit reached.');
+    await assertNativeStorageCapacity(tx, grant, !previous);
     if (!context) {
-      if (await tx.a2AContext.count({ where: isLocalGrant(grant) ? scope(grant) : { clientId: grant.clientId } }) >= A2A_LIMITS.contextsPerClient) throw new UnsupportedOperationError('Owner context limit reached.');
+      if (await tx.a2AContext.count({ where: isWorkspaceGrant(grant) ? scope(grant) : { clientId: grant.clientId } }) >= A2A_LIMITS.contextsPerClient) throw new UnsupportedOperationError('Owner context limit reached.');
       context = await tx.a2AContext.create({ data: { id: randomUUID(), workspaceId: grant.workspaceId,
-        ...(isLocalGrant(grant) ? { targetKind: 'local', agentId: grant.agentId, ownerKey: grant.ownerKey, targetBinding: grant.targetBinding }
+        ...(isRemoteGrant(grant) ? { targetKind: 'remote', remoteAgentId: grant.remoteAgentId, ownerKey: grant.ownerKey, targetBinding: grant.targetBinding }
+          : isLocalGrant(grant) ? { targetKind: 'local', agentId: grant.agentId, ownerKey: grant.ownerKey, targetBinding: grant.targetBinding }
           : { targetKind: 'published', endpointId: grant.endpointId, clientId: grant.clientId, ownerKey: grant.ownerKey, revisionId: grant.revisionId }),
         expiresAt: new Date(Date.now() + Math.max(1, Math.min(grant.retentionDays, 30)) * 86_400_000) } });
     }
@@ -135,7 +147,7 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
       task.history.push(accepted);
       transition(task, TaskState.TASK_STATE_SUBMITTED);
       row = await persist(tx, row, task, taskEvent(task), { phase: 'queued', pendingQuestion: null, request: json(SendMessageRequest.toJSON({ ...request, message: accepted })),
-        grant: json(isLocalGrant(grant) ? grant : { ...grant, revisionId: context.revisionId }) });
+        grant: json(isWorkspaceGrant(grant) ? grant : { ...grant, revisionId: context.revisionId }) });
     } else {
       const task = Task.fromJSON({ id, contextId: context.id, history: [Message.toJSON(accepted)],
         status: { state: TaskState.TASK_STATE_SUBMITTED, timestamp: new Date().toISOString() }, metadata: request.metadata });
@@ -143,13 +155,13 @@ export async function submitTask(grant: TaskGrant, request: SendMessageRequest, 
         grant.expiresAt ?? Infinity, context.expiresAt.getTime());
       row = await tx.a2ATask.create({ data: { id, contextId: context.id, state: TaskState.TASK_STATE_SUBMITTED,
         statusAt: new Date(task.status!.timestamp!), snapshot: json(jsonTask(task)), request: json(SendMessageRequest.toJSON({ ...request, message: accepted })),
-        ...(isLocalGrant(grant) ? { rootTaskId: grant.rootTaskId ?? id, parentTaskId: grant.parentTaskId, depth: grant.ancestorTaskIds.length } : {}),
-        grant: json(isLocalGrant(grant) ? grant : { ...grant, revisionId: context.revisionId }), deadlineAt: new Date(deadline),
+        ...(isWorkspaceGrant(grant) ? { rootTaskId: grant.rootTaskId ?? id, parentTaskId: grant.parentTaskId, depth: grant.ancestorTaskIds.length } : {}),
+        grant: json(isWorkspaceGrant(grant) ? grant : { ...grant, revisionId: context.revisionId }), deadlineAt: new Date(deadline),
         events: { create: { sequence: 1, payload: json(jsonEvent(taskEvent(task))) } } } });
     }
     await tx.a2ARequest.create({ data: { ownerKey: grant.ownerKey, messageId: message.messageId, contentHash, taskId: id } });
+    await refreshTaskStorage(tx, id);
     return row;
-  });
 }
 export async function requestCancellation(grant: TaskGrant, id: string) {
   await getTaskRow(grant, id);
@@ -158,7 +170,10 @@ export async function requestCancellation(grant: TaskGrant, id: string) {
     const task = Task.fromJSON(row.snapshot);
     if (row.state === TaskState.TASK_STATE_CANCELED && row.cancelRequestedAt) return task;
     assertCancelable(task);
-    if (row.state === TaskState.TASK_STATE_WORKING && row.phase === 'executing' && row.leaseToken) {
+    if (isRemoteGrant(row.grant as unknown as TaskGrant) && row.remoteDispatchedAt) {
+      // Remote cancellation is not acknowledged until the remote service confirms its state.
+      await markRemoteCancellation(tx, row, task);
+    } else if (row.state === TaskState.TASK_STATE_WORKING && row.phase === 'executing' && row.leaseToken) {
       // A cancel request does not mean the executor has stopped. The worker settles it.
       await tx.a2ATask.update({ where: { id }, data: { cancelRequestedAt: row.cancelRequestedAt ?? new Date() } });
     } else {
@@ -175,6 +190,8 @@ export async function claimTask(id: string) {
     if (row.cancelRequestedAt || row.deadlineAt <= new Date()) return null;
     const resume = row.state === TaskState.TASK_STATE_WORKING && row.phase === 'resumable';
     if (row.state !== TaskState.TASK_STATE_SUBMITTED && !resume) return null;
+    await assertNativeStorageCapacity(tx, row.grant as unknown as TaskGrant, false);
+    await reserveNativeExecutionOutput(tx, row.grant as unknown as TaskGrant, row.deadlineAt);
     const task = Task.fromJSON(row.snapshot);
     if (resume) {
       const { resumeMessage } = await import('./local-continuation');
@@ -192,12 +209,26 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
     const task = Task.fromJSON(row.snapshot);
     const grant = row.grant as unknown as TaskGrant;
     const local = isLocalGrant(grant);
+    if (local && await tx.a2AToolApproval.count({ where: { taskId: id, leaseToken,
+      status: { in: ['pending', 'approved'] } } })) {
+      state = TaskState.TASK_STATE_FAILED;
+      detail = 'Executor ended with unresolved native tool approvals.';
+      artifact = undefined;
+    }
     if (local && [TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED].includes(state)
       && !row.cancelRequestedAt && row.deadlineAt > new Date()) await assertLocalGrant(grant, tx);
     if (local && state === TaskState.TASK_STATE_COMPLETED && !row.cancelRequestedAt && row.deadlineAt > new Date()) {
       const { suspendLocalTurn } = await import('./local-continuation');
       if (await suspendLocalTurn(tx, row, task, artifact)) return;
       if (row.pendingQuestion) { state = TaskState.TASK_STATE_INPUT_REQUIRED; detail = row.pendingQuestion; artifact = undefined; }
+    }
+    if (local && state === TaskState.TASK_STATE_COMPLETED && artifact) {
+      const modes = SendMessageRequest.fromJSON(row.request).configuration?.acceptedOutputModes ?? [];
+      if (artifact.parts.some((part) => !acceptsOutput(modes, part.mediaType || 'text/plain'))) {
+        // A non-text result requested by the caller must be published explicitly, not guessed from model prose.
+        artifact = undefined;
+        if (!task.artifacts.length) { state = TaskState.TASK_STATE_FAILED; detail = 'The executor did not publish an artifact in the requested output format.'; }
+      }
     }
     // Cancellation/deadline wins over a racing successful executor return.
     const actual = row.cancelRequestedAt ? TaskState.TASK_STATE_CANCELED
@@ -216,12 +247,13 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
     if (local && terminal(actual) && actual !== TaskState.TASK_STATE_COMPLETED) await cancelLocalDescendants(tx, row);
   });
 }
-export async function interruptTask(id: string, detail: string) {
+export async function interruptTask(id: string, detail: string, expected?: { remoteMessageId: string | null; phase: string }) {
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
-    if (terminal(row.state)) return;
+    if (terminal(row.state) || expected && (row.remoteMessageId !== expected.remoteMessageId || row.phase !== expected.phase)) return;
     const task = Task.fromJSON(row.snapshot);
-    transition(task, row.cancelRequestedAt ? TaskState.TASK_STATE_CANCELED : TaskState.TASK_STATE_FAILED, detail);
+    transition(task, row.cancelRequestedAt && !row.remoteDispatchedAt ? TaskState.TASK_STATE_CANCELED : TaskState.TASK_STATE_FAILED,
+      row.remoteDispatchedAt ? `${detail} Remote completion or cancellation could not be confirmed; the remote service may still be running.` : detail);
     await persist(tx, row, task, statusEvent(task), { leaseToken: null });
     if (isLocalGrant(row.grant as unknown as TaskGrant)) await cancelLocalDescendants(tx, row);
   });
@@ -277,11 +309,23 @@ export async function cancelLocalDescendants(tx: Tx, parent: A2ATask) {
     if (!row.parentTaskId || !ancestors.has(row.parentTaskId)) continue;
     ancestors.add(row.id);
     if (terminal(row.state)) continue;
-    if (row.phase === 'executing' && row.leaseToken) {
+    if (isRemoteGrant(row.grant as unknown as TaskGrant) && row.remoteDispatchedAt) {
+      await markRemoteCancellation(tx, row, Task.fromJSON(row.snapshot));
+    } else if (row.phase === 'executing' && row.leaseToken) {
       await tx.a2ATask.update({ where: { id: row.id }, data: { cancelRequestedAt: row.cancelRequestedAt ?? new Date() } });
     } else {
       const task = Task.fromJSON(row.snapshot); transition(task, TaskState.TASK_STATE_CANCELED);
       await persist(tx, row, task, statusEvent(task), { cancelRequestedAt: new Date() });
     }
   }
+}
+
+/** A queued continuation still refers to a live peer task; cancellation must remain observable. */
+async function markRemoteCancellation(tx: Tx, row: A2ATask, task: Task) {
+  const data = { cancelRequestedAt: row.cancelRequestedAt ?? new Date(),
+    ...(row.leaseToken ? {} : { phase: 'remote-waiting', remotePollAt: new Date() }) };
+  if (row.state === TaskState.TASK_STATE_SUBMITTED) {
+    transition(task, TaskState.TASK_STATE_WORKING);
+    await persist(tx, row, task, statusEvent(task), data);
+  } else await tx.a2ATask.update({ where: { id: row.id }, data });
 }

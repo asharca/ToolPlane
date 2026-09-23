@@ -1,3 +1,4 @@
+import { runNativeEntry, latestEntryText, nativeEntryResult } from '@/lib/a2a/ingress';
 import { withRequestLogging } from '@/lib/observability/http';
 import { workspaceAccessResponse } from '@/lib/workspace/access-stream';
 import { enrichLogContext } from '@/lib/observability/context';
@@ -36,7 +37,6 @@ import {
   implementedAgentRuntimeKind,
   isDedicatedSandboxRuntimeKind,
 } from '@/lib/agents/runtime-kind';
-import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import { activeConversationMessages, latestCompaction, compactedConversationSeed, needsCompactionSeed } from '@/lib/agents/conversation-context';
 import { acquireConversationOperation } from '@/lib/agents/conversation-operations';
 import {
@@ -335,17 +335,13 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/chat", async fu
       execute: async ({ writer }) => {
         if (sandboxRuntime) {
           const uiStream = createSandboxUiStreamBridge(writer, `sandbox-${agent.id}`);
-          await runDedicatedSandboxTurn({
-            ...(agent.runtimeKind === 'hermes-rpc' && conversationId ? { runtimeSessionId: conversationId } : {}),
-            agent,
-            systemPrompt: system,
-            messages: hydratedMessages as never,
-            skills: resolved.skills,
-            deploymentIds: resolved.deploymentIds,
-            signal: req.signal,
-            onTextDelta: uiStream.onTextDelta,
-            onActivity: uiStream.onActivity,
+          if (!conversationId || !last?.id) throw new Error('Create a conversation before submitting a native A2A task.');
+          const result = await runNativeEntry({ kind: 'chat', sourceId: conversationId,
+            workspaceId: agent.workspaceId, agentId: agent.id, actorId: user.id,
+            messageId: last.id, text: latestEntryText(last), signal: req.signal,
+            onAccepted: (_task, path) => uiStream.onTextDelta(`Native task accepted. Tool approvals and progress: ${path}\n\n`),
           });
+          uiStream.onTextDelta(nativeEntryResult(result.task, result.path));
           uiStream.finish();
           executionSucceeded = true;
           return;

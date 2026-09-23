@@ -2,6 +2,8 @@
 
 > [中文](A2A_LOCAL_COLLABORATION.zh-CN.md)
 
+The console now provides opt-in controls, connection information and a local task playground. See [console integration](A2A_CONSOLE.md). The Bearer API below is unchanged; supported classic entry adapters are described in [unified ingress](A2A_INGRESS_APPROVALS.md).
+
 For Agent configuration and runtime maintainers. Local collaboration shares the
 A2A 1.0 Handler, Context, Task, request deduplication, events and Worker with
 [public A2A services](A2A_NATIVE.md). The pinned official SDK remains
@@ -21,12 +23,11 @@ models, MCPs, Skills and Toolkits. Context.id identifies a separate native sessi
 sandbox files and native memory. Enable this only for workspace users authorized to
 use those resources. Managed `hermes` stays on its public execution port.
 
-The new runtime port does not call runAgentTurn, the old collaboration Worker,
-Responses execution, runDedicatedSandboxTurn or a private Conversation. Existing
-chat, Work, messaging and Control MCP entries are **not automatically switched**;
-Work approval must not be bypassed by such a switch. This increment exposes the API
-and runtime tools. A new collaboration UI and explicit migration of old entries are
-separate acceptance work.
+The runtime port does not call runAgentTurn, the old collaboration Worker,
+Responses execution or runDedicatedSandboxTurn. Supported classic chat, Work,
+Control MCP and explicitly authorized channel adapters now use the same core;
+managed Hermes remains a compatibility path. See [unified ingress and approvals](A2A_INGRESS_APPROVALS.md).
+The [console](A2A_CONSOLE.md) provides opt-in controls, connection details and scoped task trees.
 
 ## Opt-in and root invocation
 
@@ -76,6 +77,7 @@ native A2A core, not another task database or a nonstandard A2A wire binding.
 | a2a_cancel_task | Request cancellation of a child and its descendants |
 | a2a_await_tasks | Persist a join on direct children, then end the current turn normally |
 | a2a_request_input | Record a question, then end normally; never approve an operation |
+| a2a_publish_artifact | Publish an immutable, bounded text/JSON/inline-file artifact to this task |
 
 Caller, root, parent, depth, deadlines and authorization are server-derived, not
 model-controlled metadata. Signed runtime credentials bind both Task and execution
@@ -106,6 +108,36 @@ canceled only after its executor stops; prior external effects are not rolled ba
 Restart preserves waiting/resumable records, but fails previously executing tasks
 whose side effects are uncertain. It does not automatically replay them.
 
+## Artifacts
+
+Local Agent Cards now declare text/plain, text/markdown, text/x-diff, application/json
+and application/octet-stream outputs. Inputs remain text/plain. The published Hermes
+profile still declares text/plain only; capabilities are not automatically widened.
+
+A running local Agent can call `a2a_publish_artifact`:
+
+```json
+{
+  "artifactId": "review-v1",
+  "name": "review.json",
+  "parts": [{ "data": { "approved": false, "findings": [] }, "mediaType": "application/json" }]
+}
+```
+
+Each part contains exactly one standard A2A `text`, `data` or `raw` value. `raw` is
+canonical base64 and requires an allowed mediaType; `data` is a JSON object. At most
+8 parts and 32 KiB of decoded/UTF-8 content are accepted per artifact. Filesystem paths,
+remote URLs and the old `file` shape are rejected. Names are labels, not paths.
+
+An artifactId is immutable within a task: identical retries add no event; conflicting
+content requires a new ID. At most 15 explicit artifacts leave one slot for the final
+result. Snapshot, journal and workspace quotas still apply. Publishing does not complete
+the task. A task's lease must still be executing, authorized, uncanceled and not suspended.
+
+`acceptedOutputModes` is enforced. For JSON-only requests the Agent must explicitly
+publish a JSON artifact; final prose is not guessed into JSON or returned as a successful
+format match. Children and tools treat delivered content as untrusted task data.
+
 ## Capacity and operations
 
 A root allows at most 16 tasks and three delegation edges; a parent resumes at most
@@ -121,8 +153,9 @@ and A2A; a busy sandbox leaves an A2A task queued rather than executing and retr
 side effects. Different native sessions cannot rewrite the same sandbox concurrently.
 
 These are task, execution and time limits, not a precise token/currency budget.
-Binary artifacts, remote registries, native per-tool approval bridging, automatic
-migration of old entry points and distributed execution are not advertised.
+Large/binary input, automatic historical memory migration and distributed execution remain unsupported.
+Native approval constraints are documented in [unified ingress](A2A_INGRESS_APPROVALS.md). Aggregate
+admission accounting is documented in [resource limits](A2A_RESOURCE_LIMITS.md).
 
 Apply 20260922010000_a2a_local_collaboration after the native core migration, then
 regenerate Prisma Client. Existing published Context ownership is backfilled and
@@ -140,3 +173,7 @@ tests use a replacement executor. MCP interoperability uses the unmodified offic
 client. PGlite deliberately skips real PostgreSQL concurrency tests and cannot prove
 lock semantics. Live CLI/model/browser end-to-end acceptance and official A2A TCK
 certification have not been completed.
+
+This increment also requires `20260923050000_a2a_storage_accounting`; see [resource limits and migration](A2A_RESOURCE_LIMITS.md).
+
+Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.

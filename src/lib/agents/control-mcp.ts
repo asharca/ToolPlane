@@ -13,6 +13,7 @@ import {
 } from '@/lib/agents/control-service';
 
 export type AgentControlContext = {
+  actorId?: string;
   workspaceId: string;
   workspaceSlug: string;
 };
@@ -218,7 +219,7 @@ export async function executeAgentControlTool(
     }
     case 'send_message_to_agent': {
       const input = parseArguments(SendMessageArguments, rawArguments);
-      return sendAgentControlMessage(context.workspaceId, input);
+      return sendAgentControlMessage(context.workspaceId, input, context.actorId);
     }
     default:
       throw new AgentControlError('not_found', `Unknown tool: ${name}`);

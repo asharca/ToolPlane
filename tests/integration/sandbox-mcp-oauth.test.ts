@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { db } from '@/lib/db';
 import { handleSandboxOAuth } from '@/lib/sandboxes/oauth-http';
 import { handleSandboxMcp } from '@/lib/sandboxes/mcp-http';
@@ -186,7 +186,7 @@ describe('sandbox OAuth with PostgreSQL and genuine MCP SDK', () => {
   });
   it.each([undefined, 'sandbox:read offline_access'])(
     'discovers PRM/AS, registers dynamically and completes SDK PKCE (scope: %s)', async (scope) => {
-    let info: OAuthClientInformationFull | undefined; let tokens: OAuthTokens | undefined;
+    let info: OAuthClientInformationMixed | undefined; let tokens: OAuthTokens | undefined;
     let codeVerifier = ''; let browserUrl: URL | undefined;
     const provider: OAuthClientProvider = {
       redirectUrl: callback,

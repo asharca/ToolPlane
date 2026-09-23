@@ -67,6 +67,7 @@ export const POST = withRequestLogging("/api/v1/work-sessions/[workSessionId]/in
       conversationId: work.conversationId,
     });
     result = await appendWorkSessionInput(work.workspaceId, work.id, body.input, {
+      a2aActorId: user.id,
       ...(references.data.length ? { references: references.data } : {}),
       ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),

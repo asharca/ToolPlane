@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { workbenchHref } from '@/lib/a2a/workbench-client';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
@@ -2204,6 +2205,10 @@ export function WorkspaceWork({
             />
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <Link href={workbenchHref(slug, controlAgent?.runtimeKind === 'hermes' ? undefined : controlAgent?.id)}
+              prefetch={false} title={t('nativeA2A')} aria-label={t('nativeA2A')} className="ui-button-ghost h-8 px-2 text-xs">
+              <Activity className="size-4" /><span className="hidden sm:inline">{t('nativeA2A')}</span>
+            </Link>
             {selected && selected.status !== 'idle' ? (
               <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
                 <Circle className={cx('size-2 fill-current', statusDotClass(selected.status))} />

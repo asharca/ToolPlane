@@ -1,4 +1,5 @@
 import 'server-only';
+import { nativeApprovalAdapter, claudeApprovalSettings } from './native-tool-approval';
 import { withSandboxExecutionLease } from './sandbox-execution-gate';
 import { runHermesRpcTurn } from './hermes-rpc';
 import { assertRuntimeOwner, trackRuntimeOperation, runtimeAbortSignal, markRuntimeUncertain } from '@/lib/runtime/ownership-state';
@@ -101,6 +102,7 @@ export type RunSandboxAgentTurnOptions = {
   contextWindowEstimated?: boolean;
   modelProxyBase: string;
   runtimeAccessToken: string;
+  nativeApprovalUrl?: string;
   systemPrompt?: string | null;
   disabledBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
@@ -390,6 +392,7 @@ export function buildDshPatch(options: {
   disabledBuiltinTools?: readonly string[];
   eventPluginPath?: string;
   driverPluginPath?: string;
+  approvalPluginPath?: string;
 }): string {
   const protocol = dshProviderProtocol(options.provider.format);
   const proxy = httpUrl(options.modelProxyBase, 'model proxy URL');
@@ -453,8 +456,9 @@ export function buildDshPatch(options: {
   }
   const servers = options.mcpServers ?? [];
   if (options.driverPluginPath) rows.push('- id: headless-runner', '  disabled: true');
-  if (options.eventPluginPath || options.driverPluginPath || servers.length) {
+  if (options.approvalPluginPath || options.eventPluginPath || options.driverPluginPath || servers.length) {
     rows.push('- insert:');
+    if (options.approvalPluginPath) rows.push('    - id: toolplane-native-approval', `      name: ${yamlString(`file://${options.approvalPluginPath}`)}`);
     if (options.driverPluginPath) rows.push('    - id: toolplane-driver', `      name: ${yamlString(`file://${options.driverPluginPath}`)}`);
     if (options.eventPluginPath) {
       rows.push(
@@ -553,12 +557,13 @@ export function buildClaudeRuntimeArgs(options: {
   systemPrompt: string;
   disabledBuiltinTools: readonly string[];
   skillPluginRoot?: string;
+  approvalSettings?: string;
 }): string[] {
   return [
-    '--bare', '--print', '--verbose', '--output-format', 'stream-json',
+    ...(options.approvalSettings ? [] : ['--bare']), '--print', '--verbose', '--output-format', 'stream-json',
     '--include-partial-messages', ...(options.runtimeSessionId ? ['--input-format', 'stream-json'] : ['--no-session-persistence']),
-    '--setting-sources', 'user',
-    '--dangerously-skip-permissions', '--model', options.modelId,
+    '--setting-sources', options.approvalSettings ? '' : 'user',
+    ...(options.approvalSettings ? ['--permission-mode', 'dontAsk', '--settings', options.approvalSettings] : ['--dangerously-skip-permissions']), '--model', options.modelId,
     ...(options.disabledBuiltinTools.length ? ['--disallowedTools', ...options.disabledBuiltinTools] : []),
     ...(options.skillPluginRoot ? ['--plugin-dir', options.skillPluginRoot] : []),
     ...(options.systemPrompt ? ['--append-system-prompt', options.systemPrompt] : []),
@@ -1472,13 +1477,26 @@ async function runNativeSessionExec(options: RunSandboxAgentTurnOptions, exec: P
     model: options.modelId, api: options.provider.format === 'anthropic' ? 'anthropic-messages' : options.provider.format === 'openai-responses' ? 'openai-responses' : 'openai-completions',
     packageRoot: SANDBOX_RUNTIME_PACKAGES[options.runtimeKind].directory,
     statePath: `${sandboxRuntimeStateRoot(options.runtimeKind, options.agentId)}/sessions/${options.runtimeSessionId}.json`,
-    signature: createHash('sha256').update(JSON.stringify({ args: exec.args, workdir: exec.workdir, model: options.modelId, provider: options.provider, system: options.systemPrompt, mcp: options.mcpServers, skills: options.skills })).digest('hex'),
+    signature: createHash('sha256').update(JSON.stringify({ credentialGeneration: createHash('sha256').update(options.runtimeAccessToken).digest('hex'), args: exec.args, workdir: exec.workdir, model: options.modelId, provider: options.provider, system: options.systemPrompt, mcp: options.mcpServers, skills: options.skills })).digest('hex'),
     command: options.command, prompt: buildSandboxTranscript(options.messages), message: buildSandboxTranscript(options.messages.slice(-1)),
     history: history.filter((message) => message.role === 'user' || message.role === 'assistant').map((message) => ({ role: message.role, text: buildSandboxTranscript([message]) })),
   }), options.signal);
   if (exec.user) await runTrackedDockerExec({ container: exec.container, workdir: '/workspace', executable: 'chown', args: [exec.user, driverPath, inputPath], signal: options.signal, timeoutMs: 10_000 });
   try { return await runTrackedDockerExec({ ...exec, executable: 'node', args: [driverPath, inputPath], stdin: undefined }); }
   finally { await removeSandboxFiles(exec.container, [driverPath, inputPath]); }
+}
+
+async function installNativeApproval(options: RunSandboxAgentTurnOptions, container: string, runtime: 'pi' | 'claude-code' | 'dsh', runId: string) {
+  if (!options.nativeApprovalUrl) return null;
+  httpUrl(options.nativeApprovalUrl, 'native approval URL');
+  const helper = `${RUNTIME_TEMP_ROOT}/${runId}-approval.mjs`;
+  const adapter = `${RUNTIME_TEMP_ROOT}/${runId}-approval-${runtime}.mjs`;
+  await writeSandboxFile(container, helper, await readFile(`${process.cwd()}/scripts/a2a-native-approval.mjs`, 'utf8'), options.signal);
+  const source = runtime === 'claude-code' ? claudeApprovalSettings(helper) : nativeApprovalAdapter(runtime, helper);
+  if (runtime !== 'claude-code') await writeSandboxFile(container, adapter, source, options.signal);
+  if (runtime === 'claude-code') await runTrackedDockerExec({ container, workdir: '/workspace', executable: 'chown',
+    args: [CLAUDE_RUNTIME_USER, helper], signal: options.signal, timeoutMs: 10_000 });
+  return { helper, adapter, source };
 }
 
 async function runPi(
@@ -1499,6 +1517,8 @@ async function runPi(
   const mcpConfigPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-mcp.json`;
   const systemPromptPath = `${RUNTIME_TEMP_ROOT}/${runId}-pi-system.txt`;
   const tempPaths: string[] = [];
+  const approval = await installNativeApproval(options, container, 'pi', runId);
+  if (approval) tempPaths.push(approval.helper, approval.adapter);
   await writeSandboxFile(container, modelsPath, buildPiModelsConfig({
     provider: options.provider,
     modelId: options.modelId,
@@ -1510,6 +1530,7 @@ async function runPi(
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
     '--skill', skillRoot,
     '--provider', 'toolplane', '--model', options.modelId,
+    ...(approval ? ['--extension', approval.adapter] : []),
     ...(disabledBuiltinTools.length ? ['--exclude-tools', disabledBuiltinTools.join(',')] : []),
   ];
   let lineBuffer = '';
@@ -1557,6 +1578,7 @@ async function runPi(
       stdin: prompt,
       env: {
         TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
+        ...(options.nativeApprovalUrl ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl } : {}),
         PI_CODING_AGENT_DIR: stateRoot,
         PI_OFFLINE: '1',
         PI_TELEMETRY: '0',
@@ -1602,7 +1624,9 @@ async function runClaudeCode(
   const modelProxyBase = httpUrl(options.modelProxyBase, 'model proxy URL');
   const stateRoot = sandboxRuntimeStateRoot('claude-code', options.agentId);
   const tempPath = `${RUNTIME_TEMP_ROOT}/${options.runtimeSessionId ?? randomUUID()}-claude-mcp.json`;
+  const approval = await installNativeApproval(options, container, 'claude-code', options.runtimeSessionId ?? randomUUID());
   const args = buildClaudeRuntimeArgs({
+    ...(approval ? { approvalSettings: approval.source } : {}),
     modelId: options.modelId,
     runtimeSessionId: options.runtimeSessionId,
     systemPrompt,
@@ -1666,6 +1690,7 @@ async function runClaudeCode(
       stdin: options.command ?? prompt,
       env: {
         ANTHROPIC_API_KEY: options.runtimeAccessToken,
+        ...(options.nativeApprovalUrl ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl, TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken } : {}),
         ANTHROPIC_AUTH_TOKEN: options.runtimeAccessToken,
         ANTHROPIC_BASE_URL: modelProxyBase,
         CLAUDE_CONFIG_DIR: stateRoot,
@@ -1698,7 +1723,7 @@ async function runClaudeCode(
     if (!exactUsage && !options.command) await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
     return text;
   } finally {
-    if (!options.runtimeSessionId) await removeSandboxFiles(container, mcpServers.length ? [tempPath] : []);
+    if (!options.runtimeSessionId) await removeSandboxFiles(container, [...(mcpServers.length ? [tempPath] : []), ...(approval ? [approval.helper] : [])]);
   }
 }
 
@@ -1721,7 +1746,9 @@ async function runDsh(
   const eventPluginPath = `${RUNTIME_TEMP_ROOT}/${runId}-dsh-events.mjs`;
   const driverPluginPath = options.runtimeSessionId ? `${RUNTIME_TEMP_ROOT}/${runId}-dsh-driver.mjs` : undefined;
   const eventPrefix = `__TOOLPLANE_DSH_EVENT_${runId}__`;
+  const approval = await installNativeApproval(options, container, 'dsh', runId);
   const patch = buildDshPatch({
+    ...(approval ? { approvalPluginPath: approval.adapter } : {}),
     provider: options.provider,
     modelId: options.modelId,
     modelProxyBase,
@@ -1778,6 +1805,7 @@ async function runDsh(
       ],
       env: {
         TOOLPLANE_RUNTIME_TOKEN: options.runtimeAccessToken,
+        ...(options.nativeApprovalUrl ? { TOOLPLANE_APPROVAL_URL: options.nativeApprovalUrl } : {}),
         TOOLPLANE_MCP_AUTH: `Bearer ${options.runtimeAccessToken}`,
         DSH_HOME: stateRoot,
         DSH_PERMISSION_MODE: 'danger-full-access',
@@ -1810,7 +1838,7 @@ async function runDsh(
     await reportContextUsage(options, estimateContextTokens([systemPrompt, prompt, text]), true);
     return text;
   } finally {
-    await removeSandboxFiles(container, [patchPath, promptPath, eventPluginPath, ...(driverPluginPath ? [driverPluginPath] : [])]);
+    await removeSandboxFiles(container, [patchPath, promptPath, eventPluginPath, ...(driverPluginPath ? [driverPluginPath] : []), ...(approval ? [approval.helper, approval.adapter] : [])]);
   }
 }
 

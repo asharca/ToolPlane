@@ -134,6 +134,7 @@ async function start(workspaceId: string, connectionId: string): Promise<{ error
         const { runAgentChannelMessage } = await import('./message-service');
         const result = await runAgentChannelMessage({
           workspaceId, connectionId, agentId: active.agentId, sandboxId: active.sandboxId, attachmentParts, signal: controller.signal,
+          onAccepted: async (message) => { if (current()) await adapter.sendMessage(event.chatId, message, replyOptions); },
           rawBody: {
             message: event.text.trim() || 'Attachment',
             metadata: { roleIds: event.roleIds },

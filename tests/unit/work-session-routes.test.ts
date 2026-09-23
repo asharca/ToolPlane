@@ -91,6 +91,7 @@ describe('WorkSession API', () => {
       agentId: 'agent-1',
       sandboxId: 'sandbox-1',
       task: 'Run the tests',
+      a2aActorId: 'user-1',
       reasoningEffort: 'high',
       workingDirectory: '.',
     });
@@ -122,7 +123,7 @@ describe('WorkSession API', () => {
     expect(mocks.createWorkSession).toHaveBeenCalledWith(expect.objectContaining({ references }));
     mocks.getWorkSessionForUser.mockResolvedValue({ id: 'work-1', workspaceId: 'workspace-1', conversationId: 'conversation-1', sandbox: { id: 'sandbox-1' } });
     expect((await appendWorkInput(request({ input: 'Review', references }), params)).status).toBe(202);
-    expect(mocks.appendWorkSessionInput).toHaveBeenCalledWith('workspace-1', 'work-1', 'Review', { references });
+    expect(mocks.appendWorkSessionInput).toHaveBeenCalledWith('workspace-1', 'work-1', 'Review', { references, a2aActorId: 'user-1' });
   });
 
   it('validates and forwards a Hermes model selected for the new Work conversation', async () => {
@@ -193,7 +194,7 @@ describe('WorkSession API', () => {
       'workspace-1',
       'work-1',
       'Continue',
-      { reasoningEffort: 'low' },
+      { reasoningEffort: 'low', a2aActorId: 'user-1' },
     );
   });
 

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pruneMigrationMetadata } from './runtime-metadata.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputRoot = path.resolve(
@@ -277,6 +278,10 @@ await copyRuntimePackage(
   ],
 );
 await copyRuntimePackage('undici');
+// A2A is also imported by runtime scripts, outside Next's traced server bundle.
+// Copy the complete locked package and its production dependencies, not just
+// the files Next happened to trace for a particular route.
+await copyRuntimePackage('@a2a-js/sdk');
 const streamdownNodeModules = enclosingNodeModules(
   await realpath(path.join(root, 'node_modules', '@streamdown', 'code')),
 );
@@ -308,6 +313,13 @@ await Promise.all([
   'client/streamableHttp.js',
   'types.js',
 ].map((entry) => import(pathToFileURL(path.join(remoteMcpSdkRoot, entry)).href)));
+const a2aSdkRoot = path.join(outputRoot, 'node_modules/@a2a-js/sdk/dist');
+await Promise.all([
+  'index.js',
+  'client/index.js',
+  'server/index.js',
+  'errors/index.js',
+].map((entry) => import(pathToFileURL(path.join(a2aSdkRoot, entry)).href)));
 await pruneNodePty(outputRoot);
 
 await writeFile(
@@ -326,6 +338,10 @@ for (const [entry, description] of [
   ['public', 'public assets directory'],
   ['node_modules/node-pty', 'sandbox PTY runtime'],
   ['node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', 'remote MCP client runtime'],
+  ['node_modules/@a2a-js/sdk/dist/index.js', 'A2A protocol runtime'],
+  ['node_modules/@a2a-js/sdk/dist/client/index.js', 'A2A client runtime'],
+  ['node_modules/@a2a-js/sdk/dist/server/index.js', 'A2A server runtime'],
+  ['node_modules/@a2a-js/sdk/dist/errors/index.js', 'A2A error runtime'],
   ['node_modules/undici/index.js', 'remote MCP HTTP runtime'],
   ['node_modules/ws', 'connector WebSocket runtime'],
   ['node_modules/.bin/prisma', 'legacy entrypoint Prisma shim'],
@@ -344,11 +360,24 @@ for (const [entry, description] of [
   ['scripts/install-hermes-rpc.mjs', 'pinned Hermes RPC sandbox installer'],
   ['scripts/hermes-rpc-session.mjs', 'Hermes RPC protocol adapter'],
   ['scripts/hermes-rpc-bootstrap.py', 'Hermes RPC isolated native bootstrap'],
+  ['scripts/a2a-native-approval.mjs', 'native A2A execution approval bridge'],
+  ['scripts/a2a-hermes-approval.py', 'Hermes pre-execution approval middleware'],
   ['packages/connector/bin/runtime.mjs', 'connector package runtime'],
   ['prisma/schema.prisma', 'Prisma schema'],
 ]) {
   await assertPath(path.join(outputRoot, entry), description);
 }
+
+// Prisma lazily downloads its native schema engine on first CLI use. Materialize
+// it now so the Docker image and release archive contain the same complete,
+// validated migrator and the size budget includes that required binary.
+const migratorMetadata = await pruneMigrationMetadata(
+  path.join(embeddedRuntimeRoot, 'migrator', 'node_modules'),
+);
+console.log(`Removed ${migratorMetadata.files} migration metadata files (${(migratorMetadata.bytes / 1024 / 1024).toFixed(1)} MiB)`);
+await run(path.join(outputRoot, 'node_modules', '.bin', 'prisma'), ['validate'], {
+  CHECKPOINT_DISABLE: '1',
+});
 
 const runtimeBytes = await directorySize(outputRoot);
 const runtimeMiB = runtimeBytes / 1024 / 1024;

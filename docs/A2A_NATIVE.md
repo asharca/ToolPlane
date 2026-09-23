@@ -2,6 +2,8 @@
 
 [中文](A2A_NATIVE.zh-CN.md)
 
+You can also enable services, create credentials and copy examples in **Agent settings → A2A integration**; see the [console guide](A2A_CONSOLE.md).
+
 This service implements the **A2A 1.0 JSON-RPC binding**, with the official
 `@a2a-js/sdk` pinned to **1.2.0**. SDK and protocol versions are not interchangeable.
 See the [normative specification](https://a2a-protocol.org/latest/specification/).
@@ -105,14 +107,14 @@ characters, 512 KiB task snapshots, 32 messages/task, 128 tasks/context,
 eight observers/identity and 64 globally. Deadline is at most 840 seconds, bounded
 by Endpoint configuration, credential expiry and context retention. Continuation
 cannot extend it. Terminal contexts are cleaned in bounded batches after retention
-(up to 30 days). These limits are not exact token/currency budgets; aggregate output
-and storage quota integration needs separate acceptance before production rollout.
+(up to 30 days). These limits are not exact token/currency budgets; aggregate admission is described in
+[resource limits](A2A_RESOURCE_LIMITS.md).
 
 Only JSONRPC, streaming and text/plain are advertised. REST, gRPC, push callbacks,
-extended Cards, binary/structured input and a remote registry are not implemented.
+extended Cards and binary/structured input are not implemented by the public service.
 [Native local collaboration](A2A_LOCAL_COLLABORATION.md) now uses this same task core
-with parent joins and continuation. Legacy chat/Work/delegation entries are not
-automatically migrated; native per-tool approval bridging remains unimplemented.
+with parent joins and continuation. See [unified ingress and approvals](A2A_INGRESS_APPROVALS.md)
+for supported classic adapters and remaining managed Hermes/native interactive approval limits.
 Unsupported capabilities return standard errors. Input file URLs are never fetched.
 
 Apply migration 20260922000000_a2a_native_tasks and regenerate Prisma Client using the
@@ -125,3 +127,9 @@ uses isolated DB fixtures and a replacement executor, not production model crede
 TOOLPLANE_TEST_PGLITE=1 selects local embedded testing and intentionally skips the real
 PostgreSQL concurrency test; CI must not set it. This is not a claim of live CLI/model
 end-to-end acceptance or official TCK certification.
+
+External MCP clients may use the [native MCP bridge](A2A_MCP_BRIDGE.md) over this same task core, not the legacy Responses executor.
+
+This increment also requires `20260923050000_a2a_storage_accounting`; see [resource limits and migration](A2A_RESOURCE_LIMITS.md).
+
+Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.

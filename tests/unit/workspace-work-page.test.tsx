@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   effectiveStatus: vi.fn(),
   surface: vi.fn(),
   cookies: vi.fn(),
+  nativeAgents: vi.fn(),
+  nativeSurface: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ redirect: vi.fn(), notFound: () => { throw new Error('not found'); } }));
@@ -45,13 +47,17 @@ vi.mock('@/components/dashboard/work/WorkspaceWork', () => ({
   },
 }));
 
+vi.mock('@/lib/a2a/workbench', () => ({ listWorkbenchAgents: mocks.nativeAgents }));
+vi.mock('@/components/dashboard/work/A2AWorkbench', () => ({ A2AWorkbench: (props: unknown) => { mocks.nativeSurface(props); return <div>Native workbench</div>; } }));
+
 import WorkspaceWorkPage from '@/app/app/[workspace]/work/page';
 
 describe('Workspace Work page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', status: 'active' });
+    mocks.nativeAgents.mockResolvedValue([{ id: 'agent-pi', name: 'Pi', runtimeKind: 'pi', enabled: true, configured: true }]);
     mocks.listProviders.mockResolvedValue([]);
     mocks.listConversations.mockResolvedValue([]);
     mocks.getConversation.mockResolvedValue(null);
@@ -217,5 +223,23 @@ describe('Workspace Work page', () => {
     expect(mocks.surface).toHaveBeenCalledWith(expect.objectContaining({ selectedConversation: expect.objectContaining({
       id: 'history', agentId: 'agent-hermes', readOnly: false, hermesProfile: 'research', hermesProvider: 'provider-1', hermesModel: 'model-1',
     }) }));
+  });
+});
+
+
+describe('explicit native Work entry', () => {
+  it('uses native tasks without loading, resuming or migrating classic Work/chat records', async () => {
+    vi.clearAllMocks();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'native-user' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'native-workspace', status: 'active' });
+    mocks.nativeAgents.mockResolvedValue([{ id: 'agent-pi', name: 'Pi', runtimeKind: 'pi', enabled: true, configured: true }]);
+    render(await WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }), searchParams: Promise.resolve({ mode: 'a2a', agent: 'agent-pi', task: 'task-1' }) }));
+    expect(mocks.nativeSurface).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-pi', initialTaskId: 'task-1' }));
+    expect(mocks.nativeAgents).toHaveBeenCalledWith('native-workspace', 'native-user');
+    expect(mocks.listWorkSessions).not.toHaveBeenCalled(); expect(mocks.getConversation).not.toHaveBeenCalled();
+    expect(mocks.surface).not.toHaveBeenCalled();
+  });
+  it.each([{ w: 'old-work' }, { c: 'old-chat' }, { agent: 'foreign-agent' }, { task: 'orphan-task' }])('rejects ambiguous or unauthorized mode selection %s', async (extra) => {
+    await expect(WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }), searchParams: Promise.resolve({ mode: 'a2a', ...extra }) })).rejects.toThrow('not found');
   });
 });

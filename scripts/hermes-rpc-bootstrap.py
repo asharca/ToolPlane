@@ -61,6 +61,9 @@ def main():
     sys.path.insert(0, source)
     os.chdir(request["cwd"])
     try:
+        if request.get("approvalUrl"):
+            hook = runpy.run_path(request["approvalScript"])
+            hook["install_approval_gate"](request["approvalUrl"], request["token"])
         runpy.run_module("tui_gateway.entry", run_name="__main__")
     finally:
         # Keep native state, memories and learned skills, not an active grant.

@@ -1,3 +1,4 @@
+import { runNativeEntry, latestEntryText, nativeEntryResult } from '@/lib/a2a/ingress';
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { UIMessage } from 'ai';
@@ -26,7 +27,6 @@ import {
   implementedAgentRuntimeKind,
   isDedicatedSandboxRuntimeKind,
 } from '@/lib/agents/runtime-kind';
-import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import { activeConversationMessages } from './conversation-context';
 import { acquireConversationOperation, ConversationOperationError, operateConversation } from './conversation-operations';
 import { executeRuntimeCommand, RuntimeCommandError } from './runtime-command-service';
@@ -62,6 +62,7 @@ export async function runAgentMessage(params: {
   if (!agent) return { status: 404, body: { error: 'Agent not found' } };
   return runLoadedAgentMessage({
     agent,
+    actorId: params.userId,
     rawBody: params.rawBody,
     defaults: params.defaults,
   });
@@ -71,6 +72,7 @@ export async function runAgentMessage(params: {
 // URL workspace remains a hard boundary even when the caller can access more
 // than one workspace.
 export async function runWorkspaceAgentMessage(params: {
+  userId?: string;
   workspaceId: string;
   agentId: string;
   rawBody: unknown;
@@ -80,6 +82,7 @@ export async function runWorkspaceAgentMessage(params: {
   if (!agent) return { status: 404, body: { error: 'Agent not found' } };
   return runLoadedAgentMessage({
     agent,
+    actorId: params.userId,
     rawBody: params.rawBody,
     defaults: params.defaults,
   });
@@ -94,6 +97,7 @@ export async function runAgentChannelMessage(params: {
   defaults?: Partial<AgentMessageBody>;
   attachmentParts?: UIMessage['parts'];
   signal?: AbortSignal;
+  onAccepted?: (message: string) => Promise<void>;
 }): Promise<AgentMessageResult> {
   const channel = await db.agentChannelConnection.findFirst({
     where: { id: params.connectionId, workspaceId: params.workspaceId, agentId: params.agentId, sandboxId: params.sandboxId },
@@ -117,6 +121,7 @@ export async function runAgentChannelMessage(params: {
   const agent = await getAgent(params.workspaceId, params.agentId);
   if (!agent) return { status: 404, body: { error: 'Agent not found' } };
   const sessionKey = `channel:${channel.id}:${event.sessionKey}`;
+  if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !channel.a2aActorId) return { status: 409, body: { error: 'Authorize a native channel operator in Agent A2A settings first.' } };
   const command = body.message.trim().match(/^\/([a-z][a-z0-9_:-]{0,99})(?:@\w+)?(?:\s+([\s\S]*))?$/i);
   if (command) {
     const name = command[1].toLowerCase();
@@ -124,13 +129,16 @@ export async function runAgentChannelMessage(params: {
       where: { agentId: agent.id, runtimeSessionKey: sessionKey }, orderBy: { createdAt: 'desc' },
       include: { messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
-    const commands = sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []);
+    // Native channel ingress must not advertise legacy commands that bypass its task core.
+    const commands = isDedicatedSandboxRuntimeKind(agent.runtimeKind) ? [] : sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []);
     let conversationId = prior?.id ?? '';
     let message: string;
     if (name === 'help') {
       message = ['/new - Start a new conversation', ...commands.map((item) => `/${item.name}${item.description ? ` - ${item.description}` : ''}`), '/whoami - Show your chat and user IDs', '/help - Show commands'].join('\n');
     } else if (name === 'whoami') {
       message = `User ID: ${event.source.userId ?? '-'}\nChat ID: ${event.source.chatId ?? '-'}\nPlatform: ${channel.platform}`;
+    } else if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !['new'].includes(name)) {
+      message = 'Legacy runtime commands are unavailable through native A2A ingress. Use the native workbench.';
     } else if (name === 'compact' && !prior) {
       message = 'No active conversation to compact.';
     } else if (name !== 'new' && !commands.some((item) => item.name === name)) {
@@ -192,6 +200,8 @@ export async function runAgentChannelMessage(params: {
     rawBody: body,
     defaults: params.defaults,
     connectionId: channel.id,
+    actorId: channel.a2aActorId ?? undefined,
+    onAccepted: params.onAccepted,
     sandboxId: channel.sandboxId ?? undefined,
     attachmentParts: params.attachmentParts,
     signal: params.signal,
@@ -202,6 +212,8 @@ export async function runAgentChannelMessage(params: {
 
 async function runLoadedAgentMessage(params: {
   agent: LoadedMessageAgent;
+  actorId?: string;
+  onAccepted?: (message: string) => Promise<void>;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
@@ -283,7 +295,7 @@ async function runLoadedAgentMessage(params: {
     parts: m.parts as UIMessage['parts'],
   }));
   const userMessage: UIMessage = {
-    id: randomUUID(),
+    id: event.source.messageId ?? randomUUID(),
     role: 'user',
     parts: [{ type: 'text', text: event.promptText }, ...(params.attachmentParts ?? [])],
   };
@@ -313,18 +325,16 @@ async function runLoadedAgentMessage(params: {
     }
     const resolved = resolveAgentTools(agent);
     if (isDedicatedSandboxRuntimeKind(runtimeKind)) {
-      text = await runDedicatedSandboxTurn({
-        agent,
-        sandboxId: params.sandboxId,
-        runtimeSessionId: conversation.id,
-        signal: params.signal,
-        systemPrompt: agent.systemPrompt,
-        messages: [...priorMessages, userMessage] as never,
-        skills: resolved.skills,
-        deploymentIds: resolved.deploymentIds,
-        onCommands: (next) => { commands = next; },
-        onUsage: (next) => { usage = next; },
+      if (!params.actorId) return { status: 403, body: { error: 'An authenticated native execution actor is required.' } };
+      if (body.attachments.length || params.attachmentParts?.length) return { status: 415, body: { error: 'Native message ingress accepts text only.' } };
+      if (params.connectionId && !event.source.messageId) return { status: 400, body: { error: 'A stable channel message ID is required for native task deduplication.' } };
+      const result = await runNativeEntry({ kind: params.connectionId ? 'channel' : event.source.platform === 'mcp' ? 'control' : 'chat',
+        sourceId: conversation.id, channelId: params.connectionId, workspaceId: agent.workspaceId,
+        agentId: agent.id, actorId: params.actorId, messageId: userMessage.id, text: latestEntryText(userMessage), signal: params.signal,
+        onAccepted: (_task, path) => params.onAccepted?.(`Native task accepted. Approvals and progress (authorized console operator only): ${path}`),
       });
+      text = nativeEntryResult(result.task, result.path);
+
     } else {
       const tools = await buildAgentToolSet(resolved, {
         workspaceId: agent.workspaceId,

@@ -180,7 +180,7 @@ export const POST = withRequestLogging("/api/v1/workspaces/[slug]/agents/mcp", a
     } else {
       try {
         const result = await executeAgentControlTool(
-          { workspaceId: workspace.id, workspaceSlug: workspace.slug },
+          { workspaceId: workspace.id, workspaceSlug: workspace.slug, actorId: user.id },
           toolName,
           rpcParams?.arguments,
         );

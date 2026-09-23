@@ -21,6 +21,7 @@ import {
 
 type CreateWorkSessionInput = {
   workspaceId: string;
+  a2aActorId?: string;
   uploadedById?: string;
   agentId: string;
   sandboxId?: string;
@@ -203,6 +204,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         agentId: agent.id,
         sandboxId,
         conversationId: conversation.id,
+        a2aActorId: input.a2aActorId,
         task,
         title: task.slice(0, 80),
         acceptanceCriteria,
@@ -335,11 +337,13 @@ export async function finalizeWorkSessionCancellation(workspaceId: string, workS
 export async function resumeWorkSession(
   workspaceId: string,
   workSessionId: string,
+  actorId?: string,
 ): Promise<WorkSessionTransitionResult> {
   const updated = await db.workSession.updateMany({
     where: { id: workSessionId, workspaceId, status: 'failed' },
     data: {
       status: 'queued',
+      ...(actorId ? { a2aActorId: actorId } : {}),
       result: null,
       error: null,
       waitingQuestion: null,
@@ -361,6 +365,7 @@ export async function appendWorkSessionInput(
   workSessionId: string,
   input: string,
   options: {
+    a2aActorId?: string;
     uploadedById?: string;
     attachments?: PreparedWorkAttachment[];
     references?: ComposerReference[];
@@ -388,6 +393,7 @@ export async function appendWorkSessionInput(
       },
       data: {
         status: 'queued',
+        ...(options.a2aActorId ? { a2aActorId: options.a2aActorId } : {}),
         result: null,
         artifacts: [],
         error: null,

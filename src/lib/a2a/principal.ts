@@ -2,7 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import { decodeJwt } from 'jose';
 import { db } from '@/lib/db';
-import { resolveAgentApiPrincipal, AGENT_CLIENT_TOKEN_PREFIX, hasAgentApiScope } from '@/lib/agents/public-api/auth';
+import { resolveAgentApiPrincipal, AGENT_CLIENT_TOKEN_PREFIX } from '@/lib/agents/public-api/auth';
 import { takeAgentApiPrincipalRateLimit } from '@/lib/agents/public-api/rate-limit';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
 
@@ -15,13 +15,27 @@ export type A2AGrant = {
   scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;
 };
 export type LocalA2AGrant = {
+  entryPolicy?: { kind: 'chat' | 'work' | 'channel' | 'control'; sourceId: string; sourceAgentId: string; channelId?: string; binding: string; workingDirectory?: string };
   kind: 'local'; workspaceId: string; agentId: string; actorId: string;
   targetBinding: string; ownerKey: string; expiresAt: number;
   scopes: string[]; maxConcurrent: number; timeoutSeconds: number; retentionDays: number;
   ancestorTaskIds: string[]; ancestorAgentIds: string[];
   parentTaskId?: string; rootTaskId?: string;
 };
-export type TaskGrant = A2AGrant | LocalA2AGrant;
+export type RemoteA2AGrant = Omit<LocalA2AGrant, 'kind' | 'agentId'> & {
+  kind: 'remote'; remoteAgentId: string; sourceAgentId: string;
+  parentTaskId: string; rootTaskId: string;
+};
+export type TaskGrant = A2AGrant | LocalA2AGrant | RemoteA2AGrant;
+export function isRemoteGrant(grant: TaskGrant): grant is RemoteA2AGrant {
+  return 'kind' in grant && grant.kind === 'remote';
+}
+export function isWorkspaceGrant(grant: TaskGrant): grant is LocalA2AGrant | RemoteA2AGrant {
+  return isLocalGrant(grant) || isRemoteGrant(grant);
+}
+export function grantTargetId(grant: TaskGrant) {
+  return isLocalGrant(grant) ? grant.agentId : isRemoteGrant(grant) ? grant.remoteAgentId : grant.endpointPublicId;
+}
 export function isLocalGrant(grant: TaskGrant): grant is LocalA2AGrant {
   return 'kind' in grant && grant.kind === 'local';
 }
@@ -30,14 +44,15 @@ export class A2AHttpError extends Error {
 }
 export function permits(grant: Pick<TaskGrant, 'scopes'>, operation: A2AOperation) {
   const required = operation === 'cancel' ? ['a2a:cancel', 'a2a:read'] : [`a2a:${operation}`];
-  return hasAgentApiScope(grant.scopes, required);
+  // Opt-in is explicit: an old wildcard/Responses client must not silently gain A2A access.
+  return required.every((scope) => grant.scopes.includes(scope));
 }
 export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
   // Direct server-to-server profile. Browser support needs a separate CORS/OAuth design.
   if (req.headers.has('origin')) throw new A2AHttpError(403, 'Browser origins are not supported by this A2A interface.');
   const principal = await resolveAgentApiPrincipal(req, endpointPublicId);
   if (!principal) throw new A2AHttpError(401, 'A valid Agent Endpoint credential is required.');
-  if (!A2A_SCOPES.some((scope) => hasAgentApiScope(principal.scopes, scope))) throw new A2AHttpError(403, 'A2A permission is required.');
+  if (!A2A_SCOPES.some((scope) => principal.scopes.includes(scope))) throw new A2AHttpError(403, 'A2A permission is required.');
   const endpoint = await db.agentEndpoint.findFirst({ where: { id: principal.endpointId,
     a2aEnabled: true, status: 'active', workspace: { status: 'active' } }, select: { id: true } });
   if (!endpoint) throw new A2AHttpError(404, 'Agent service not found.');
@@ -63,6 +78,10 @@ export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
 /** Rechecked during execution and subscriptions, so revocation is not admission-only. */
 export async function assertLiveGrant(grant: TaskGrant, operation: A2AOperation = 'read') {
   if (!permits(grant, operation) || (grant.expiresAt !== null && grant.expiresAt <= Date.now())) throw new TaskNotFoundError();
+  if (isRemoteGrant(grant)) {
+    const { assertRemoteGrant } = await import('./remote-policy');
+    return assertRemoteGrant(grant, undefined, operation === 'cancel');
+  }
   if (isLocalGrant(grant)) {
     const { assertLocalGrant } = await import('./local-policy');
     return assertLocalGrant(grant);

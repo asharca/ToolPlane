@@ -16,6 +16,8 @@ vi.mock('@/components/dashboard/agents/AgentMessagingPanel', () => ({
   AgentMessagingPanel: () => <div>channel-settings</div>,
 }));
 
+vi.mock('@/components/dashboard/agents/AgentA2APanel', () => ({ AgentA2APanel: () => <div>native-a2a-panel</div> }));
+
 const settings = {
   name: 'Release copilot',
   runtimeKind: 'pi',
@@ -73,4 +75,10 @@ describe('AgentSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
     expect(await screen.findByText('channel-settings')).toBeInTheDocument();
   });
+});
+
+it('opens A2A from its deep-linked settings tab', async () => {
+  render(<AgentSettings slug="acme" agentId="agent-1" settings={settings} channelSettings={{ connections: [] }} ready agentName="Agent" initialSettingsTab="a2a" />);
+  expect(await screen.findByText('native-a2a-panel')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'A2A integration' })).toHaveAttribute('aria-current', 'page');
 });

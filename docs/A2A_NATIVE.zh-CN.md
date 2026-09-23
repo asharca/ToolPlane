@@ -2,6 +2,8 @@
 
 > [English](A2A_NATIVE.md)
 
+现在也可以在 **Agent 设置 → A2A 接入** 中开启服务、创建凭据和复制示例，见[控制台指南](A2A_CONSOLE.zh-CN.md)。
+
 本功能使用 A2A **1.0** 网络协议，依赖精确锁定的官方 `@a2a-js/sdk@1.2.0`。
 协议版本与 SDK 版本不同。依据 [A2A 规范](https://a2a-protocol.org/latest/specification/)
 实现 JSON-RPC 绑定；没有启用 SDK 的 v0.3 兼容层。
@@ -110,14 +112,14 @@ agentId 作为授权。读、继续、取消和订阅都限制到 Endpoint、客
 1,000 个保留任务；Worker 最多四个执行；每身份八个、全局 64 个观察连接。
 任务最长 840 秒，实际取 Endpoint 超时、凭据寿命和 Context 到期时间中的最小值；补充
 信息不会延长原截止时间。Context 最多保留 30 天，终结后按有限批次清理。
-这些不等于精确的金额或 Token 预算；聚合输出/存储额度仍需独立验收。
+聚合输出预留和载荷存储准入已加入，见[资源限额](A2A_RESOURCE_LIMITS.zh-CN.md)。它们不是精确金额或 Token 计费。
 
 ## 支持范围与验证
 
 只声明 JSONRPC、streaming 和 text/plain。REST、gRPC、Push Notification、扩展 Card、
 文件与结构化输入均未声明实现；不支持的能力返回标准错误，不伪造成功。
 没有自动注册任意外部 URL，不会抓取调用方提供的文件 URL。
-内部 Agent 现在可以通过独立的[原生协作入口](A2A_LOCAL_COLLABORATION.zh-CN.md)使用同一任务核心，支持父任务等待与续轮。旧聊天/Work/委派入口尚未自动迁移，运行时原生审批桥接仍未实现。
+内部 Agent 现在可以通过独立的[原生协作入口](A2A_LOCAL_COLLABORATION.zh-CN.md)使用同一任务核心，支持父任务等待与续轮。受支持的旧入口适配及执行前审批见[统一入口说明](A2A_INGRESS_APPROVALS.zh-CN.md)，不代表托管 Hermes 或所有原生交互审批已经迁移。
 
 升级前按平台单所有者流程应用 `20260922000000_a2a_native_tasks` 并重新生成 Prisma Client。
 此迁移新增独立表、索引和显式开关，不迁移/重放旧会话或旧协作任务。
@@ -133,3 +135,9 @@ pnpm lint
 集成测试使用隔离数据库和替身执行器；`TOOLPLANE_TEST_PGLITE=1` 仅用于本地嵌入数据库，
 明确跳过真实 PostgreSQL 并发锁验证。CI 不应设置该标记。不能把此模式结果当成真实
 PostgreSQL 并发、真实 Hermes/CLI/模型端到端验收或官方 TCK 认证。
+
+外部 MCP 客户端可通过[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)使用同一任务核心，不经过旧 Responses 执行链。
+
+本版还需应用 `20260923050000_a2a_storage_accounting`，参见[资源限额与迁移](A2A_RESOURCE_LIMITS.zh-CN.md)。
+
+内部任务现在可通过[远程 Agent 注册与委派](A2A_REMOTE_AGENTS.zh-CN.md)调用经过单独批准的外部 A2A 服务。部署来源白名单、工作区注册和发起方 Agent 授权都必须显式配置；不自动开放私人资源。

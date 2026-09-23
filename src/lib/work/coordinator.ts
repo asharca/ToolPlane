@@ -1,5 +1,7 @@
 import { systemLog } from '@/lib/observability/system';
 import 'server-only';
+import { TaskState } from '@a2a-js/sdk';
+import { runNativeEntry, latestEntryText, nativeEntryResult } from '@/lib/a2a/ingress';
 import { runtimeCanOperate, trackRuntimeOperation } from '@/lib/runtime/ownership-state';
 import { withLogContext, enrichLogContext } from '@/lib/observability/context';
 import { recordEvent } from '@/lib/observability/events';
@@ -19,9 +21,8 @@ import { toolKey } from '@/lib/agents/tools';
 import { assembleSystemPrompt } from '@/lib/agents/system-prompt';
 import { runNativeAgent, uiMessagesToPi } from '@/lib/agents/native';
 import { isDedicatedSandboxRuntimeKind, isWorkRuntimeKind } from '@/lib/agents/runtime-kind';
-import { runDedicatedSandboxTurn } from '@/lib/agents/sandbox-turn';
 import type { SandboxRuntimeActivity } from '@/lib/agents/sandbox-runtime';
-import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, sessionRuntimeCommands, type RuntimeCommand, type RuntimeUsage } from '@/lib/agents/runtime-commands';
+import { COMMAND_RESULT_PART, RUNTIME_COMMANDS_PART, RUNTIME_USAGE_PART, parseRuntimeCommand, type RuntimeCommand, type RuntimeUsage } from '@/lib/agents/runtime-commands';
 import {
   runHermesWork,
   stopHermesWorkRun,
@@ -522,7 +523,6 @@ async function executeWork(workSessionId: string) {
   let contextUsage: ContextUsageSnapshot | undefined;
   let commands: RuntimeCommand[] | undefined;
   let usage: RuntimeUsage | undefined;
-  let executedCommand: ReturnType<typeof parseRuntimeCommand> = null;
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
     ...(commands ? [{ type: RUNTIME_COMMANDS_PART, data: { runtimeKind: work.runtimeKind, commands } } as Prisma.InputJsonValue] : []),
     ...(usage ? [{ type: RUNTIME_USAGE_PART, data: usage } as Prisma.InputJsonValue] : []),
@@ -878,35 +878,21 @@ async function executeWork(workSessionId: string) {
         writeLease.release();
       }
     } else if (isDedicatedSandboxRuntimeKind(work.runtimeKind)) {
+      if (!work.a2aActorId) throw new Error('This historical Work record has no authenticated native actor. Send a new input or explicitly resume it.');
       const last = runtimeMessages.at(-1);
-      const commandText = last?.role === 'user' ? last.parts.filter((part) => part.type === 'text' && !('reference' in part)).map((part) => part.text ?? '').join('\n') : '';
-      const command = parseRuntimeCommand(commandText);
-      executedCommand = command;
-      if (command && !sessionRuntimeCommands(work.runtimeKind, work.conversation.messages).some((item) => item.name === command.name)) throw new Error('This command is not available for the current runtime.');
-      const system = [
-        saved.systemPrompt ?? agent.systemPrompt,
-        workSystemPrompt(workingDirectory, true),
-      ].filter(Boolean).join('\n\n---\n\n');
-      response = await runDedicatedSandboxTurn({
-        agent,
-        sandboxId: work.sandbox.id,
-        systemPrompt: system,
-        messages: command ? runtimeMessages.slice(0, -1) : runtimeMessages,
-        ...(command ? { command: commandText } : {}),
-        runtimeSessionId: work.conversationId,
-        skills: resolved.skills,
-        deploymentIds: resolved.deploymentIds.filter((id) => !resolved.sandboxDeploymentIds.includes(id)),
-        workingDirectory,
-        signal: controller.signal,
-        onTextDelta: (delta) => {
-          finishReasoning();
-          publishWorkOutput(work.id, delta);
-        },
-        onActivity,
-        onContextUsage: (usage) => { contextUsage = usage; },
-        onCommands: (next) => { commands = next; },
-        onUsage: (next) => { usage = next; },
+      const text = latestEntryText(last);
+      if (parseRuntimeCommand(text)) throw new Error('Native task ingress does not execute legacy slash commands. Submit an explicit task instead.');
+      const result = await runNativeEntry({ kind: 'work', sourceId: work.id,
+        workspaceId: work.workspaceId, agentId: agent.id, actorId: work.a2aActorId,
+        messageId: last?.id ?? work.id, text, signal: controller.signal,
+        onAccepted: (_task, path) => publishWorkOutput(work.id, `Native task accepted. Tool approvals and progress: ${path}\n\n`),
       });
+      response = nativeEntryResult(result.task, result.path);
+      outcome.current = result.task.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED
+        ? { kind: 'waiting_user', question: response }
+        : { kind: 'complete', summary: response, artifacts: result.task.artifacts.map((item) => item.artifactId) };
+      publishWorkOutput(work.id, response);
+
     } else {
       if (!provider || !model) throw new Error('Work Agent has no configured model.');
       const calls = new Map<string, ToolCall[]>();
@@ -993,10 +979,10 @@ async function executeWork(workSessionId: string) {
       status: 'completed',
       runtimeKind: work.runtimeKind,
     });
-    const controlCommand = executedCommand && (['compact', 'context', 'usage', 'clear'].includes(executedCommand.name) || (executedCommand.name === 'goal' && ['', 'pause', 'clear'].includes(executedCommand.args.toLowerCase()))) ? executedCommand.name : undefined;
-    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming(), runtimeMetadata(), controlCommand);
+
+    await appendAssistantResult(work.conversationId, fallbackText, traceParts(), contextUsage, turnTiming(), runtimeMetadata());
     tracePersisted = true;
-    if (!executedCommand && !pendingTitles.has(work.id)) {
+    if (!pendingTitles.has(work.id)) {
       pendingTitles.add(work.id);
       void generateWorkSessionTitle(work.workspaceId, work.agentId, work.conversationId)
         .catch((error) => systemLog('warn', `[work] ${work.id} title generation failed`, error))

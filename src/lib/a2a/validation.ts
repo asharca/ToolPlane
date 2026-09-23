@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { A2A_LIMITS } from './model';
+import { A2A_LIMITS, acceptsOutput } from './model';
 import { ContentTypeNotSupportedError, RequestMalformedError, PushNotificationNotSupportedError,
   ExtensionSupportRequiredError } from '@a2a-js/sdk/errors';
 import { SendMessageRequest, Role } from '@a2a-js/sdk';
@@ -40,17 +40,17 @@ const List = z.object({ tenant: Tenant, contextId: OptionalId,
 const Rpc = z.object({ jsonrpc: z.literal('2.0'), id: z.union([z.string().max(200), z.number().int().safe(), z.null()]).optional(),
   method: z.string().min(1).max(100), params: z.unknown().optional(),
 }).strict();
-export { Rpc };
+export { Rpc, Send as A2ASendSchema, Get as A2AGetSchema, Cancel as A2ACancelSchema, List as A2AListSchema };
 /** Validate before SDK fromJSON: it intentionally coerces values and selects oneofs. */
-export function validateParams(method: string, raw: unknown) {
+export function validateParams(method: string, raw: unknown, outputModes: readonly string[] = ['text/plain']) {
   const schema = method === 'SendMessage' || method === 'SendStreamingMessage' ? Send
     : method === 'GetTask' ? Get : method === 'CancelTask' ? Cancel : method === 'SubscribeToTask' ? TaskId
     : method === 'ListTasks' ? List : null;
   if (!schema) return;
   if (!schema.safeParse(raw).success) throw new RequestMalformedError('Invalid A2A method parameters.');
-  if (method === 'SendMessage' || method === 'SendStreamingMessage') validateSend(SendMessageRequest.fromJSON(raw));
+  if (method === 'SendMessage' || method === 'SendStreamingMessage') validateSend(SendMessageRequest.fromJSON(raw), outputModes);
 }
-export function validateSend(request: SendMessageRequest) {
+export function validateSend(request: SendMessageRequest, outputModes: readonly string[] = ['text/plain']) {
   const message = request.message;
   if (!message || !message.messageId || message.role !== Role.ROLE_USER || !message.parts.length) throw new RequestMalformedError('A user message with messageId and parts is required.');
   if (request.configuration?.taskPushNotificationConfig) throw new PushNotificationNotSupportedError();
@@ -59,5 +59,5 @@ export function validateSend(request: SendMessageRequest) {
   const text = message.parts.map((part) => part.content?.value ?? '').join('\n');
   if (!text.trim() || text.length > A2A_LIMITS.inputCharacters) throw new RequestMalformedError('Input is empty or exceeds the service input limit.');
   const modes = request.configuration?.acceptedOutputModes ?? [];
-  if (modes.length && !modes.some((mode) => mode === 'text/plain' || mode === 'text/*' || mode === '*/*')) throw new ContentTypeNotSupportedError('This service produces text/plain.');
+  if (!outputModes.some((mode) => acceptsOutput(modes, mode))) throw new ContentTypeNotSupportedError('Requested output media types are not supported by this service.');
 }
