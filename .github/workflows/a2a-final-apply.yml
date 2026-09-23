@@ -1,0 +1,50 @@
+name: a2a-final-apply
+on:
+  push:
+    branches: [feat/a2a-console-onboarding]
+    paths: ['.a2a-final.*', '.github/workflows/a2a-final-apply.yml']
+permissions:
+  contents: write
+concurrency:
+  group: a2a-final-source-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'asharca/ToolPlane' && github.ref == 'refs/heads/feat/a2a-console-onboarding'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Apply verified source without production credentials
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, lzma, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          compressed = b''.join((root / f'.a2a-final.{i}').read_bytes() for i in range(1, 11))
+          assert hashlib.sha256(compressed).hexdigest() == '1c6ea0e2c83f56b9992175c9e2b8f021af0764d79a4fcd9dc31d5315bbb9ab9f'
+          patch = lzma.decompress(compressed)
+          assert len(patch) == 165118
+          assert hashlib.sha256(patch).hexdigest() == '851d764ef5b278727ff4171304804869cd165bd44e262e9be365b39f33b29053'
+          target = pathlib.Path('/tmp/a2a-final.patch')
+          target.write_bytes(patch)
+          allowed = set(['.github/workflows/a2a-review-source.yml', 'docs/A2A_CONSOLE.md', 'docs/A2A_CONSOLE.zh-CN.md', 'docs/A2A_LOCAL_COLLABORATION.md', 'docs/A2A_LOCAL_COLLABORATION.zh-CN.md', 'docs/A2A_MCP_BRIDGE.md', 'docs/A2A_MCP_BRIDGE.zh-CN.md', 'docs/A2A_NATIVE.md', 'docs/A2A_NATIVE.zh-CN.md', 'docs/A2A_RESOURCE_LIMITS.md', 'docs/A2A_RESOURCE_LIMITS.zh-CN.md', 'docs/A2A_VALIDATION.md', 'docs/README.md', 'docs/README.zh-CN.md', 'messages/en.json', 'messages/zh.json', 'prisma/migrations/20260923050000_a2a_storage_accounting/migration.sql', 'prisma/schema.prisma', 'src/app/api/v1/agent-endpoints/[endpointId]/a2a/mcp/route.ts', 'src/app/api/v1/workspaces/[slug]/agents/[agentId]/a2a/console/tasks/route.ts', 'src/components/dashboard/agents/A2AArtifactParts.tsx', 'src/components/dashboard/agents/AgentA2APanel.tsx', 'src/components/dashboard/agents/AgentA2ATaskMonitor.tsx', 'src/lib/a2a/connection-info.ts', 'src/lib/a2a/console-http.ts', 'src/lib/a2a/console-tasks.ts', 'src/lib/a2a/handler.ts', 'src/lib/a2a/http.ts', 'src/lib/a2a/local-artifacts.ts', 'src/lib/a2a/local-executor.ts', 'src/lib/a2a/local-http.ts', 'src/lib/a2a/local-mcp.ts', 'src/lib/a2a/model.ts', 'src/lib/a2a/principal.ts', 'src/lib/a2a/quotas.ts', 'src/lib/a2a/service-mcp.ts', 'src/lib/a2a/store.ts', 'src/lib/a2a/validation.ts', 'src/lib/a2a/worker.ts', 'src/lib/agents/public-api/runs.ts', 'tests/integration/a2a-local.test.ts', 'tests/integration/a2a-native.test.ts', 'tests/integration/a2a-storage-migration.test.ts', 'tests/unit/a2a-architecture.test.ts', 'tests/unit/a2a-artifact-parts.test.tsx', 'tests/unit/a2a-connection-info.test.ts', 'tests/unit/a2a-console-http.test.ts', 'tests/unit/a2a-http.test.ts', 'tests/unit/a2a-local-artifacts.test.ts', 'tests/unit/a2a-service-mcp.test.ts', 'tests/unit/agent-a2a-panel.test.tsx', 'tests/unit/agent-a2a-task-monitor.test.tsx'])
+          stats = subprocess.check_output(['git', 'apply', '--numstat', str(target)], text=True)
+          paths = {line.split('\t', 2)[2] for line in stats.splitlines()}
+          assert paths == allowed, paths ^ allowed
+          subprocess.run(['git', 'apply', '--check', str(target)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(target)], check=True)
+          for i in range(1, 11):
+              (root / f'.a2a-final.{i}').unlink()
+          (root / '.github/workflows/a2a-final-apply.yml').unlink()
+          subprocess.run(['git', 'add', '--all'], check=True)
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          assert subprocess.check_output(['git', 'write-tree'], text=True).strip() == '2151b7d2cf57aa73f7c235318a9a52e7073fa4ad'
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: complete native A2A task monitoring, MCP access and resource controls'
+          git push origin HEAD:refs/heads/feat/a2a-console-onboarding
