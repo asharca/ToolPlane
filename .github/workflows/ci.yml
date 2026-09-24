@@ -150,6 +150,7 @@ jobs:
           expected_files=$'.release-please-manifest.json\nCHANGELOG.md\npackage.json'
           actual_files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' | LC_ALL=C sort)"
           test "$actual_files" = "$expected_files"
+          test "${GITHUB_EVENT_NAME}" = pull_request_target
 
   release-metadata-connectors:
     name: connector (${{ matrix.os }})
