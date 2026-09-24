@@ -63,11 +63,7 @@ jobs:
         run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts tests/integration/deployment-config-volume.live.test.ts
 
   validate:
-    if: >-
-      github.event_name != 'pull_request_target' &&
-      !(github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
+    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -154,6 +150,7 @@ jobs:
           expected_files=$'.release-please-manifest.json\nCHANGELOG.md\npackage.json'
           actual_files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' | LC_ALL=C sort)"
           test "$actual_files" = "$expected_files"
+          test "${GITHUB_EVENT_NAME}" = pull_request_target
 
   release-metadata-connectors:
     name: connector (${{ matrix.os }})
