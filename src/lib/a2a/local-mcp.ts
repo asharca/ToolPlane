@@ -51,6 +51,8 @@ function admit(id: string) {
 }
 export async function executeLocalMcpTool(token: AgentRuntimeTokenPayload, name: string, raw: unknown) {
   const { row, grant, target } = await assertLocalRuntimeToken(token);
+  if (!(await db.agent.count({ where: { id: grant.agentId, workspaceId: grant.workspaceId,
+    a2aInternalEnabled: true } }))) throw new Error('A2A collaboration is disabled for this Agent.');
   switch (name) {
     case 'a2a_list_remote_agents': {
       Empty.parse(raw);

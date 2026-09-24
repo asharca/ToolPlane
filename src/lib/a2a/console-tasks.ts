@@ -2,7 +2,7 @@ import 'server-only';
 import { Task } from '@a2a-js/sdk';
 import { TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { db } from '@/lib/db';
-import { createLocalRootGrant, LOCAL_LIMITS, localTarget } from './local-policy';
+import { assertLocalGrant, createLocalEntryGrant, createLocalRootGrant, LOCAL_LIMITS, localOwnerKey, localTarget } from './local-policy';
 import { isLocalGrant, isRemoteGrant, isWorkspaceGrant, type TaskGrant } from './principal';
 import { remoteTarget } from './remote-policy';
 import { getTaskRow } from './store';
@@ -21,7 +21,16 @@ export type ConsoleTaskTree = {
 /** Knowing a child ID never authorizes it: enter through an owned, non-delegated root. */
 export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, selectedId = rootId, historyLength = 0): Promise<ConsoleTaskTree> {
   if (!Number.isSafeInteger(historyLength) || historyLength < 0 || historyLength > 32) throw new UnsupportedOperationError('Invalid history length.');
-  const authority = await createLocalRootGrant(ctx.workspaceId, ctx.agentId, ctx.actorId);
+  const stored = await db.a2ATask.findFirst({ where: { id: rootId, parentTaskId: null,
+    context: { workspaceId: ctx.workspaceId, agentId: ctx.agentId, targetKind: 'local' } } });
+  if (!stored) throw new TaskNotFoundError();
+  const entry = stored.grant as unknown as TaskGrant;
+  if (isLocalGrant(entry) && entry.entryPolicy && entry.actorId !== ctx.actorId) throw new TaskNotFoundError();
+  if (isLocalGrant(entry) && entry.entryPolicy) await assertLocalGrant(entry);
+  const authority = isLocalGrant(entry) && entry.entryPolicy && entry.ancestorTaskIds.length === 0
+    ? entry.ownerKey === localOwnerKey(ctx.workspaceId, ctx.agentId, ctx.actorId)
+      ? entry : await createLocalEntryGrant(db, ctx.workspaceId, ctx.agentId, ctx.actorId, entry.entryPolicy)
+    : await createLocalRootGrant(ctx.workspaceId, ctx.agentId, ctx.actorId);
   const root = await getTaskRow(authority, rootId);
   if (root.parentTaskId || root.rootTaskId !== root.id) throw new TaskNotFoundError();
   const rows = await db.a2ATask.findMany({ where: {
@@ -64,7 +73,8 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
     }
     let target = targets.get(grant.agentId);
     if (!target) {
-      try { target = await localTarget(db, ctx.workspaceId, grant.agentId); targets.set(grant.agentId, target); }
+      try { target = await localTarget(db, ctx.workspaceId, grant.agentId,
+        row.id === root.id && grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined); targets.set(grant.agentId, target); }
       catch { continue; }
     }
     // Historical execution expiry is not a read credential. Current actor/edge/config still governs access.

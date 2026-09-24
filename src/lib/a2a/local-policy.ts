@@ -15,15 +15,20 @@ const missing = () => new TaskNotFoundError();
 export function localOwnerKey(...values: string[]) {
   return createHash('sha256').update(JSON.stringify(['toolplane:a2a:local:v1', ...values])).digest('hex');
 }
+export function localEntryOwnerKey(workspaceId: string, agentId: string, actorId: string,
+  entry: NonNullable<LocalA2AGrant['entryPolicy']>) {
+  return localOwnerKey('entry', workspaceId, agentId, actorId, entry.kind, entry.sourceId);
+}
 export async function assertLocalActor(tx: Database, workspaceId: string, actorId: string) {
   if (!await tx.workspace.count({ where: { id: workspaceId, status: 'active', owner: { status: 'active' }, OR: [
     { ownerId: actorId }, { members: { some: { userId: actorId, user: { status: 'active' } } } },
   ] } }) || !await tx.user.count({ where: { id: actorId, status: 'active' } })) throw missing();
 }
 /** Hash configured capabilities, never persist their credentials in a grant or task. */
-export async function localTarget(tx: Database, workspaceId: string, agentId: string) {
+export async function localTarget(tx: Database, workspaceId: string, agentId: string, entry?: LocalA2AGrant['entryPolicy']) {
+  if (entry && entry.sourceAgentId !== agentId) throw missing();
   const agent = await tx.agent.findFirst({ where: { ...ORDINARY_AGENT_FILTER, id: agentId,
-    workspaceId, a2aInternalEnabled: true }, select: {
+    workspaceId, ...(!entry || entry.kind === 'channel' ? { a2aInternalEnabled: true } : {}) }, select: {
     id: true, name: true, runtimeKind: true, systemPrompt: true, model: true, maxSteps: true,
     disabledBuiltinTools: true, provider: { select: { id: true, format: true, baseUrl: true, apiKey: true } },
     sandboxes: { select: { sandboxId: true, sandbox: { select: { workspaceId: true, kind: true, network: true, image: true, config: true } } } },
@@ -58,9 +63,13 @@ export async function localTarget(tx: Database, workspaceId: string, agentId: st
 export async function assertLocalGrant(grant: LocalA2AGrant, tx: Database = db) {
   if (grant.expiresAt <= Date.now() || grant.ancestorTaskIds.length > LOCAL_LIMITS.depth
     || grant.ancestorTaskIds.length !== grant.ancestorAgentIds.length) throw missing();
+  if (grant.entryPolicy && grant.ancestorTaskIds.length === 0
+    && grant.ownerKey !== localEntryOwnerKey(grant.workspaceId, grant.agentId, grant.actorId, grant.entryPolicy)
+    && grant.ownerKey !== localOwnerKey(grant.workspaceId, grant.agentId, grant.actorId)) throw missing();
   await assertLocalActor(tx, grant.workspaceId, grant.actorId);
   if (grant.entryPolicy) await (await import('./entry-policy')).assertEntryPolicy(tx, grant);
-  if ((await localTarget(tx, grant.workspaceId, grant.agentId)).binding !== grant.targetBinding) throw missing();
+  const entry = grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined;
+  if ((await localTarget(tx, grant.workspaceId, grant.agentId, entry)).binding !== grant.targetBinding) throw missing();
   for (let index = 0; index < grant.ancestorTaskIds.length; index++) {
     const ancestor = await tx.a2ATask.findUnique({ where: { id: grant.ancestorTaskIds[index] } });
     if (!ancestor || ancestor.cancelRequestedAt || ancestor.deadlineAt <= new Date()
@@ -81,6 +90,16 @@ export async function createLocalRootGrant(workspaceId: string, agentId: string,
     scopes: [...A2A_SCOPES], maxConcurrent: 4, timeoutSeconds: 840, retentionDays: 7,
     ancestorTaskIds: [], ancestorAgentIds: [] };
 }
+/** Ordinary ingress is bound to its live source, not the A2A opt-in switch. */
+export async function createLocalEntryGrant(tx: Database, workspaceId: string, agentId: string, actorId: string,
+  entry: NonNullable<LocalA2AGrant['entryPolicy']>): Promise<LocalA2AGrant> {
+  await assertLocalActor(tx, workspaceId, actorId);
+  const target = await localTarget(tx, workspaceId, agentId, entry);
+  return { kind: 'local', workspaceId, agentId, actorId, entryPolicy: entry, targetBinding: target.binding,
+    ownerKey: localEntryOwnerKey(workspaceId, agentId, actorId, entry), expiresAt: Date.now() + 840_000,
+    scopes: [...A2A_SCOPES], maxConcurrent: 4, timeoutSeconds: 840, retentionDays: 7,
+    ancestorTaskIds: [], ancestorAgentIds: [] };
+}
 export async function childGrant(parentId: string, lease: string, targetId: string): Promise<LocalA2AGrant> {
   const parent = await db.a2ATask.findUnique({ where: { id: parentId } });
   if (!parent || parent.state !== TaskState.TASK_STATE_WORKING || parent.phase !== 'executing'
@@ -88,6 +107,8 @@ export async function childGrant(parentId: string, lease: string, targetId: stri
   const authority = parent.grant as unknown as TaskGrant;
   if (!isLocalGrant(authority)) throw missing();
   await assertLocalGrant(authority);
+  if (authority.entryPolicy && !(await db.agent.count({ where: { id: authority.agentId,
+    workspaceId: authority.workspaceId, a2aInternalEnabled: true } }))) throw missing();
   const chain = [...authority.ancestorAgentIds, authority.agentId];
   if (chain.includes(targetId) || chain.length > LOCAL_LIMITS.depth) throw new UnsupportedOperationError('Delegation cycle or depth limit.');
   const caller = await localTarget(db, authority.workspaceId, authority.agentId);

@@ -26,7 +26,8 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   const grant = row.grant as unknown as TaskGrant;
   if (!isLocalGrant(grant) || !row.leaseToken) throw new Error('Not a claimed local task.');
   await assertLiveGrant(grant, 'send'); signal.throwIfAborted();
-  const target = await localTarget(db, grant.workspaceId, grant.agentId);
+  const target = await localTarget(db, grant.workspaceId, grant.agentId,
+    grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined);
   const context = await db.a2AContext.findFirst({ where: { id: row.contextId, targetKind: 'local',
     agentId: grant.agentId, workspaceId: grant.workspaceId, ownerKey: grant.ownerKey, targetBinding: target.binding } });
   if (!context) throw new Error('Local task context changed.');
@@ -50,12 +51,12 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     modelProxyBase: runtimeModelProxyBase(agent.provider.id), runtimeAccessToken: token,
     nativeApprovalUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/a2a/${row.id}/approvals`,
     workingDirectory: work ? grant.entryPolicy?.workingDirectory : undefined,
-    systemPrompt: `${saved?.systemPrompt ?? agent.systemPrompt ?? ''}\n\n${LOCAL_COLLABORATION_INSTRUCTIONS}`,
+    systemPrompt: `${saved?.systemPrompt ?? agent.systemPrompt ?? ''}${agent.a2aInternalEnabled ? `\n\n${LOCAL_COLLABORATION_INSTRUCTIONS}` : ''}`,
     disabledBuiltinTools: agent.disabledBuiltinTools, skills: resolved.skills, runtimeSessionId: context.id,
     messages: Task.fromJSON(row.snapshot).history.map((message) => ({ role: message.role === Role.ROLE_USER ? 'user' : 'assistant',
       parts: message.parts.flatMap((part) => part.content?.$case === 'text' ? [{ type: 'text', text: part.content.value }] : []) })),
     mcpServers: [...deploymentIds.map((deploymentId) => ({ deploymentId, url: runtimeMcpProxyUrl(deploymentId) })),
-      { deploymentId: 'toolplane-a2a', url: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/a2a/${row.id}/mcp` }], signal,
+      ...(agent.a2aInternalEnabled ? [{ deploymentId: 'toolplane-a2a', url: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/a2a/${row.id}/mcp` }] : [])], signal,
   });
   signal.throwIfAborted(); await assertLiveGrant(grant, 'send');
   if (text.length > A2A_LIMITS.outputCharacters) throw new Error('Task output limit exceeded.');

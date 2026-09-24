@@ -10,7 +10,7 @@ export type EntryKind = 'chat' | 'work' | 'channel' | 'control';
 export type EntryIdentity = { kind: EntryKind; sourceId: string; channelId?: string };
 const missing = () => new TaskNotFoundError();
 /** Never infer a platform user from a channel sender or workspace owner. */
-export async function createEntryPolicy(tx: Tx, grant: LocalA2AGrant, source: EntryIdentity): Promise<NonNullable<LocalA2AGrant['entryPolicy']>> {
+export async function createEntryPolicy(tx: Tx, grant: Pick<LocalA2AGrant, 'workspaceId' | 'agentId' | 'actorId'>, source: EntryIdentity): Promise<NonNullable<LocalA2AGrant['entryPolicy']>> {
   let authorization: unknown;
   let workingDirectory: string | undefined;
   if (source.kind === 'work') {
