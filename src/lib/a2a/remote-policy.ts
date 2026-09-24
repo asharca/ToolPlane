@@ -45,6 +45,8 @@ export async function remoteChildGrant(parentId: string, lease: string, remoteId
   if (!parent || !caller || !isLocalGrant(caller) || parent.state !== TaskState.TASK_STATE_WORKING
     || parent.phase !== 'executing' || parent.leaseToken !== lease || parent.cancelRequestedAt) throw missing();
   await assertLocalGrant(caller);
+  if (caller.entryPolicy && !(await db.agent.count({ where: { id: caller.agentId,
+    workspaceId: caller.workspaceId, a2aInternalEnabled: true } }))) throw missing();
   if (caller.ancestorTaskIds.length + 1 > LOCAL_LIMITS.depth) throw new UnsupportedOperationError('Remote delegation depth limit reached.');
   const target = await remoteTarget(db, caller.workspaceId, caller.agentId, remoteId);
   return { kind: 'remote', workspaceId: caller.workspaceId, sourceAgentId: caller.agentId, remoteAgentId: remoteId,

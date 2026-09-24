@@ -5,9 +5,9 @@ import { SendMessageRequest, Task, TaskState } from '@a2a-js/sdk';
 import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { db } from '@/lib/db';
 import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
-import { createLocalRootGrant, assertLocalGrant } from './local-policy';
+import { createLocalEntryGrant, assertLocalGrant, localOwnerKey } from './local-policy';
 import { createEntryPolicy, type EntryIdentity } from './entry-policy';
-import { submitTaskInTransaction, getTaskRow, requestCancellation } from './store';
+import { submitTaskInTransaction, getTaskRow, requestCancellation, taskScope } from './store';
 import { settled, terminal, A2A_LIMITS } from './model';
 import { refreshTaskStorage } from './quotas';
 import { wakeA2AWorker } from './worker';
@@ -32,15 +32,32 @@ export async function submitNativeEntry(input: NativeEntryInput, wake: () => voi
   assertRuntimeOwner();
   if (!input.actorId || !input.sourceId || input.sourceId.length > 200 || !input.messageId || input.messageId.length > 240
     || !input.text.trim() || input.text.length > A2A_LIMITS.inputCharacters) throw new RequestMalformedError('Invalid native entry request.');
-  const root = await createLocalRootGrant(input.workspaceId, input.agentId, input.actorId);
   const accepted = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
-    const policy = await createEntryPolicy(tx, root, { kind: input.kind, sourceId: input.sourceId, ...(input.channelId ? { channelId: input.channelId } : {}) });
-    const grant = { ...root, entryPolicy: policy };
+    const scope = { workspaceId: input.workspaceId, agentId: input.agentId, actorId: input.actorId };
+    const policy = await createEntryPolicy(tx, scope, { kind: input.kind, sourceId: input.sourceId, ...(input.channelId ? { channelId: input.channelId } : {}) });
+    const grant = await createLocalEntryGrant(tx, input.workspaceId, input.agentId, input.actorId, policy);
     await assertLocalGrant(grant, tx);
-    const key = { ownerKey: root.ownerKey, kind: input.kind, sourceId: input.sourceId };
-    let binding = await tx.a2AEntryBinding.findUnique({ where: { ownerKey_kind_sourceId: key }, include: { lastTask: true } });
+    const key = { ownerKey: grant.ownerKey, kind: input.kind, sourceId: input.sourceId };
     const inputHash = hash([input.text]);
+    let binding = await tx.a2AEntryBinding.findUnique({ where: { ownerKey_kind_sourceId: key }, include: { lastTask: true } });
+    if (!binding) {
+      const previousKey = { ...key, ownerKey: localOwnerKey(input.workspaceId, input.agentId, input.actorId) };
+      const legacy = await tx.a2AEntryBinding.findUnique({ where: { ownerKey_kind_sourceId: previousKey } });
+      if (legacy) {
+        const receipt = await tx.a2AEntryReceipt.findUnique({ where: { bindingId_messageId: { bindingId: legacy.id, messageId: input.messageId } }, include: { task: true } });
+        if (receipt) {
+          if (receipt.inputHash !== inputHash) throw new RequestMalformedError('The entry message ID was reused with different content.');
+          const previous = receipt.task.grant as unknown as typeof grant;
+          if (!previous.entryPolicy || previous.entryPolicy.kind !== policy.kind || previous.entryPolicy.sourceId !== policy.sourceId
+            || previous.entryPolicy.binding !== policy.binding || previous.agentId !== grant.agentId
+            || previous.actorId !== grant.actorId || previous.ownerKey !== previousKey.ownerKey) throw new TaskNotFoundError();
+          await assertLocalGrant(previous, tx);
+          if (!await tx.a2AContext.count({ where: { id: receipt.task.contextId, ...taskScope(previous), expiresAt: { gt: new Date() } } })) throw new TaskNotFoundError();
+          return { row: receipt.task, grant: previous, replay: true };
+        }
+      }
+    }
     const replay = binding ? await tx.a2AEntryReceipt.findUnique({ where: { bindingId_messageId: { bindingId: binding.id, messageId: input.messageId } }, include: { task: true } }) : null;
     if (replay) {
       if (replay.inputHash !== inputHash) throw new RequestMalformedError('The entry message ID was reused with different content.');
@@ -72,7 +89,7 @@ export async function runNativeEntry(input: NativeEntryInput & { signal?: AbortS
   onAccepted?: (task: Task, path: string) => void | Promise<void> }) {
   const accepted = await submitNativeEntry(input);
   const workspace = await db.workspace.findUniqueOrThrow({ where: { id: input.workspaceId }, select: { slug: true } });
-  const path = `/app/${encodeURIComponent(workspace.slug)}/work?mode=a2a&agent=${encodeURIComponent(input.agentId)}&task=${encodeURIComponent(accepted.row.id)}`;
+  const path = `/app/${encodeURIComponent(workspace.slug)}/work?mode=a2a&agent=${encodeURIComponent(input.agentId)}&task=${encodeURIComponent(accepted.row.id)}${accepted.grant.entryPolicy ? '&view=entry' : ''}`;
   await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
   try {
     while (true) {

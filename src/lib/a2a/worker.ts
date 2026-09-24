@@ -75,7 +75,8 @@ export function executeA2ATask(id: string, executor: TaskExecutor = executeTask)
     const grant = queued.grant as unknown as TaskGrant;
     if (!isLocalGrant(grant)) return operation();
     try {
-      const target = await localTarget(db, grant.workspaceId, grant.agentId);
+      const target = await localTarget(db, grant.workspaceId, grant.agentId,
+        grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined);
       // Reserve before claiming: a busy sandbox leaves the task safely queued, without any execution replay.
       return await withSandboxExecutionLease(target.sandboxId, operation);
     } catch (error) {

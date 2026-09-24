@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { Message, SendMessageRequest, Task, TaskState } from '@a2a-js/sdk';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
@@ -9,7 +9,7 @@ import { db } from '@/lib/db';
 import { checkNativeToolApproval, decideNativeToolApproval, listNativeToolApprovals, nativeApprovalHash } from '@/lib/a2a/tool-approvals';
 import { publishLocalArtifact } from '@/lib/a2a/local-artifacts';
 import { getConsoleTaskTree } from '@/lib/a2a/console-tasks';
-import { createLocalRootGrant, childGrant, assertLocalGrant, LOCAL_LIMITS } from '@/lib/a2a/local-policy';
+import { createLocalRootGrant, childGrant, assertLocalGrant, LOCAL_LIMITS, localOwnerKey } from '@/lib/a2a/local-policy';
 import { type LocalA2AGrant } from '@/lib/a2a/principal';
 import { submitTask, claimTask, finishTask, getTask, getTaskRow, requestCancellation, eventsAfter } from '@/lib/a2a/store';
 import { requestLocalWait, requestLocalInput, reconcileLocalWaits } from '@/lib/a2a/local-continuation';
@@ -534,6 +534,59 @@ describe('unified native ingress mappings', () => {
       runtimeSnapshot: { workingDirectory: '.', deploymentIds: [], installedSkillIds: [] } } })).id;
     return { kind, sourceId, workspaceId: ws, agentId: agents[0], actorId: user, messageId: randomUUID(), text: 'New task only' };
   }
+  it.each(['chat', 'work'] as const)('runs ordinary %s with internal A2A disabled without enabling delegation', async (kind) => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress');
+    const input = await entry(kind);
+    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    await expect(createLocalRootGrant(ws, agents[0], user)).rejects.toBeInstanceOf(TaskNotFoundError);
+    const accepted = await submitNativeEntry(input, vi.fn());
+    expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+    expect(accepted.grant.ownerKey).not.toBe(grant.ownerKey);
+    expect((await getConsoleTaskTree(actor(), accepted.row.id)).selectedTask.id).toBe(accepted.row.id);
+    await expect(getConsoleTaskTree({ ...actor(), actorId: otherUser }, accepted.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+    const claimed = (await claimTask(accepted.row.id))!;
+    await assertLocalGrant(accepted.grant);
+    await expect(childGrant(claimed.id, claimed.leaseToken!, agents[1])).rejects.toBeInstanceOf(TaskNotFoundError);
+    const token = { ...runtimeToken(claimed), a2aApprovalRequired: true as const };
+    await checkNativeToolApproval(token, { action: 'ready' });
+    const callId = randomUUID();
+    const approval = await checkNativeToolApproval(token, { action: 'check', callId, toolName: 'read', input: { path: 'notes.txt' } });
+    expect(approval.status).toBe('pending');
+    expect(await listNativeToolApprovals(actor(), claimed.id, claimed.id)).toHaveLength(1);
+    await decideNativeToolApproval(actor(), { rootTaskId: claimed.id, taskId: claimed.id, approvalId: approval.approvalId!,
+      inputHash: approval.inputHash!, decision: 'approved' });
+    await expect(decideNativeToolApproval({ ...actor(), actorId: otherUser }, { rootTaskId: claimed.id, taskId: claimed.id,
+      approvalId: approval.approvalId!, inputHash: approval.inputHash!, decision: 'approved' })).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect((await checkNativeToolApproval(token, { action: 'check', callId, toolName: 'read', input: { path: 'notes.txt' } })).status).toBe('allow');
+    await expect(assertLocalRuntimeToken(token)).resolves.toBeDefined();
+    await expect(executeLocalMcpTool(token, 'a2a_list_agents', {})).rejects.toThrow('A2A collaboration is disabled');
+    await finishTask(claimed.id, claimed.leaseToken!, TaskState.TASK_STATE_COMPLETED, undefined, textArtifact('Done'));
+    expect((await getTask(accepted.grant, accepted.row.id)).status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    const next = await submitNativeEntry({ ...input, messageId: randomUUID(), text: 'Continue' }, vi.fn());
+    expect(next.row.contextId).toBe(accepted.row.contextId);
+  });
+  it('does not expose ordinary chat tasks to explicit A2A even after opt-in', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress');
+    const input = await entry();
+    const accepted = await submitNativeEntry(input, vi.fn());
+    await expect(getTask(grant, accepted.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect((await getConsoleTaskTree(actor(), accepted.row.id)).selectedTask.id).toBe(accepted.row.id);
+    await db.conversation.delete({ where: { id: input.sourceId } });
+    await expect(getConsoleTaskTree(actor(), accepted.row.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it('executes a normal chat Task through the worker with A2A disabled', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress');
+    const input = await entry();
+    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    await startA2AWorker();
+    try {
+      const accepted = await submitNativeEntry(input, vi.fn());
+      const executor = vi.fn(async () => ({ state: TaskState.TASK_STATE_COMPLETED, artifact: textArtifact('Chat reply') }));
+      await executeA2ATask(accepted.row.id, executor);
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect((await getTask(accepted.grant, accepted.row.id)).status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    } finally { stopA2AWorker(); }
+  });
   it.each(['chat', 'control', 'work'] as const)('maps %s to Task and Context without executing old history', async (kind) => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry(kind);
     const count = await db.conversation.count({ where: { agentId: agents[0] } });
@@ -554,6 +607,25 @@ describe('unified native ingress mappings', () => {
     await expect(submitNativeEntry({ ...input, messageId: randomUUID() }, vi.fn())).rejects.toThrow();
     expect(await db.a2AEntryReceipt.count({ where: { taskId: first.row.id } })).toBe(1);
   });
+  it('replays a pre-upgrade native entry without submitting a second task', async () => {
+    const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
+    const policy = await db.$transaction(async (tx) => (await import('@/lib/a2a/entry-policy')).createEntryPolicy(tx, grant,
+      { kind: input.kind, sourceId: input.sourceId }));
+    const legacyGrant = { ...grant, entryPolicy: policy };
+    const messageId = `entry-${createHash('sha256').update(JSON.stringify([input.kind, input.sourceId, input.messageId])).digest('hex')}`;
+    const original = await submitTask(legacyGrant, SendMessageRequest.fromJSON({ message: { messageId,
+      role: 'ROLE_USER', parts: [{ text: input.text }] }, configuration: { returnImmediately: true } }));
+    const binding = await db.a2AEntryBinding.create({ data: { ownerKey: localOwnerKey(ws, agents[0], user),
+      kind: input.kind, sourceId: input.sourceId, contextId: original.contextId, lastTaskId: original.id } });
+    await db.a2AEntryReceipt.create({ data: { bindingId: binding.id, messageId: input.messageId,
+      inputHash: createHash('sha256').update(JSON.stringify([input.text])).digest('hex'), taskId: original.id } });
+    await db.agent.update({ where: { id: agents[0] }, data: { a2aInternalEnabled: false } });
+    const replay = await submitNativeEntry(input, vi.fn());
+    expect(replay).toMatchObject({ row: { id: original.id }, replay: true });
+    expect((await getConsoleTaskTree(actor(), original.id)).selectedTask.id).toBe(original.id);
+    expect(await db.a2ATask.count({ where: { context: { workspaceId: ws } } })).toBe(1);
+    await expect(submitNativeEntry({ ...input, text: 'changed' }, vi.fn())).rejects.toThrow('reused with different content');
+  });
   it('creates a new terminal follow-up in the same context and preserves the original receipt', async () => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
     const first = await submitNativeEntry(input, vi.fn()); const claimed = (await claimTask(first.row.id))!;
@@ -561,7 +633,7 @@ describe('unified native ingress mappings', () => {
     const next = await submitNativeEntry({ ...input, messageId: randomUUID(), text: 'Follow up' }, vi.fn());
     expect(next.row.id).not.toBe(first.row.id); expect(next.row.contextId).toBe(first.row.contextId);
     expect((await submitNativeEntry(input, vi.fn())).row.id).toBe(first.row.id);
-    expect((await getTask(grant, first.row.id)).status?.state).toBe(3);
+    expect((await getTask(first.grant, first.row.id)).status?.state).toBe(3);
   });
   it('continues INPUT_REQUIRED with the same task and original deadline', async () => {
     const { submitNativeEntry } = await import('@/lib/a2a/ingress'); const input = await entry();
