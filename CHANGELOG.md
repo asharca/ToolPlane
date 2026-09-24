@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.2](https://github.com/asharca/ToolPlane/compare/v0.31.1...v0.31.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* allow native chat tasks without a2a opt-in ([8261678](https://github.com/asharca/ToolPlane/commit/8261678028cf5fbf370bad7d3e777d32b1e32825))
+
 ## [0.31.1](https://github.com/asharca/ToolPlane/compare/v0.31.0...v0.31.1) (2026-09-24)
 
 
