@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/asharca/ToolPlane/compare/v0.31.0...v0.31.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* avoid conflicting workspace sandbox routes ([#152](https://github.com/asharca/ToolPlane/issues/152)) ([fc5bbd6](https://github.com/asharca/ToolPlane/commit/fc5bbd643f55118390b99639e6a875c9295ac682))
+
 ## [0.31.0](https://github.com/asharca/ToolPlane/compare/v0.30.0...v0.31.0) (2026-09-23)
 
 
