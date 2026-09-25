@@ -22,17 +22,89 @@ jobs:
           test "$GITHUB_REF" = refs/heads/refactor/beui-platform-ui
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 - <<'PY'
-          import base64,gzip,hashlib,pathlib,subprocess
-          before={"src/components/dashboard/knowledge/WorkspaceKnowledge.tsx":"1d43c562c1b0d08fb478593860971fd521e92f1fe1a786bd4fdc28ed8e394241","src/components/dashboard/work/WorkspaceWork.tsx":"39ecad4bb7a2635e9623352d30c6e2e8731b6637f6d7ace64e71a883ff6db698","src/components/dashboard/work/A2AWorkbench.tsx":"c4fc8f18f721c5dc59ba6e295e777b5c6720710b39f92521ed5ad4e400d33d21","src/components/dashboard/market/MarketDetailShell.tsx":"1c13c255b0a7fe613a4b64f57d81c493f0a3f87b956a6a4f23e8a9432d54364f","src/app/app/[workspace]/market/mcp/[serverSlug]/page.tsx":"aeb2b11cd1e896bff8e7a99799d4ccbf69b047c672c1d7a94c99683bb2a71379","src/components/ui/beui/components/motion/input.tsx":"5c6ea6953ecc2802f7e7514059ac65f8d371021c56c580ea34903ea1d62c306d","src/components/ui/Controls.tsx":"3f2165ca91af43af944297d30f0bca8bc55be77bab81f9e350d7f7430265ecd5","src/components/ui/beui/provenance.json":"652e1fcd148b5de04386f761ed1d4324a1d96cbf3858c9b61a67ddebbccb95e1","tests/unit/beui-native-contracts.test.tsx":"8c1fdcd394c968527dd4caa4ef03d7fed141f6d1ef241476ae73f39eb99906e4","tests/unit/beui-architecture.test.ts":"8b38cef0f296be09e64b1f3e022dbb9b888e62639a5f533f79d90297a05edf40","tests/browser/platform-ui.mjs":"38d8bbf06838a3030cb3cbe30cb6f6b55e279cd5ade1118e155ddf03ee13ac56"}
+          from pathlib import Path
+          import json,hashlib,subprocess
           after={"src/components/dashboard/knowledge/WorkspaceKnowledge.tsx":"b3bc715176776b1eb1c9fc68850667bd5ca939337c742d596a777a033da5ac6c","src/components/dashboard/work/WorkspaceWork.tsx":"b34e7e69c154b4e34514f1c9f3d7df6326ea9e4173d148b2d8be90f061467ab0","src/components/dashboard/work/A2AWorkbench.tsx":"11147d45ddca673c1252e599b680500bfd9ffffd0c2b54c40eaef28ed466f5a9","src/components/dashboard/market/MarketDetailShell.tsx":"b98e56bfba61576c80e13c644a5d88a107133cfc4663155c914512df775286a4","src/app/app/[workspace]/market/mcp/[serverSlug]/page.tsx":"d159ccacc30bc5183869c85c9e55ceeef2eee1e105c8a09ba54d65dc1612875e","src/components/ui/beui/components/motion/input.tsx":"84e485c23fb565fb7617924ec3585b0399198614233d4a493a0cbb328fd62ded","src/components/ui/Controls.tsx":"2c46d7afb2841f78d95a51927f1bfa3e98cade9b77c1459e706baab9aeb38734","src/components/ui/beui/provenance.json":"ec2679b389c114e8beebd6506cfea6e39fa5d460a4ca35bb3d1f18fe768aec96","tests/unit/beui-native-contracts.test.tsx":"b8f9992d9deaf3d72aca8e6fbb24941e5a83ad406205f91cd5f896415095a93b","tests/unit/beui-architecture.test.ts":"fc59792ebdf55403b4f2d38c0b442a7281952b923160b8075584954f1a870654","tests/browser/platform-ui.mjs":"79dcec8195cb76ef0f4c5cb454c84b44176090eead6272a209d19ecdc24d9dd7"}
-          patch='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'
-          for name,digest in before.items():
-              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
-          data=gzip.decompress(base64.b64decode(patch))
-          subprocess.run(['git','apply','--check','--whitespace=error','-'],input=data,check=True)
-          subprocess.run(['git','apply','--index','--whitespace=error','-'],input=data,check=True)
+          def change(path,f):
+              p=Path(path);old=p.read_text();new=f(old);assert new!=old,path;p.write_text(new)
+          landmarks=['src/components/dashboard/knowledge/WorkspaceKnowledge.tsx','src/components/dashboard/work/WorkspaceWork.tsx','src/components/dashboard/work/A2AWorkbench.tsx','src/components/dashboard/market/MarketDetailShell.tsx','src/app/app/[workspace]/market/mcp/[serverSlug]/page.tsx']
+          for file in landmarks:
+              change(file,lambda s:s.replace('<main ', '<div ').replace('</main>', '</div>'))
+          def registry(s):
+              old='''            "peer h-full w-full bg-transparent text-base leading-6 text-foreground caret-foreground outline-none",
+                      "placeholder:text-muted-foreground/60",
+                      leftIcon ? "pl-10" : "pl-3.5",
+                      rightSlot || success ? "pr-10" : "pr-3.5",'''
+              new='''            "peer w-full outline-none",
+                      !nativeLayout && "h-full bg-transparent text-base leading-6 text-foreground caret-foreground placeholder:text-muted-foreground/60",
+                      !nativeLayout && (leftIcon ? "pl-10" : "pl-3.5"),
+                      !nativeLayout && (rightSlot || success ? "pr-10" : "pr-3.5"),'''
+              assert old in s;return s.replace(old,new)
+          change('src/components/ui/beui/components/motion/input.tsx',registry)
+          change('src/components/ui/Controls.tsx',lambda s:s.replace("'h-10 rounded-xl border border-input bg-background px-3.5 text-sm focus-visible:ring-2 focus-visible:ring-ring/30'","'rounded-xl focus-visible:ring-2 focus-visible:ring-ring/30'"))
+          def provenance(s):
+              d=json.loads(s);entry=next(x for x in d['files'] if x['path']=='components/motion/input.tsx');entry['adapted'].append('nativeLayout leaves sizing and icon padding to the form adapter CSS');return json.dumps(d,indent=2)+'\n'
+          change('src/components/ui/beui/provenance.json',provenance)
+          def tests(s):
+              target="  it('keeps controlled numeric input and textarea values editable', async () => {"
+              extra='''  it('does not override native icon padding or compact sizes with standalone registry utilities', () => {
+              render(<><Input aria-label="Search with icon" className="ui-input-icon" controlSize="sm" /><SearchInput label="Clearable search" value="query" onClear={() => {}} /></>);
+              const icon = screen.getByLabelText('Search with icon');
+              expect(icon).toHaveClass('ui-input-icon', 'ui-input-sm');
+              for (const input of [icon, screen.getByRole('searchbox')]) {
+                for (const token of ['px-3.5', 'pl-3.5', 'pr-3.5', 'h-full', 'h-10']) expect(input).not.toHaveClass(token);
+              }
+              expect(screen.getByRole('searchbox')).toHaveClass('tp-search-input__control');
+            });
+          '''
+              assert target in s;return s.replace(target,extra+target)
+          change('tests/unit/beui-native-contracts.test.tsx',tests)
+          def arch(s):
+              target="  it('records the requested registry and preserves reduced-motion and forced-color handling', () => {"
+              paths=json.dumps(landmarks)
+              extra=f'''  it('leaves the main landmark with the dashboard host, not nested feature panes', () => {{
+              for (const file of {paths}) {{
+                const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+                const landmarks: string[] = [];
+                const visit = (node: ts.Node) => {{
+                  if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(ast) === 'main') landmarks.push(file);
+                  ts.forEachChild(node, visit);
+                }};
+                visit(ast);
+                expect(landmarks).toEqual([]);
+              }}
+            }});
+          '''
+              assert target in s;return s.replace(target,extra+target)
+          change('tests/unit/beui-architecture.test.ts',arch)
+          def browser(s):
+              s=s.replace("    await noPageOverflow(page); await page.screenshot({ path: path.join(output, 'desktop-workspace.png') });",'''    await noPageOverflow(page);
+              const field = page.getByPlaceholder('Search toolkits...');
+              const geometry = await field.evaluate(el => {
+                const icon = el.parentElement.querySelector('svg');
+                return { textStart: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft), iconEnd: icon.getBoundingClientRect().right };
+              });
+              assert.ok(geometry.textStart >= geometry.iconEnd + 4, 'Search text must not overlap its icon.');
+              await page.screenshot({ path: path.join(output, 'desktop-workspace.png') });''')
+              s=s.replace("    assert.ok(await page.getByRole('dialog').innerText());",'''    const dialog = page.getByRole('dialog');
+              await dialog.getByRole('heading', { name: 'Internal collaboration', exact: true }).waitFor();
+              assert.equal(await dialog.getByRole('button', { name: 'Enable internal A2A', exact: true }).isDisabled(), true);
+              await dialog.getByText('Configure a model provider, model and exactly one exclusive networked Docker sandbox first.', { exact: true }).waitFor();''')
+              s=s.replace("      await page.getByRole('main').waitFor(); await noPageOverflow(page);",'''      await page.getByRole('main').waitFor();
+                assert.equal(await page.getByRole('main').count(), 1, `${segment} must have exactly one main landmark`);
+                await noPageOverflow(page);''')
+              s=s.replace("  await context.close();",'''  await check('light mobile theme keeps the workspace surface and fields visible', async () => {
+              await page.evaluate(() => localStorage.setItem('theme', 'light')); await page.reload();
+              await page.locator('html.light').waitFor(); await noPageOverflow(page);
+              await page.screenshot({ path: path.join(output, 'mobile-light.png') });
+              assert.equal(errors.length, 0, `Unhandled browser errors: ${errors.join('; ')}`);
+            });
+            await context.close();''')
+              return s
+          change('tests/browser/platform-ui.mjs',browser)
           for name,digest in after.items():
-              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          subprocess.run(['git','add','--',*after],check=True)
           assert set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())==set(after)
           print('Verified 11 UI paths; no backend or workflow changes in the patch.')
           PY
