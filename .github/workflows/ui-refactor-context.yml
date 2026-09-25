@@ -1,0 +1,49 @@
+name: ui-refactor-context
+on:
+  push:
+    branches: [refactor/asharca-ui-platform]
+    paths: [.github/workflows/ui-refactor-context.yml]
+permissions:
+  contents: read
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e76b78059b42131a28766bd8c5e48be65ebc896a
+          persist-credentials: false
+      - name: Snapshot exact application and reference component source
+        run: |
+          mkdir -p /tmp/ui-context/reference
+          git archive HEAD | gzip > /tmp/ui-context/toolplane-source.tar.gz
+          git ls-tree -r HEAD > /tmp/ui-context/toolplane-tree.txt
+          git clone --depth=1 https://github.com/asharca/ui.git /tmp/ui-reference
+          git -C /tmp/ui-reference checkout 85b080aafe2f7e3aaf720e5a2ffdf035289c49c1
+          git -C /tmp/ui-reference archive HEAD | gzip > /tmp/ui-context/ui-reference.tar.gz
+          curl --fail --location --max-time 45 https://asharca.github.io/ui/llms.txt -o /tmp/ui-context/reference/llms.txt
+          curl --fail --location --max-time 45 https://asharca.github.io/ui/r/index.json -o /tmp/ui-context/reference/registry-index.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-refactor-source
+          path: /tmp/ui-context/
+          retention-days: 3
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack matching development dependencies
+        run: |
+          mkdir -p /tmp/ui-dev
+          tar -czf /tmp/ui-dev/node_modules.tar.gz node_modules
+          cp pnpm-lock.yaml /tmp/ui-dev/pnpm-lock.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-refactor-dependencies
+          path: /tmp/ui-dev/
+          retention-days: 1
