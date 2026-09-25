@@ -1,0 +1,29 @@
+name: ui-inspection-snapshot
+on:
+  pull_request:
+    paths: ['.github/workflows/ui-inspection-snapshot.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: github.event.pull_request.number == 158
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Snapshot tracked sources only
+        run: |
+          mkdir -p /tmp/ui-inspection
+          git archive HEAD | gzip > /tmp/ui-inspection/toolplane.tar.gz
+          git rev-parse HEAD > /tmp/ui-inspection/source-sha.txt
+          git clone --depth 1 https://github.com/asharca/ui.git /tmp/ui-upstream
+          git -C /tmp/ui-upstream archive HEAD | gzip > /tmp/ui-inspection/upstream.tar.gz
+          git -C /tmp/ui-upstream rev-parse HEAD > /tmp/ui-inspection/upstream-sha.txt
+          curl --fail --location https://asharca.github.io/ui/llms.txt -o /tmp/ui-inspection/llms.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-inspection-sources
+          path: /tmp/ui-inspection/
+          retention-days: 1
