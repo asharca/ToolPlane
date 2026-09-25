@@ -13,15 +13,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Snapshot tracked sources only
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Snapshot sources and isolated public tooling
         run: |
-          mkdir -p /tmp/ui-inspection
+          mkdir -p /tmp/ui-inspection /tmp/ui-tools
           git archive HEAD | gzip > /tmp/ui-inspection/toolplane.tar.gz
           git rev-parse HEAD > /tmp/ui-inspection/source-sha.txt
           git clone --depth 1 https://github.com/asharca/ui.git /tmp/ui-upstream
           git -C /tmp/ui-upstream archive HEAD | gzip > /tmp/ui-inspection/upstream.tar.gz
           git -C /tmp/ui-upstream rev-parse HEAD > /tmp/ui-inspection/upstream-sha.txt
           curl --fail --location https://asharca.github.io/ui/llms.txt -o /tmp/ui-inspection/llms.txt
+          npm install --prefix /tmp/ui-tools --ignore-scripts --package-lock=false motion@11.18.2 react@19.2.4 react-dom@19.2.4
+          cp "$(command -v node)" /tmp/ui-tools/node
+          tar -C /tmp/ui-tools -czf /tmp/ui-inspection/tooling.tar.gz node node_modules
       - uses: actions/upload-artifact@v4
         with:
           name: ui-inspection-sources
