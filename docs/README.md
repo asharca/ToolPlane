@@ -40,7 +40,7 @@ Start with the [project overview and quick start](../README.md), then choose a t
 | [Upgrades and recovery](./RUNTIME_OPERATIONS.md) · [中文](./RUNTIME_OPERATIONS.zh-CN.md) | Migrations, single-owner recovery, and attachment quotas |
 | [Logging and audit](./OBSERVABILITY.md) · [中文](./OBSERVABILITY.zh-CN.md) | Log models, diagnostic capture, and retention |
 | [Releases](./RELEASES.md) · [中文](./RELEASES.zh-CN.md) | release-please and GitHub configuration |
-| [Shared UI](./UI_LIBRARY.md) · [中文](./UI_LIBRARY.zh-CN.md) | Updating and releasing `@asharca/ui` |
+| [Shared UI](./UI_LIBRARY.md) · [中文](./UI_LIBRARY.zh-CN.md) | Source registry, component adapters and regression checks |
 
 ## Maintenance conventions
 

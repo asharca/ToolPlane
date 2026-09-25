@@ -6,20 +6,20 @@ import { describe, expect, it } from 'vitest';
 
 function files(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const target = path.join(directory, entry.name);
+    const target = path.posix.join(directory, entry.name);
     return entry.isDirectory() ? files(target) : [target];
   });
 }
 describe('platform UI source ownership', () => {
   it('has no retired runtime dependency, package aliases or application imports', () => {
     const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-    expect(pkg.dependencies["@/components/ui"]).toBeUndefined();
+    expect(pkg.dependencies["@asharca/ui"]).toBeUndefined();
     expect(readFileSync('tsconfig.json', 'utf8')).not.toContain('"@asharca/ui"');
     const offenders: string[] = [];
     for (const file of files('src').filter(f => /\.[jt]sx?$/.test(f))) {
       const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
       const visit = (node: ts.Node) => {
-        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text.startsWith("@/components/ui")) offenders.push(file);
+        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text.startsWith("@asharca/ui")) offenders.push(file);
         ts.forEachChild(node, visit);
       };
       visit(ast);

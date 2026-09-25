@@ -40,7 +40,7 @@
 | [升级与恢复](./RUNTIME_OPERATIONS.zh-CN.md) · [English](./RUNTIME_OPERATIONS.md) | 数据迁移、单所有者恢复与附件配额 |
 | [日志与审计](./OBSERVABILITY.zh-CN.md) · [English](./OBSERVABILITY.md) | 日志模型、诊断抓取与保留策略 |
 | [版本发布](./RELEASES.zh-CN.md) · [English](./RELEASES.md) | release-please 发布流程与 GitHub 配置 |
-| [共享 UI](./UI_LIBRARY.zh-CN.md) · [English](./UI_LIBRARY.md) | `@asharca/ui` 更新与发布 |
+| [共享 UI](./UI_LIBRARY.zh-CN.md) · [English](./UI_LIBRARY.md) | 源码 registry、组件适配与回归检查 |
 
 ## 维护约定
 

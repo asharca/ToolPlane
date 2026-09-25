@@ -38,7 +38,7 @@ Dependency versions and Node requirements are defined by [`package.json`](../pac
 | Layer | Choice |
 |---|---|
 | Application | Next.js App Router, React, TypeScript |
-| Styling | Tailwind CSS and the published `@asharca/ui` package |
+| Styling | Tailwind CSS, pinned beUI source components and native-form/accessibility adapters |
 | Theme / i18n | next-themes, next-intl (`messages/en.json`, `messages/zh.json`) |
 | Data | PostgreSQL, Prisma, `@prisma/adapter-pg`, `pg` |
 | Authentication | jose-signed JWT sessions, hashed API tokens, separate Agent API keys |
@@ -114,7 +114,7 @@ prisma/migrations/             database migration history
 tests/                         unit/integration tests and stubs
 ```
 
-Shared UI source is in the separate `asharca/ui` repository. ToolPlane consumes released `@asharca/ui`; do not treat `packages/ui` as a maintained local source entry point. Obtain model, migration, route, and test counts from current source or actual test reports rather than static numbers copied here.
+Shared UI comes from the separate `asharca/ui` source registry. Provenance and adaptations are recorded in `src/components/ui/beui/provenance.json`; application adapters live in `src/components/ui` instead of the retired npm package. Obtain model, migration, route, and test counts from current source or actual test reports rather than static numbers copied here.
 
 ## 5. Data Model (Prisma)
 

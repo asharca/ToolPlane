@@ -39,7 +39,7 @@ export function migrateSource(source, filename, { controls = true, legacyComposi
         }
       }
     }
-    if (ts.isStringLiteral(node) && /^@asharca\/ui(?:\/[^/]*)?$/.test(node.text)) {
+    if (ts.isStringLiteral(node) && ((ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent)) || (ts.isCallExpression(node.parent) && ['vi.mock', 'vi.doMock', 'vi.importActual', 'vi.importMock', 'import'].includes(node.parent.expression.getText(ast)))) && /^@asharca\/ui(?:\/[^/]*)?$/.test(node.text)) {
       const segment = node.text.slice('@asharca/ui'.length);
       const targets = { '/controls': '/Controls', '/dialog': '/Dialog', '/forms': '/Forms' };
       edit(node, JSON.stringify(`@/components/ui${targets[segment] ?? ''}`));

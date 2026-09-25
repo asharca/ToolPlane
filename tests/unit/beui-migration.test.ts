@@ -24,6 +24,11 @@ describe('source registry migration', () => {
   it('changes the retired package path explicitly instead of aliasing its identity', () => {
     expect(migrateSource(`export { Input } from '@asharca/ui/controls';`, 'A.ts')).toContain('"@/components/ui/Controls"');
   });
+  it('does not rewrite policy checks or package names outside module specifiers', () => {
+    const source = `const name = '@asharca/ui'; expect(pkg.dependencies['@asharca/ui']).toBeUndefined();`;
+    expect(migrateSource(source, 'policy.test.ts')).toBe(source);
+    expect(migrateSource(`vi.mock('@asharca/ui');`, 'mock.test.ts')).toContain(`vi.mock("@/components/ui");`);
+  });
   it('is idempotent for migrated application files', () => {
     const once = migrateSource(`'use client'; export const A = () => <button><select><option>A</option></select></button>;`, 'A.tsx');
     expect(migrateSource(once, 'A.tsx')).toBe(once);

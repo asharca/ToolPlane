@@ -74,4 +74,4 @@ pnpm account:reset-password -- user@example.com
 
 `pnpm db:seed` 仅用于本地演示：创建演示账户、停止状态的调试 MCP、Skill 和 Toolkit，不拉取外部 Skill 或启动 MCP。消息渠道使用原生 Node 传输，本地调试不需要 Hermes Checkout 或 Python 渠道运行器；接入方式见[消息渠道](./AGENT_MESSAGING_PLATFORMS.zh-CN.md)。
 
-完整 CI 在 PR 或手动触发时运行，合并到 `main` 后不重复运行。建议保护 `main`，要求 PR 保持最新，并要求 `validate`、`connector (ubuntu-latest)`、`connector (macos-latest)`、`connector (windows-latest)` 检查，管理员也不例外。共享 UI 使用 `asharca/ui` 发布的 `@asharca/ui` npm 包，流程见[共享 UI](./UI_LIBRARY.zh-CN.md)。
+完整 CI 在 PR 或手动触发时运行，合并到 `main` 后不重复运行。建议保护 `main`，要求 PR 保持最新，并要求 `validate`、`connector (ubuntu-latest)`、`connector (macos-latest)`、`connector (windows-latest)` 检查，管理员也不例外。共享 UI 使用 `asharca/ui` 的固定版本源码 registry，流程见[共享 UI](./UI_LIBRARY.zh-CN.md)。

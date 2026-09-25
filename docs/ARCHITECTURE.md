@@ -38,7 +38,7 @@ MCP 部署可以是内置子进程、远程 MCP（Streamable HTTP / SSE）或 Do
 | 层 | 选型 |
 |---|---|
 | 应用 | Next.js App Router、React、TypeScript |
-| 样式 | Tailwind CSS、npm 发布的共享 UI 包 `@asharca/ui` |
+| 样式 | Tailwind CSS、beUI 固定版本源码组件与表单/无障碍适配层 |
 | 主题 / 国际化 | next-themes、next-intl（`messages/en.json`、`messages/zh.json`） |
 | 数据 | PostgreSQL、Prisma、`@prisma/adapter-pg`、`pg` |
 | 认证 | jose 签名的 JWT 会话、哈希 API Token、独立的 Agent API Key |
@@ -114,7 +114,7 @@ prisma/migrations/             数据库迁移历史
 tests/                         单元、集成测试及替身
 ```
 
-共享 UI 源码在独立的 `asharca/ui` 仓库；ToolPlane 消费发布的 `@asharca/ui`，不要把 `packages/ui` 当作本仓库的维护入口。模型、迁移、路由、测试数量应从当前源码或实际测试报告取得，不在此复制静态计数。
+共享 UI 源码来自独立的 `asharca/ui` 源码 registry；固定版本、来源与修改说明在 `src/components/ui/beui/provenance.json`，应用适配在 `src/components/ui`，不再依赖旧 npm 包。模型、迁移、路由、测试数量应从当前源码或实际测试报告取得，不在此复制静态计数。
 
 ## 5. 数据模型（Prisma）
 
