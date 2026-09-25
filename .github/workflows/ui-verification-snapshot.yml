@@ -1,0 +1,45 @@
+name: ui-verification-snapshot
+on:
+  push:
+    branches: [refactor/beui-platform-ui]
+    paths: [.github/workflows/ui-verification-snapshot.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/checkout@v4
+        with:
+          repository: asharca/ui
+          ref: 85b080aafe2f7e3aaf720e5a2ffdf035289c49c1
+          path: .ui-reference
+          persist-credentials: false
+      - name: Export exact source and verification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ui-verification
+          git archive HEAD | gzip > /tmp/ui-verification/source.tar.gz
+          git rev-parse HEAD > /tmp/ui-verification/source-sha.txt
+          tar --exclude=.git -czf /tmp/ui-verification/reference.tar.gz -C .ui-reference .
+          tar -czf /tmp/ui-verification/dependencies.tar.gz node_modules packages/connector/node_modules
+          cp "$(command -v node)" /tmp/ui-verification/node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-verification-source
+          path: /tmp/ui-verification/
+          retention-days: 1
+          compression-level: 0
