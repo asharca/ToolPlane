@@ -29,11 +29,12 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
       TOOLPLANE_UI_E2E: '1'
       UI_E2E_PASSWORD: disposable-browser-fixture-password
-      UI_BROWSER_TOOLS: ${{ runner.temp }}/toolplane-browser-tools
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Locate isolated browser tooling
+        run: echo "UI_BROWSER_TOOLS=$RUNNER_TEMP/toolplane-browser-tools" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
