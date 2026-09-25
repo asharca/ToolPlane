@@ -1,0 +1,53 @@
+name: ui-refactor-context
+on:
+  push:
+    branches: [feat/beui-platform-refactor]
+    paths: [.github/workflows/ui-refactor-context.yml]
+permissions:
+  contents: read
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e76b78059b42131a28766bd8c5e48be65ebc896a
+          path: toolplane
+      - uses: actions/checkout@v4
+        with:
+          repository: asharca/ui
+          ref: 85b080aafe2f7e3aaf720e5a2ffdf035289c49c1
+          path: ui-source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+          package_json_file: toolplane/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Archive tracked sources and documentation
+        run: |
+          mkdir -p /tmp/ui-context
+          git -C toolplane archive HEAD | gzip > /tmp/ui-context/toolplane-source.tar.gz
+          git -C ui-source archive HEAD | gzip > /tmp/ui-context/ui-source.tar.gz
+          curl --fail --location --max-time 30 https://asharca.github.io/ui/llms.txt -o /tmp/ui-context/llms.txt
+          git -C toolplane rev-parse HEAD > /tmp/ui-context/toolplane.sha
+          git -C ui-source rev-parse HEAD > /tmp/ui-context/ui.sha
+      - name: Prepare exact project dependencies for isolated verification
+        working-directory: toolplane
+        env:
+          DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm remove @asharca/ui
+          pnpm add --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0 react-use-measure@2.1.7 @tanstack/react-virtual@3.14.4
+          pnpm exec prisma generate
+          cp package.json /tmp/ui-context/package.json
+          cp pnpm-lock.yaml /tmp/ui-context/pnpm-lock.yaml
+          tar -czf /tmp/ui-context/node_modules.tar.gz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beui-refactor-context
+          path: /tmp/ui-context/
+          retention-days: 1
