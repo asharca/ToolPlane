@@ -40,13 +40,14 @@ jobs:
           DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
         run: |
           pnpm install --frozen-lockfile
-          pnpm remove @asharca/ui
-          pnpm add --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0 react-use-measure@2.1.7 @tanstack/react-virtual@3.14.4
+          pnpm remove -w @asharca/ui
+          pnpm add -w --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0 react-use-measure@2.1.7 @tanstack/react-virtual@3.14.4
           pnpm exec prisma generate
           cp package.json /tmp/ui-context/package.json
           cp pnpm-lock.yaml /tmp/ui-context/pnpm-lock.yaml
           tar -czf /tmp/ui-context/node_modules.tar.gz node_modules
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: beui-refactor-context
           path: /tmp/ui-context/
