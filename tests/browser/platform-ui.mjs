@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { verifySkillForms } from './skill-forms.mjs';
 
 // Real production app, database, server actions and browser. No route interception or backend stubs.
 const origin = 'http://127.0.0.1:3000';
@@ -131,6 +132,7 @@ try {
     await page.screenshot({ path: path.join(output, 'desktop-a2a-settings.png') });
     await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'hidden' });
   });
+  await verifySkillForms({ page, origin, check });
   await check('remaining feature entry pages render without runtime or model execution', async () => {
     for (const segment of ['skills', 'mcp', 'sandboxes', 'providers', 'knowledge', 'members', 'market', 'work']) {
       const response = await page.goto(`${origin}/app/ui-browser/${segment}`);

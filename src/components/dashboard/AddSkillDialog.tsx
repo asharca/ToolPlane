@@ -1,9 +1,9 @@
 'use client';
+
 import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
-
-
+import { SubmitButton } from '@/components/ui/Forms';
 import { useTranslations } from 'next-intl';
-import { useActionState, useState } from 'react';
+import { useActionState, useId, useState } from 'react';
 import { Plus, X, FileText, GitBranch, Upload } from 'lucide-react';
 import {
   Dialog,
@@ -72,12 +72,15 @@ function displaySkillRoots(roots: string[]): string[] {
 function GithubImportForm({ slug }: { slug: string }) {
   const t = useTranslations('console.skills');
   const [state, formAction, isPending] = useActionState(importSkillFromGithubAction, {});
+  const errorId = useId();
   return (
     <form action={formAction} className="space-y-3">
       <BeuiInput type="hidden" name="workspace" value={slug} />
-      <BeuiInput name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
-      {state.error ? <p className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
-      <BeuiButton nativeButton unstyled type="submit" disabled={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
+      <BeuiInput name="repo" required aria-label={t('importFromGithub')} aria-invalid={Boolean(state.error)}
+        aria-describedby={state.error ? errorId : undefined}
+        placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
+      {state.error ? <p id={errorId} className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
+      <BeuiButton nativeButton unstyled type="submit" disabled={isPending} aria-busy={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
         {isPending ? t('importing') : t('import')}
       </BeuiButton>
     </form>
@@ -97,6 +100,7 @@ export function AddSkillDialog({
   const [open, setOpen] = useState(defaultOpen);
   const [mode, setMode] = useState<Mode>('menu');
   const [folder, setFolder] = useState<FolderSelection>(emptySelection);
+  const folderStatusId = useId();
   const close = () => { setOpen(false); setMode('menu'); setFolder(emptySelection); };
 
   function onPickFolder(e: React.ChangeEvent<HTMLInputElement>) {
@@ -156,9 +160,9 @@ export function AddSkillDialog({
                 {mode === 'create' ? (
                   <form action={createCustomSkillAction} className="space-y-3">
                     <BeuiInput type="hidden" name="workspace" value={slug} />
-                    <BeuiInput name="name" required placeholder={t('myAwesomeSkill')} className={field} />
-                    <BeuiInput name="description" placeholder={t('summarizeThisSkillsPurpose')} className={field} />
-                    <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary w-full">{t('createSkill')}</BeuiButton>
+                    <BeuiInput name="name" required aria-label={t('skillName')} placeholder={t('myAwesomeSkill')} className={field} />
+                    <BeuiInput name="description" aria-label={t('summarizeThisSkillsPurpose')} placeholder={t('summarizeThisSkillsPurpose')} className={field} />
+                    <SubmitButton className="w-full" pendingLabel={t('createSkill')} flash={false}>{t('createSkill')}</SubmitButton>
                   </form>
                 ) : null}
 
@@ -167,11 +171,12 @@ export function AddSkillDialog({
                 ) : null}
 
                 {mode === 'upload' ? (
-                  <form action={uploadSkillFolderAction} encType="multipart/form-data" className="space-y-3">
+                  <form action={uploadSkillFolderAction} className="space-y-3">
                     <BeuiInput type="hidden" name="workspace" value={slug} />
                     <BeuiInput type="hidden" name="filePaths" value={JSON.stringify(folder.paths)} />
                     <BeuiInput
                       name="name"
+                      aria-label={t('skillName')}
                       disabled={folder.skillRoots.length > 1}
                       placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')}
                       className={`${field} disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground`}
@@ -185,11 +190,14 @@ export function AddSkillDialog({
                         name="folderFiles"
                         type="file"
                         multiple
+                        aria-label={t('uploadAFolder')}
+                        aria-describedby={folderStatusId}
+                        aria-invalid={Boolean(folder.error)}
                         onChange={onPickFolder}
                         className="sr-only"
                       />
                     </label>
-                    <p className={`text-xs ${folder.error ? 'text-red-600 dark:text-red-300' : 'text-muted-foreground'}`}>
+                    <p id={folderStatusId} role={folder.error ? 'alert' : 'status'} className={`text-xs ${folder.error ? 'text-red-600 dark:text-red-300' : 'text-muted-foreground'}`}>
                       {folder.error ?? `${folder.count} ${t('filesSelected')} · ${formatBytes(folder.bytes)}`}
                     </p>
                     {displayedSkillRoots.length > 0 ? (
@@ -211,7 +219,7 @@ export function AddSkillDialog({
                         ) : null}
                       </div>
                     ) : null}
-                    <BeuiButton nativeButton unstyled type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="ui-button-primary w-full disabled:opacity-50">{t('upload')}</BeuiButton>
+                    <SubmitButton className="w-full" pendingLabel={t('upload')} flash={false} disabled={folder.count === 0 || Boolean(folder.error)}>{t('upload')}</SubmitButton>
                   </form>
                 ) : null}
         </DialogContent>
