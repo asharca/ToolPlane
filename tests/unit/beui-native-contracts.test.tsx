@@ -31,6 +31,15 @@ describe('beUI platform native contracts', () => {
     expect(new FormData(form).get('query')).toBe('changed');
     act(() => form.reset()); expect(input).toHaveValue('initial');
   });
+  it('does not override native icon padding or compact sizes with standalone registry utilities', () => {
+    render(<><Input aria-label="Search with icon" className="ui-input-icon" controlSize="sm" /><SearchInput label="Clearable search" value="query" onClear={() => {}} /></>);
+    const icon = screen.getByLabelText('Search with icon');
+    expect(icon).toHaveClass('ui-input-icon', 'ui-input-sm');
+    for (const input of [icon, screen.getByRole('searchbox')]) {
+      for (const token of ['px-3.5', 'pl-3.5', 'pr-3.5', 'h-full', 'h-10']) expect(input).not.toHaveClass(token);
+    }
+    expect(screen.getByRole('searchbox')).toHaveClass('tp-search-input__control');
+  });
   it('keeps controlled numeric input and textarea values editable', async () => {
     function Fields() {
       const [number, setNumber] = useState('3'); const [text, setText] = useState('before');

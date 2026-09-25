@@ -2103,7 +2103,7 @@ export function WorkspaceWork({
         </div>
       </aside>
 
-      <main className={cx(
+      <div className={cx(
         mobilePane === 'sessions' ? 'hidden lg:flex' : 'flex',
         'relative min-h-0 min-w-0 flex-col bg-background',
       )}>
@@ -2405,7 +2405,7 @@ export function WorkspaceWork({
             {!selected && activeSandbox && !activeSandbox.running && activeSandbox.status !== 'provisioning' && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('stopped')}</p> : null}
           </div>
         </div>}
-      </main>
+      </div>
 
       {workspacePanelOpen ? (
         <aside className="hidden min-h-0 overflow-hidden bg-background xl:block">

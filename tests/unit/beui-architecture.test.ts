@@ -38,6 +38,18 @@ describe('platform UI source ownership', () => {
     }
     expect(offenders).toEqual([]);
   });
+  it('leaves the main landmark with the dashboard host, not nested feature panes', () => {
+    for (const file of ["src/components/dashboard/knowledge/WorkspaceKnowledge.tsx", "src/components/dashboard/work/WorkspaceWork.tsx", "src/components/dashboard/work/A2AWorkbench.tsx", "src/components/dashboard/market/MarketDetailShell.tsx", "src/app/app/[workspace]/market/mcp/[serverSlug]/page.tsx"]) {
+      const ast = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      const landmarks: string[] = [];
+      const visit = (node: ts.Node) => {
+        if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(ast) === 'main') landmarks.push(file);
+        ts.forEachChild(node, visit);
+      };
+      visit(ast);
+      expect(landmarks).toEqual([]);
+    }
+  });
   it('records the requested registry and preserves reduced-motion and forced-color handling', () => {
     const manifest = JSON.parse(readFileSync('src/components/ui/beui/provenance.json', 'utf8'));
     expect(manifest.source).toBe('https://asharca.github.io/ui/llms.txt');

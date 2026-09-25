@@ -158,7 +158,7 @@ export default async function McpMarketDetailPage({
       />
 
       <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_21rem]">
-        <main className="min-w-0 space-y-10">
+        <div className="min-w-0 space-y-10">
           <section>
             <div className="flex items-center gap-2.5">
               <FileText className="size-[18px] text-muted-foreground" />
@@ -213,7 +213,7 @@ export default async function McpMarketDetailPage({
               </div>
             </section>
           ) : null}
-        </main>
+        </div>
 
         <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
           {server.mcpKind === 'connector' ? <section className="rounded-lg bg-muted/35 p-5">

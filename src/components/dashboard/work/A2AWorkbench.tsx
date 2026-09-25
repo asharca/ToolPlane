@@ -170,7 +170,7 @@ export function A2AWorkbench({ slug, agents, agentId, initialTaskId }: {
         {!tasks.length && !listLoading ? <p className="text-xs text-muted-foreground">{t('noTasks')}</p> : null}
         {cursor ? <Button size="sm" variant="secondary" disabled={listLoading || tasks.length >= 200} onClick={() => { setListLoading(true); void refreshTasks(cursor); }}>{t('more')}</Button> : null}
       </aside>
-      <main className="min-w-0 space-y-5 p-4 sm:p-6 md:overflow-y-auto">
+      <div className="min-w-0 space-y-5 p-4 sm:p-6 md:overflow-y-auto">
         <Alert tone="info">{t('boundary')}</Alert>
         {!enabled ? <Alert tone="warning">{t('notReady')}</Alert> : null}
         {loading ? <p role="status">{t('loading')}</p> : null}
@@ -191,7 +191,7 @@ export function A2AWorkbench({ slug, agents, agentId, initialTaskId }: {
           <div className="flex flex-wrap items-center justify-between gap-2"><Button type="submit" disabled={busy || (!pending && (!canSend || !prompt.trim()))}><Send className="size-4" />{t(pending ? 'retry' : state === TaskState.TASK_STATE_INPUT_REQUIRED ? 'sendAnswer' : selected ? 'sendFollowUp' : 'send')}</Button>
             {selected && !terminal ? <Button type="button" variant="danger-secondary" disabled={busy || Boolean(pending) || cancelPending} onClick={() => void cancel()}>{t('cancel')}</Button> : null}</div>
         </form>
-      </main>
+      </div>
     </div>
   </div>;
 }

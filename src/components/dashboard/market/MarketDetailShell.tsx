@@ -114,7 +114,7 @@ export function MarketDetailShell({
         ))}
       </nav>
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_21rem]">
-        <main className="min-w-0 space-y-8">{children}</main>
+        <div className="min-w-0 space-y-8">{children}</div>
         <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">{aside}</aside>
       </div>
     </>

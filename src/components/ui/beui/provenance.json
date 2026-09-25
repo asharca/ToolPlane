@@ -18,7 +18,8 @@
       "adapted": [
         "nativeLayout for existing field layouts",
         "onNativeChange forwards the actual React event",
-        "uncontrolled native value/defaultValue preserves form reset"
+        "uncontrolled native value/defaultValue preserves form reset",
+        "nativeLayout leaves sizing and icon padding to the form adapter CSS"
       ]
     },
     {

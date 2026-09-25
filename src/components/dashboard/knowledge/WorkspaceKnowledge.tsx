@@ -214,7 +214,7 @@ export function WorkspaceKnowledge({
         </div>
       </aside>
 
-      <main className="min-h-0 min-w-0 overflow-y-auto">
+      <div className="min-h-0 min-w-0 overflow-y-auto">
         {creatingBase ? (
           <div className="mx-auto w-full max-w-3xl px-5 py-7 sm:px-8 sm:py-10">
             <div className="pb-5"><h1 className="text-lg font-semibold">{t('newBase')}</h1><p className="mt-1 text-sm text-muted-foreground">{t('newBaseDescription')}</p></div>
@@ -276,7 +276,7 @@ export function WorkspaceKnowledge({
             {activeTab === 'settings' ? <div className="mx-auto w-full max-w-3xl p-5 sm:p-7"><div className="grid gap-x-5 gap-y-4 sm:grid-cols-2"><label className="sm:col-span-2 text-xs font-medium text-muted-foreground">{t('name')}<BeuiInput value={name} onChange={(event) => setName(event.target.value)} className="ui-input mt-1.5 h-10 w-full text-foreground" /></label><div className="sm:col-span-2 text-xs font-medium text-muted-foreground"><span>{t('embeddingModel')}</span><ModelPicker providers={providers} value={providerId && model ? { providerId, model } : null} onSelect={(selection) => { setProviderId(selection.providerId); setModel(selection.model); }} onConfigure={() => { const returnTo = `/app/${encodeURIComponent(slug)}/knowledge`; window.location.assign(`/app/${encodeURIComponent(slug)}/providers?returnTo=${encodeURIComponent(returnTo)}`); }} trigger={<BeuiButton nativeButton unstyled type="button" aria-label={`${t('embeddingModel')}: ${model || t('embeddingModel')}`} className="ui-input mt-1.5 flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground"><Cpu className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1 truncate">{model || t('embeddingModel')}</span><span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span><ChevronDown className="size-3.5 shrink-0 text-muted-foreground" /></BeuiButton>} /></div><label className="text-xs font-medium text-muted-foreground">{t('chunkSize')}<BeuiInput type="number" min={200} max={8000} value={chunkSize} onChange={(event) => setChunkSize(Number(event.target.value))} className="ui-input mt-1.5 h-10 w-full text-foreground" /></label><label className="text-xs font-medium text-muted-foreground">{t('chunkOverlap')}<BeuiInput type="number" min={0} value={chunkOverlap} onChange={(event) => setChunkOverlap(Number(event.target.value))} className="ui-input mt-1.5 h-10 w-full text-foreground" /></label><label className="text-xs font-medium text-muted-foreground">{t('resultsPerSearch')}<BeuiInput type="number" min={1} max={20} value={topK} onChange={(event) => setTopK(Number(event.target.value))} className="ui-input mt-1.5 h-10 w-full text-foreground" /></label><label className="text-xs font-medium text-muted-foreground">{t('similarityThreshold')}<BeuiInput type="number" min={-1} max={1} step={0.05} value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} className="ui-input mt-1.5 h-10 w-full text-foreground" /></label></div><div className="mt-6 flex justify-end pt-4"><BeuiButton nativeButton unstyled type="button" onClick={saveSettings} disabled={busy || !name.trim() || !providerId || !model.trim()} className="ui-button-primary">{busy ? t('saving') : t('saveSettings')}</BeuiButton></div></div> : null}
           </div>
         ) : null}
-      </main>
+      </div>
     </div>
   );
 }

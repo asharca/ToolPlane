@@ -68,7 +68,14 @@ try {
     const tab = page.getByRole('tab', { name: 'Toolkits', exact: true });
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
     assert.equal(await page.getByRole('tabpanel').getAttribute('aria-labelledby'), await tab.getAttribute('id'));
-    await noPageOverflow(page); await page.screenshot({ path: path.join(output, 'desktop-workspace.png') });
+    await noPageOverflow(page);
+    const field = page.getByPlaceholder('Search toolkits...');
+    const geometry = await field.evaluate(el => {
+      const icon = el.parentElement.querySelector('svg');
+      return { textStart: el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft), iconEnd: icon.getBoundingClientRect().right };
+    });
+    assert.ok(geometry.textStart >= geometry.iconEnd + 4, 'Search text must not overlap its icon.');
+    await page.screenshot({ path: path.join(output, 'desktop-workspace.png') });
   });
   await check('create toolkit via FormData and verify persisted result after reload', async () => {
     await page.getByRole('button', { name: 'New Toolkit', exact: true }).first().click();
@@ -117,7 +124,10 @@ try {
   await check('A2A settings show the disabled service without enabling or executing it', async () => {
     await page.goto(`${origin}/app/ui-browser/agents/ui-agent?settings=a2a`);
     await page.getByRole('dialog').waitFor();
-    assert.ok(await page.getByRole('dialog').innerText());
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('heading', { name: 'Internal collaboration', exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Enable internal A2A', exact: true }).isDisabled(), true);
+    await dialog.getByText('Configure a model provider, model and exactly one exclusive networked Docker sandbox first.', { exact: true }).waitFor();
     await page.screenshot({ path: path.join(output, 'desktop-a2a-settings.png') });
     await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'hidden' });
   });
@@ -125,7 +135,9 @@ try {
     for (const segment of ['skills', 'mcp', 'sandboxes', 'providers', 'knowledge', 'members', 'market', 'work']) {
       const response = await page.goto(`${origin}/app/ui-browser/${segment}`);
       assert.ok(response && response.status() < 400, `${segment} returned ${response?.status()}`);
-      await page.getByRole('main').waitFor(); await noPageOverflow(page);
+      await page.getByRole('main').waitFor();
+      assert.equal(await page.getByRole('main').count(), 1, `${segment} must have exactly one main landmark`);
+      await noPageOverflow(page);
     }
     const response = await page.goto(`${origin}/admin`); assert.ok(response && response.status() < 400);
   });
@@ -155,6 +167,12 @@ try {
     await page.evaluate(() => localStorage.setItem('theme', 'dark')); await page.reload();
     await page.locator('html.dark').waitFor(); await noPageOverflow(page);
     await page.screenshot({ path: path.join(output, 'mobile-dark.png') });
+    assert.equal(errors.length, 0, `Unhandled browser errors: ${errors.join('; ')}`);
+  });
+  await check('light mobile theme keeps the workspace surface and fields visible', async () => {
+    await page.evaluate(() => localStorage.setItem('theme', 'light')); await page.reload();
+    await page.locator('html.light').waitFor(); await noPageOverflow(page);
+    await page.screenshot({ path: path.join(output, 'mobile-light.png') });
     assert.equal(errors.length, 0, `Unhandled browser errors: ${errors.join('; ')}`);
   });
   await context.close();

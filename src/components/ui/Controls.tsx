@@ -87,7 +87,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ t
   return <RegistryInput {...props} ref={ref} type={type} nativeLayout
     value={value === undefined ? undefined : String(value)} defaultValue={defaultValue === undefined ? undefined : String(defaultValue)}
     onNativeChange={onChange} data-toolplane-ui="input" data-ui-engine="beui"
-    classNames={{ input: cn('h-10 rounded-xl border border-input bg-background px-3.5 text-sm focus-visible:ring-2 focus-visible:ring-ring/30', classes) }} />;
+    classNames={{ input: cn('rounded-xl focus-visible:ring-2 focus-visible:ring-ring/30', classes) }} />;
 });
 
 export type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement>;
