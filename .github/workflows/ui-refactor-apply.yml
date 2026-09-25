@@ -1,0 +1,93 @@
+name: ui-refactor-apply
+on:
+  push:
+    branches: [refactor/beui-platform-ui]
+    paths: [.github/workflows/ui-refactor-apply.yml, '.ui-refactor-parts/**']
+permissions:
+  contents: write
+concurrency:
+  group: ui-refactor-apply
+  cancel-in-progress: false
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      AUTH_SECRET: test-ui-apply-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: asharca/ui
+          ref: 85b080aafe2f7e3aaf720e5a2ffdf035289c49c1
+          path: .ui-reference
+          persist-credentials: false
+      - name: Apply checksum-verified source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/refactor/beui-platform-ui
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C .ui-reference rev-parse HEAD)" = 85b080aafe2f7e3aaf720e5a2ffdf035289c49c1
+          python3 - <<'PY'
+          import gzip, hashlib, json, pathlib, shutil, subprocess
+          root = pathlib.Path('.')
+          parts = root / '.ui-refactor-parts'
+          manifest = json.loads((parts/'manifest.json').read_text())
+          compressed = b''.join((parts/f'{n:02}.bin').read_bytes() for n in range(8))
+          assert hashlib.sha256(compressed).hexdigest() == '3ffcb13f94fdd8d0a427b40d3abd13c1f583b4947563fe2ff3ad0aba813b7a43'
+          for relative, digest in manifest['overlay'].items():
+              source = root/'.ui-reference'/relative
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == digest, relative
+              destination = root/'src/components/ui/beui'/relative
+              assert not destination.exists(), relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, destination)
+          patch = pathlib.Path('/tmp/ui-refactor.patch')
+          patch.write_bytes(gzip.decompress(compressed))
+          subprocess.run(['git','apply','--check','--whitespace=error',str(patch)], check=True)
+          subprocess.run(['git','apply','--whitespace=error',str(patch)], check=True)
+          for relative, digest in manifest['files'].items():
+              file = root/relative
+              assert (not file.exists()) if digest is None else hashlib.sha256(file.read_bytes()).hexdigest() == digest, relative
+          pathlib.Path('/tmp/ui-changed-paths.json').write_text(json.dumps(list(manifest['files'])))
+          shutil.rmtree(parts)
+          (root/'.github/workflows/ui-refactor-apply.yml').unlink()
+          print('All 26 source paths match the locally verified changes.')
+          PY
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec tsc --noEmit
+      - name: Lint updated UI sources
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          paths = [p for p in json.loads(pathlib.Path('/tmp/ui-changed-paths.json').read_text()) if pathlib.Path(p).exists() and pathlib.Path(p).suffix in {'.ts','.tsx','.mjs'}]
+          subprocess.run(['pnpm','exec','eslint','--max-warnings=0',*paths],check=True)
+          PY
+      - name: Test source UI and host behavior
+        run: pnpm exec vitest run tests/unit/beui-native-contracts.test.tsx tests/unit/beui-workspace-contracts.test.tsx tests/unit/beui-architecture.test.ts tests/unit/beui-migration.test.ts tests/unit/dashboard-tabs.test.tsx tests/unit/dashboard-chrome.test.tsx
+      - name: Publish only verified changes to the existing PR
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          paths=json.loads(pathlib.Path('/tmp/ui-changed-paths.json').read_text())
+          subprocess.run(['git','add','--all','--',*paths,'.ui-refactor-parts','.github/workflows/ui-refactor-apply.yml'],check=True)
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor: adopt source workspace shell and tabs with browser regression coverage'
+          git push origin HEAD:refs/heads/refactor/beui-platform-ui
