@@ -135,7 +135,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
   return <div data-toolplane-ui="search-input" className={cn('tp-search-input', wrapperClassName)}>
     <Search aria-hidden="true" className="tp-search-input__icon" />
     <Input {...props} ref={inputRef} type="search" value={value} aria-label={label} className={cn('tp-search-input__control', className)} />
-    {value ? <IconButton icon={<X className="size-3.5" />} label={clearLabel} size="sm" variant="ghost" className="tp-search-input__clear"
+    {value ? <IconButton icon={<X className="size-3.5" />} label={clearLabel} size="sm" variant="ghost" className="tp-search-input__clear" disabled={props.disabled || props.readOnly}
       onClick={() => { onClear(); inputRef.current?.focus(); }} /> : null}
   </div>;
 });

@@ -29,7 +29,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { WorkspaceTabBar } from "@/components/ui";
+import { WorkspaceTabBar, workspaceTabElementId } from "@/components/ui";
 import { DashboardHeaderControls } from './DashboardHeaderControls';
 
 export const DASHBOARD_TAB_QUERY_PARAM = '__dashboardTab';
@@ -383,6 +383,11 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
       })}
       labels={{
         navigation: tabT('navigation'),
+        actions: (title) => tabT('actions', { title }),
+        menu: (title) => tabT('menu', { title }),
+        moveLeft: tabT('moveLeft'),
+        moveRight: tabT('moveRight'),
+        unsaved: tabT('unsaved'),
         newTab: tabT('new'),
         pin: (label) => tabT('pin', { label }),
         unpin: (label) => tabT('unpin', { label }),
@@ -400,10 +405,11 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
   );
 }
 
-export function DashboardTabContent({ children }: { children?: ReactNode }) {
+export function DashboardTabContent({ children, embedded = false }: { children?: ReactNode; embedded?: boolean }) {
+  const { activeTabId } = useDashboardTabs();
   return (
-    <main className="m-2 mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain rounded-[12px] bg-background lg:ml-0">
-      {children}
+    <main className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain ${embedded ? '' : 'm-2 mt-0 rounded-[12px] bg-background lg:ml-0'}`}>
+      <div id="dashboard-active-panel" role="tabpanel" aria-labelledby={workspaceTabElementId(activeTabId)} tabIndex={0} className="flex min-h-0 min-w-0 flex-1 flex-col outline-none">{children}</div>
     </main>
   );
 }

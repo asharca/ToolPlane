@@ -1,5 +1,6 @@
 'use client';
 import { Button as BeuiButton } from '@/components/ui/Controls';
+import { WorkspaceShell } from '@/components/ui/beui/components/workspace/workspace-shell';
 
 
 import {
@@ -138,47 +139,25 @@ export function DashboardChrome({
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
       <DashboardTabsProvider key={slug} slug={slug}>
-        <div className="flex h-dvh min-h-dvh overflow-hidden bg-shell text-foreground [--dashboard-page-header-height:2.75rem] [--dashboard-tabbar-height:2.75rem]">
-            {open ? (
-              <BeuiButton nativeButton unstyled
-                type="button"
-                aria-label={t('closeMenu')}
-                onClick={closeMenu}
-                className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-              />
-            ) : null}
-
-            <DashboardSidebar
-              slug={slug}
-              workspaceName={workspaceName}
-              userLabel={userLabel}
-              workspaces={workspaces}
-              isAdmin={isAdmin}
-              mobileOpen={open}
-              onClose={closeMenu}
-              collapsed={collapsed}
-              onToggleCollapsed={() => setCollapsed((value) => !value)}
-            />
-
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <div className="flex h-14 shrink-0 items-center gap-3 bg-shell px-3 lg:hidden">
-                <BeuiButton nativeButton unstyled
-                  ref={menuButtonRef}
-                  type="button"
-                  aria-label={t('openMenu')}
-                  aria-expanded={open}
-                  aria-controls="dashboard-sidebar"
-                  onClick={() => setOpen(true)}
-                  className="ui-button-ghost ui-icon-button"
-                >
-                  <Menu className="size-5" />
-                </BeuiButton>
-                <DashboardLogo />
-              </div>
-              <DashboardTabBar canInstall={isAdmin} />
-              <DashboardTabContent>{children}</DashboardTabContent>
-            </div>
-          </div>
+        <WorkspaceShell
+          open={!collapsed} onOpenChange={value => setCollapsed(!value)}
+          openMobile={open} onOpenMobileChange={value => { if (value) setOpen(true); else closeMenu(); }}
+          scroll="none"
+          style={{ '--sidebar-width': '16rem', '--sidebar-width-icon': '4rem' }}
+          className="h-dvh min-h-dvh [--workspace-gap:0.5rem] [--workspace-surface:hsl(var(--background))] [--workspace-shell-background:hsl(var(--shell))] [--dashboard-page-header-height:2.75rem] [--dashboard-tabbar-height:2.75rem]"
+          sidebar={<>
+            {open ? <BeuiButton unstyled type="button" aria-label={t('closeMenu')} onClick={closeMenu} className="fixed inset-0 z-30 bg-black/40 lg:hidden" /> : null}
+            <DashboardSidebar slug={slug} workspaceName={workspaceName} userLabel={userLabel} workspaces={workspaces} isAdmin={isAdmin}
+              mobileOpen={open} onClose={closeMenu} collapsed={collapsed} onToggleCollapsed={() => setCollapsed(value => !value)} />
+          </>}
+          mobileHeader={<>
+            <BeuiButton unstyled ref={menuButtonRef} type="button" aria-label={t('openMenu')} aria-expanded={open} aria-controls="dashboard-sidebar" onClick={() => setOpen(true)} className="ui-button-ghost ui-icon-button"><Menu className="size-5" /></BeuiButton>
+            <DashboardLogo />
+          </>}
+          tabBar={<DashboardTabBar canInstall={isAdmin} />}
+        >
+          <DashboardTabContent embedded>{children}</DashboardTabContent>
+        </WorkspaceShell>
         </DashboardTabsProvider>
     </DashboardRuntimeConfigProvider>
   );

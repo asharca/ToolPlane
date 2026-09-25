@@ -99,6 +99,15 @@ describe('beUI platform native contracts', () => {
     render(<Search />); await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     expect(screen.getByRole('searchbox')).toHaveValue(''); expect(screen.getByRole('searchbox')).toHaveFocus();
   });
+  it.each(['disabled', 'readOnly'] as const)('does not clear a %s search field', async (mode) => {
+    const clear = vi.fn();
+    render(<SearchInput label="Search" value="protected" onClear={clear} {...{ [mode]: true }} />);
+    const button = screen.getByRole('button', { name: 'Clear search' });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(clear).not.toHaveBeenCalled();
+    expect(screen.getByRole('searchbox')).toHaveValue('protected');
+  });
   it('reports clipboard failure without leaking an exception or moving focus', async () => {
     const user = userEvent.setup();
     vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'));

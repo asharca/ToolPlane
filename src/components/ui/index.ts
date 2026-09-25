@@ -14,5 +14,6 @@ export * from './compositions/Overlays.js';
 export * from './compositions/RotatingHeadline.js';
 export * from './compositions/SafeStreamdown.js';
 export * from './compositions/Sidebar.js';
-export * from './compositions/WorkspaceTabBar.jsx';
+export * from './WorkspaceTabs';
+export { WorkspaceShell } from './beui/components/workspace/workspace-shell';
 export * from './compositions/chat-markdown.js';

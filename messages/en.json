@@ -437,7 +437,12 @@
       "new": "New tab",
       "pin": "Pin {label}",
       "unpin": "Unpin {label}",
-      "openInNewWindow": "Open {label} in new window"
+      "openInNewWindow": "Open {label} in new window",
+      "actions": "{title} actions",
+      "menu": "{title} tab menu",
+      "moveLeft": "Move left",
+      "moveRight": "Move right",
+      "unsaved": "(unsaved)"
     },
     "market": {
       "title": "Workspace Market",
