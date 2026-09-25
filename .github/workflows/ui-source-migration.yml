@@ -40,11 +40,14 @@ jobs:
           source = source.replace("import { createRequire } from 'node:module';\n", '');
           source = source.replace('  const require = createRequire(import.meta.url);\n', '');
           source = source.replace("path.dirname(path.dirname(require.resolve('@asharca/ui')))", "path.dirname(path.dirname(fileURLToPath(import.meta.resolve('@asharca/ui'))))");
+          source = source.split('\n').map(line => line.includes("replaceOne(source, '  label?: string;',")
+            ? '  source = replaceOne(source, ' + JSON.stringify('> {\n  label?: string;') + ', ' + JSON.stringify('> {\n  /** Native form bridge; see provenance.json. */\n  nativeLayout?: boolean;\n  onNativeChange?: ChangeEventHandler<HTMLInputElement>;\n  label?: string;') + ', filename);'
+            : line).join('\n');
           writeFileSync(file, source);
           JS
           node scripts/ui/migrate-beui.mjs
-          pnpm remove @asharca/ui
-          pnpm add --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0
+          pnpm remove -w @asharca/ui
+          pnpm add -w --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0
           pnpm exec prisma generate
           git diff --check
       - name: Commit source changes only to the authorized branch
