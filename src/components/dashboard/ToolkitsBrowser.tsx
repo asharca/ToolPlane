@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -36,7 +38,7 @@ function CreateToolkitToggle({
   const t = useTranslations('console.toolkits');
 
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="button"
       onClick={onClick}
       aria-controls="toolkit-create-form"
@@ -45,7 +47,7 @@ function CreateToolkitToggle({
     >
       {expanded ? <X className="size-4" /> : <Plus className="size-4" />}
       {expanded ? t('cancel') : t('newToolkit')}
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -91,18 +93,18 @@ function ToolkitAvailabilityPill({
 
   return (
     <form action={updateToolkitAvailabilityAction} className="inline-flex">
-      <input type="hidden" name="workspace" value={workspaceSlug} />
-      <input type="hidden" name="toolkitSlug" value={toolkit.slug} />
-      <input type="hidden" name="visibility" value={nextVisibility} />
-      {nextEnabled ? <input type="hidden" name="enabled" value="on" /> : null}
-      <button
+      <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+      <BeuiInput type="hidden" name="toolkitSlug" value={toolkit.slug} />
+      <BeuiInput type="hidden" name="visibility" value={nextVisibility} />
+      {nextEnabled ? <BeuiInput type="hidden" name="enabled" value="on" /> : null}
+      <BeuiButton nativeButton unstyled
         type="submit"
         aria-label={actionLabel}
         title={actionLabel}
         className={`${className} transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
       >
         {content}
-      </button>
+      </BeuiButton>
     </form>
   );
 }
@@ -151,10 +153,10 @@ export function ToolkitsBrowser({
           action={createToolkitAction}
           className="ui-panel grid gap-3 p-4 sm:grid-cols-[minmax(0,20rem)_auto] sm:items-end"
         >
-          <input type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
           <label htmlFor="toolkit-create-name" className="block text-xs font-medium text-muted-foreground">
             {t('toolkitName')}
-            <input
+            <BeuiInput
               id="toolkit-create-name"
               name="name"
               autoFocus
@@ -165,16 +167,16 @@ export function ToolkitsBrowser({
             />
           </label>
           <div className="grid grid-cols-2 gap-2 sm:flex">
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => setCreating(false)}
               className="ui-button-secondary"
             >
               {t('cancel')}
-            </button>
-            <button className="ui-button-primary">
+            </BeuiButton>
+            <BeuiButton nativeButton unstyled className="ui-button-primary">
               {t('createToolkit')}
-            </button>
+            </BeuiButton>
           </div>
         </form>
       ) : null}

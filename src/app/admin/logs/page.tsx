@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { Activity, ArrowDown, ArrowUpRight, Bot, ChevronDown, ChevronRight, CircleAlert, Clock3, Download, Gauge, RefreshCw, ScrollText, Server, ShieldCheck } from 'lucide-react';
-import { Alert, DataTable, Pagination, Tab, TabList } from '@asharca/ui';
+import { Alert, DataTable, Pagination, Tab, TabList } from "@/components/ui";
 import type { Prisma } from '@prisma/client';
 import { requireAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/db';

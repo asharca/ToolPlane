@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -33,7 +35,7 @@ export function WorkspaceInvitation({ signedIn }: { signedIn: boolean }) {
   return (
     <div className="space-y-4">
       {!state ? <p role="status">{t('loadingInvitation')}</p> : !signedIn ? <><p className="text-sm text-muted-foreground">{t('signInToJoin')}</p><div className="flex flex-wrap gap-2"><Link href={`/app/login?next=${next}`} className="ui-button-primary">{auth('signIn')}</Link><Link href={`/app/signup?next=${next}`} className="ui-button-secondary">{auth('signUpLink')}</Link></div></> : !state.preview ? <p role="alert">{t('errors.invalidInvitation')}</p> : !state.preview.canJoin ? (
-        <form action={switchInvitationAccountAction} className="space-y-4"><p>{t('invitationAccount', { email: state.preview.email })}</p><button type="submit" className="ui-button-primary">{t('switchAccount')}</button></form>
+        <form action={switchInvitationAccountAction} className="space-y-4"><p>{t('invitationAccount', { email: state.preview.email })}</p><BeuiButton nativeButton unstyled type="submit" className="ui-button-primary">{t('switchAccount')}</BeuiButton></form>
       ) : <><h2 className="break-words text-lg font-medium">{state.preview.name}</h2><p className="text-sm text-muted-foreground">{t('invitationAccount', { email: state.preview.email })}</p><AcceptWorkspaceInvitationForm token={state.token} /></>}
       <Link href="/app?view=workspaces" className="ui-button-ghost">{t('backToList')}</Link>
     </div>

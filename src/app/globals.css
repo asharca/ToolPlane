@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@import "@asharca/ui/styles.css";
+@import "../components/ui/composition-layout.css";
+@import "../components/ui/beui-overrides.css";
 @import "@xterm/xterm/css/xterm.css";
 
 /* Let Tailwind detect the utility classes baked into Streamdown's chat markdown renderer. */
@@ -18,8 +19,8 @@
   --card-foreground: 0 0% 12%;
   --popover: 0 0% 100%;
   --popover-foreground: 0 0% 12%;
-  --primary: 0 0% 15%;
-  --primary-foreground: 0 0% 98%;
+  --primary: 208 98% 43%;
+  --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 95%;
   --secondary-foreground: 0 0% 17%;
   --muted: 0 0% 96%;
@@ -31,7 +32,7 @@
   --destructive-text: 0 72% 42%;
   --border: 0 0% 88%;
   --input: 0 0% 84%;
-  --ring: 142 58% 38%;
+  --ring: 208 98% 43%;
   --brand: 142 58% 38%;
   --brand-foreground: 0 0% 100%;
   --brand-soft: 137 56% 92%;
@@ -48,8 +49,8 @@
   --card-foreground: 0 0% 96%;
   --popover: 0 0% 17%;
   --popover-foreground: 0 0% 96%;
-  --primary: 0 0% 93%;
-  --primary-foreground: 0 0% 12%;
+  --primary: 208 98% 43%;
+  --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 18%;
   --secondary-foreground: 0 0% 96%;
   --muted: 0 0% 17%;
@@ -61,7 +62,7 @@
   --destructive-text: 0 78% 72%;
   --border: 0 0% 22%;
   --input: 0 0% 25%;
-  --ring: 128 73% 67%;
+  --ring: 208 98% 43%;
   --brand: 128 73% 67%;
   --brand-foreground: 0 0% 12%;
   --brand-soft: 130 36% 18%;

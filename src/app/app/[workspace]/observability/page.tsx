@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
@@ -105,8 +107,8 @@ export default async function ObservabilityPage({
             className="rounded-lg border border-border bg-muted/20 px-4 py-3"
             actions={(
               <form action={base} method="get" className="flex flex-wrap items-center gap-2">
-                {current !== 'usage' ? <input type="hidden" name="tab" value={current} /> : null}
-                <input name="q" defaultValue={q} aria-label={t('searchLogs')} placeholder={t('searchLogs')} className="ui-input h-9 w-48" />
+                {current !== 'usage' ? <BeuiInput type="hidden" name="tab" value={current} /> : null}
+                <BeuiInput name="q" defaultValue={q} aria-label={t('searchLogs')} placeholder={t('searchLogs')} className="ui-input h-9 w-48" />
                 <label htmlFor="observability-deployment" className="sr-only">
                   {t('filterByServer')}
                 </label>
@@ -124,9 +126,9 @@ export default async function ObservabilityPage({
                     </option>
                   ))}
                 </NativeSelect>
-                <button type="submit" className="ui-button-secondary h-9 text-sm">
+                <BeuiButton nativeButton unstyled type="submit" className="ui-button-secondary h-9 text-sm">
                   {t('applyFilter')}
-                </button>
+                </BeuiButton>
                 {selectedDeploymentId ? (
                   <Link href={current === 'usage' ? base : `${base}?tab=${current}`} className="text-sm text-muted-foreground hover:text-foreground">
                     {t('clearFilter')}

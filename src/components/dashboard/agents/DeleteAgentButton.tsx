@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
@@ -22,9 +24,9 @@ export function DeleteAgentButton({
 
   return (
     <form action={deleteAgentAction} className="flex flex-wrap items-center gap-2.5">
-      <input type="hidden" name="workspace" value={slug} />
-      <input type="hidden" name="agentId" value={agentId} />
-      {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
+      <BeuiInput type="hidden" name="workspace" value={slug} />
+      <BeuiInput type="hidden" name="agentId" value={agentId} />
+      {returnTo ? <BeuiInput type="hidden" name="returnTo" value={returnTo} /> : null}
       <ConfirmSubmitButton
         triggerLabel={<Trash2 className="size-[18px] shrink-0" />}
         triggerAriaLabel={t('deleteAgent')}

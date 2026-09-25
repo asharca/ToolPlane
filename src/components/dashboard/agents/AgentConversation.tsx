@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react';
 import { useTranslations } from 'next-intl';
@@ -31,11 +33,11 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { Popover } from 'radix-ui';
+import { Popover } from '@/components/ui/primitives';
 import {
   ChatThread,
   type ChatThreadLabels,
-} from '@asharca/ui';
+} from "@/components/ui";
 import { ConversationContextUsage } from '@/components/dashboard/ConversationComposer';
 import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import { McpResourcePickerButton } from '@/components/dashboard/McpResourcePickerButton';
@@ -407,7 +409,7 @@ function ConversationTools({
     <>
       <Popover.Root open={toolsOpen} onOpenChange={setToolsOpen}>
         <Popover.Trigger asChild>
-          <button
+          <BeuiButton nativeButton unstyled
             ref={toolsButtonRef}
             type="button"
             disabled={disabled}
@@ -418,7 +420,7 @@ function ConversationTools({
             className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
           >
             <Plus className="size-[18px]" />
-          </button>
+          </BeuiButton>
         </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
@@ -436,7 +438,7 @@ function ConversationTools({
               return (
                 <div key={action.id} role="presentation">
                   {action.group && action.group !== previousGroup ? <p className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{action.group}</p> : null}
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     role="menuitem"
                     disabled={action.disabled}
@@ -451,14 +453,14 @@ function ConversationTools({
                       <span className="block text-sm">{action.label}</span>
                       {action.description ? <span className="block truncate text-xs text-muted-foreground">{action.description}</span> : null}
                     </span>
-                  </button>
+                  </BeuiButton>
                 </div>
               );
             })}
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
-      <input id={attachmentInputId} type="file" multiple hidden onChange={(event) => void addAttachments(event)} />
+      <BeuiInput id={attachmentInputId} type="file" multiple hidden onChange={(event) => void addAttachments(event)} />
       {!disabled && slashItems.length ? (
         <ComposerPrimitive.Unstable_TriggerPopover
           char="/"
@@ -528,7 +530,7 @@ function ConversationTools({
       {pinnedActions.map((action) => {
         const Icon = action.icon;
         return (
-          <button
+          <BeuiButton nativeButton unstyled
             key={action.id}
             type="button"
             data-composer-shortcut={action.id}
@@ -542,7 +544,7 @@ function ConversationTools({
               : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
           >
             <Icon className="size-[17px]" />
-          </button>
+          </BeuiButton>
         );
       })}
       <Dialog open={customizing} onOpenChange={setCustomizing}>
@@ -552,9 +554,9 @@ function ConversationTools({
             <header className="flex items-center justify-between gap-3">
               <DialogTitle className="!text-base !tracking-normal">{agentsT('customizeToolbar')}</DialogTitle>
               <DialogClose asChild>
-                <button type="button" aria-label={common('close')} title={common('close')} className="ui-button-ghost ui-icon-button">
+                <BeuiButton nativeButton unstyled type="button" aria-label={common('close')} title={common('close')} className="ui-button-ghost ui-icon-button">
                   <X className="size-4" />
-                </button>
+                </BeuiButton>
               </DialogClose>
             </header>
             <div className="mt-3 divide-y divide-border">
@@ -564,7 +566,7 @@ function ConversationTools({
                 return (
                   <div key={action.id} className="flex min-h-11 items-center gap-2 py-1">
                     <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-sm">
-                      <input
+                      <BeuiInput
                         type="checkbox"
                         checked={index >= 0}
                         onChange={(event) => saveToolbar(event.target.checked
@@ -577,12 +579,12 @@ function ConversationTools({
                     </label>
                     {index >= 0 ? (
                       <>
-                        <button type="button" disabled={index === 0} aria-label={agentsT('moveShortcutUp', { name: action.label })} title={agentsT('moveShortcutUp', { name: action.label })} onClick={() => moveShortcut(index, -1)} className="ui-button-ghost ui-icon-button">
+                        <BeuiButton nativeButton unstyled type="button" disabled={index === 0} aria-label={agentsT('moveShortcutUp', { name: action.label })} title={agentsT('moveShortcutUp', { name: action.label })} onClick={() => moveShortcut(index, -1)} className="ui-button-ghost ui-icon-button">
                           <ArrowUp className="size-3.5" />
-                        </button>
-                        <button type="button" disabled={index === pinnedIds.length - 1} aria-label={agentsT('moveShortcutDown', { name: action.label })} title={agentsT('moveShortcutDown', { name: action.label })} onClick={() => moveShortcut(index, 1)} className="ui-button-ghost ui-icon-button">
+                        </BeuiButton>
+                        <BeuiButton nativeButton unstyled type="button" disabled={index === pinnedIds.length - 1} aria-label={agentsT('moveShortcutDown', { name: action.label })} title={agentsT('moveShortcutDown', { name: action.label })} onClick={() => moveShortcut(index, 1)} className="ui-button-ghost ui-icon-button">
                           <ArrowDown className="size-3.5" />
-                        </button>
+                        </BeuiButton>
                       </>
                     ) : null}
                   </div>
@@ -590,10 +592,10 @@ function ConversationTools({
               })}
             </div>
             <footer className="mt-3 flex justify-end border-t border-border pt-3">
-              <button type="button" disabled={!pinnedIds.length} onClick={() => saveToolbar([])} className="ui-button-secondary text-xs">
+              <BeuiButton nativeButton unstyled type="button" disabled={!pinnedIds.length} onClick={() => saveToolbar([])} className="ui-button-secondary text-xs">
                 <RotateCcw className="size-3.5" />
                 {agentsT('resetToolbar')}
-              </button>
+              </BeuiButton>
             </footer>
           </DialogContent>
         </DialogPortal>

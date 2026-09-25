@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -93,8 +95,8 @@ export default async function SkillMarketDetailPage({
               </Link>
             ) : (
               <form action={installSkillAction} className="mt-5">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="skillId" value={skill.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="skillId" value={skill.id} />
                 <SubmitButton pendingLabel={t('installing')} flash={false} className="ui-button-primary h-10 w-full">
                   {t('installToWorkspace')} <ArrowRight className="size-4" />
                 </SubmitButton>

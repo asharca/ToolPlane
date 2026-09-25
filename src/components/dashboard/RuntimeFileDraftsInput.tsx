@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useId, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslations } from 'next-intl';
@@ -122,7 +124,7 @@ export function RuntimeFileDraftsInput({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             disabled={disabled}
             onClick={() => inputRef.current?.click()}
@@ -130,8 +132,8 @@ export function RuntimeFileDraftsInput({
           >
             <Upload className="size-3.5" />
             {t('uploadTextFiles')}
-          </button>
-          <button
+          </BeuiButton>
+          <BeuiButton nativeButton unstyled
             type="button"
             disabled={disabled}
             onClick={addFile}
@@ -139,8 +141,8 @@ export function RuntimeFileDraftsInput({
           >
             <Plus className="size-3.5" />
             {t('addFile')}
-          </button>
-          <input
+          </BeuiButton>
+          <BeuiInput
             ref={inputRef}
             type="file"
             multiple
@@ -164,7 +166,7 @@ export function RuntimeFileDraftsInput({
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('relativeFilePath')}
-                  <input
+                  <BeuiInput
                     value={file.path}
                     onChange={(event) => updateFile(index, { path: event.target.value })}
                     disabled={disabled}
@@ -173,7 +175,7 @@ export function RuntimeFileDraftsInput({
                     className="ui-input font-mono text-xs disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </label>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   disabled={disabled}
                   onClick={() => removeFile(index)}
@@ -181,11 +183,11 @@ export function RuntimeFileDraftsInput({
                 >
                   <Trash2 className="size-3.5" />
                   {t('remove')}
-                </button>
+                </BeuiButton>
               </div>
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 {t('textContent')}
-                <textarea
+                <BeuiTextarea
                   value={file.content}
                   onChange={(event) => updateFile(index, { content: event.target.value })}
                   disabled={disabled}

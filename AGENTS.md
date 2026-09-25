@@ -109,7 +109,7 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Task | Start here |
 | --- | --- |
 | Core platform | `docs/README.md` (index), `docs/ARCHITECTURE.md` (Chinese); `prisma/schema.prisma` |
-| Shared UI | `docs/UI_LIBRARY.md`; use published `@asharca/ui`. Change shared components/styles in `asharca/ui`, then update the pinned dependency through a PR. Do not recreate `packages/ui` or alias imports to local UI source. |
+| Shared UI | `docs/UI_LIBRARY.md`; use the source registry selected by the user at `https://asharca.github.io/ui/llms.txt`. Components live under `src/components/ui`; provenance records the pinned upstream commit and documented adaptations. Do not restore the retired npm package or alias its name to local source. Preserve native form semantics and headless accessibility contracts. |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
 | Toolkits and sync | `src/lib/toolkits/actions.ts`; `docs/TOOLKIT_SYNC.md` |

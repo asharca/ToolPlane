@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -26,7 +28,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
         <fieldset disabled={pending} className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('owner')}</span>
-            <input
+            <BeuiInput
               name="owner"
               defaultValue={source.owner}
               className="ui-input h-11 font-mono"
@@ -36,7 +38,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('repo')}</span>
-            <input
+            <BeuiInput
               name="repo"
               defaultValue={source.repo}
               className="ui-input h-11 font-mono"
@@ -46,7 +48,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('ref')}</span>
-            <input
+            <BeuiInput
               name="ref"
               defaultValue={source.ref}
               className="ui-input h-11 font-mono"
@@ -56,7 +58,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-3">
             <span>{t('root')}</span>
-            <input
+            <BeuiInput
               name="rootPath"
               defaultValue={source.rootPath}
               className="ui-input h-11 font-mono"
@@ -66,7 +68,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-1">
             <span>{t('prefix')}</span>
-            <input
+            <BeuiInput
               name="slugPrefix"
               defaultValue={source.slugPrefix}
               className="ui-input h-11 font-mono"
@@ -104,7 +106,7 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </p>
         ) : null}
         {state.failures?.length ? <section className="space-y-3 border-t border-border pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">{ops('failedFiles')} ({state.failures.length})</h3><button type="submit" name="intent" value="retry" disabled={pending} className="ui-button-secondary"><RotateCcw className="size-4" />{pending ? t('syncing') : ops('retryFailed')}</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">{ops('failedFiles')} ({state.failures.length})</h3><BeuiButton nativeButton unstyled type="submit" name="intent" value="retry" disabled={pending} className="ui-button-secondary"><RotateCcw className="size-4" />{pending ? t('syncing') : ops('retryFailed')}</BeuiButton></div>
           <p className="break-all font-mono text-xs text-muted-foreground">{state.source?.owner}/{state.source?.repo} @ {state.source?.ref}</p>
           <ul className="max-h-80 divide-y divide-border overflow-auto">{state.failures.map((failure) => <li key={failure.path} className="py-3"><code className="block break-all text-xs font-medium">{failure.path}</code><p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive-text">{failure.error}</p></li>)}</ul>
         </section> : null}

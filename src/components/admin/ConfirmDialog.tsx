@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useEffect, useId, useRef, useState } from 'react';
@@ -53,7 +55,7 @@ export function ConfirmDialog({
 
   return (
     <div className={open ? 'w-full' : undefined}>
-      <button
+      <BeuiButton nativeButton unstyled
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
@@ -65,7 +67,7 @@ export function ConfirmDialog({
       >
         <TriggerIcon className="size-4" />
         {label}
-      </button>
+      </BeuiButton>
       <form
         id={confirmationId}
         action={formAction}
@@ -75,11 +77,11 @@ export function ConfirmDialog({
         aria-busy={isPending}
       >
         {Object.entries(hidden).map(([k, v]) => (
-          <input key={k} type="hidden" name={k} value={v} />
+          <BeuiInput key={k} type="hidden" name={k} value={v} />
         ))}
         <p id={promptId} className="text-sm font-medium text-foreground">{prompt}</p>
         {confirmWord ? (
-          <input
+          <BeuiInput
             name="confirm"
             placeholder={confirmWord}
             className="ui-input h-11 font-mono"
@@ -100,7 +102,7 @@ export function ConfirmDialog({
             <Check className="size-4" />
             {t('confirm')}
           </SubmitButton>
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={closeConfirmation}
             disabled={isPending}
@@ -108,7 +110,7 @@ export function ConfirmDialog({
           >
             <X className="size-4" />
             {t('cancel')}
-          </button>
+          </BeuiButton>
         </div>
         {state.error ? (
           <p className="text-sm text-destructive-text" role="alert">

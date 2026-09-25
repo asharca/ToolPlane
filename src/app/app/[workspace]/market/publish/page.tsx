@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -62,8 +64,8 @@ function PublisherControls({
     <div className="flex flex-wrap justify-end gap-2 sm:col-span-4">
       {listing.pendingRelease?.reviewStatus === 'pending' ? (
         <form action={withdrawMarketReleaseAction}>
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="listingId" value={listing.id} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="listingId" value={listing.id} />
           <ConfirmSubmitButton
             triggerLabel={<><Undo2 className="size-3.5" />{labels.withdraw}</>}
             prompt={labels.withdrawConfirm}
@@ -79,8 +81,8 @@ function PublisherControls({
       ) : null}
       {listing.status === 'published' && listing.latestRelease ? (
         <form action={unpublishMarketListingAction}>
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="listingId" value={listing.id} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="listingId" value={listing.id} />
           <ConfirmSubmitButton
             triggerLabel={<><EyeOff className="size-3.5" />{labels.unpublish}</>}
             prompt={labels.unpublishConfirm}

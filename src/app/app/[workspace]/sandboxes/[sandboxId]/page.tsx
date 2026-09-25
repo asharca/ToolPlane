@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
@@ -163,8 +165,8 @@ export default async function SandboxDetailPage({
   const connectorSettings = connector ? (
     <div className="space-y-4">
       <form action={generateConnectorCommandAction} className="space-y-3">
-        <input type="hidden" name="workspace" value={slug} />
-        <input type="hidden" name="sandboxId" value={sandbox.id} />
+        <BeuiInput type="hidden" name="workspace" value={slug} />
+        <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border pb-3 text-xs text-muted-foreground">
           <Globe2 className="size-4 shrink-0" />
           <span>{t('platformUrl')}</span>
@@ -178,7 +180,7 @@ export default async function SandboxDetailPage({
             {t('localRoot')}
             <span className="relative block">
               <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <BeuiInput
                 name="connectorRemoteRoot"
                 required
                 defaultValue={connector.remoteRoot || DEFAULT_CONNECTOR_REMOTE_ROOT}
@@ -314,12 +316,12 @@ export default async function SandboxDetailPage({
                   <section className="pb-5">
                     <h3 className="text-sm font-semibold text-foreground">{t('generalSettings')}</h3>
                     <form action={renameSandboxAction} className="mt-3">
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="sandboxId" value={sandbox.id} />
+                      <BeuiInput type="hidden" name="workspace" value={slug} />
+                      <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                       <fieldset disabled={lifecycleBlocked} className="flex items-end gap-2 disabled:opacity-60">
                         <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                           {t('sandboxName')}
-                          <input
+                          <BeuiInput
                             name="name"
                             defaultValue={sandbox.name}
                             maxLength={80}
@@ -347,10 +349,10 @@ export default async function SandboxDetailPage({
                     <h3 className="text-sm font-semibold text-foreground">{t('environmentVariables')}</h3>
                     <p className="mt-0.5 text-xs text-muted-foreground">{t('changesRestartTheSandboxContainerButKeepFiles')}</p>
                     <form action={updateSandboxEnvAction} className="mt-3">
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="sandboxId" value={sandbox.id} />
+                      <BeuiInput type="hidden" name="workspace" value={slug} />
+                      <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                       <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
-                        <textarea
+                        <BeuiTextarea
                           name="env"
                           defaultValue={envText}
                           rows={5}
@@ -421,8 +423,8 @@ export default async function SandboxDetailPage({
                             : 'deleteExternalSandboxDescription')}
                         </p>
                         <form action={deleteSandboxAction}>
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input type="hidden" name="sandboxId" value={sandbox.id} />
+                          <BeuiInput type="hidden" name="workspace" value={slug} />
+                          <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                           <ConfirmSubmitButton
                             triggerLabel={t('delete')}
                             confirmLabel={common('confirm')}
@@ -450,15 +452,15 @@ export default async function SandboxDetailPage({
               {disabledLegacy || lifecycleBlocked ? null : running ? (
                 <>
                   <form action={stopSandboxAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="sandboxId" value={sandbox.id} />
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                     <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
                       {t('stop')}
                     </SubmitButton>
                   </form>
                   <form action={restartSandboxAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="sandboxId" value={sandbox.id} />
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                     <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
                       {t('restart')}
                     </SubmitButton>
@@ -466,8 +468,8 @@ export default async function SandboxDetailPage({
                 </>
               ) : (
                 <form action={startSandboxAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="sandboxId" value={sandbox.id} />
+                  <BeuiInput type="hidden" name="workspace" value={slug} />
+                  <BeuiInput type="hidden" name="sandboxId" value={sandbox.id} />
                   <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
                     {t('start')}
                   </SubmitButton>

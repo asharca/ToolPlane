@@ -1,7 +1,6 @@
 import { readFile, writeFile, mkdir, readdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
 
@@ -98,7 +97,7 @@ function replaceOne(source, from, to, filename) {
 export function adaptInput(source) {
   const filename = 'beui/input';
   source = replaceOne(source, 'type InputHTMLAttributes,', 'type InputHTMLAttributes,\n  type ChangeEventHandler,', filename);
-  source = replaceOne(source, '  label?: string;', '  /** Native form bridge; see provenance.json. */\n  nativeLayout?: boolean;\n  onNativeChange?: ChangeEventHandler<HTMLInputElement>;\n  label?: string;', filename);
+  source = replaceOne(source, "> {\n  label?: string;", "> {\n  /** Native form bridge; see provenance.json. */\n  nativeLayout?: boolean;\n  onNativeChange?: ChangeEventHandler<HTMLInputElement>;\n  label?: string;", filename);
   source = replaceOne(source, '    onChange,\n', '    onChange,\n    onNativeChange,\n    nativeLayout = false,\n', filename);
   source = replaceOne(source, '  const controlled = valueProp !== undefined;\n  const [internal, setInternal] = useState(defaultValue ?? "");\n  const value = controlled ? (valueProp ?? "") : internal;\n', '', filename);
   source = replaceOne(source, '    if (!controlled) setInternal(next);\n', '', filename);
@@ -161,8 +160,7 @@ async function vendorRegistry() {
 
 async function preserveCompositions() {
   // Application-specific assistant-ui, routing and layout adapters, NOT new registry primitives.
-  const require = createRequire(import.meta.url);
-  const packageRoot = path.dirname(path.dirname(require.resolve('@asharca/ui')));
+  const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.resolve('@asharca/ui'))));
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'));
   if (manifest.version !== '0.2.1') throw new Error('Unexpected old UI version');
   const modules = [];

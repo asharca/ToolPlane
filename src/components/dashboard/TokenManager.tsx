@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
@@ -23,13 +25,13 @@ function CreateButton() {
   const t = useTranslations('console.tokens');
   const { pending } = useFormStatus();
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="submit"
       disabled={pending}
       className="ui-button-primary disabled:opacity-60"
     >
       {pending ? t('creating') : t('createToken')}
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -45,7 +47,7 @@ function NewTokenReveal({ token }: { token: string }) {
         <code className="min-w-0 flex-1 truncate rounded bg-card px-2 py-1.5 font-mono text-sm text-foreground">
           {token}
         </code>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={() => {
             navigator.clipboard.writeText(token).then(() => {
@@ -57,7 +59,7 @@ function NewTokenReveal({ token }: { token: string }) {
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? t('copied') : t('copy')}
-        </button>
+        </BeuiButton>
       </div>
     </div>
   );
@@ -85,7 +87,7 @@ export function TokenManager({
         {state.token ? <NewTokenReveal token={state.token} /> : null}
 
         <form action={formAction} className="flex flex-wrap items-end gap-2">
-          <input type="hidden" name="workspace" value={workspaceSlug} />
+          <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
           <div className="flex-1 space-y-1.5">
             <label
               htmlFor="token-name"
@@ -93,7 +95,7 @@ export function TokenManager({
             >
               {t('tokenName')}
             </label>
-            <input
+            <BeuiInput
               id="token-name"
               name="name"
               type="text"
@@ -137,14 +139,14 @@ export function TokenManager({
                   </div>
                 </div>
                 <form action={revokeTokenAction}>
-                  <input type="hidden" name="id" value={token.id} />
-                  <input type="hidden" name="workspace" value={workspaceSlug} />
-                  <button
+                  <BeuiInput type="hidden" name="id" value={token.id} />
+                  <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                  <BeuiButton nativeButton unstyled
                     type="submit"
                     className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-zinc-800 dark:text-red-400 dark:hover:bg-red-950/30"
                   >
                     <Trash2 className="h-3.5 w-3.5" /> {t('revoke')}
-                  </button>
+                  </BeuiButton>
                 </form>
               </li>
             ))}

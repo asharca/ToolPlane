@@ -1,6 +1,8 @@
+
+import { Input as BeuiInput, Select as BeuiSelect } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Button, Input, Tab, TabList } from '@asharca/ui';
+import { Button, Input, Tab, TabList } from "@/components/ui";
 import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import type { LogFilters as Filters } from '@/lib/observability/queries';
 
@@ -17,8 +19,8 @@ export function LogFilters({ tab, raw, filters, observedAt }: {
   const activeCount = fields.filter((key) => raw[key]).length + (tab !== 'audit' && raw.level ? 1 : 0);
 
   return <form action="/admin/logs" className="space-y-3" key={JSON.stringify(raw)}>
-    <input type="hidden" name="tab" value={tab} />
-    {raw.returnTo ? <input type="hidden" name="returnTo" value={raw.returnTo} /> : null}
+    <BeuiInput type="hidden" name="tab" value={tab} />
+    {raw.returnTo ? <BeuiInput type="hidden" name="returnTo" value={raw.returnTo} /> : null}
     <div className="flex flex-wrap items-end gap-2">
       <label className="grid min-w-0 basis-full gap-1.5 text-xs font-medium sm:min-w-64 sm:flex-1 sm:basis-0">
         {t('logsSearch')}
@@ -30,17 +32,17 @@ export function LogFilters({ tab, raw, filters, observedAt }: {
       {tab !== 'audit' ? <>
         <label className="grid min-w-36 flex-1 gap-1.5 text-xs font-medium sm:max-w-40">
           {t('logFields.domain')}
-          <select name="domain" className="ui-input h-10 w-full text-xs" defaultValue={filters.domain ?? 'all'}>
+          <BeuiSelect name="domain" className="ui-input h-10 w-full text-xs" defaultValue={filters.domain ?? 'all'}>
             <option value="all">{t('logsAll')}</option>
             {['http', 'mcp', 'agent', 'runtime', 'channel', 'plugin', 'system'].map((value) => <option key={value} value={value}>{t(`logDomains.${value}`)}</option>)}
-          </select>
+          </BeuiSelect>
         </label>
         <label className="grid min-w-32 flex-1 gap-1.5 text-xs font-medium sm:max-w-36">
           {t('logsResult')}
-          <select name="outcome" className="ui-input h-10 w-full text-xs" defaultValue={raw.outcome ?? ''}>
+          <BeuiSelect name="outcome" className="ui-input h-10 w-full text-xs" defaultValue={raw.outcome ?? ''}>
             <option value="">{t('logsAll')}</option>
             {['success', 'error', 'timeout', 'cancelled', 'denied'].map((value) => <option key={value} value={value}>{t(`logOutcomes.${value}`)}</option>)}
-          </select>
+          </BeuiSelect>
         </label>
       </> : null}
       <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -75,7 +77,7 @@ export function LogFilters({ tab, raw, filters, observedAt }: {
       <div className="grid min-w-0 gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-4">
         {(['since', 'until'] as const).map((key) => <label key={key} className="grid min-w-0 gap-1.5 text-xs font-medium sm:col-span-2">
           {t(key === 'since' ? 'logsSince' : 'logsUntil')} (UTC)
-          <input type="datetime-local" step="0.001" name={key} className="ui-input h-10 min-w-0 w-full" defaultValue={filters[key].toISOString().slice(0, -1)} />
+          <BeuiInput type="datetime-local" step="0.001" name={key} className="ui-input h-10 min-w-0 w-full" defaultValue={filters[key].toISOString().slice(0, -1)} />
         </label>)}
         {fields.map((key) => <label key={key} className="grid min-w-0 gap-1.5 text-xs font-medium">
           {key === 'targetType' || key === 'targetId' ? ops(key) : t(`logFields.${key}`)}
@@ -83,10 +85,10 @@ export function LogFilters({ tab, raw, filters, observedAt }: {
         </label>)}
         {tab !== 'audit' ? <label className="grid min-w-0 gap-1.5 text-xs font-medium">
           {t('logFields.level')}
-          <select name="level" className="ui-input h-10 w-full" defaultValue={raw.level ?? ''}>
+          <BeuiSelect name="level" className="ui-input h-10 w-full" defaultValue={raw.level ?? ''}>
             <option value="">{t('logsAll')}</option>
             {['debug', 'info', 'warn', 'error'].map((value) => <option key={value} value={value}>{t(`logLevels.${value}`)}</option>)}
-          </select>
+          </BeuiSelect>
         </label> : null}
         <div className="flex items-end"><Button type="submit" variant="secondary" className="h-10"><Search className="size-4" aria-hidden="true" />{t('logsApplyFilters')}</Button></div>
       </div>

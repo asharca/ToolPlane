@@ -1,0 +1,49 @@
+{
+  "source": "https://asharca.github.io/ui/llms.txt",
+  "repository": "asharca/ui",
+  "commit": "85b080aafe2f7e3aaf720e5a2ffdf035289c49c1",
+  "files": [
+    {
+      "path": "components/motion/button/base.tsx",
+      "upstreamBlob": "68095cc67d0d8b95f84f2cad184bc38e63d64828",
+      "sha256": "5948d878f3446b4cdfa6e076aa2c6ccdb05f5a102bbba074b022de6f3e924144",
+      "adapted": [
+        "relative helper imports"
+      ]
+    },
+    {
+      "path": "components/motion/input.tsx",
+      "upstreamBlob": "38c30fee677bb1cdbeb56fe4ba457a4cad3988ad",
+      "sha256": "4dd774bbada7f1c9ec283905586a4306593792ea570ae81caa71874d5bdb0b3d",
+      "adapted": [
+        "nativeLayout for existing field layouts",
+        "onNativeChange forwards the actual React event",
+        "uncontrolled native value/defaultValue preserves form reset"
+      ]
+    },
+    {
+      "path": "lib/ease.ts",
+      "upstreamBlob": "c46f60b7399b5166cf90413970b4bcd4f8e2ce29",
+      "sha256": "bdfa2814cffaa4d974a5fc8614868ddb89e0310a0ead9e7105f2e8132b219ff3",
+      "adapted": [
+        "relative helper imports"
+      ]
+    },
+    {
+      "path": "lib/hooks/use-hover-capable.ts",
+      "upstreamBlob": "4b4bc40c9faa7da1cfb3bc4d0a8152fa55621ff8",
+      "sha256": "b5b9397bfa03859e04673c8f1817cf13ff55d2a9688955d6e0459ae70db90d06",
+      "adapted": [
+        "relative helper imports"
+      ]
+    },
+    {
+      "path": "lib/utils.ts",
+      "upstreamBlob": "bd0c391ddd1088e9067844c48835bf4abcd61783",
+      "sha256": "7c8c3dfc0cdd370d44932828eb067ef771c8fe7996693221d5d4b90af6d54f2d",
+      "adapted": [
+        "relative helper imports"
+      ]
+    }
+  ]
+}

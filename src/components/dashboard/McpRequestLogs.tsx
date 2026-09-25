@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import type { ComponentType } from 'react';
 import { useEffect, useMemo, useState, useTransition } from 'react';
@@ -194,7 +196,7 @@ export function McpRequestLogs({
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <BeuiInput
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t('searchLogs')}
@@ -209,7 +211,7 @@ export function McpRequestLogs({
               ['failed', t('failedRequests'), failed],
               ['slow', t('slowRequests', { threshold: SLOW_REQUEST_MS }), slow],
             ] as const).map(([value, label, count]) => (
-              <button
+              <BeuiButton nativeButton unstyled
                 key={value}
                 type="button"
                 aria-pressed={filter === value}
@@ -225,11 +227,11 @@ export function McpRequestLogs({
                 }`}
               >
                 {label} <span className="tabular-nums">{count}</span>
-              </button>
+              </BeuiButton>
             ))}
           </div>
           {refreshIntervalMs ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={refresh}
               disabled={isRefreshing}
@@ -237,7 +239,7 @@ export function McpRequestLogs({
             >
               <RefreshCw className={`size-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               {t('refresh')}
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
       </div>
@@ -257,10 +259,10 @@ export function McpRequestLogs({
           <Search className="mb-3 size-7 text-muted-foreground" />
           <p className="text-sm font-medium text-foreground">{t('noMatchingRequests')}</p>
           {filtersActive ? (
-            <button type="button" onClick={clearFilters} className="ui-button-secondary ui-button-sm mt-4">
+            <BeuiButton nativeButton unstyled type="button" onClick={clearFilters} className="ui-button-secondary ui-button-sm mt-4">
               <X className="size-3.5" />
               {t('clearLogFilters')}
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
       ) : (
@@ -281,7 +283,7 @@ export function McpRequestLogs({
               ].filter(Boolean).join(' · ');
               return (
                 <article key={log.id} className={isError ? 'bg-red-500/[0.025]' : undefined}>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => hasDetails && toggle(log.id)}
                     aria-expanded={hasDetails ? expanded : undefined}
@@ -339,7 +341,7 @@ export function McpRequestLogs({
                         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
                       ) : null}
                     </span>
-                  </button>
+                  </BeuiButton>
 
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3 pl-[3.75rem] text-xs text-muted-foreground">
                     <span className={`inline-flex rounded-full px-2 py-0.5 font-semibold sm:hidden ${

@@ -1,6 +1,8 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
 
-import { DropdownMenu } from 'radix-ui';
+
+import { DropdownMenu } from '@/components/ui/primitives';
 import { MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 
 export function SidebarEntityActionsMenu({
@@ -29,14 +31,14 @@ export function SidebarEntityActionsMenu({
   return (
     <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           aria-label={actionsLabel}
           title={actionsLabel}
           className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
         >
           <MoreHorizontal className="size-3.5" />
-        </button>
+        </BeuiButton>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content

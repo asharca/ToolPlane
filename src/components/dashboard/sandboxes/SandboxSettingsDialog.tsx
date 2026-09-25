@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
@@ -32,10 +34,10 @@ export function SandboxSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <button type="button" className="ui-button-secondary h-9 text-sm">
+        <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary h-9 text-sm">
           <Settings className="size-4" />
           {triggerLabel}
-        </button>
+        </BeuiButton>
       </DialogTrigger>
 
       <DialogPortal>
@@ -47,14 +49,14 @@ export function SandboxSettingsDialog({
               <DialogDescription className="mt-0.5 truncate !text-xs">{subtitle}</DialogDescription>
             </div>
             <DialogClose asChild>
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 aria-label={closeLabel}
                 title={closeLabel}
                 className="ui-button-ghost ui-icon-button shrink-0"
               >
                 <X className="size-4" />
-              </button>
+              </BeuiButton>
             </DialogClose>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>

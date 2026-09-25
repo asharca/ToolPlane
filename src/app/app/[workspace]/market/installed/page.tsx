@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -335,10 +337,10 @@ export default async function InstalledMarketPage({
                   ) : null}
                   {latestIsNewer && item.market && item.status !== 'modified' ? (
                     <form action={updateMarketInstallAction}>
-                      <input type="hidden" name="workspace" value={workspace.slug} />
-                      <input type="hidden" name="installId" value={item.market.installId} />
-                      <input type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
-                      <input type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
+                      <BeuiInput type="hidden" name="workspace" value={workspace.slug} />
+                      <BeuiInput type="hidden" name="installId" value={item.market.installId} />
+                      <BeuiInput type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
+                      <BeuiInput type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
                       <SubmitButton flash={false} pendingLabel={t('updating')} className="ui-button-primary h-8 px-2.5 text-xs">
                         {t('update')}
                       </SubmitButton>
@@ -356,10 +358,10 @@ export default async function InstalledMarketPage({
                   ) : null}
                   {item.market?.updateAvailable ? (
                     <form action={ignoreMarketUpdateAction}>
-                      <input type="hidden" name="workspace" value={workspace.slug} />
-                      <input type="hidden" name="installId" value={item.market.installId} />
-                      <input type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
-                      <input type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
+                      <BeuiInput type="hidden" name="workspace" value={workspace.slug} />
+                      <BeuiInput type="hidden" name="installId" value={item.market.installId} />
+                      <BeuiInput type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
+                      <BeuiInput type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
                       <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-ghost h-8 px-2 text-xs">
                         {t('ignoreThisVersion')}
                       </SubmitButton>
@@ -370,8 +372,8 @@ export default async function InstalledMarketPage({
                   </Link>
                   {item.market ? (
                     <form action={removeMarketInstallAction}>
-                      <input type="hidden" name="workspace" value={workspace.slug} />
-                      <input type="hidden" name="installId" value={item.market.installId} />
+                      <BeuiInput type="hidden" name="workspace" value={workspace.slug} />
+                      <BeuiInput type="hidden" name="installId" value={item.market.installId} />
                       <ConfirmSubmitButton
                         triggerLabel={<><Trash2 className="size-3.5" />{t('uninstall')}</>}
                         triggerAriaLabel={`${t('uninstall')}: ${item.name}`}
@@ -388,9 +390,9 @@ export default async function InstalledMarketPage({
                   ) : null}
                   {item.copy?.agentId ? (
                     <form action={uninstallAgentMarketCopyAction}>
-                      <input type="hidden" name="workspace" value={workspace.slug} />
-                      <input type="hidden" name="agentId" value={item.copy.agentId} />
-                      <input type="hidden" name="returnTo" value={`${base}/market/installed`} />
+                      <BeuiInput type="hidden" name="workspace" value={workspace.slug} />
+                      <BeuiInput type="hidden" name="agentId" value={item.copy.agentId} />
+                      <BeuiInput type="hidden" name="returnTo" value={`${base}/market/installed`} />
                       <ConfirmSubmitButton
                         triggerLabel={<><Trash2 className="size-3.5" />{t('uninstall')}</>}
                         triggerAriaLabel={`${t('uninstall')}: ${item.name}`}
@@ -407,8 +409,8 @@ export default async function InstalledMarketPage({
                   ) : null}
                   {item.copy?.assistantId ? (
                     <form action={removeAssistantMarketCopyAction}>
-                      <input type="hidden" name="workspace" value={workspace.slug} />
-                      <input type="hidden" name="assistantId" value={item.copy.assistantId} />
+                      <BeuiInput type="hidden" name="workspace" value={workspace.slug} />
+                      <BeuiInput type="hidden" name="assistantId" value={item.copy.assistantId} />
                       <ConfirmSubmitButton
                         triggerLabel={<><Trash2 className="size-3.5" />{t('uninstall')}</>}
                         triggerAriaLabel={`${t('uninstall')}: ${item.name}`}

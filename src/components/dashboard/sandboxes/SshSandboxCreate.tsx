@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -27,15 +29,15 @@ export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
     } catch { setError(t('sshOperationFailed')); setBusy(false); }
   }
   return <div className="space-y-3">
-    <button type="button" className="ui-button-secondary h-9 text-sm" onClick={() => open ? setOpen(false) : void show()} aria-expanded={open}>{t('sshCreate')}</button>
+    <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary h-9 text-sm" onClick={() => open ? setOpen(false) : void show()} aria-expanded={open}>{t('sshCreate')}</BeuiButton>
     {open ? <form onSubmit={create} className="w-full max-w-lg space-y-3 rounded-md border border-border bg-card p-4">
       <p className="text-sm font-semibold">{t('sshCreate')}</p><p className="text-xs leading-5 text-muted-foreground">{t('sshTargetHint')}</p>
       <fieldset disabled={busy} className="space-y-3 disabled:opacity-60">
-        <label className="block space-y-1 text-xs">{t('sandboxName')}<input name="name" required maxLength={80} className="ui-input h-9 w-full" /></label>
+        <label className="block space-y-1 text-xs">{t('sandboxName')}<BeuiInput name="name" required maxLength={80} className="ui-input h-9 w-full" /></label>
         <label className="block space-y-1 text-xs">{t('sshApprovedTarget')}<NativeSelect name="targetId" required className="h-9 w-full" defaultValue=""><option value="" disabled>{t('sshSelectTarget')}</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</NativeSelect></label>
         {!targets.length && !busy ? <p className="text-xs text-muted-foreground">{t('sshNoTargets')}</p> : null}
-        <label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" name="ack" required className="mt-1" /><span>{t('sshHostAccessWarning')}</span></label>
-        <button type="submit" disabled={!targets.length} className="ui-button-primary h-9 text-sm">{t('sshCreate')}</button>
+        <label className="flex items-start gap-2 text-xs leading-5"><BeuiInput type="checkbox" name="ack" required className="mt-1" /><span>{t('sshHostAccessWarning')}</span></label>
+        <BeuiButton nativeButton unstyled type="submit" disabled={!targets.length} className="ui-button-primary h-9 text-sm">{t('sshCreate')}</BeuiButton>
       </fieldset>
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </form> : null}

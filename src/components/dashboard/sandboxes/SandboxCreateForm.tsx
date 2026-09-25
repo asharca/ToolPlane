@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
@@ -94,7 +96,7 @@ function ModeButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="button"
       aria-pressed={active}
       onClick={onClick}
@@ -117,7 +119,7 @@ function ModeButton({
         <span className="block text-sm font-semibold">{title}</span>
         <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -139,7 +141,7 @@ function ImageCard({
           : 'border-border bg-background hover:border-ring/60 hover:bg-muted/40',
       )}
     >
-      <input
+      <BeuiInput
         type="radio"
         name="imageChoice"
         value={option.image}
@@ -258,7 +260,7 @@ function CreateSandboxFooter({
       ) : null}
       <div className="flex justify-end">
         {isHermesImport ? (
-          <button
+          <BeuiButton nativeButton unstyled
             type="submit"
             disabled={pending}
             aria-busy={pending}
@@ -266,7 +268,7 @@ function CreateSandboxFooter({
           >
             {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-4" />}
             {pending ? pendingLabel : submitLabel}
-          </button>
+          </BeuiButton>
         ) : (
           <SubmitButton
             flash={false}
@@ -420,10 +422,10 @@ export function SandboxCreateForm({
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="ui-button-primary">
+      <BeuiButton nativeButton unstyled type="button" onClick={() => setOpen(true)} className="ui-button-primary">
         <Plus className="size-4" />
         {t('newSandbox')}
-      </button>
+      </BeuiButton>
 
       {open ? (
         <div
@@ -446,7 +448,7 @@ export function SandboxCreateForm({
                   {t('chooseASandboxSource')}
                 </p>
               </div>
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => setOpen(false)}
                 disabled={importState.pending}
@@ -454,7 +456,7 @@ export function SandboxCreateForm({
                 className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
               >
                 <X className="size-4" />
-              </button>
+              </BeuiButton>
             </div>
 
             <form
@@ -462,8 +464,8 @@ export function SandboxCreateForm({
               onSubmit={isHermesImport ? submitHermesArchive : undefined}
               className="min-h-0 overflow-y-auto p-5"
             >
-              <input type="hidden" name="workspace" value={workspace} />
-              <input type="hidden" name="kind" value={mode} />
+              <BeuiInput type="hidden" name="workspace" value={workspace} />
+              <BeuiInput type="hidden" name="kind" value={mode} />
 
               <div className="grid gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
                 <div className="space-y-4">
@@ -499,7 +501,7 @@ export function SandboxCreateForm({
 
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
                     <Field label={t('name')}>
-                      <input
+                      <BeuiInput
                         name="name"
                         placeholder={isHermesImport ? t('importedHermes') : isDocker ? t('researchContainer') : t('myLaptop')}
                         className={inputClass}
@@ -528,7 +530,7 @@ export function SandboxCreateForm({
                           className="mt-3"
                           hint={t('hermesArchiveHint', { max: hermesArchiveLimitLabel(hermesArchiveMaxUploadMiB) })}
                         >
-                          <input
+                          <BeuiInput
                             name="hermesArchive"
                             type="file"
                             accept=".zip,application/zip"
@@ -541,11 +543,11 @@ export function SandboxCreateForm({
                           />
                         </Field>
                         <label className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-xs leading-5 text-foreground">
-                          <input name="trustArchive" type="checkbox" required className="mt-0.5 size-3.5 shrink-0 accent-brand" />
+                          <BeuiInput name="trustArchive" type="checkbox" required className="mt-0.5 size-3.5 shrink-0 accent-brand" />
                           <span>{t('trustHermesArchive')}</span>
                         </label>
                         <label className="mt-3 flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
-                          <input name="allowSudo" type="checkbox" className="mt-0.5 size-3.5 shrink-0 accent-brand" />
+                          <BeuiInput name="allowSudo" type="checkbox" className="mt-0.5 size-3.5 shrink-0 accent-brand" />
                           <span>
                             {t('allowSudo')}
                             <span className="mt-0.5 block text-[11px] font-normal leading-4 text-muted-foreground">
@@ -560,7 +562,7 @@ export function SandboxCreateForm({
                     ) : (
                       <>
                         <Field label={t('environment')} className="mt-3" hint={t('environmentVariablesHint')}>
-                          <textarea
+                          <BeuiTextarea
                             name="env"
                             rows={5}
                             spellCheck={false}
@@ -646,7 +648,7 @@ export function SandboxCreateForm({
               )}
             >
                 <span className="flex items-center gap-2">
-                  <input
+                  <BeuiInput
                     type="radio"
                   name="imageChoice"
                   value="custom"
@@ -660,7 +662,7 @@ export function SandboxCreateForm({
               </span>
               <div className="relative mt-3">
                 <Server className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
+                <BeuiInput
                   name="customImage"
                   value={customImage}
                   onChange={(event) => {

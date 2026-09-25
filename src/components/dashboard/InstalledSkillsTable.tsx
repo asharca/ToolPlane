@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -61,8 +63,8 @@ export function InstalledSkillsTable({
               aria-label={agentT('selectedResources', { count: activeSelected.size })}
               className="flex min-h-8 flex-wrap items-center justify-between gap-2"
             >
-              <input type="hidden" name="workspace" value={slug} />
-              {selectedIds.map((id) => <input key={id} type="hidden" name="installId" value={id} />)}
+              <BeuiInput type="hidden" name="workspace" value={slug} />
+              {selectedIds.map((id) => <BeuiInput key={id} type="hidden" name="installId" value={id} />)}
               <div className="flex items-center gap-2.5">
                 <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-brand px-1.5 py-0.5 text-xs font-semibold tabular-nums text-brand-foreground">
                   {activeSelected.size}
@@ -70,7 +72,7 @@ export function InstalledSkillsTable({
                 <span className="text-xs font-medium text-foreground">
                   {agentT('selectedResources', { count: activeSelected.size })}
                 </span>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => setSelected(new Set())}
                   aria-label={agentT('clearSelection')}
@@ -78,7 +80,7 @@ export function InstalledSkillsTable({
                   className="flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
                 >
                   <X className="size-3.5" />
-                </button>
+                </BeuiButton>
               </div>
               <ConfirmSubmitButton
                 triggerLabel={<><Trash2 className="size-3.5" />{t('uninstall')} ({activeSelected.size})</>}
@@ -99,7 +101,7 @@ export function InstalledSkillsTable({
       ] : [
         {
           label: (
-            <input
+            <BeuiInput
               ref={selectAllRef}
               type="checkbox"
               checked={allSelected}
@@ -120,7 +122,7 @@ export function InstalledSkillsTable({
         return (
           <tr key={skill.id} className={isSelected ? 'bg-muted/35' : undefined}>
             <td className="px-4 py-3">
-              <input
+              <BeuiInput
                 type="checkbox"
                 checked={isSelected}
                 onChange={() => toggleSkill(skill.id)}
@@ -158,8 +160,8 @@ export function InstalledSkillsTable({
             </td>
             <td className="px-4 py-3 text-right">
               <form action={uninstallSkillAction} className="inline-flex">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="installId" value={skill.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="installId" value={skill.id} />
                 <ConfirmSubmitButton
                   triggerLabel={<Trash2 className="size-3.5" />}
                   triggerAriaLabel={`${t('uninstall')}: ${skill.name}`}

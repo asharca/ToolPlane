@@ -1,3 +1,5 @@
+
+import { Select as BeuiSelect } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { ClipboardCheck, Library } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
@@ -24,8 +26,8 @@ export default async function AdminReviewsPage({ searchParams }: { searchParams:
     <AdminPageHeader title={ops('reviewQueue')} meta={<AdminBadge tone={result.status === 'pending' ? 'warning' : 'neutral'}>{result.total}</AdminBadge>}
       actions={<Link href="/admin/market" className="ui-button-secondary"><Library className="size-4" />{ops('catalog')}</Link>} />
     <AdminSearchForm defaultValue={q} placeholder={t('marketCatalogSearchPlaceholder')} label={t('search')} searchLabel={t('search')} clearLabel={t('clear')} clearHref="/admin/reviews">
-      <select name="status" defaultValue={result.status} aria-label={t('statusColumn')} className="ui-input h-11 w-auto sm:h-9">{REVIEW_STATUSES.map((value) => <option key={value} value={value}>{ops(value)}</option>)}</select>
-      <select name="kind" defaultValue={result.kind} aria-label={ops('allKinds')} className="ui-input h-11 w-auto sm:h-9"><option value="">{ops('allKinds')}</option>{REVIEW_KINDS.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <BeuiSelect name="status" defaultValue={result.status} aria-label={t('statusColumn')} className="ui-input h-11 w-auto sm:h-9">{REVIEW_STATUSES.map((value) => <option key={value} value={value}>{ops(value)}</option>)}</BeuiSelect>
+      <BeuiSelect name="kind" defaultValue={result.kind} aria-label={ops('allKinds')} className="ui-input h-11 w-auto sm:h-9"><option value="">{ops('allKinds')}</option>{REVIEW_KINDS.map((value) => <option key={value} value={value}>{value}</option>)}</BeuiSelect>
     </AdminSearchForm>
     {result.items.length ? <DashboardTable ariaLabel={ops('reviewQueue')} minWidth="64rem" headers={[
       { label: t('name'), className: 'w-full' }, { label: t('marketReleasePublisher') }, { label: ops('submittedAt') },

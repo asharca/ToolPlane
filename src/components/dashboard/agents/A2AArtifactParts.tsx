@@ -1,5 +1,5 @@
 'use client';
-import { Button } from '@asharca/ui';
+import { Button } from "@/components/ui";
 import { useTranslations } from 'next-intl';
 
 export type A2AWirePart = { text?: string; data?: Record<string, unknown>; raw?: string; mediaType?: string };

@@ -1,3 +1,3 @@
 'use client';
 
-export { RotatingHeadline, type RotatingHeadlineProps } from '@asharca/ui';
+export { RotatingHeadline, type RotatingHeadlineProps } from "@/components/ui";

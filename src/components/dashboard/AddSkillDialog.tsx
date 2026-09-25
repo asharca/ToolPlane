@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
@@ -72,12 +74,12 @@ function GithubImportForm({ slug }: { slug: string }) {
   const [state, formAction, isPending] = useActionState(importSkillFromGithubAction, {});
   return (
     <form action={formAction} className="space-y-3">
-      <input type="hidden" name="workspace" value={slug} />
-      <input name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
+      <BeuiInput type="hidden" name="workspace" value={slug} />
+      <BeuiInput name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
       {state.error ? <p className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
-      <button type="submit" disabled={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
+      <BeuiButton nativeButton unstyled type="submit" disabled={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
         {isPending ? t('importing') : t('import')}
-      </button>
+      </BeuiButton>
     </form>
   );
 }
@@ -122,9 +124,9 @@ export function AddSkillDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
       <DialogTrigger asChild>
-        <button type="button" className="ui-button-primary">
+        <BeuiButton nativeButton unstyled type="button" className="ui-button-primary">
           <Plus className="size-4" /> {t('addSkill')}
-        </button>
+        </BeuiButton>
       </DialogTrigger>
 
       <DialogPortal>
@@ -133,30 +135,30 @@ export function AddSkillDialog({
                 <div className="mb-4 flex items-center justify-between">
                   <DialogTitle className="text-lg font-semibold text-foreground">{t('addASkill')}</DialogTitle>
                   <DialogClose asChild>
-                    <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('close')}><X className="size-5" /></button>
+                    <BeuiButton nativeButton unstyled type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('close')}><X className="size-5" /></BeuiButton>
                   </DialogClose>
                 </div>
 
                 {mode === 'menu' ? (
                   <div className="space-y-2">
-                    <button type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
+                    <BeuiButton nativeButton unstyled type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span>
-                    </button>
-                    <button type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
+                    </BeuiButton>
+                    <BeuiButton nativeButton unstyled type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span>
-                    </button>
-                    <button type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
+                    </BeuiButton>
+                    <BeuiButton nativeButton unstyled type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
                       <FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span>
-                    </button>
+                    </BeuiButton>
                   </div>
                 ) : null}
 
                 {mode === 'create' ? (
                   <form action={createCustomSkillAction} className="space-y-3">
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input name="name" required placeholder={t('myAwesomeSkill')} className={field} />
-                    <input name="description" placeholder={t('summarizeThisSkillsPurpose')} className={field} />
-                    <button type="submit" className="ui-button-primary w-full">{t('createSkill')}</button>
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput name="name" required placeholder={t('myAwesomeSkill')} className={field} />
+                    <BeuiInput name="description" placeholder={t('summarizeThisSkillsPurpose')} className={field} />
+                    <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary w-full">{t('createSkill')}</BeuiButton>
                   </form>
                 ) : null}
 
@@ -166,9 +168,9 @@ export function AddSkillDialog({
 
                 {mode === 'upload' ? (
                   <form action={uploadSkillFolderAction} encType="multipart/form-data" className="space-y-3">
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="filePaths" value={JSON.stringify(folder.paths)} />
-                    <input
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="filePaths" value={JSON.stringify(folder.paths)} />
+                    <BeuiInput
                       name="name"
                       disabled={folder.skillRoots.length > 1}
                       placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')}
@@ -178,7 +180,7 @@ export function AddSkillDialog({
                       <Upload className="size-5 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{t('uploadAFolder')}</span>
                       <span className="text-xs text-muted-foreground">{t('dragInASkillFolder')}</span>
-                      <input
+                      <BeuiInput
                         {...directoryInputProps}
                         name="folderFiles"
                         type="file"
@@ -209,7 +211,7 @@ export function AddSkillDialog({
                         ) : null}
                       </div>
                     ) : null}
-                    <button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="ui-button-primary w-full disabled:opacity-50">{t('upload')}</button>
+                    <BeuiButton nativeButton unstyled type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="ui-button-primary w-full disabled:opacity-50">{t('upload')}</BeuiButton>
                   </form>
                 ) : null}
         </DialogContent>

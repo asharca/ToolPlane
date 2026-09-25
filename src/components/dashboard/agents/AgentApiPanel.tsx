@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useActionState, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -101,10 +103,10 @@ function cx(...classes: Array<string | false | null | undefined>) {
 function SubmitButton({ idle, pending }: { idle: string; pending: string }) {
   const status = useFormStatus();
   return (
-    <button type="submit" disabled={status.pending} className="ui-button-primary gap-2 disabled:opacity-60">
+    <BeuiButton nativeButton unstyled type="submit" disabled={status.pending} className="ui-button-primary gap-2 disabled:opacity-60">
       {status.pending ? <Loader2 className="size-4 animate-spin" /> : null}
       {status.pending ? pending : idle}
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -175,7 +177,7 @@ function ResourceChecklist({
               key={option.id}
               className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-accent/50"
             >
-              <input
+              <BeuiInput
                 type="checkbox"
                 name={name}
                 value={option.id}
@@ -361,11 +363,11 @@ print(response.choices[0].message.content)`,
           </div>
           {endpoint && canManage ? (
             <form action={setAgentEndpointStatusAction}>
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="agentId" value={agentId} />
-              <input type="hidden" name="endpointId" value={endpoint.id} />
-              <input type="hidden" name="status" value={endpointActive ? 'disabled' : 'active'} />
-              <button
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="agentId" value={agentId} />
+              <BeuiInput type="hidden" name="endpointId" value={endpoint.id} />
+              <BeuiInput type="hidden" name="status" value={endpointActive ? 'disabled' : 'active'} />
+              <BeuiButton nativeButton unstyled
                 type="submit"
                 className={cx(
                   'ui-button-secondary shrink-0 gap-2',
@@ -374,7 +376,7 @@ print(response.choices[0].message.content)`,
               >
                 {endpointActive ? <CircleSlash2 className="size-4" /> : <Globe2 className="size-4" />}
                 {endpointActive ? t('disableAgentApi') : t('enableAgentApi')}
-              </button>
+              </BeuiButton>
             </form>
           ) : null}
         </div>
@@ -408,14 +410,14 @@ print(response.choices[0].message.content)`,
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('agentApiConfigurationHelp')}</p>
         </div>
         <form action={publishFormAction} className="space-y-5 px-5 py-5">
-          <input type="hidden" name="workspace" value={workspaceSlug} />
-          <input type="hidden" name="agentId" value={agentId} />
-          {endpoint ? <input type="hidden" name="endpointId" value={endpoint.id} /> : null}
+          <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+          <BeuiInput type="hidden" name="agentId" value={agentId} />
+          {endpoint ? <BeuiInput type="hidden" name="endpointId" value={endpoint.id} /> : null}
 
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1.5">
               <span className="block text-xs font-semibold text-foreground">{t('agentApiEndpointName')}</span>
-              <input
+              <BeuiInput
                 className="ui-input h-10"
                 name="name"
                 defaultValue={endpoint?.name ?? agentName}
@@ -440,7 +442,7 @@ print(response.choices[0].message.content)`,
 
           <label className="block space-y-1.5">
             <span className="block text-xs font-semibold text-foreground">{t('agentApiSystemPrompt')}</span>
-            <textarea
+            <BeuiTextarea
               name="systemPrompt"
               defaultValue={endpoint?.systemPrompt ?? ''}
               rows={4}
@@ -465,7 +467,7 @@ print(response.choices[0].message.content)`,
             ] as const).map(([name, label, defaultValue, min, max]) => (
               <label key={name} className="space-y-1.5">
                 <span className="block text-xs font-semibold text-foreground">{label}</span>
-                <input
+                <BeuiInput
                   className="ui-input h-10"
                   type="number"
                   name={name}
@@ -481,7 +483,7 @@ print(response.choices[0].message.content)`,
 
           <label className="block space-y-1.5">
             <span className="block text-xs font-semibold text-foreground">{t('agentApiAllowedOrigins')}</span>
-            <textarea
+            <BeuiTextarea
               name="allowedOrigins"
               defaultValue={endpoint?.allowedOrigins.join('\n') ?? ''}
               rows={3}
@@ -548,12 +550,12 @@ print(response.choices[0].message.content)`,
 
           {endpoint && canManage ? (
             <form action={clientFormAction} className="flex flex-col gap-3 rounded-md border border-border bg-muted/10 p-4 sm:flex-row sm:items-end">
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="agentId" value={agentId} />
-              <input type="hidden" name="endpointId" value={endpoint.id} />
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="agentId" value={agentId} />
+              <BeuiInput type="hidden" name="endpointId" value={endpoint.id} />
               <label className="min-w-0 flex-1 space-y-1.5">
                 <span className="block text-xs font-semibold text-foreground">{t('agentApiClientName')}</span>
-                <input
+                <BeuiInput
                   name="name"
                   className="ui-input h-10"
                   placeholder={t('agentApiClientNamePlaceholder')}
@@ -585,13 +587,13 @@ print(response.choices[0].message.content)`,
                     </div>
                     {canManage ? (
                       <form action={keyFormAction} className="flex flex-wrap items-end gap-2">
-                        <input type="hidden" name="workspace" value={workspaceSlug} />
-                        <input type="hidden" name="agentId" value={agentId} />
-                        <input type="hidden" name="endpointId" value={endpoint.id} />
-                        <input type="hidden" name="clientId" value={client.id} />
+                        <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                        <BeuiInput type="hidden" name="agentId" value={agentId} />
+                        <BeuiInput type="hidden" name="endpointId" value={endpoint.id} />
+                        <BeuiInput type="hidden" name="clientId" value={client.id} />
                         <label className="space-y-1">
                           <span className="block text-xs font-semibold text-foreground">{t('agentApiKeyName')}</span>
-                          <input
+                          <BeuiInput
                             name="name"
                             className="ui-input h-9 w-40"
                             placeholder={t('agentApiKeyNamePlaceholder')}
@@ -623,14 +625,14 @@ print(response.choices[0].message.content)`,
                           </div>
                           {!key.revokedAt && canManage ? (
                             <form action={revokeAgentApiKeyAction}>
-                              <input type="hidden" name="workspace" value={workspaceSlug} />
-                              <input type="hidden" name="agentId" value={agentId} />
-                              <input type="hidden" name="endpointId" value={endpoint.id} />
-                              <input type="hidden" name="keyId" value={key.id} />
-                              <button type="submit" className="ui-button-secondary ui-button-sm gap-1.5 text-red-600 dark:text-red-400">
+                              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                              <BeuiInput type="hidden" name="agentId" value={agentId} />
+                              <BeuiInput type="hidden" name="endpointId" value={endpoint.id} />
+                              <BeuiInput type="hidden" name="keyId" value={key.id} />
+                              <BeuiButton nativeButton unstyled type="submit" className="ui-button-secondary ui-button-sm gap-1.5 text-red-600 dark:text-red-400">
                                 <Trash2 className="size-3.5" />
                                 {t('revokeAgentApiKey')}
-                              </button>
+                              </BeuiButton>
                             </form>
                           ) : null}
                         </li>
@@ -649,9 +651,9 @@ print(response.choices[0].message.content)`,
                 {t('agentApiBrowserToken')}
               </summary>
               <form action={tokenFormAction} className="grid gap-3 border-t border-border px-4 py-4 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
-                <input type="hidden" name="workspace" value={workspaceSlug} />
-                <input type="hidden" name="agentId" value={agentId} />
-                <input type="hidden" name="endpointId" value={endpoint.id} />
+                <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                <BeuiInput type="hidden" name="agentId" value={agentId} />
+                <BeuiInput type="hidden" name="endpointId" value={endpoint.id} />
                 <label className="space-y-1.5">
                   <span className="block text-xs font-semibold text-foreground">{t('agentApiClient')}</span>
                   <NativeSelect name="clientId" className="h-10">
@@ -660,7 +662,7 @@ print(response.choices[0].message.content)`,
                 </label>
                 <label className="space-y-1.5">
                   <span className="block text-xs font-semibold text-foreground">{t('agentApiSubject')}</span>
-                  <input name="subject" className="ui-input h-10" maxLength={200} required placeholder="customer_42" />
+                  <BeuiInput name="subject" className="ui-input h-10" maxLength={200} required placeholder="customer_42" />
                 </label>
                 <label className="space-y-1.5">
                   <span className="block text-xs font-semibold text-foreground">{t('agentApiAllowedOrigins')}</span>
@@ -714,7 +716,7 @@ print(response.choices[0].message.content)`,
               ['javascript', t('agentApiJavaScript')],
               ['python', t('agentApiPython')],
             ] as const).map(([value, label]) => (
-              <button
+              <BeuiButton nativeButton unstyled
                 key={value}
                 type="button"
                 role="tab"
@@ -727,7 +729,7 @@ print(response.choices[0].message.content)`,
               >
                 {value === 'curl' ? <Braces className="size-3.5" /> : <Code2 className="size-3.5" />}
                 {label}
-              </button>
+              </BeuiButton>
             ))}
           </div>
           <CodeSnippet

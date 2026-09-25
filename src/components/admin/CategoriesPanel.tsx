@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -35,10 +37,10 @@ function CategoryRow({ category }: { category: Row }) {
     <li className="px-5 py-4">
       <div className="flex min-w-0 flex-col items-start gap-3 2xl:flex-row">
       <form action={action} className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-        <input type="hidden" name="categoryId" value={category.id} />
+        <BeuiInput type="hidden" name="categoryId" value={category.id} />
         <label className="min-w-0 flex-1">
           <span className="sr-only">{t('categoryNameLabel', { slug: category.slug })}</span>
-          <input
+          <BeuiInput
             name="name"
             defaultValue={category.name}
             maxLength={120}
@@ -92,11 +94,11 @@ export function CategoriesPanel({ categories }: { categories: Row[] }) {
         <form action={action} className="space-y-4">
           <label className="block space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('name')}</span>
-            <input name="name" placeholder={t('name')} className="ui-input h-11" required />
+            <BeuiInput name="name" placeholder={t('name')} className="ui-input h-11" required />
           </label>
           <label className="block space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('slug3')}</span>
-            <input
+            <BeuiInput
               name="slug"
               placeholder={t('slug3')}
               className="ui-input h-11 font-mono"

@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
@@ -338,8 +340,8 @@ export default async function DeploymentInspectorPage({
                   <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
                   {status !== 'deleting' ? (
                     <form action={stopDeploymentAction}>
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="deploymentId" value={deploymentId} />
+                      <BeuiInput type="hidden" name="workspace" value={slug} />
+                      <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                       <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
                         {t('stop')}
                       </SubmitButton>
@@ -354,16 +356,16 @@ export default async function DeploymentInspectorPage({
               ) : running ? (
                 <>
                   <form action={restartDeploymentAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                     <SubmitButton flash={false} pendingLabel={t('restarting')} className={secondaryAction}>
                       <RefreshCw className="size-3.5" />
                       {t('restart')}
                     </SubmitButton>
                   </form>
                   <form action={stopDeploymentAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                     <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
                       {t('stop')}
                     </SubmitButton>
@@ -371,8 +373,8 @@ export default async function DeploymentInspectorPage({
                 </>
               ) : (
                 <form action={startDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="deploymentId" value={deploymentId} />
+                  <BeuiInput type="hidden" name="workspace" value={slug} />
+                  <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                   <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
                     <Play className="size-3.5" />
                     {t('start')}
@@ -524,8 +526,8 @@ export default async function DeploymentInspectorPage({
                     </div>
                   </div>
                   <form action={startDeploymentAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="deploymentId" value={deploymentId} />
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                     <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
                       <Play className="size-3.5" />
                       {t('start')}
@@ -688,11 +690,11 @@ export default async function DeploymentInspectorPage({
           <div className="max-w-4xl space-y-5">
             <DashboardPanel title={t('generalSettings')} description={t('renameMcpDescription')}>
               <form action={renameDeploymentAction} className="flex max-w-xl flex-col items-stretch gap-3 sm:flex-row sm:items-end">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('mcpName')}
-                  <input
+                  <BeuiInput
                     name="name"
                     defaultValue={label.name}
                     required
@@ -711,13 +713,13 @@ export default async function DeploymentInspectorPage({
 
             <DashboardPanel title={t('cloneMcp')} description={t('cloneMcpDescription')}>
               <form action={cloneDeploymentAction} className="max-w-xl space-y-4">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
-                <input type="hidden" name="copyEnvironmentVariables" value="false" />
-                <input type="hidden" name="copyRuntimeFiles" value="false" />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
+                <BeuiInput type="hidden" name="copyEnvironmentVariables" value="false" />
+                <BeuiInput type="hidden" name="copyRuntimeFiles" value="false" />
                 <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('copyName')}
-                  <input
+                  <BeuiInput
                     name="name"
                     defaultValue={defaultCloneName}
                     required
@@ -731,14 +733,14 @@ export default async function DeploymentInspectorPage({
                   {t('cloneSensitiveDataHint')}
                 </p>
                 <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input type="checkbox" name="copyEnvironmentVariables" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
+                  <BeuiInput type="checkbox" name="copyEnvironmentVariables" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
                   <span>
                     <span className="block text-sm font-medium text-foreground">{t('copyEnvironmentVariables')}</span>
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyEnvironmentVariablesDescription')}</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input type="checkbox" name="copyRuntimeFiles" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
+                  <BeuiInput type="checkbox" name="copyRuntimeFiles" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
                   <span>
                     <span className="block text-sm font-medium text-foreground">{t('copyRuntimeFiles')}</span>
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyRuntimeFilesDescription')}</span>
@@ -758,8 +760,8 @@ export default async function DeploymentInspectorPage({
                   <p className="max-w-xl text-sm leading-6 text-muted-foreground">{t('rebuildDescription')}</p>
                 </div>
                 <form action={rebuildDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="deploymentId" value={deploymentId} />
+                  <BeuiInput type="hidden" name="workspace" value={slug} />
+                  <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                   <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={secondaryAction}>
                     <RefreshCw className="size-3.5" />
                     {t('rebuild')}
@@ -770,8 +772,8 @@ export default async function DeploymentInspectorPage({
 
             <DashboardPanel title={t('dangerZone')} description={t('removeMcpDescription')} tone="danger" bodyClassName="py-4">
               <form action={removeDeploymentAction} className="flex flex-wrap items-center justify-between gap-4">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
                 <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{t('removeMcpWarning')}</p>
                 <ConfirmSubmitButton
                   triggerLabel={t('remove')}

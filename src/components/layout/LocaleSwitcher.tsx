@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useLocale, useTranslations } from 'next-intl';
 import { setLocale } from '@/lib/i18n/actions';
@@ -24,22 +26,22 @@ export function LocaleSwitcher() {
       aria-label={t('language')}
       className="inline-flex items-center gap-1 rounded-md border border-border bg-card p-0.5"
     >
-      <button
+      <BeuiButton nativeButton unstyled
         type="button"
         aria-pressed={locale === 'en'}
         onClick={() => handleSwitch('en')}
         className={locale === 'en' ? activeClass : inactiveClass}
       >
         {t('en')}
-      </button>
-      <button
+      </BeuiButton>
+      <BeuiButton nativeButton unstyled
         type="button"
         aria-pressed={locale === 'zh'}
         onClick={() => handleSwitch('zh')}
         className={locale === 'zh' ? activeClass : inactiveClass}
       >
         {t('zh')}
-      </button>
+      </BeuiButton>
     </div>
   );
 }

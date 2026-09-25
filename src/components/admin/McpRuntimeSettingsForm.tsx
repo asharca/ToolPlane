@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { Clock3, RotateCcw, Save } from 'lucide-react';
@@ -51,7 +53,7 @@ export function McpRuntimeSettingsForm({
             <label htmlFor="mcp-startup-idle-timeout" className="block text-sm font-medium text-foreground">
               {t('mcpStartupIdleTimeout')}
             </label>
-            <input
+            <BeuiInput
               id="mcp-startup-idle-timeout"
               name="mcpStartupIdleTimeoutSeconds"
               type="number"
@@ -69,7 +71,7 @@ export function McpRuntimeSettingsForm({
             <label htmlFor="mcp-startup-max-timeout" className="block text-sm font-medium text-foreground">
               {t('mcpStartupMaxTimeout')}
             </label>
-            <input
+            <BeuiInput
               id="mcp-startup-max-timeout"
               name="mcpStartupMaxTimeoutSeconds"
               type="number"
@@ -99,7 +101,7 @@ export function McpRuntimeSettingsForm({
             {t('saveChanges')}
           </SubmitButton>
           {source === 'database' ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="submit"
               name="intent"
               value="reset"
@@ -109,7 +111,7 @@ export function McpRuntimeSettingsForm({
             >
               <RotateCcw className="size-4" />
               {t('restoreEnvironmentDefault')}
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
 

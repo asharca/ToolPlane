@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -29,7 +31,7 @@ import {
   DashboardSection,
 } from '@/components/dashboard/DashboardUI';
 import { NativeSelect } from '@/components/ui/NativeSelect';
-import { Tab, TabList } from '@asharca/ui';
+import { Tab, TabList } from "@/components/ui";
 
 export const dynamic = 'force-dynamic';
 
@@ -101,11 +103,11 @@ function McpMarketplaceAction({
 
   return (
     <form action={server.marketListing ? installMarketResourceAction : deployServerAction} className="w-full min-w-0">
-      <input type="hidden" name="workspace" value={workspace} />
+      <BeuiInput type="hidden" name="workspace" value={workspace} />
       {server.marketListing ? (
-        <input type="hidden" name="releaseId" value={server.marketListing.releaseId} />
+        <BeuiInput type="hidden" name="releaseId" value={server.marketListing.releaseId} />
       ) : (
-        <input type="hidden" name="serverId" value={server.id} />
+        <BeuiInput type="hidden" name="serverId" value={server.id} />
       )}
       <SubmitButton
         flash={false}
@@ -294,19 +296,19 @@ export default async function McpMarketPage({
       </TabList>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
-        <input type="hidden" name="category" value={category} />
-        {type === 'connector' ? <input type="hidden" name="type" value="connector" /> : null}
+        <BeuiInput type="hidden" name="category" value={category} />
+        {type === 'connector' ? <BeuiInput type="hidden" name="type" value="connector" /> : null}
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">{t('searchMcp')}</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchMcp')} className="ui-input ui-input-icon h-10 w-full" />
+          <BeuiInput name="q" defaultValue={q} placeholder={t('searchMcp')} className="ui-input ui-input-icon h-10 w-full" />
         </label>
         <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortResources')} className="ui-input h-10 sm:w-40">
           <option value="popular">{t('sortPopular')}</option>
           <option value="newest">{t('sortNewest')}</option>
           <option value="name">{t('sortName')}</option>
         </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
+        <BeuiButton nativeButton unstyled className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</BeuiButton>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">

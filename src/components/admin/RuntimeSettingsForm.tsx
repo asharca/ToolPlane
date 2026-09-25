@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { HardDriveUpload, RotateCcw, Save } from 'lucide-react';
@@ -56,7 +58,7 @@ export function RuntimeSettingsForm({
             {t('maximumAttachmentSize')}
           </label>
           <div className="flex items-center gap-2">
-            <input
+            <BeuiInput
               id="max-agent-attachment-size"
               name="maxAttachmentSizeMb"
               type="number"
@@ -86,7 +88,7 @@ export function RuntimeSettingsForm({
             {t('saveChanges')}
           </SubmitButton>
           {source === 'database' ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="submit"
               name="intent"
               value="reset"
@@ -96,7 +98,7 @@ export function RuntimeSettingsForm({
             >
               <RotateCcw className="size-4" />
               {t('restoreEnvironmentDefault')}
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
 

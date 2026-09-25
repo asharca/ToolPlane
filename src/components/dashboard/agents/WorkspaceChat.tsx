@@ -1,11 +1,13 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ContextMenu } from 'radix-ui';
-import { SidebarActionRail } from '@asharca/ui';
+import { ContextMenu } from '@/components/ui/primitives';
+import { SidebarActionRail } from "@/components/ui";
 import {
   AlertCircle,
   ArrowLeft,
@@ -299,7 +301,7 @@ export function WorkspaceChat({
           <div className="shrink-0 px-0.5">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <BeuiInput
                 value={conversationQuery}
                 onChange={(event) => setConversationQuery(event.target.value)}
                 placeholder={t('searchConversations')}
@@ -307,7 +309,7 @@ export function WorkspaceChat({
                 className="h-7 w-full rounded-full border-0 bg-muted/70 pl-7 pr-7 text-[10px] text-foreground outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-brand/35"
               />
               {conversationQuery ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => setConversationQuery('')}
                   aria-label={t('clearConversationSearch')}
@@ -315,7 +317,7 @@ export function WorkspaceChat({
                   className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
                 >
                   <X className="size-3" />
-                </button>
+                </BeuiButton>
               ) : null}
             </div>
             {titleGenerationFailed ? (
@@ -350,7 +352,7 @@ export function WorkspaceChat({
                       'group flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
                       agent.id === activeAgent.id ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60 hover:text-foreground',
                     )}>
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         aria-expanded={expanded}
                         aria-controls={`agent-conversations-${agent.id}`}
@@ -369,7 +371,7 @@ export function WorkspaceChat({
                         <span aria-hidden="true" className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex">
                           <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
                         </span>
-                      </button>
+                      </BeuiButton>
                       <SidebarActionRail hasLeadingSlot revealOnCellFocus>
                         <form
                           action={createConversationAction}
@@ -379,16 +381,16 @@ export function WorkspaceChat({
                           }}
                           className="flex shrink-0"
                         >
-                          <input type="hidden" name="workspace" value={slug} />
-                          <input type="hidden" name="agentId" value={agent.id} />
-                          <button
+                          <BeuiInput type="hidden" name="workspace" value={slug} />
+                          <BeuiInput type="hidden" name="agentId" value={agent.id} />
+                          <BeuiButton nativeButton unstyled
                             type="submit"
                             aria-label={newChatLabel}
                             title={newChatLabel}
                             className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
                           >
                             <Plus className="size-3.5" />
-                          </button>
+                          </BeuiButton>
                         </form>
                       </SidebarActionRail>
                     </div>
@@ -416,11 +418,11 @@ export function WorkspaceChat({
                                     onSubmit={() => setInlineRenameId(null)}
                                     className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-5"
                                   >
-                                    <input type="hidden" name="workspace" value={slug} />
-                                    <input type="hidden" name="agentId" value={agent.id} />
-                                    <input type="hidden" name="conversationId" value={item.id} />
+                                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                                    <BeuiInput type="hidden" name="agentId" value={agent.id} />
+                                    <BeuiInput type="hidden" name="conversationId" value={item.id} />
                                     <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
-                                    <input
+                                    <BeuiInput
                                       name="title"
                                       defaultValue={item.title ?? ''}
                                       aria-label={t('renameConversation')}
@@ -469,10 +471,10 @@ export function WorkspaceChat({
                                         : 'pointer-events-none opacity-0 group-focus-within/conversation:pointer-events-auto group-focus-within/conversation:opacity-100 group-hover/conversation:pointer-events-auto group-hover/conversation:opacity-100',
                                     )}
                                   >
-                                    <input type="hidden" name="workspace" value={slug} />
-                                    <input type="hidden" name="agentId" value={agent.id} />
-                                    <input type="hidden" name="conversationId" value={item.id} />
-                                    <button
+                                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                                    <BeuiInput type="hidden" name="agentId" value={agent.id} />
+                                    <BeuiInput type="hidden" name="conversationId" value={item.id} />
+                                    <BeuiButton nativeButton unstyled
                                       type="submit"
                                       aria-label={confirmingDelete ? common('confirm') : common('delete')}
                                       title={confirmingDelete ? t('deleteConversation') : common('delete')}
@@ -490,7 +492,7 @@ export function WorkspaceChat({
                                       className="flex size-5 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
                                     >
                                       {confirmingDelete ? <Trash2 className="size-3.5 text-destructive" /> : <X className="size-3.5" />}
-                                    </button>
+                                    </BeuiButton>
                                   </form>
                                 ) : null}
                               </div>
@@ -555,7 +557,7 @@ export function WorkspaceChat({
                 <Link href={`/app/${encodeURIComponent(slug)}/work`} aria-label={work('title')} title={work('title')} className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
                   <ArrowLeft className="size-[18px]" />
                 </Link>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={t('showConversations')}
                   title={t('showConversations')}
@@ -563,8 +565,8 @@ export function WorkspaceChat({
                   className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
                 >
                   <PanelLeftOpen className="size-[18px]" />
-                </button>
-                <button
+                </BeuiButton>
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={sidebarOpen ? t('hideConversations') : t('showConversations')}
                   title={sidebarOpen ? t('hideConversations') : t('showConversations')}
@@ -573,7 +575,7 @@ export function WorkspaceChat({
                   className="hidden size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:flex"
                 >
                   {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-                </button>
+                </BeuiButton>
                 <span className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium text-foreground hover:bg-muted">
                   <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-3" /></span>
                   <span className="max-w-40 truncate">{activeAgent.name}</span>
@@ -600,7 +602,7 @@ export function WorkspaceChat({
                     editable: hermesSelection?.editable ?? true,
                   } : undefined}
                   trigger={(
-                    <button
+                    <BeuiButton nativeButton unstyled
                       type="button"
                       disabled={conversationBusy}
                       aria-label={t('modelConfiguration')}
@@ -620,7 +622,7 @@ export function WorkspaceChat({
                           : activeAgent.model ?? t('select')}
                       </span>
                       <ChevronDown className="size-3.5 shrink-0" />
-                    </button>
+                    </BeuiButton>
                   )}
                 />
               </div>
@@ -665,12 +667,12 @@ export function WorkspaceChat({
                 <DialogTitle className="!text-sm !leading-4 !tracking-normal">{t('renameConversation')}</DialogTitle>
               </header>
               <form action={renameConversationAction} onSubmit={() => setRenameTarget(null)} className="flex flex-col">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="agentId" value={renameTarget.agentId} />
-                <input type="hidden" name="conversationId" value={renameTarget.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="agentId" value={renameTarget.agentId} />
+                <BeuiInput type="hidden" name="conversationId" value={renameTarget.id} />
                 <label className="space-y-1 px-4 py-3 text-xs font-medium text-muted-foreground">
                   {t('name')}
-                  <input
+                  <BeuiInput
                     name="title"
                     defaultValue={renameTarget.title ?? ''}
                     placeholder={t('newChat')}
@@ -681,8 +683,8 @@ export function WorkspaceChat({
                   />
                 </label>
                 <footer className="flex justify-end gap-2 border-t border-border px-4 py-3">
-                  <button type="button" onClick={() => setRenameTarget(null)} className="ui-button-secondary h-8 min-h-8 rounded-lg px-3 text-xs">{common('cancel')}</button>
-                  <button type="submit" className="ui-button-primary h-8 min-h-8 rounded-lg px-3 text-xs">{common('save')}</button>
+                  <BeuiButton nativeButton unstyled type="button" onClick={() => setRenameTarget(null)} className="ui-button-secondary h-8 min-h-8 rounded-lg px-3 text-xs">{common('cancel')}</BeuiButton>
+                  <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary h-8 min-h-8 rounded-lg px-3 text-xs">{common('save')}</BeuiButton>
                 </footer>
               </form>
             </DialogContent>
@@ -696,9 +698,9 @@ export function WorkspaceChat({
           {deleteTarget ? (
             <DialogContent key={deleteTarget.id} className="!z-[51] !max-w-lg !gap-5 !rounded-3xl !border-0 !p-6">
               <form action={deleteConversationAction} onSubmit={() => setDeleteTarget(null)}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="agentId" value={deleteTarget.agentId} />
-                <input type="hidden" name="conversationId" value={deleteTarget.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="agentId" value={deleteTarget.agentId} />
+                <BeuiInput type="hidden" name="conversationId" value={deleteTarget.id} />
                 <div className="flex items-start gap-3">
                   <AlertCircle className="mt-0.5 size-5 shrink-0 text-warning" />
                   <div className="min-w-0 flex-1">
@@ -707,8 +709,8 @@ export function WorkspaceChat({
                   </div>
                 </div>
                 <footer className="mt-5 flex justify-end gap-2">
-                  <button type="button" onClick={() => setDeleteTarget(null)} className="ui-button-secondary h-9 px-4 text-sm">{common('cancel')}</button>
-                  <button type="submit" className="ui-button-primary ui-button-danger h-9 px-4 text-sm">{common('delete')}</button>
+                  <BeuiButton nativeButton unstyled type="button" onClick={() => setDeleteTarget(null)} className="ui-button-secondary h-9 px-4 text-sm">{common('cancel')}</BeuiButton>
+                  <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary ui-button-danger h-9 px-4 text-sm">{common('delete')}</BeuiButton>
                 </footer>
               </form>
             </DialogContent>

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -80,8 +82,8 @@ function McpDeploymentActions({
       {isRunning || isProvisioning ? (
         <>
           <form action={stopDeploymentAction}>
-            <input type="hidden" name="workspace" value={slug} />
-            <input type="hidden" name="deploymentId" value={deployment.id} />
+            <BeuiInput type="hidden" name="workspace" value={slug} />
+            <BeuiInput type="hidden" name="deploymentId" value={deployment.id} />
             <SubmitButton flash={false} pendingLabel={t('stopping')} className={actionClass}>
               {compact ? <Pause className="size-3.5" /> : null}
               {t('stop')}
@@ -89,8 +91,8 @@ function McpDeploymentActions({
           </form>
           {isRunning ? (
             <form action={restartDeploymentAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="deploymentId" value={deployment.id} />
+              <BeuiInput type="hidden" name="workspace" value={slug} />
+              <BeuiInput type="hidden" name="deploymentId" value={deployment.id} />
               <SubmitButton flash={false} pendingLabel={t('restarting')} className={actionClass}>
                 {compact ? <RotateCcw className="size-3.5" /> : null}
                 {t('restart')}
@@ -104,8 +106,8 @@ function McpDeploymentActions({
         </Link>
       ) : (
         <form action={startDeploymentAction}>
-          <input type="hidden" name="workspace" value={slug} />
-          <input type="hidden" name="deploymentId" value={deployment.id} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="deploymentId" value={deployment.id} />
           <SubmitButton flash={false} pendingLabel={t('starting')} className={actionClass}>
             {compact ? <Play className="size-3.5" /> : null}
             {t('start')}
@@ -113,8 +115,8 @@ function McpDeploymentActions({
         </form>
       )}
       <form action={removeDeploymentAction}>
-        <input type="hidden" name="workspace" value={slug} />
-        <input type="hidden" name="deploymentId" value={deployment.id} />
+        <BeuiInput type="hidden" name="workspace" value={slug} />
+        <BeuiInput type="hidden" name="deploymentId" value={deployment.id} />
         <ConfirmSubmitButton
           triggerLabel={t('remove')}
           confirmLabel={common('confirm')}
@@ -156,7 +158,7 @@ function McpBulkDeploymentActions({
       <span className="mr-0.5 text-xs font-medium tabular-nums text-accent-foreground" aria-live="polite">
         {selection('selectedResources', { count: selectedIds.length })}
       </span>
-      <button
+      <BeuiButton nativeButton unstyled
         type="button"
         onClick={onClear}
         aria-label={selection('clearSelection')}
@@ -164,13 +166,13 @@ function McpBulkDeploymentActions({
         className="flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
       >
         <X className="size-3.5" />
-      </button>
+      </BeuiButton>
       <span className="h-4 w-px bg-brand/20" aria-hidden="true" />
       <div className="flex flex-wrap items-center gap-1.5">
         <form action={startDeploymentsAction}>
-          <input type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
           {selectedIds.map((deploymentId) => (
-            <input key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
+            <BeuiInput key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
           ))}
           <SubmitButton flash={false} pendingLabel={t('starting')} className={lifecycleAction}>
             <Play className="size-3.5" />
@@ -178,9 +180,9 @@ function McpBulkDeploymentActions({
           </SubmitButton>
         </form>
         <form action={stopDeploymentsAction}>
-          <input type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
           {selectedIds.map((deploymentId) => (
-            <input key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
+            <BeuiInput key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
           ))}
           <SubmitButton flash={false} pendingLabel={t('stopping')} className={lifecycleAction}>
             <Pause className="size-3.5" />
@@ -188,9 +190,9 @@ function McpBulkDeploymentActions({
           </SubmitButton>
         </form>
         <form action={removeDeploymentsAction}>
-          <input type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
           {selectedIds.map((deploymentId) => (
-            <input key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
+            <BeuiInput key={deploymentId} type="hidden" name="deploymentId" value={deploymentId} />
           ))}
           <ConfirmSubmitButton
             triggerLabel={<><Trash2 className="size-3.5" />{common('delete')}</>}
@@ -324,28 +326,28 @@ export function McpDeploymentsBrowser({
           <label className="relative block min-w-0 lg:max-w-md lg:flex-1">
             <span className="sr-only">{t('searchMcp')}</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
+            <BeuiInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('searchMcp')}
               className="ui-input ui-input-icon h-10 w-full pr-9"
             />
             {query ? (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => setQuery('')}
                 className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 aria-label={common('all')}
               >
                 <X className="size-4" />
-              </button>
+              </BeuiButton>
             ) : null}
           </label>
           <div className="flex flex-wrap gap-1.5" aria-label={t('status')}>
             {filters.map((filter) => {
               const active = status === filter.key;
               return (
-                <button
+                <BeuiButton nativeButton unstyled
                   key={filter.key}
                   type="button"
                   onClick={() => setStatus(filter.key)}
@@ -359,7 +361,7 @@ export function McpDeploymentsBrowser({
                 >
                   {filter.label}
                   <span className="text-[10px] opacity-70">{filter.count}</span>
-                </button>
+                </BeuiButton>
               );
             })}
           </div>
@@ -375,7 +377,7 @@ export function McpDeploymentsBrowser({
           title={t('noMcpFound')}
           description={query || status !== 'all' ? t('searchMcp') : t('noServersDeployedYet')}
           actions={query || status !== 'all' ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => {
                 setQuery('');
@@ -384,14 +386,14 @@ export function McpDeploymentsBrowser({
               className="ui-button-secondary"
             >
               {common('all')}
-            </button>
+            </BeuiButton>
           ) : undefined}
         />
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 lg:hidden">
             <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground transition-colors hover:border-ring/50 hover:bg-muted">
-              <input
+              <BeuiInput
                 ref={mobileSelectAllRef}
                 type="checkbox"
                 checked={allFilteredSelected}
@@ -418,7 +420,7 @@ export function McpDeploymentsBrowser({
               return (
                 <article key={deployment.id} className={`ui-panel p-4 transition-colors ${isSelected ? 'border-brand/30 bg-brand-soft/30' : ''}`}>
                   <div className="flex items-start justify-between gap-3">
-                    <input
+                    <BeuiInput
                       type="checkbox"
                       checked={isSelected}
                       onChange={(event) => toggleDeployment(deployment.id, event.target.checked)}
@@ -462,7 +464,7 @@ export function McpDeploymentsBrowser({
               : [
                 {
                   label: (
-                    <input
+                    <BeuiInput
                       ref={desktopSelectAllRef}
                       type="checkbox"
                       checked={allFilteredSelected}
@@ -485,7 +487,7 @@ export function McpDeploymentsBrowser({
               return (
                 <tr key={deployment.id} className={isSelected ? 'bg-brand-soft/30' : undefined}>
                   <td className="w-12 px-4 py-3">
-                    <input
+                    <BeuiInput
                       type="checkbox"
                       checked={isSelected}
                       onChange={(event) => toggleDeployment(deployment.id, event.target.checked)}

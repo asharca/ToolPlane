@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -32,12 +34,12 @@ export function SkillForm({
 
   return (
     <form action={formAction} className="max-w-3xl space-y-6">
-      {initial.id ? <input type="hidden" name="id" value={initial.id} /> : null}
+      {initial.id ? <BeuiInput type="hidden" name="id" value={initial.id} /> : null}
 
       <div className="grid gap-5 sm:grid-cols-2">
         <label className={LABEL_CLASS}>
           <span>{t('name')}</span>
-          <input name="name" defaultValue={initial.name ?? ''} required className="ui-input h-11" />
+          <BeuiInput name="name" defaultValue={initial.name ?? ''} required className="ui-input h-11" />
         </label>
         {initial.id ? (
           <div className={LABEL_CLASS}>
@@ -50,7 +52,7 @@ export function SkillForm({
         ) : (
           <label className={LABEL_CLASS}>
             <span>{t('slug2')}</span>
-            <input
+            <BeuiInput
               name="slug"
               required
               placeholder="my-skill"
@@ -62,15 +64,15 @@ export function SkillForm({
         )}
         <label className={LABEL_CLASS}>
           <span>{t('author')}</span>
-          <input name="author" defaultValue={initial.author ?? ''} className="ui-input h-11" />
+          <BeuiInput name="author" defaultValue={initial.author ?? ''} className="ui-input h-11" />
         </label>
         <label className={LABEL_CLASS}>
           <span>{t('score')}</span>
-          <input name="score" type="number" defaultValue={initial.score ?? 0} className="ui-input h-11" />
+          <BeuiInput name="score" type="number" defaultValue={initial.score ?? 0} className="ui-input h-11" />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('description')}</span>
-          <textarea
+          <BeuiTextarea
             name="description"
             defaultValue={initial.description ?? ''}
             rows={4}
@@ -79,7 +81,7 @@ export function SkillForm({
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('iconUrl')}</span>
-          <input
+          <BeuiInput
             name="iconUrl"
             defaultValue={initial.iconUrl ?? ''}
             className="ui-input h-11"
@@ -90,7 +92,7 @@ export function SkillForm({
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('githubSource')}</span>
-          <input
+          <BeuiInput
             name="githubSource"
             defaultValue={initial.githubSource ?? ''}
             placeholder="owner/repo or owner/repo/path/to/skill"
@@ -113,7 +115,7 @@ export function SkillForm({
                 key={c.id}
                 className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
               >
-                <input
+                <BeuiInput
                   type="checkbox"
                   name="categoryIds"
                   value={c.id}

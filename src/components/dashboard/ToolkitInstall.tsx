@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useState, type ReactNode } from 'react';
@@ -42,13 +44,13 @@ function Pill({
   children: ReactNode;
 }) {
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="button"
       onClick={onClick}
       className={`${pillBase} ${active ? pillActive : pillIdle}`}
     >
       {children}
-    </button>
+    </BeuiButton>
   );
 }
 

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea, Select as BeuiSelect } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -271,7 +273,7 @@ export function AgentsBrowser({
               {t('browseAgentMarket')}
             </Link>
           ) : null}
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={() => {
               if (creating) closeCreateForm();
@@ -286,7 +288,7 @@ export function AgentsBrowser({
           >
             {creating ? <X className="size-[18px] shrink-0" /> : <Plus className="size-[18px] shrink-0" />}
             {creating ? t('cancel') : t('newAgent')}
-          </button>
+          </BeuiButton>
         </div>
       </div>
       ) : null}
@@ -316,14 +318,14 @@ export function AgentsBrowser({
           )}
         >
           <header className="flex shrink-0 items-start gap-3 px-5 py-4 sm:px-6">
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => setCreateSource('blank')}
               aria-label={t('back')}
               className="ui-button-ghost ui-icon-button shrink-0"
             >
               <ChevronLeft className="size-4" />
-            </button>
+            </BeuiButton>
             <div className="min-w-0 flex-1">
               <h3 className="text-lg font-semibold text-foreground">{t('chooseFromAgentMarket')}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{t('chooseFromAgentMarketDescription')}</p>
@@ -398,10 +400,10 @@ export function AgentsBrowser({
           </div>
 
           <footer className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
-            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+            <BeuiButton nativeButton unstyled type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
               <X className="size-4 shrink-0" />
               {t('cancel')}
-            </button>
+            </BeuiButton>
           </footer>
         </section>
       ) : creating ? (
@@ -413,8 +415,8 @@ export function AgentsBrowser({
             createOnly ? 'h-full' : 'ui-panel min-h-[38rem] max-h-[calc(100dvh-10rem)]',
           )}
         >
-          <input type="hidden" name="workspace" value={slug} />
-          <input type="hidden" name="returnTo" value={requestedReturnTo} />
+          <BeuiInput type="hidden" name="workspace" value={slug} />
+          <BeuiInput type="hidden" name="returnTo" value={requestedReturnTo} />
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
             <nav
               aria-label={t('configurationNavigation')}
@@ -426,7 +428,7 @@ export function AgentsBrowser({
                   const done = index < createStepIndex;
                   return (
                     <li key={step.id} className="shrink-0 sm:w-full">
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         aria-current={active ? 'step' : undefined}
                         disabled={index > createStepIndex}
@@ -446,7 +448,7 @@ export function AgentsBrowser({
                           {index + 1}
                         </span>
                         <span>{step.label}</span>
-                      </button>
+                      </BeuiButton>
                     </li>
                   );
                 })}
@@ -465,7 +467,7 @@ export function AgentsBrowser({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     aria-pressed={createSource === 'blank'}
                     onClick={() => setCreateSource('blank')}
@@ -473,8 +475,8 @@ export function AgentsBrowser({
                   >
                     <Plus className="size-3.5" />
                     {t('createBlankAgent')}
-                  </button>
-                  <button
+                  </BeuiButton>
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     aria-pressed={createSource === 'market'}
                     onClick={() => setCreateSource('market')}
@@ -482,7 +484,7 @@ export function AgentsBrowser({
                   >
                     <Store className="size-3.5" />
                     {t('chooseFromAgentMarket')}
-                  </button>
+                  </BeuiButton>
                 </div>
 
                 {!hasProviders ? (
@@ -501,7 +503,7 @@ export function AgentsBrowser({
 
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
-                  <input
+                  <BeuiInput
                     name="name"
                     value={agentName}
                     onChange={(event) => setAgentName(event.target.value)}
@@ -514,7 +516,7 @@ export function AgentsBrowser({
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
-                  <textarea
+                  <BeuiTextarea
                     name="description"
                     value={agentDescription}
                     onChange={(event) => setAgentDescription(event.target.value)}
@@ -570,7 +572,7 @@ export function AgentsBrowser({
                             selected ? 'border-foreground/20 bg-muted/60' : 'border-border',
                           )}
                         >
-                          <input
+                          <BeuiInput
                             type="radio"
                             name="runtime"
                             value={option.value}
@@ -609,8 +611,8 @@ export function AgentsBrowser({
                   </div>
                 ) : runtime ? (
                   <div>
-                    <input type="hidden" name="providerId" value={providerId} />
-                    <input type="hidden" name="model" value={modelId} />
+                    <BeuiInput type="hidden" name="providerId" value={providerId} />
+                    <BeuiInput type="hidden" name="model" value={modelId} />
                     <span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-foreground">
                       <Cpu className="size-4 text-muted-foreground" /> {t('model')}
                     </span>
@@ -625,14 +627,14 @@ export function AgentsBrowser({
                         window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
-                        <button type="button" aria-label={`${t('model')}: ${modelId || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
+                        <BeuiButton nativeButton unstyled type="button" aria-label={`${t('model')}: ${modelId || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
                           <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
                             {selectedProvider?.name.charAt(0).toUpperCase() || 'M'}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{modelId || t('selectModel')}</span>
                           <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span>
                           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </button>
+                        </BeuiButton>
                       )}
                     />
                   </div>
@@ -641,10 +643,10 @@ export function AgentsBrowser({
                 {runtime === 'hermes-rpc' ? (
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesRpcSandbox')}</span>
-                    <select name={sandboxId ? 'sandboxId' : undefined} value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input h-10 w-full">
+                    <BeuiSelect name={sandboxId ? 'sandboxId' : undefined} value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input h-10 w-full">
                       <option value="">{t('hermesRpcNewSandbox')}</option>
                       {(createOptions.sandboxes ?? []).map((sandbox) => <option key={sandbox.id} value={sandbox.id}>{sandbox.label}</option>)}
-                    </select>
+                    </BeuiSelect>
                     <span className="mt-1.5 block text-xs text-muted-foreground">{t('hermesRpcSandboxHelp')}</span>
                   </label>
                 ) : null}
@@ -656,7 +658,7 @@ export function AgentsBrowser({
                 ) : null}
                 <label className="block max-w-48 text-xs font-medium text-muted-foreground">
                   {t('maxToolSteps')}
-                  <input
+                  <BeuiInput
                     name="maxSteps"
                     type="number"
                     min={AGENT_STEP_BOUNDS.min}
@@ -765,19 +767,19 @@ export function AgentsBrowser({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3 sm:px-6">
-            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+            <BeuiButton nativeButton unstyled type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
               <X className="size-4 shrink-0" />
               {t('cancel')}
-            </button>
+            </BeuiButton>
             {createStepIndex > 0 ? (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
                 className="ui-button-secondary h-10 gap-2 px-4"
               >
                 <ChevronLeft className="size-4 shrink-0" />
                 {t('back')}
-              </button>
+              </BeuiButton>
             ) : null}
             {lastCreateStep ? (
               <SubmitButton
@@ -790,7 +792,7 @@ export function AgentsBrowser({
                 {t('createAgent')}
               </SubmitButton>
             ) : (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 disabled={activeCreateStep === 'basic' && !createReady}
                 onClick={() => {
@@ -802,7 +804,7 @@ export function AgentsBrowser({
               >
                 {t('next')}
                 <ChevronRight className="size-4 shrink-0" />
-              </button>
+              </BeuiButton>
             )}
           </div>
         </form>

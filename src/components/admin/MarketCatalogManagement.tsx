@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { ClipboardCheck, History, Save } from 'lucide-react';
@@ -143,7 +145,7 @@ function CategoryChecklist({
       <div className="mt-2 grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
         {categories.map((category) => (
           <label key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
-            <input
+            <BeuiInput
               type="checkbox"
               name="categoryIds"
               value={category.id}
@@ -175,7 +177,7 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
         </span>
       </summary>
       <form action={action} className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
-        <input type="hidden" name="listingId" value={listing.id} />
+        <BeuiInput type="hidden" name="listingId" value={listing.id} />
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('statusColumn')}</span>
@@ -186,11 +188,11 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
             </NativeSelect>
           </label>
           <label className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="curated" defaultChecked={listing.curated} className="size-4 accent-brand" />
+            <BeuiInput type="checkbox" name="curated" defaultChecked={listing.curated} className="size-4 accent-brand" />
             {t('curated')}
           </label>
           <label className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="isFeatured" defaultChecked={listing.isFeatured} className="size-4 accent-brand" />
+            <BeuiInput type="checkbox" name="isFeatured" defaultChecked={listing.isFeatured} className="size-4 accent-brand" />
             {t('featured')}
           </label>
         </div>
@@ -245,14 +247,14 @@ function ToolkitForm({ toolkit, categories }: { toolkit: ToolkitRow; categories:
         </span>
       </summary>
       <form action={action} className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
-        <input type="hidden" name="toolkitId" value={toolkit.id} />
+        <BeuiInput type="hidden" name="toolkitId" value={toolkit.id} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium text-foreground">{toolkit.workspace.name}</p>
             <p className="text-xs text-muted-foreground">{t('marketToolkitLegacyNotice')}</p>
           </div>
           <label className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="enabled" defaultChecked={toolkit.enabled} className="size-4 accent-brand" />
+            <BeuiInput type="checkbox" name="enabled" defaultChecked={toolkit.enabled} className="size-4 accent-brand" />
             {t('enabled')}
           </label>
         </div>

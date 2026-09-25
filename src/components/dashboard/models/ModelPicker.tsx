@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import {
   useCallback,
@@ -9,7 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslations } from 'next-intl';
-import { Popover } from 'radix-ui';
+import { Popover } from '@/components/ui/primitives';
 import {
   ArrowUpDown,
   AudioLines,
@@ -170,7 +172,7 @@ export function ModelPicker({
           <div className="flex h-9 shrink-0 items-center border-b border-border px-3">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <BeuiInput
                 ref={searchRef}
                 type="text"
                 value={search}
@@ -187,7 +189,7 @@ export function ModelPicker({
                 className="h-7 w-full border-0 bg-transparent py-0 pl-5 pr-6 text-xs leading-7 text-foreground outline-none placeholder:text-muted-foreground"
               />
               {search ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={t('clearModelSearch')}
                   onMouseDown={(event) => event.preventDefault()}
@@ -198,7 +200,7 @@ export function ModelPicker({
                   className="absolute right-0 top-1/2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                 >
                   <X className="size-2.5" />
-                </button>
+                </BeuiButton>
               ) : null}
             </div>
           </div>
@@ -227,7 +229,7 @@ export function ModelPicker({
                   const descriptionId = `model-option-${encodeURIComponent(provider.id)}-${encodeURIComponent(model)}-description`;
                   return (
                     <div key={key} className="px-1 py-0.5">
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         role="option"
                         aria-selected={isSelected}
@@ -261,7 +263,7 @@ export function ModelPicker({
                         {pending && pendingValue?.providerId === provider.id && pendingValue.model === model
                           ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                           : null}
-                      </button>
+                      </BeuiButton>
                     </div>
                   );
                 })}
@@ -275,7 +277,7 @@ export function ModelPicker({
 
           {error ? <p role="alert" className="mx-2 mb-1 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p> : null}
           {onConfigure ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => {
                 setOpen(false);
@@ -285,7 +287,7 @@ export function ModelPicker({
             >
               <Settings2 className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">{t('configureModelProviders')}</span>
-            </button>
+            </BeuiButton>
           ) : null}
         </Popover.Content>
       </Popover.Portal>

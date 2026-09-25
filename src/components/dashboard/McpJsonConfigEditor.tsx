@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
@@ -74,8 +76,8 @@ export function McpJsonConfigEditor({
 
   return (
     <form action={formAction} className="ui-panel max-w-4xl overflow-hidden">
-      <input type="hidden" name="workspace" value={slug} />
-      <input type="hidden" name="deploymentId" value={deploymentId} />
+      <BeuiInput type="hidden" name="workspace" value={slug} />
+      <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
       <header className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-foreground">{t('configuration')}</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('configurationDescription')}</p>
@@ -111,7 +113,7 @@ export function McpJsonConfigEditor({
             {t('jsonConfig')}
           </p>
         {revealed ? (
-          <textarea
+          <BeuiTextarea
             id="mcp-json-config"
             name="config"
             required
@@ -136,7 +138,7 @@ export function McpJsonConfigEditor({
             >
               {maskedConfig}
             </pre>
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={revealConfig}
               disabled={isRevealPending}
@@ -145,7 +147,7 @@ export function McpJsonConfigEditor({
             >
               {isRevealPending ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
               {isRevealPending ? t('revealingSensitiveConfig') : t('revealSensitiveConfigAndEdit')}
-            </button>
+            </BeuiButton>
           </>
         )}
         </div>

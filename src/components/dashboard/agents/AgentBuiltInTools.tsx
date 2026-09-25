@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import {
@@ -34,7 +36,7 @@ export function AgentBuiltInTools({
   return (
     <div className="space-y-3">
       {selectable ? [...disabledTools].map((tool) => (
-        <input key={tool} type="hidden" name={fieldName} value={tool} />
+        <BeuiInput key={tool} type="hidden" name={fieldName} value={tool} />
       )) : null}
       <div role="list" aria-label={t('builtInTools')} className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
         {groups.map((group) => {
@@ -43,7 +45,7 @@ export function AgentBuiltInTools({
             <div key={group.category} role="listitem" className="min-w-0">
               {selectable ? (
                 <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-foreground">
-                  <input
+                  <BeuiInput
                     type="checkbox"
                     checked={enabled}
                     onChange={() => {

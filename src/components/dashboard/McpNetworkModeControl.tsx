@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useId } from 'react';
 import { useTranslations } from 'next-intl';
@@ -53,7 +55,7 @@ export function McpNetworkModeControl({
                   : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
               } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
             >
-              <input
+              <BeuiInput
                 type="radio"
                 name="network"
                 value={option.value}

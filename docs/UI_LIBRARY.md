@@ -1,36 +1,17 @@
-# Shared UI and CI
+# UI library
 
-> **中文**：[UI_LIBRARY.zh-CN.md](./UI_LIBRARY.zh-CN.md)
+The platform uses the source registry selected at https://asharca.github.io/ui/llms.txt, pinned to `85b080aafe2f7e3aaf720e5a2ffdf035289c49c1`. The former `@asharca/ui@0.2.1` npm package is not the same catalog and has been removed.
 
-The shared UI library is maintained in https://github.com/asharca/ui and
-published to npm as `@asharca/ui`. ToolPlane consumes a released version, just
-like any other application. Keep routing, authentication, API clients, and
-business adapters in ToolPlane.
+## Ownership and architecture
 
-## Updating UI
+- `src/components/ui/beui`: pinned registry Button, Input and their helpers, MIT license and file hashes.
+- `Controls.tsx`: form-compatible application adapters. Native events, refs, reset, required validation, multiple selection, form association and drag-and-drop are preserved.
+- `Dialog.tsx` and `primitives.tsx`: beUI surface/motion styling over existing Radix headless focus, dismissal and keyboard primitives. Aesthetic reuse does not justify replacing a proven focus stack with a partial custom trap.
+- `compositions`: explicitly attributed, application-specific assistant-ui and layout ports. These retain chat streaming and navigation state; they are not claimed to be registry components.
+- `composition-layout.css` retains geometry; `beui-overrides.css` owns the new visual treatment. All controls inherit the app theme.
 
-Make component or stylesheet changes in `asharca/ui`, run its checks, and merge
-the PR. Release a new package version using that repository's release workflow.
-ToolPlane no longer owns the UI source or its npm publisher.
+## Verification
 
-Update the application in a ToolPlane PR:
+Run `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test`, `pnpm build` and `pnpm runtime:assemble`. New contract tests cover real form events/reset, disabled links, confirmation, keyboard focus and native drag events. API/auth/DB/approval logic is unchanged. Existing functionality regressions must be fixed, not skipped. Actual CLI/model and production integrations remain separate acceptance checks.
 
-```bash
-pnpm add @asharca/ui@X.Y.Z --save-exact
-```
-
-Check the release's React and assistant-ui peer requirements before upgrading.
-Keep the existing `@asharca/ui/styles.css` import in the global stylesheet.
-Rebuild and deploy ToolPlane to adopt the package's component and style changes.
-
-## CI and merging
-
-Ordinary PRs, including stacked PRs, run the full [`ci.yml`](../.github/workflows/ci.yml) workflow. It can also be started manually. Merging into `main` does not repeat the full CI run because this workflow has no `push` trigger.
-
-Same-repository release-please branches beginning `release-please--branches--` are an exception: `pull_request_target` validates that only `.release-please-manifest.json`, `CHANGELOG.md`, and `package.json` changed, then supplies the Connector gate results. It does not rerun application tests or Connector tests for that metadata-only PR. See [Releases](./RELEASES.md).
-
-The workflow's check names are `validate`, `connector (ubuntu-latest)`, `connector (macos-latest)`, and `connector (windows-latest)`. Branch protection, required approvals, administrator bypasses, and restrictions on direct pushes or deletion are configured separately in GitHub repository rules; the workflow file alone does not establish or enforce those policies.
-
-UI publishing validates the UI release in its own repository. ToolPlane's
-`release-please.yml` application release flow and `vX.Y.Z` tags remain separate;
-a normal feature merge does not publish a new UI package.
+The migration script uses AST offset edits and a fixed upstream commit. It is a one-time migration and refuses an already migrated package. Keep future source updates explicit and update provenance.

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import {
   useRef,
@@ -303,7 +305,7 @@ export function RuntimeFilesEditor({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={pickUpload}
             disabled={isSaving || isRevealing || isDeleting}
@@ -311,8 +313,8 @@ export function RuntimeFilesEditor({
           >
             <Upload className="size-3.5" />
             {t('uploadTextFile')}
-          </button>
-          <button
+          </BeuiButton>
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={startNewFile}
             disabled={isSaving || isRevealing || isDeleting}
@@ -320,8 +322,8 @@ export function RuntimeFilesEditor({
           >
             <Plus className="size-3.5" />
             {t('addFile')}
-          </button>
-          <input
+          </BeuiButton>
+          <BeuiInput
             ref={uploadInputRef}
             type="file"
             tabIndex={-1}
@@ -350,7 +352,7 @@ export function RuntimeFilesEditor({
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => revealFile(file)}
                   disabled={isRevealing || isSaving || isDeleting}
@@ -359,8 +361,8 @@ export function RuntimeFilesEditor({
                 >
                   {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
                   {isRevealing ? t('revealing') : t('revealAndEdit')}
-                </button>
-                <button
+                </BeuiButton>
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => removeFile(file)}
                   disabled={isSaving || isRevealing || isDeleting}
@@ -370,7 +372,7 @@ export function RuntimeFilesEditor({
                     ? <Loader2 className="size-3.5 animate-spin" />
                     : <Trash2 className="size-3.5" />}
                   {isDeleting && deletingFileId === file.id ? t('removing') : t('remove')}
-                </button>
+                </BeuiButton>
               </div>
             </div>
           ))
@@ -379,8 +381,8 @@ export function RuntimeFilesEditor({
 
       {draft ? (
         <form onSubmit={saveFile} className="border-t border-border bg-muted/20 px-4 py-4">
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="deploymentId" value={deploymentId} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-foreground">
@@ -392,7 +394,7 @@ export function RuntimeFilesEditor({
                   : t('newRuntimeFileHelp')}
               </p>
             </div>
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => {
                 setDraft(null);
@@ -405,13 +407,13 @@ export function RuntimeFilesEditor({
               className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-70"
             >
               <X className="size-4" />
-            </button>
+            </BeuiButton>
           </div>
 
           <div className="mt-4 space-y-3">
             {draft.source === 'revealed' ? (
               <>
-                <input type="hidden" name="path" value={draft.path} />
+                <BeuiInput type="hidden" name="path" value={draft.path} />
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">{t('filePath')}</p>
                   <code className="mt-1 block break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">
@@ -422,7 +424,7 @@ export function RuntimeFilesEditor({
             ) : (
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 {t('filePath')}
-                <input
+                <BeuiInput
                   name="path"
                   value={draft.path}
                   onChange={(event) => setDraft((current) => current && {
@@ -446,7 +448,7 @@ export function RuntimeFilesEditor({
 
             <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
               {t('textContent')}
-              <textarea
+              <BeuiTextarea
                 name="content"
                 value={draft.content}
                 onChange={(event) => setDraft((current) => current && {
@@ -474,14 +476,14 @@ export function RuntimeFilesEditor({
                 </p>
               ) : null}
             </div>
-            <button
+            <BeuiButton nativeButton unstyled
               type="submit"
               disabled={isSaving || isDeleting || !draft.path.trim()}
               className="ui-button-primary h-9 disabled:cursor-wait disabled:opacity-70"
             >
               {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               {isSaving ? t('savingAndRestarting') : t('saveAndRestart')}
-            </button>
+            </BeuiButton>
           </div>
         </form>
       ) : (

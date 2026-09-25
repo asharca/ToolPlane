@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
@@ -380,16 +382,16 @@ export default async function SandboxesPage({
                           </Link>
                           {!lifecycleBlocked ? running ? (
                             <form action={stopSandboxAction}>
-                              <input type="hidden" name="workspace" value={slug} />
-                              <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
+                              <BeuiInput type="hidden" name="workspace" value={slug} />
+                              <BeuiInput type="hidden" name="sandboxId" value={runtime.sandbox.id} />
                               <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
                                 {t('stop')}
                               </SubmitButton>
                             </form>
                           ) : (
                             <form action={startSandboxAction}>
-                              <input type="hidden" name="workspace" value={slug} />
-                              <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
+                              <BeuiInput type="hidden" name="workspace" value={slug} />
+                              <BeuiInput type="hidden" name="sandboxId" value={runtime.sandbox.id} />
                               <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
                                 {t('start')}
                               </SubmitButton>
@@ -468,15 +470,15 @@ export default async function SandboxesPage({
                         {disabledLegacy || lifecycleBlocked ? null : running ? (
                           <>
                             <form action={stopSandboxAction}>
-                              <input type="hidden" name="workspace" value={slug} />
-                              <input type="hidden" name="sandboxId" value={s.id} />
+                              <BeuiInput type="hidden" name="workspace" value={slug} />
+                              <BeuiInput type="hidden" name="sandboxId" value={s.id} />
                               <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
                                 {t('stop')}
                               </SubmitButton>
                             </form>
                             <form action={restartSandboxAction}>
-                              <input type="hidden" name="workspace" value={slug} />
-                              <input type="hidden" name="sandboxId" value={s.id} />
+                              <BeuiInput type="hidden" name="workspace" value={slug} />
+                              <BeuiInput type="hidden" name="sandboxId" value={s.id} />
                               <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
                                 {t('restart')}
                               </SubmitButton>
@@ -484,8 +486,8 @@ export default async function SandboxesPage({
                           </>
                         ) : (
                           <form action={startSandboxAction}>
-                            <input type="hidden" name="workspace" value={slug} />
-                            <input type="hidden" name="sandboxId" value={s.id} />
+                            <BeuiInput type="hidden" name="workspace" value={slug} />
+                            <BeuiInput type="hidden" name="sandboxId" value={s.id} />
                             <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
                               {t('start')}
                             </SubmitButton>
@@ -497,8 +499,8 @@ export default async function SandboxesPage({
                           </Link>
                         ) : (
                           <form action={deleteSandboxAction}>
-                            <input type="hidden" name="workspace" value={slug} />
-                            <input type="hidden" name="sandboxId" value={s.id} />
+                            <BeuiInput type="hidden" name="workspace" value={slug} />
+                            <BeuiInput type="hidden" name="sandboxId" value={s.id} />
                             <ConfirmSubmitButton
                               triggerLabel={t('delete')}
                               confirmLabel={common('confirm')}

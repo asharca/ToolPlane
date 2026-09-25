@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -35,7 +37,7 @@ export default function ImportSkillPage() {
               <FolderGit2 className="size-4 text-muted-foreground" />
               {t('githubSource')}
             </span>
-            <input
+            <BeuiInput
               name="githubSource"
               required
               placeholder="owner/repo/path/to/skill or https://github.com/owner/repo/tree/main/path"

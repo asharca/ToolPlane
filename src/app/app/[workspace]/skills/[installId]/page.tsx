@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
@@ -331,24 +333,24 @@ export default async function SkillInspectorPage({
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <form action={deleteCustomSkillAction}>
-                    <input type="hidden" name="workspace" value={slug} />
-                    <input type="hidden" name="installId" value={install.id} />
-                    <button className="ui-button-secondary ui-button-sm text-red-600 hover:border-red-200 hover:text-red-700 dark:text-red-300">
+                    <BeuiInput type="hidden" name="workspace" value={slug} />
+                    <BeuiInput type="hidden" name="installId" value={install.id} />
+                    <BeuiButton nativeButton unstyled className="ui-button-secondary ui-button-sm text-red-600 hover:border-red-200 hover:text-red-700 dark:text-red-300">
                       {t('delete')}
-                    </button>
+                    </BeuiButton>
                   </form>
                 </div>
               </div>
 
               <form action={updateSkillAttributesAction} className="flex flex-wrap items-end gap-3">
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="installId" value={install.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="installId" value={install.id} />
                 <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <input type="checkbox" name="userInvocable" defaultChecked={install.userInvocable} />
+                  <BeuiInput type="checkbox" name="userInvocable" defaultChecked={install.userInvocable} />
                   {t('user')}
                 </label>
                 <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <input type="checkbox" name="agentInvocable" defaultChecked={install.agentInvocable} />
+                  <BeuiInput type="checkbox" name="agentInvocable" defaultChecked={install.agentInvocable} />
                   {t('agent')}
                 </label>
                 <label className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -359,7 +361,7 @@ export default async function SkillInspectorPage({
                     <option value="high">{t('high')}</option>
                   </NativeSelect>
                 </label>
-                <button className="ui-button-primary h-9">{t('save')}</button>
+                <BeuiButton nativeButton unstyled className="ui-button-primary h-9">{t('save')}</BeuiButton>
               </form>
             </div>
           ) : null}

@@ -1,11 +1,13 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea, Select as BeuiSelect } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type DragEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ContextMenu, Popover } from 'radix-ui';
-import { SearchInput, SidebarActionRail } from '@asharca/ui';
+import { ContextMenu, Popover } from '@/components/ui/primitives';
+import { SearchInput, SidebarActionRail } from "@/components/ui";
 import {
   Bot,
   ChevronDown,
@@ -328,9 +330,9 @@ function AssistantEditor({
               </DialogTitle>
               <DialogDescription className="mt-1 !text-xs">{t('boundaryDescription')}</DialogDescription>
             </div>
-            <button type="button" onClick={onClose} aria-label={common('close')} className="ui-button-ghost ui-icon-button -mr-2 -mt-2 shrink-0">
+            <BeuiButton nativeButton unstyled type="button" onClick={onClose} aria-label={common('close')} className="ui-button-ghost ui-icon-button -mr-2 -mt-2 shrink-0">
               <X className="size-4" />
-            </button>
+            </BeuiButton>
           </header>
           <form
             onSubmit={(event) => {
@@ -350,7 +352,7 @@ function AssistantEditor({
                     const done = index < createStepIndex;
                     return (
                       <li key={step.id} className="shrink-0 sm:w-full">
-                        <button
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           aria-label={step.label}
                           aria-current={active ? (creating ? 'step' : 'page') : undefined}
@@ -373,7 +375,7 @@ function AssistantEditor({
                             </span>
                           ) : null}
                           <span>{step.label}</span>
-                        </button>
+                        </BeuiButton>
                       </li>
                     );
                   })}
@@ -393,22 +395,22 @@ function AssistantEditor({
                         <p className="mt-1 text-sm text-muted-foreground">{t('boundaryDescription')}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
-                        <button
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           onClick={() => onTemplateSelect(null)}
                           className={cx('ui-button-secondary h-8 px-3 text-xs', !marketTemplate && 'bg-background text-foreground')}
                         >
                           <Plus className="size-3.5" />
                           {t('blankAssistant')}
-                        </button>
-                        <button
+                        </BeuiButton>
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           onClick={() => setShowMarketTemplates((current) => !current)}
                           className={cx('ui-button-secondary h-8 px-3 text-xs', marketTemplate && 'bg-background text-foreground')}
                         >
                           <Store className="size-3.5" />
                           {marketTemplate ? t('marketTemplateSelected') : t('chooseFromMarket')}
-                        </button>
+                        </BeuiButton>
                         {marketTemplate ? (
                           <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground" title={marketTemplate.summary ?? marketTemplate.name}>
                             {marketTemplate.name}
@@ -419,7 +421,7 @@ function AssistantEditor({
                         marketTemplates.length ? (
                           <div className="grid gap-2 sm:grid-cols-2">
                             {marketTemplates.map((template) => (
-                              <button
+                              <BeuiButton nativeButton unstyled
                                 key={template.releaseId}
                                 type="button"
                                 aria-pressed={marketTemplate?.releaseId === template.releaseId}
@@ -441,7 +443,7 @@ function AssistantEditor({
                                     <span key={tag} className="rounded bg-muted px-1.5 py-0.5">{tag}</span>
                                   ))}
                                 </span>
-                              </button>
+                              </BeuiButton>
                             ))}
                           </div>
                         ) : (
@@ -453,7 +455,7 @@ function AssistantEditor({
 
                   <label className="block text-xs font-medium text-muted-foreground">
                     {t('name')}
-                    <input
+                    <BeuiInput
                       name="name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
@@ -467,7 +469,7 @@ function AssistantEditor({
 
                   <label className="block text-xs font-medium text-muted-foreground">
                     {t('description')}
-                    <textarea
+                    <BeuiTextarea
                       name="description"
                       value={description}
                       onChange={(event) => setDescription(event.target.value)}
@@ -491,14 +493,14 @@ function AssistantEditor({
                         window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
-                        <button type="button" aria-label={`${t('model')}: ${model || t('selectModel')}`} className="ui-input mt-1.5 flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
+                        <BeuiButton nativeButton unstyled type="button" aria-label={`${t('model')}: ${model || t('selectModel')}`} className="ui-input mt-1.5 flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
                           <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
                             {selectedProvider?.name.charAt(0).toUpperCase() || 'M'}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{model || t('selectModel')}</span>
                           <span className="hidden max-w-36 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span>
                           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </button>
+                        </BeuiButton>
                       )}
                     />
                   </div>
@@ -518,7 +520,7 @@ function AssistantEditor({
                     <div className="flex items-center justify-between gap-3">
                       <span>{t('systemPrompt')}</span>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        <button
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           onClick={() => setShowPromptPreview((current) => !current)}
                           aria-label={showPromptPreview ? t('editSystemPrompt') : t('previewSystemPrompt')}
@@ -526,9 +528,9 @@ function AssistantEditor({
                           className="ui-button-ghost ui-icon-button size-7"
                         >
                           {showPromptPreview ? <Pencil className="size-3.5" /> : <Eye className="size-3.5" />}
-                        </button>
+                        </BeuiButton>
                         {promptRestore?.generated === systemPrompt ? (
-                          <button
+                          <BeuiButton nativeButton unstyled
                             type="button"
                             onClick={() => {
                               setSystemPrompt(promptRestore.previous);
@@ -539,9 +541,9 @@ function AssistantEditor({
                             className="ui-button-ghost ui-icon-button size-7"
                           >
                             <RotateCcw className="size-3.5" />
-                          </button>
+                          </BeuiButton>
                         ) : null}
-                        <button
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           disabled={!basicComplete || generatingPrompt}
                           onClick={() => void generateSystemPrompt()}
@@ -549,7 +551,7 @@ function AssistantEditor({
                         >
                           {generatingPrompt ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
                           {systemPrompt.trim() ? t('improvePrompt') : t('generatePrompt')}
-                        </button>
+                        </BeuiButton>
                       </div>
                     </div>
                     {showPromptPreview ? (
@@ -557,7 +559,7 @@ function AssistantEditor({
                         {systemPrompt.trim() ? <AssistantMarkdown text={systemPrompt} /> : <p className="text-muted-foreground">{t('systemPromptPlaceholder')}</p>}
                       </div>
                     ) : (
-                      <textarea
+                      <BeuiTextarea
                         name="systemPrompt"
                         value={systemPrompt}
                         aria-label={t('systemPrompt')}
@@ -588,7 +590,7 @@ function AssistantEditor({
                   <div className="divide-y divide-border border-y border-border">
                     <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
                       <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
-                        <input
+                        <BeuiInput
                           type="checkbox"
                           checked={temperatureEnabled}
                           onChange={(event) => setTemperatureEnabled(event.target.checked)}
@@ -597,7 +599,7 @@ function AssistantEditor({
                         />
                         <span>{t('temperature')}</span>
                       </label>
-                      <input
+                      <BeuiInput
                         type="number"
                         min={0}
                         max={2}
@@ -615,7 +617,7 @@ function AssistantEditor({
                     </div>
                     <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
                       <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
-                        <input
+                        <BeuiInput
                           type="checkbox"
                           checked={topPEnabled}
                           onChange={(event) => setTopPEnabled(event.target.checked)}
@@ -624,7 +626,7 @@ function AssistantEditor({
                         />
                         <span>{t('topP')}</span>
                       </label>
-                      <input
+                      <BeuiInput
                         type="number"
                         min={0}
                         max={1}
@@ -642,7 +644,7 @@ function AssistantEditor({
                     </div>
                     <div className="flex min-h-14 items-center justify-between gap-4 py-2.5">
                       <label className="flex min-w-0 items-center gap-2 text-sm text-foreground">
-                        <input
+                        <BeuiInput
                           type="checkbox"
                           checked={maxOutputTokensEnabled}
                           onChange={(event) => setMaxOutputTokensEnabled(event.target.checked)}
@@ -651,7 +653,7 @@ function AssistantEditor({
                         />
                         <span>{t('maxOutputTokens')}</span>
                       </label>
-                      <input
+                      <BeuiInput
                         type="number"
                         min={1}
                         max={1_000_000}
@@ -674,13 +676,13 @@ function AssistantEditor({
                         <h4 className="text-sm font-medium text-foreground">{t('customParameters')}</h4>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('customParametersHint')}</p>
                       </div>
-                      <button type="button" onClick={() => setCustomParameters((current) => [
+                      <BeuiButton nativeButton unstyled type="button" onClick={() => setCustomParameters((current) => [
                         ...current,
                         { name: '', type: 'string', value: '' },
                       ])} className="ui-button-secondary h-8 shrink-0 gap-1.5 px-2.5 text-xs">
                         <Plus className="size-3.5" />
                         {t('addCustomParameter')}
-                      </button>
+                      </BeuiButton>
                     </div>
                     {customParameters.length ? (
                       <div className="mt-3 space-y-3">
@@ -704,14 +706,14 @@ function AssistantEditor({
                           return (
                             <div key={index} className="border-t border-border pt-3">
                               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_2rem]">
-                                <input
+                                <BeuiInput
                                   value={parameter.name}
                                   onChange={(event) => updateParameter({ name: event.target.value })}
                                   aria-label={t('customParameterName')}
                                   className="ui-input h-8 w-full"
                                   placeholder="top_k"
                                 />
-                                <select
+                                <BeuiSelect
                                   value={parameter.type}
                                   onChange={(event) => updateParameter({ type: event.target.value as AssistantCustomParameter['type'] })}
                                   aria-label={t('customParameterType')}
@@ -721,9 +723,9 @@ function AssistantEditor({
                                   <option value="number">number</option>
                                   <option value="boolean">boolean</option>
                                   <option value="json">json</option>
-                                </select>
+                                </BeuiSelect>
                                 {parameter.type === 'number' ? (
-                                  <input
+                                  <BeuiInput
                                     type="number"
                                     value={typeof parameter.value === 'number' ? parameter.value : 0}
                                     onChange={(event) => updateParameter({ value: Number.isFinite(event.currentTarget.valueAsNumber) ? event.currentTarget.valueAsNumber : 0 })}
@@ -731,7 +733,7 @@ function AssistantEditor({
                                     className="ui-input h-8 w-full"
                                   />
                                 ) : parameter.type === 'boolean' ? (
-                                  <select
+                                  <BeuiSelect
                                     value={String(parameter.value)}
                                     onChange={(event) => updateParameter({ value: event.target.value === 'true' })}
                                     aria-label={valueLabel}
@@ -739,18 +741,18 @@ function AssistantEditor({
                                   >
                                     <option value="true">true</option>
                                     <option value="false">false</option>
-                                  </select>
+                                  </BeuiSelect>
                                 ) : parameter.type === 'json' ? (
                                   <span className="hidden sm:block" />
                                 ) : (
-                                  <input
+                                  <BeuiInput
                                     value={String(parameter.value)}
                                     onChange={(event) => updateParameter({ value: event.target.value })}
                                     aria-label={valueLabel}
                                     className="ui-input h-8 w-full"
                                   />
                                 )}
-                                <button
+                                <BeuiButton nativeButton unstyled
                                   type="button"
                                   onClick={() => setCustomParameters((current) => current.filter((_, currentIndex) => currentIndex !== index))}
                                   aria-label={common('delete')}
@@ -758,10 +760,10 @@ function AssistantEditor({
                                   className="ui-button-ghost ui-icon-button size-8"
                                 >
                                   <Trash2 className="size-3.5" />
-                                </button>
+                                </BeuiButton>
                               </div>
                               {parameter.type === 'json' ? (
-                                <textarea
+                                <BeuiTextarea
                                   value={String(parameter.value)}
                                   onChange={(event) => updateParameter({ value: event.target.value })}
                                   aria-label={valueLabel}
@@ -793,7 +795,7 @@ function AssistantEditor({
 
                   <label className="block max-w-44 text-xs font-medium text-muted-foreground">
                     {t('maxToolSteps')}
-                    <input
+                    <BeuiInput
                       name="maxSteps"
                       type="number"
                       min={AGENT_STEP_BOUNDS.min}
@@ -817,7 +819,7 @@ function AssistantEditor({
                     <div className="mt-2 divide-y divide-border border-y border-border">
                       {deployments.length ? deployments.map((deployment) => (
                         <label key={deployment.id} className="flex min-h-10 items-center gap-3 py-2 text-sm">
-                          <input
+                          <BeuiInput
                             type="checkbox"
                             name="deploymentIds"
                             value={deployment.id}
@@ -844,32 +846,32 @@ function AssistantEditor({
             )}>
               {assistant ? (
                 <div>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => void onDelete(assistant.id)}
                     className="ui-button-secondary ui-button-danger-secondary h-9 px-3 text-sm"
                   >
                     <Trash2 className="size-4" />
                     {common('delete')}
-                  </button>
+                  </BeuiButton>
                 </div>
               ) : null}
               <div className="flex gap-2">
-                <button type="button" onClick={onClose} className="ui-button-secondary h-9 px-4 text-sm">
+                <BeuiButton nativeButton unstyled type="button" onClick={onClose} className="ui-button-secondary h-9 px-4 text-sm">
                   {common('cancel')}
-                </button>
+                </BeuiButton>
                 {creating && createStepIndex > 0 ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
                     className="ui-button-secondary h-9 gap-2 px-4 text-sm"
                   >
                     <ChevronLeft className="size-4" />
                     {t('back')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
                 {creating && !lastCreateStep ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     disabled={createStep === 'basic' && !basicComplete}
                     onClick={(event) => {
@@ -880,18 +882,18 @@ function AssistantEditor({
                   >
                     {t('next')}
                     <ChevronRight className="size-4" />
-                  </button>
+                  </BeuiButton>
                 ) : null}
                 {creating && lastCreateStep ? (
-                  <button type="submit" disabled={saving || !basicComplete} className="ui-button-primary h-9 gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50">
+                  <BeuiButton nativeButton unstyled type="submit" disabled={saving || !basicComplete} className="ui-button-primary h-9 gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                     <Plus className="size-4" />
                     {saving ? t('saving') : t('createAssistant')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
                 {!creating ? (
-                  <button type="submit" disabled={saving} className="ui-button-primary h-9 px-4 text-sm">
+                  <BeuiButton nativeButton unstyled type="submit" disabled={saving} className="ui-button-primary h-9 px-4 text-sm">
                     {saving ? t('saving') : common('save')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
               </div>
             </footer>
@@ -1377,7 +1379,7 @@ export function WorkspaceAssistantChat({
             draggingAssistantId === assistant.id && 'opacity-50',
           )}
         >
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             draggable={!busy}
             aria-label={t('moveToGroup')}
@@ -1403,7 +1405,7 @@ export function WorkspaceAssistantChat({
             className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
           >
             <GripVertical className="size-3.5" />
-          </button>
+          </BeuiButton>
           <Link draggable={false} href={chatHref(slug, assistant.id)} onClick={(event) => {
             if (draggingAssistantIdRef.current || draggingThreadRef.current) event.preventDefault();
             else setMobilePane('chat');
@@ -1411,7 +1413,7 @@ export function WorkspaceAssistantChat({
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground"><Bot className="size-3.5" /></span>
             <span className="min-w-0 flex-1 truncate">{assistant.name}</span>
           </Link>
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             aria-label={assistant.name}
             aria-expanded={expanded}
@@ -1421,7 +1423,7 @@ export function WorkspaceAssistantChat({
             className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex hover:bg-background hover:text-foreground"
           >
             <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-          </button>
+          </BeuiButton>
           <SidebarActionRail hasLeadingSlot revealOnCellFocus>
             <SidebarEntityActionsMenu
               actionsLabel={t('assistantActions', { name: assistant.name })}
@@ -1434,9 +1436,9 @@ export function WorkspaceAssistantChat({
               pinLabel={t('pinAssistant')}
               unpinLabel={t('unpinAssistant')}
             />
-            <button type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground">
+            <BeuiButton nativeButton unstyled type="button" onClick={() => void createThread(assistant.id)} aria-label={t('newChatFor', { name: assistant.name })} title={t('newChat')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground">
               <Plus className="size-3.5" />
-            </button>
+            </BeuiButton>
           </SidebarActionRail>
         </div>
         {expanded ? (
@@ -1506,7 +1508,7 @@ export function WorkspaceAssistantChat({
                     <MessageSquare className="size-3 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{thread.title || t('newChat')}</span>
                   </Link>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => void deleteThread(thread.id)}
                     aria-label={t('deleteThread')}
@@ -1514,7 +1516,7 @@ export function WorkspaceAssistantChat({
                     className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/thread:opacity-100 focus:opacity-100"
                   >
                     <X className="size-3.5" />
-                  </button>
+                  </BeuiButton>
                 </li>
               </ContextMenu.Trigger>
               <ContextMenu.Portal>
@@ -1595,7 +1597,7 @@ export function WorkspaceAssistantChat({
             dropGroupId === groupId && 'bg-muted ring-1 ring-inset ring-brand/50',
           )}
         >
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             aria-label={label}
             aria-expanded={expanded}
@@ -1611,15 +1613,15 @@ export function WorkspaceAssistantChat({
             <span className="min-w-0 flex-1 truncate">{name}</span>
             <span className="text-[10px] text-muted-foreground">{groupAssistants.length}</span>
             <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-          </button>
+          </BeuiButton>
           {editable ? (
             <>
-              <button type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: groupId, name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
+              <BeuiButton nativeButton unstyled type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: groupId, name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
                 <Pencil className="size-3.5" />
-              </button>
-              <button type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAssistantGroup(groupId)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
+              </BeuiButton>
+              <BeuiButton nativeButton unstyled type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAssistantGroup(groupId)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
                 <Trash2 className="size-3.5" />
-              </button>
+              </BeuiButton>
             </>
           ) : null}
         </div>
@@ -1662,15 +1664,15 @@ export function WorkspaceAssistantChat({
             />
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
               <div className="flex h-8 items-center gap-1 px-1">
-                <button type="button" onClick={() => { setSelectedMarketTemplate(null); setEditing('new'); }} aria-label={t('newAssistant')} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-[13px] text-foreground hover:bg-muted">
+                <BeuiButton nativeButton unstyled type="button" onClick={() => { setSelectedMarketTemplate(null); setEditing('new'); }} aria-label={t('newAssistant')} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-[13px] text-foreground hover:bg-muted">
                   <Plus className="size-3.5 shrink-0" />
                   <span className="truncate">{t('newAssistant')}</span>
-                </button>
+                </BeuiButton>
                 <Popover.Root>
                   <Popover.Trigger asChild>
-                    <button type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <BeuiButton nativeButton unstyled type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
                       <ListFilter className="size-3.5" />
-                    </button>
+                    </BeuiButton>
                   </Popover.Trigger>
                   <Popover.Portal>
                     <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
@@ -1678,25 +1680,25 @@ export function WorkspaceAssistantChat({
                       {assistants.length ? (
                         <>
                           <Popover.Close asChild>
-                            <button type="button" onClick={() => setAllAssistantSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                            <BeuiButton nativeButton unstyled type="button" onClick={() => setAllAssistantSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                               <ChevronsUpDown className="size-4" />
                               {t('expandAll')}
-                            </button>
+                            </BeuiButton>
                           </Popover.Close>
                           <Popover.Close asChild>
-                            <button type="button" onClick={() => setAllAssistantSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                            <BeuiButton nativeButton unstyled type="button" onClick={() => setAllAssistantSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                               <ChevronsDownUp className="size-4" />
                               {t('collapseAll')}
-                            </button>
+                            </BeuiButton>
                           </Popover.Close>
                         </>
                       ) : null}
                       <div className="my-1 h-px bg-border" />
                       <Popover.Close asChild>
-                        <button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                        <BeuiButton nativeButton unstyled type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                           <FolderPlus className="size-4" />
                           {t('newGroup')}
-                        </button>
+                        </BeuiButton>
                       </Popover.Close>
                       <Popover.Close asChild>
                         <Link href={`/app/${encodeURIComponent(slug)}/market/assistants`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
@@ -1733,7 +1735,7 @@ export function WorkspaceAssistantChat({
           )}>
             <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-background px-2.5">
               <div className="flex min-w-0 items-center gap-1.5">
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={t('showSidebar')}
                   title={t('showSidebar')}
@@ -1741,8 +1743,8 @@ export function WorkspaceAssistantChat({
                   className="flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
                 >
                   <PanelLeftOpen className="size-[18px]" />
-                </button>
-                <button
+                </BeuiButton>
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
                   title={sidebarOpen ? t('hideSidebar') : t('showSidebar')}
@@ -1751,13 +1753,13 @@ export function WorkspaceAssistantChat({
                   className="hidden size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground lg:flex"
                 >
                   {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-                </button>
+                </BeuiButton>
                 {activeAssistant ? (
                   <>
-                    <button type="button" onClick={() => setEditing(activeAssistant)} aria-label={`${t('settings')}: ${activeAssistant.name}`} title={t('settings')} className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium hover:bg-muted">
+                    <BeuiButton nativeButton unstyled type="button" onClick={() => setEditing(activeAssistant)} aria-label={`${t('settings')}: ${activeAssistant.name}`} title={t('settings')} className="ml-0.5 flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-xs font-medium hover:bg-muted">
                       <span className="flex size-5 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-3" /></span>
                       <span className="max-w-44 truncate">{activeAssistant.name}</span>
-                    </button>
+                    </BeuiButton>
                     <ModelPicker
                       providers={providers}
                       value={activeAssistant.modelProviderId && activeAssistant.model
@@ -1769,7 +1771,7 @@ export function WorkspaceAssistantChat({
                         window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
-                        <button
+                        <BeuiButton nativeButton unstyled
                           type="button"
                           disabled={busy}
                           aria-label={`${t('model')}: ${activeAssistant.model ?? t('modelMissing')}`}
@@ -1778,14 +1780,14 @@ export function WorkspaceAssistantChat({
                           <Cpu className="size-4 shrink-0" />
                           <span className="hidden max-w-52 truncate sm:block">{activeAssistant.model ?? t('modelMissing')}</span>
                           <ChevronDown className="size-3 shrink-0" />
-                        </button>
+                        </BeuiButton>
                       )}
                     />
                   </>
                 ) : null}
               </div>
               {activeThread && branch ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => setBranchOpen((value) => {
                     if (value) setBranchMaximized(false);
@@ -1797,7 +1799,7 @@ export function WorkspaceAssistantChat({
                   className={cx('flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground', branchOpen && 'bg-muted text-foreground')}
                 >
                   <GitBranch className="size-[17px]" />
-                </button>
+                </BeuiButton>
               ) : null}
             </header>
             {error ? <p role="alert" className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
@@ -1839,10 +1841,10 @@ export function WorkspaceAssistantChat({
                 <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bot className="size-5" /></div>
                 <h2 className="text-base font-medium">{activeAssistant ? t('noThreadTitle') : t('emptyTitle')}</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">{activeAssistant ? t('noThreadDescription') : t('emptyDescription')}</p>
-                <button type="button" onClick={() => activeAssistant ? void createThread(activeAssistant.id) : setEditing('new')} className="ui-button-primary mt-4 h-9 px-4 text-sm">
+                <BeuiButton nativeButton unstyled type="button" onClick={() => activeAssistant ? void createThread(activeAssistant.id) : setEditing('new')} className="ui-button-primary mt-4 h-9 px-4 text-sm">
                   <Plus className="size-4" />
                   {activeAssistant ? t('newChat') : t('newAssistant')}
-                </button>
+                </BeuiButton>
               </div>
             )}
           </section>
@@ -1866,7 +1868,7 @@ export function WorkspaceAssistantChat({
 
       {branchOpen && !branchMaximized && activeThread && branch ? (
         <div className="fixed inset-0 z-50 flex justify-end xl:hidden">
-          <button type="button" aria-label={common('close')} onClick={() => setBranchOpen(false)} className="absolute inset-0 bg-black/30" />
+          <BeuiButton nativeButton unstyled type="button" aria-label={common('close')} onClick={() => setBranchOpen(false)} className="absolute inset-0 bg-black/30" />
           <aside className="relative flex h-full w-[min(22rem,92vw)] bg-background shadow-xl">
             <ChatBranchPanel
               branch={branch}

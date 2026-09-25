@@ -1,4 +1,6 @@
 'use client';
+import { Textarea as BeuiTextarea, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { Network, RotateCcw, Save } from 'lucide-react';
@@ -46,7 +48,7 @@ export function RemoteMcpPrivateHostsSettingsForm({
           <label htmlFor="remote-mcp-private-hosts" className="block text-sm font-medium text-foreground">
             {t('remoteMcpPrivateHostsLabel')}
           </label>
-          <textarea
+          <BeuiTextarea
             id="remote-mcp-private-hosts"
             name="remoteMcpPrivateHosts"
             defaultValue={value}
@@ -74,7 +76,7 @@ export function RemoteMcpPrivateHostsSettingsForm({
             {t('saveChanges')}
           </SubmitButton>
           {source === 'database' ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="submit"
               name="intent"
               value="reset"
@@ -84,7 +86,7 @@ export function RemoteMcpPrivateHostsSettingsForm({
             >
               <RotateCcw className="size-4" />
               {t('restoreEnvironmentDefault')}
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
 

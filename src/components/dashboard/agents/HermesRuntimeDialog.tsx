@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -137,7 +139,7 @@ export function HermesRuntimeDialogLauncher({
           className,
         )}
       >
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={(event) => openView('web', event.currentTarget)}
           aria-label={tSandboxes('openHermes')}
@@ -146,8 +148,8 @@ export function HermesRuntimeDialogLauncher({
         >
           <Monitor className="size-3.5" />
           <span className={triggerLabelClass}>{tSandboxes('web')}</span>
-        </button>
-        <button
+        </BeuiButton>
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={(event) => openView('terminal', event.currentTarget)}
           aria-label={tSandboxes('openTerminal')}
@@ -156,9 +158,9 @@ export function HermesRuntimeDialogLauncher({
         >
           <Terminal className="size-3.5" />
           <span className={triggerLabelClass}>{tSandboxes('terminal')}</span>
-        </button>
+        </BeuiButton>
         {runtime.management ? (
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={(event) => openView('settings', event.currentTarget)}
             aria-label={tSandboxes('settings')}
@@ -167,7 +169,7 @@ export function HermesRuntimeDialogLauncher({
           >
             <Settings className="size-3.5" />
             <span className={triggerLabelClass}>{tSandboxes('settings')}</span>
-          </button>
+          </BeuiButton>
         ) : null}
       </div>
 
@@ -195,7 +197,7 @@ export function HermesRuntimeDialogLauncher({
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{runtime.name}</p>
                 </div>
               </div>
-              <button
+              <BeuiButton nativeButton unstyled
                 ref={closeButtonRef}
                 type="button"
                 aria-label={tAgents('closeHermesRuntimeDialog')}
@@ -204,7 +206,7 @@ export function HermesRuntimeDialogLauncher({
                 className="ui-button-secondary h-11 w-11 shrink-0 px-0"
               >
                 <X className="size-5" />
-              </button>
+              </BeuiButton>
             </header>
 
             <div
@@ -212,7 +214,7 @@ export function HermesRuntimeDialogLauncher({
               aria-label={tAgents('hermesRuntimeDialogTitle')}
               className={`grid shrink-0 ${runtime.management ? 'grid-cols-3' : 'grid-cols-2'} gap-1 border-b border-border px-2 py-3 sm:flex sm:gap-2 sm:px-5`}
             >
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 role="tab"
                 id={webTabId}
@@ -228,8 +230,8 @@ export function HermesRuntimeDialogLauncher({
               >
                 <Monitor className="size-4 shrink-0" />
                 {tAgents('hermesWebTab')}
-              </button>
-              <button
+              </BeuiButton>
+              <BeuiButton nativeButton unstyled
                 type="button"
                 role="tab"
                 id={terminalTabId}
@@ -245,9 +247,9 @@ export function HermesRuntimeDialogLauncher({
               >
                 <Terminal className="size-4 shrink-0" />
                 {tAgents('terminalSettingsTab')}
-              </button>
+              </BeuiButton>
               {runtime.management ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   role="tab"
                   id={settingsTabId}
@@ -263,7 +265,7 @@ export function HermesRuntimeDialogLauncher({
                 >
                   <Settings className="size-4 shrink-0" />
                   {tSandboxes('settings')}
-                </button>
+                </BeuiButton>
               ) : null}
             </div>
 

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState, useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -14,19 +16,19 @@ export function WorkspaceInviteForm({ workspaceSlug, canInvite }: { workspaceSlu
   return (
     <DashboardPanel title={t('invite')} description={t('inviteHint')}>
       {canInvite ? <form action={action} className="space-y-3" aria-busy={pending} onSubmit={() => setCopyStatus('')}>
-        <input type="hidden" name="workspace" value={workspaceSlug} />
+        <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
         <label htmlFor={id} className="block text-sm font-medium">{t('email')}</label>
-        <input id={id} name="email" type="email" required maxLength={320} disabled={pending} placeholder="teammate@example.com" className="ui-input w-full" />
-        <button type="submit" disabled={pending} className="ui-button-primary">{pending ? t('working') : t('createInvitation')}</button>
+        <BeuiInput id={id} name="email" type="email" required maxLength={320} disabled={pending} placeholder="teammate@example.com" className="ui-input w-full" />
+        <BeuiButton nativeButton unstyled type="submit" disabled={pending} className="ui-button-primary">{pending ? t('working') : t('createInvitation')}</BeuiButton>
         {state.error ? <p className="text-sm text-destructive" role="alert">{state.error}</p> : null}
         {link ? <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
           <p className="text-xs leading-5 text-muted-foreground" role="status">{t('invitationCreated')}</p>
           <label htmlFor={`${id}-link`} className="block text-xs font-medium">{t('invitationLink')}</label>
-          <input id={`${id}-link`} value={link} readOnly onFocus={(event) => event.target.select()} className="ui-input w-full text-xs" />
-          <button type="button" className="ui-button-secondary ui-button-sm" onClick={async () => {
+          <BeuiInput id={`${id}-link`} value={link} readOnly onFocus={(event) => event.target.select()} className="ui-input w-full text-xs" />
+          <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary ui-button-sm" onClick={async () => {
             try { await navigator.clipboard.writeText(link); setCopyStatus(t('copied')); }
             catch { setCopyStatus(t('copyFailed')); }
-          }}>{t('copyLink')}</button>
+          }}>{t('copyLink')}</BeuiButton>
           {copyStatus ? <p className="text-xs" role="status">{copyStatus}</p> : null}
         </div> : null}
       </form> : <p className="text-sm text-muted-foreground">{t('ownerOnly')}</p>}

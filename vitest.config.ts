@@ -9,8 +9,6 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
-    // Keep React hook mocks effective inside the published UI package.
-    server: { deps: { inline: ['@asharca/ui'] } },
     // Integration tests share one Postgres DB; run test files sequentially
     // so concurrent upserts of the same row don't race the unique constraint.
     fileParallelism: false,

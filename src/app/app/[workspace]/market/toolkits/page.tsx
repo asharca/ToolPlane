@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -107,17 +109,17 @@ export default async function ToolkitMarketPage({
       </div>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
-        <input type="hidden" name="category" value={category} />
+        <BeuiInput type="hidden" name="category" value={category} />
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">{t('searchPublicToolkits')}</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchPublicToolkits')} className="ui-input ui-input-icon h-10 w-full" />
+          <BeuiInput name="q" defaultValue={q} placeholder={t('searchPublicToolkits')} className="ui-input ui-input-icon h-10 w-full" />
         </label>
         <NativeSelect name="sort" defaultValue={sort} aria-label={marketT('sortResources')} className="ui-input h-10 sm:w-40">
           <option value="newest">{marketT('sortNewest')}</option>
           <option value="name">{marketT('sortName')}</option>
         </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{marketT('applyFilters')}</button>
+        <BeuiButton nativeButton unstyled className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{marketT('applyFilters')}</BeuiButton>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -210,11 +212,11 @@ export default async function ToolkitMarketPage({
                     ) : null}
 
                     <form action={toolkit.marketListing ? installMarketResourceAction : clonePublicToolkitAction} className="mt-4 border-t border-border pt-4">
-                      <input type="hidden" name="workspace" value={slug} />
+                      <BeuiInput type="hidden" name="workspace" value={slug} />
                       {toolkit.marketListing ? (
-                        <input type="hidden" name="releaseId" value={toolkit.marketListing.releaseId} />
+                        <BeuiInput type="hidden" name="releaseId" value={toolkit.marketListing.releaseId} />
                       ) : (
-                        <input type="hidden" name="toolkitId" value={toolkit.id} />
+                        <BeuiInput type="hidden" name="toolkitId" value={toolkit.id} />
                       )}
                       <SubmitButton className="ui-button-primary h-9 w-full" pendingLabel={t('importing')} flash={false}>
                         <CopyPlus className="size-4" />{t('import')}

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { CopyButton } from '@/components/dashboard/CopyButton';
@@ -37,13 +39,13 @@ export function SandboxMcpExport({ sandboxId, endpoint, exportable }: { sandboxI
       </div> : <p role="alert" className="text-xs text-destructive">{t('mcpConfigureOrigin')}</p>}
       <p className="text-xs leading-5 text-muted-foreground">{t('mcpScopeWarning')}</p>
     </>}
-    <button type="button" disabled={busy} onClick={refresh} className="ui-button-secondary h-8 text-xs">{t('mcpViewGrants')}</button>
+    <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={refresh} className="ui-button-secondary h-8 text-xs">{t('mcpViewGrants')}</BeuiButton>
     {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     {grants ? <div className="space-y-2" aria-live="polite">
       {grants.length === 0 ? <p className="text-xs text-muted-foreground">{t('mcpNoGrants')}</p> : grants.map((grant) => <div key={grant.id} className="flex items-start justify-between gap-3 rounded-md border border-border p-3">
         <div className="min-w-0"><p className="break-all text-sm">{grant.name}</p><p className="break-all text-xs text-muted-foreground">{grant.allowedTools.join(', ')}</p>
           <p className="text-xs text-muted-foreground">{grant.revokedAt ? t('mcpRevoked') : t('mcpGrantExpiry', { date: new Date(grant.oauthExpiresAt ?? grant.expiresAt).toLocaleString() })}</p></div>
-        {!grant.revokedAt ? <button type="button" disabled={busy} onClick={() => revoke(grant.id)} className="ui-button-secondary h-8 shrink-0 text-xs">{t('mcpRevoke')}</button> : null}
+        {!grant.revokedAt ? <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={() => revoke(grant.id)} className="ui-button-secondary h-8 shrink-0 text-xs">{t('mcpRevoke')}</BeuiButton> : null}
       </div>)}
     </div> : null}
   </section>;

@@ -1,9 +1,11 @@
 'use client';
+import { Input as BeuiInput, Select as BeuiSelect, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { ArrowRightLeft, FileText, LoaderCircle, Pencil, Plus, QrCode, Radio, Trash2, X } from 'lucide-react';
-import { IconButton } from '@asharca/ui';
+import { IconButton } from "@/components/ui";
 import { Dialog, DialogClose, DialogContent, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/Dialog';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { QrPairingDisplay } from '@/components/dashboard/agents/QrPairingDisplay';
@@ -160,13 +162,13 @@ function ChannelEditor({ channel, agents, pending, error, send, onClose }: {
     const boolean = field.inputType === 'boolean';
     return <label key={field.name} className={`block space-y-1.5 text-xs ${boolean || field.secret || field.name.includes('ALLOWED') ? 'sm:col-span-2' : ''}`}>
       <span className="font-medium">{label}</span>
-      {boolean ? <input type="checkbox" role="switch" aria-label={label} checked={value === 'true'} className="ml-3 accent-brand"
+      {boolean ? <BeuiInput type="checkbox" role="switch" aria-label={label} checked={value === 'true'} className="ml-3 accent-brand"
         onChange={(event) => { setValues((current) => ({ ...current, [field.name]: String(event.target.checked) })); void saveCredentials({ [field.name]: String(event.target.checked) }); }} />
-        : field.options ? <select aria-label={label} className="ui-input h-9 w-full text-sm" value={value} onChange={(event) => {
+        : field.options ? <BeuiSelect aria-label={label} className="ui-input h-9 w-full text-sm" value={value} onChange={(event) => {
           setValues((current) => ({ ...current, [field.name]: event.target.value }));
           void saveCredentials({ [field.name]: event.target.value });
-        }}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-        : <input type={field.secret ? 'password' : 'text'} autoComplete={field.secret ? 'new-password' : 'off'} value={value}
+        }}>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</BeuiSelect>
+        : <BeuiInput type={field.secret ? 'password' : 'text'} autoComplete={field.secret ? 'new-password' : 'off'} value={value}
           maxLength={8000} className="ui-input h-9 w-full text-sm" aria-label={label}
           placeholder={field.secret && channel.credentialNames.includes(field.name) ? t('secretSaved') : field.placeholder}
           onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} onBlur={() => saveField(field.name)} />}
@@ -180,28 +182,28 @@ function ChannelEditor({ channel, agents, pending, error, send, onClose }: {
       }}>
         <label className="block space-y-1.5 text-xs font-medium">
           <span>{t('connectionName')}</span>
-          <input autoFocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)}
+          <BeuiInput autoFocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)}
             onBlur={() => { if (name.trim() && name.trim() !== channel.name) void update({ name: name.trim() }); }}
             className="ui-input h-9 w-full text-sm" />
         </label>
         <label className="block space-y-1.5 text-xs font-medium">
           <span>{t('bindAgent')}</span>
-          <select aria-label={t('bindAgent')} disabled={Boolean(channel.sandboxId)} className="ui-input h-9 w-full text-sm disabled:opacity-60" value={channel.sandboxId ? channel.agentId ?? '' : agentId} onChange={(event) => {
+          <BeuiSelect aria-label={t('bindAgent')} disabled={Boolean(channel.sandboxId)} className="ui-input h-9 w-full text-sm disabled:opacity-60" value={channel.sandboxId ? channel.agentId ?? '' : agentId} onChange={(event) => {
             setAgentId(event.target.value);
             void update({ agentId: event.target.value || null });
           }}>
             <option value="">{t('noAgent')}</option>
             {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-          </select>
+          </BeuiSelect>
         </label>
         {hasBuiltInPairingProvider(platform) && <section className="space-y-3 border-y border-border py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">{waiting ? t(pairing.status === 'scanned' ? 'statusScanned' : 'statusWaiting') : channel.missingStartCredentialNames.length ? t('qrSetup') : t('setupComplete')}</span>
-            <button type="button" disabled={pending} className="ui-button-secondary h-8 gap-2 px-2.5 text-xs"
+            <BeuiButton nativeButton unstyled type="button" disabled={pending} className="ui-button-secondary h-8 gap-2 px-2.5 text-xs"
               onClick={() => void send({ action: 'pair', connectionId: channel.id })}>
               {pending ? <LoaderCircle className="size-3.5 animate-spin" /> : <QrCode className="size-3.5" />}
               {pairing ? t('reauthenticate') : t('requestQr')}
-            </button>
+            </BeuiButton>
           </div>
           {waiting && pairing.qrPayload && <div className="mx-auto w-56 max-w-full">
             <QrPairingDisplay payload={pairing.qrPayload} label={t(`platforms.${channel.platform}`)} emptyLabel={t('requestQr')} errorLabel={t('qrRenderFailed')} />
@@ -210,10 +212,10 @@ function ChannelEditor({ channel, agents, pending, error, send, onClose }: {
           {pairing?.error && <p role="alert" className="break-words text-xs text-red-600">{pairing.error}</p>}
           {needsApply && <div className="space-y-2">
             <label className="block space-y-1 text-xs"><span>{t('allowedTelegramUserIdsOptional')}</span>
-              <input className="ui-input h-9 w-full" value={allowedUsers ?? pairing.extra?.ownerUserId ?? ''} onChange={(event) => setAllowedUsers(event.target.value)} />
+              <BeuiInput className="ui-input h-9 w-full" value={allowedUsers ?? pairing.extra?.ownerUserId ?? ''} onChange={(event) => setAllowedUsers(event.target.value)} />
             </label>
-            <button type="button" className="ui-button-secondary text-xs" disabled={pending}
-              onClick={() => void send({ action: 'apply', connectionId: channel.id, allowedUserIds: allowedUsers ?? pairing.extra?.ownerUserId ?? '' })}>{t('saveTelegramSetup')}</button>
+            <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary text-xs" disabled={pending}
+              onClick={() => void send({ action: 'apply', connectionId: channel.id, allowedUserIds: allowedUsers ?? pairing.extra?.ownerUserId ?? '' })}>{t('saveTelegramSetup')}</BeuiButton>
           </div>}
         </section>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -226,9 +228,9 @@ function ChannelEditor({ channel, agents, pending, error, send, onClose }: {
         </details>}
         {error && <p role="alert" className="break-words text-sm text-red-600">{error}</p>}
         <div className="flex justify-end border-t border-border pt-3">
-          <button type="submit" className="ui-button-primary h-9 gap-2 px-4 text-sm" aria-busy={pending}>
+          <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary h-9 gap-2 px-4 text-sm" aria-busy={pending}>
             {pending && <LoaderCircle className="size-4 animate-spin" />}{t('saveCredentials')}
-          </button>
+          </BeuiButton>
         </div>
       </form>
     </ChannelDialog>
@@ -343,16 +345,16 @@ export function AgentMessagingPanel({ slug, agentId, sandboxId, connections: ini
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col sm:flex-row">
       <nav aria-label={t('platformNavigation')} className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 p-3 sm:w-40 sm:flex-col sm:overflow-y-auto sm:border-b-0 sm:border-r">
-        {platforms.map((platform) => <button key={platform} type="button" aria-current={selected === platform ? 'page' : undefined}
+        {platforms.map((platform) => <BeuiButton nativeButton unstyled key={platform} type="button" aria-current={selected === platform ? 'page' : undefined}
           className={`flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm ${selected === platform ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60'}`}
-          onClick={() => setSelected(platform)}><PlatformIcon platform={platform} /><span className="whitespace-nowrap">{platformName(platform)}</span></button>)}
+          onClick={() => setSelected(platform)}><PlatformIcon platform={platform} /><span className="whitespace-nowrap">{platformName(platform)}</span></BeuiButton>)}
       </nav>
       <section className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <header className="mb-2 flex items-center justify-between gap-3 border-b border-border pb-4">
           <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold"><PlatformIcon platform={selected} />{platformName(selected)}</h2>
-          <button type="button" disabled={Boolean(pending) || !PLATFORMS.includes(selected)} onClick={() => void add()} className="ui-button-secondary h-8 shrink-0 gap-1.5 px-3 text-xs">
+          <BeuiButton nativeButton unstyled type="button" disabled={Boolean(pending) || !PLATFORMS.includes(selected)} onClick={() => void add()} className="ui-button-secondary h-8 shrink-0 gap-1.5 px-3 text-xs">
             <Plus className="size-4" />{t('add')}
-          </button>
+          </BeuiButton>
         </header>
         {!ready && <p className="py-2 text-xs text-amber-700 dark:text-amber-400">{t('configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies')}</p>}
         {error && !editing && <p role="alert" className="py-2 text-sm text-red-600">{error}</p>}
@@ -375,7 +377,7 @@ export function AgentMessagingPanel({ slug, agentId, sandboxId, connections: ini
                 <IconButton icon={<ArrowRightLeft className="size-4" />} label={t('migrate')} variant="ghost" size="sm" onClick={() => { setError(''); setTargetSandboxId(''); setMoveId(channel.id); }} />
                 <IconButton icon={<Trash2 className="size-4" />} label={t('delete')} variant="ghost" size="sm" onClick={() => setDeleteId(channel.id)} />
                 <label className="relative ml-2 inline-flex h-7 w-9 items-center">
-                  <input type="checkbox" role="switch" aria-label={`${t(active ? 'stop' : 'start')} ${channel.name}`} checked={active} disabled={Boolean(pending)} className="peer sr-only"
+                  <BeuiInput type="checkbox" role="switch" aria-label={`${t(active ? 'stop' : 'start')} ${channel.name}`} checked={active} disabled={Boolean(pending)} className="peer sr-only"
                     onChange={() => void send({ action: active ? 'stop' : 'start', connectionId: channel.id })} />
                   <span className="h-5 w-9 rounded-full bg-muted-foreground/30 transition-colors peer-checked:bg-emerald-600 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand peer-disabled:opacity-50" />
                   <span className="pointer-events-none absolute left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
@@ -389,28 +391,28 @@ export function AgentMessagingPanel({ slug, agentId, sandboxId, connections: ini
       {logChannel && <ChannelLogs endpoint={endpoint} channel={logChannel} onClose={() => setLogId(null)} />}
       {moveChannel && <ChannelDialog title={t('migrateTitle', { name: moveChannel.name })} onClose={() => { if (!pending) setMoveId(null); }}>
         <label className="block space-y-2 text-sm"><span>{t('targetSandbox')}</span>
-          <select aria-label={t('targetSandbox')} className="ui-input h-9 w-full" value={targetSandboxId} disabled={Boolean(pending)} onChange={(event) => setTargetSandboxId(event.target.value)}>
+          <BeuiSelect aria-label={t('targetSandbox')} className="ui-input h-9 w-full" value={targetSandboxId} disabled={Boolean(pending)} onChange={(event) => setTargetSandboxId(event.target.value)}>
             <option value="">{t('selectSandbox')}</option>
             {sandboxes.filter((sandbox) => sandbox.id !== moveChannel.sandboxId).map((sandbox) => <option key={sandbox.id} value={sandbox.id}>{sandbox.name} / {sandbox.agentName ?? t('noAgent')}</option>)}
-          </select>
+          </BeuiSelect>
         </label>
         <p className="mt-3 text-sm text-muted-foreground">{t('migrateConfirmation')}</p>
         {targetSandbox && !targetSandbox.agentId && <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">{t('targetHasNoAgent')}</p>}
         {error && <p role="alert" className="mt-2 break-words text-sm text-red-600">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="ui-button-secondary" disabled={Boolean(pending)} onClick={() => setMoveId(null)}>{t('cancel')}</button>
-          <button type="button" className="ui-button-primary gap-2" disabled={Boolean(pending) || !targetSandbox} onClick={async () => {
+          <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary" disabled={Boolean(pending)} onClick={() => setMoveId(null)}>{t('cancel')}</BeuiButton>
+          <BeuiButton nativeButton unstyled type="button" className="ui-button-primary gap-2" disabled={Boolean(pending) || !targetSandbox} onClick={async () => {
             if (await send({ action: 'move', connectionId: moveChannel.id, sandboxId: targetSandboxId })) setMoveId(null);
-          }}><ArrowRightLeft className="size-4" />{t('migrate')}</button>
+          }}><ArrowRightLeft className="size-4" />{t('migrate')}</BeuiButton>
         </div>
       </ChannelDialog>}
       {deleteChannel && <ChannelDialog title={t('deleteTitle', { name: deleteChannel.name })} onClose={() => setDeleteId(null)}>
         <p className="text-sm text-muted-foreground">{t('deleteConfirmation')}</p>
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="ui-button-secondary" disabled={Boolean(pending)} onClick={() => setDeleteId(null)}>{t('cancel')}</button>
-          <button type="button" className="ui-button-danger" disabled={Boolean(pending)} onClick={async () => {
+          <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary" disabled={Boolean(pending)} onClick={() => setDeleteId(null)}>{t('cancel')}</BeuiButton>
+          <BeuiButton nativeButton unstyled type="button" className="ui-button-danger" disabled={Boolean(pending)} onClick={async () => {
             if (await send({ action: 'delete', connectionId: deleteChannel.id })) setDeleteId(null);
-          }}>{t('delete')}</button>
+          }}>{t('delete')}</BeuiButton>
         </div>
       </ChannelDialog>}
     </div>

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { Save, Upload } from 'lucide-react';
@@ -33,7 +35,7 @@ export function SystemSettingsForm({
         <label htmlFor="hermes-archive-max-upload-mib">
           {t('hermesArchiveMaxUploadMiB')}
         </label>
-        <input
+        <BeuiInput
           id="hermes-archive-max-upload-mib"
           name="hermesArchiveMaxUploadMiB"
           type="number"

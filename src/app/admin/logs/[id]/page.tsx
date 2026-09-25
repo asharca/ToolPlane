@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { requireAdmin } from '@/lib/auth/admin';
-import { Alert, CopyButton } from '@asharca/ui';
+import { Alert, CopyButton } from "@/components/ui";
 import { ChevronDown, ChevronRight, FileJson, GitBranch, ScrollText } from 'lucide-react';
 import { AdminBadge, AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
 import { LogOutcomeBadge, LogTimestamp } from '@/components/admin/LogUI';

@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
@@ -131,7 +133,7 @@ export function HomeView({
 
           <form action="/search" className="relative mx-auto mt-7 max-w-2xl">
             <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
+            <BeuiInput
               type="search"
               name="q"
               placeholder={t('searchPlaceholder')}

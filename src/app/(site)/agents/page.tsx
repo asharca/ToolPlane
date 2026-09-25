@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import type { Metadata } from 'next';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { Search } from 'lucide-react';
@@ -32,7 +34,7 @@ export default async function Page() {
             </div>
             <form action="/search" className="relative w-full max-w-md">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <BeuiInput
                 type="search"
                 name="q"
                 maxLength={160}

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -35,15 +37,15 @@ export function ToolkitInstallations({ mcpUrl }: { mcpUrl: string }) {
   }
   return <section className="mt-4 border-t border-border pt-3 text-sm">
     <div className="flex flex-wrap gap-3">
-      <button type="button" disabled={busy} onClick={load} className="underline disabled:opacity-50">{t('installationDevices')}</button>
-      <button type="button" disabled={busy} onClick={() => mutate('revoke-all')} className="underline disabled:opacity-50">{t('installationRevokeAll')}</button>
-      <button type="button" disabled={busy} onClick={() => mutate('rotate-link')} className="underline disabled:opacity-50">{t('installationRotateLink')}</button>
+      <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={load} className="underline disabled:opacity-50">{t('installationDevices')}</BeuiButton>
+      <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={() => mutate('revoke-all')} className="underline disabled:opacity-50">{t('installationRevokeAll')}</BeuiButton>
+      <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={() => mutate('rotate-link')} className="underline disabled:opacity-50">{t('installationRotateLink')}</BeuiButton>
     </div>
     {error && <p role="alert" className="mt-2">{t('installationError')}</p>}
     {items && <ul className="mt-2 space-y-2">{items.length === 0 && <li>{t('installationEmpty')}</li>}
       {items.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2">
         <span>{item.label} · {item.client} · {t(item.status === 'active' ? 'installationActive' : 'installationRevoked')} · {t('installationLastUsed')}: {item.lastUsedAt ? new Date(item.lastUsedAt).toISOString() : '—'}</span>
-        {item.status === 'active' && <button type="button" disabled={busy} onClick={() => mutate('revoke', item.id)} className="underline">{t('installationRevoke')}</button>}
+        {item.status === 'active' && <BeuiButton nativeButton unstyled type="button" disabled={busy} onClick={() => mutate('revoke', item.id)} className="underline">{t('installationRevoke')}</BeuiButton>}
       </li>)}
     </ul>}
   </section>;

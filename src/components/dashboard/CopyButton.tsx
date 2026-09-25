@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { CopyButton as UiCopyButton } from '@asharca/ui';
+import { CopyButton as UiCopyButton } from "@/components/ui";
 
 export function CopyButton({
   text,

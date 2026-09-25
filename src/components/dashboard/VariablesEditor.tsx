@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -127,9 +129,9 @@ function VariablesEditorForm({
 
   return (
     <form action={setDeploymentEnvAction} className="ui-panel max-w-5xl overflow-hidden">
-      <input type="hidden" name="workspace" value={slug} />
-      <input type="hidden" name="deploymentId" value={deploymentId} />
-      <input type="hidden" name="changes" value={JSON.stringify(changes)} />
+      <BeuiInput type="hidden" name="workspace" value={slug} />
+      <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
+      <BeuiInput type="hidden" name="changes" value={JSON.stringify(changes)} />
 
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div className="min-w-0">
@@ -144,10 +146,10 @@ function VariablesEditorForm({
             {t('environmentVariablesDescription')}
           </p>
         </div>
-        <button type="button" onClick={addRow} className="ui-button-secondary ui-button-sm shrink-0">
+        <BeuiButton nativeButton unstyled type="button" onClick={addRow} className="ui-button-secondary ui-button-sm shrink-0">
           <Plus className="size-3.5" />
           {t('addVariable')}
-        </button>
+        </BeuiButton>
       </header>
 
       {rows.length === 0 ? (
@@ -155,10 +157,10 @@ function VariablesEditorForm({
           <KeyRound className="mx-auto size-6 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium text-foreground">{t('noEnvironmentVariables')}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t('environmentVariablesDescription')}</p>
-          <button type="button" onClick={addRow} className="ui-button-secondary ui-button-sm mt-4">
+          <BeuiButton nativeButton unstyled type="button" onClick={addRow} className="ui-button-secondary ui-button-sm mt-4">
             <Plus className="size-3.5" />
             {t('addVariable')}
-          </button>
+          </BeuiButton>
         </div>
       ) : (
         <div className="divide-y divide-border">
@@ -178,7 +180,7 @@ function VariablesEditorForm({
                         </span>
                       ) : null}
                     </span>
-                    <input
+                    <BeuiInput
                       value={row.key}
                       onChange={(event) => updateRow(row.id, { key: event.target.value })}
                       placeholder="API_KEY"
@@ -215,7 +217,7 @@ function VariablesEditorForm({
                         {t('variableWillBeRemoved')}
                       </p>
                     ) : (
-                      <input
+                      <BeuiInput
                         type="password"
                         value={row.value}
                         onChange={(event) => updateRow(row.id, { value: event.target.value })}
@@ -233,23 +235,23 @@ function VariablesEditorForm({
 
                   <div className="flex items-end gap-2 lg:justify-end lg:pb-0.5">
                     {row.removed ? (
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         onClick={() => updateRow(row.id, { removed: false })}
                         className="ui-button-secondary h-9 text-xs"
                       >
                         <Undo2 className="size-3.5" />
                         {t('undo')}
-                      </button>
+                      </BeuiButton>
                     ) : (
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         onClick={() => removeRow(row)}
                         className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-700 dark:hover:text-red-400"
                       >
                         <Trash2 className="size-3.5" />
                         {row.isNew ? t('discardVariable') : t('remove')}
-                      </button>
+                      </BeuiButton>
                     )}
                   </div>
                 </div>

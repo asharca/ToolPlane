@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useEffect, useRef } from 'react';
 import {
@@ -211,7 +213,7 @@ export function AdminSidebar({
         </Link>
 
         <div className="shrink-0 lg:hidden">
-          <button
+          <BeuiButton nativeButton unstyled
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
@@ -219,7 +221,7 @@ export function AdminSidebar({
             className="ui-button-ghost ui-icon-button"
           >
             <X className="size-5" aria-hidden="true" />
-          </button>
+          </BeuiButton>
         </div>
       </div>
 

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { Camera, Copy, RotateCcw, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -89,14 +91,14 @@ export function SandboxDataManagement({
           <div className="grid gap-4 lg:grid-cols-2">
             {showClone ? (
               <form action={cloneSandboxAction} className="space-y-2">
-                <input type="hidden" name="workspace" value={workspace} />
-                <input type="hidden" name="sandboxId" value={sandboxId} />
-                <input type="hidden" name="defaultName" value={t('cloneNameDefault', { name: sandboxName })} />
+                <BeuiInput type="hidden" name="workspace" value={workspace} />
+                <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
+                <BeuiInput type="hidden" name="defaultName" value={t('cloneNameDefault', { name: sandboxName })} />
                 <label className="block text-xs font-medium text-muted-foreground" htmlFor="sandbox-clone-name">
                   {t('cloneName')}
                 </label>
                 <div className="flex gap-2">
-                  <input
+                  <BeuiInput
                     id="sandbox-clone-name"
                     name="name"
                     defaultValue={t('cloneNameDefault', { name: sandboxName })}
@@ -112,14 +114,14 @@ export function SandboxDataManagement({
             ) : null}
 
             <form action={createSandboxSnapshotAction} className="space-y-2">
-              <input type="hidden" name="workspace" value={workspace} />
-              <input type="hidden" name="sandboxId" value={sandboxId} />
-              <input type="hidden" name="defaultName" value={t('snapshotDefaultName')} />
+              <BeuiInput type="hidden" name="workspace" value={workspace} />
+              <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
+              <BeuiInput type="hidden" name="defaultName" value={t('snapshotDefaultName')} />
               <label className="block text-xs font-medium text-muted-foreground" htmlFor="sandbox-snapshot-name">
                 {t('snapshotName')}
               </label>
               <div className="flex gap-2">
-                <input
+                <BeuiInput
                   id="sandbox-snapshot-name"
                   name="name"
                   placeholder={t('snapshotNamePlaceholder')}
@@ -162,10 +164,10 @@ export function SandboxDataManagement({
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       {ready ? (
                         <form action={restoreSandboxSnapshotAction}>
-                          <input type="hidden" name="workspace" value={workspace} />
-                          <input type="hidden" name="sandboxId" value={sandboxId} />
-                          <input type="hidden" name="snapshotId" value={snapshot.id} />
-                          <input
+                          <BeuiInput type="hidden" name="workspace" value={workspace} />
+                          <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
+                          <BeuiInput type="hidden" name="snapshotId" value={snapshot.id} />
+                          <BeuiInput
                             type="hidden"
                             name="recoveryName"
                             value={t('restoreRecoveryName', { name: snapshot.name })}
@@ -187,9 +189,9 @@ export function SandboxDataManagement({
                         </form>
                       ) : null}
                       <form action={deleteSandboxSnapshotAction}>
-                        <input type="hidden" name="workspace" value={workspace} />
-                        <input type="hidden" name="sandboxId" value={sandboxId} />
-                        <input type="hidden" name="snapshotId" value={snapshot.id} />
+                        <BeuiInput type="hidden" name="workspace" value={workspace} />
+                        <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
+                        <BeuiInput type="hidden" name="snapshotId" value={snapshot.id} />
                         <ConfirmSubmitButton
                           triggerLabel={<><Trash2 className="size-3.5" />{t('deleteSnapshot')}</>}
                           confirmLabel={common('confirm')}

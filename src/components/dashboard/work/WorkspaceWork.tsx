@@ -1,12 +1,14 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { workbenchHref } from '@/lib/a2a/workbench-client';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ContextMenu, Popover } from 'radix-ui';
-import { SidebarActionRail } from '@asharca/ui';
+import { ContextMenu, Popover } from '@/components/ui/primitives';
+import { SidebarActionRail } from "@/components/ui";
 import {
   Activity,
   Archive,
@@ -407,7 +409,7 @@ function TopControlMenu({
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={disabled}
           aria-label={label}
@@ -417,7 +419,7 @@ function TopControlMenu({
           <Icon className="size-4 shrink-0" />
           <span className="hidden max-w-36 truncate sm:block">{selected?.label ?? label}</span>
           {!disabled ? <ChevronDown className="size-3.5 shrink-0" /> : null}
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -428,7 +430,7 @@ function TopControlMenu({
         >
           <div role="listbox" aria-label={label} className="max-h-72 overflow-y-auto">
             {options.map((option) => (
-              <button
+              <BeuiButton nativeButton unstyled
                 key={option.value}
                 type="button"
                 role="option"
@@ -442,7 +444,7 @@ function TopControlMenu({
                   {option.description ? <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{option.description}</span> : null}
                 </span>
                 {option.value === value ? <Check className="size-3.5 shrink-0" /> : null}
-              </button>
+              </BeuiButton>
             ))}
           </div>
         </Popover.Content>
@@ -517,7 +519,7 @@ function WorkDirectoryControl({
   return (
     <Popover.Root open={open} onOpenChange={handleOpenChange}>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={locked || (!sandbox?.running && sandbox?.kind !== 'hermes')}
           aria-label={t('workingDirectory')}
@@ -527,7 +529,7 @@ function WorkDirectoryControl({
           <Folder className="size-4 shrink-0" />
           <span className="hidden max-w-48 truncate sm:block">{displayWorkPath(value, workspaceRoot)}</span>
           {!locked ? <ChevronDown className="size-3.5 shrink-0" /> : null}
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content align="start" sideOffset={5} collisionPadding={10} className="z-50 flex h-96 w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-lg outline-none">
@@ -542,27 +544,27 @@ function WorkDirectoryControl({
               void load(next);
             }}
           >
-            <button type="button" disabled={path === '.' || loading} onClick={() => void load(parentWorkPath(path))} aria-label={t('parentDirectory')} className="ui-button-ghost ui-icon-button shrink-0">
+            <BeuiButton nativeButton unstyled type="button" disabled={path === '.' || loading} onClick={() => void load(parentWorkPath(path))} aria-label={t('parentDirectory')} className="ui-button-ghost ui-icon-button shrink-0">
               <ArrowUp className="size-4" />
-            </button>
-            <input value={pathInput} onChange={(event) => setPathInput(event.target.value)} aria-label={t('directoryPath')} className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 text-xs outline-none focus:border-foreground/30" />
+            </BeuiButton>
+            <BeuiInput value={pathInput} onChange={(event) => setPathInput(event.target.value)} aria-label={t('directoryPath')} className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 text-xs outline-none focus:border-foreground/30" />
           </form>
           <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
             {loading ? <div className="flex h-full items-center justify-center"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div> : null}
             {!loading && loadError ? <p role="alert" className="p-3 text-xs text-destructive">{loadError}</p> : null}
             {!loading && !loadError && !entries.length ? <p className="p-3 text-center text-xs text-muted-foreground">{t('noSubdirectories')}</p> : null}
             {!loading && !loadError ? entries.map((entry) => (
-              <button key={entry.name} type="button" onClick={() => void load(joinWorkPath(path, entry.name))} className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs hover:bg-muted">
+              <BeuiButton nativeButton unstyled key={entry.name} type="button" onClick={() => void load(joinWorkPath(path, entry.name))} className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs hover:bg-muted">
                 <Folder className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">{entry.name}</span>
                 <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-              </button>
+              </BeuiButton>
             )) : null}
           </div>
           <div className="border-t border-border p-2">
-            <button type="button" disabled={loading || Boolean(loadError)} onClick={() => { onChange(path); setOpen(false); }} className="ui-button-primary h-8 w-full text-xs">
+            <BeuiButton nativeButton unstyled type="button" disabled={loading || Boolean(loadError)} onClick={() => { onChange(path); setOpen(false); }} className="ui-button-primary h-8 w-full text-xs">
               {t('useDirectory', { path: displayWorkPath(path, workspaceRoot) })}
-            </button>
+            </BeuiButton>
           </div>
         </Popover.Content>
       </Popover.Portal>
@@ -1772,7 +1774,7 @@ export function WorkspaceWork({
             dropGroupId === entry.id && 'bg-muted ring-1 ring-inset ring-brand/50',
           )}
         >
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             aria-label={label}
             aria-expanded={expanded}
@@ -1787,15 +1789,15 @@ export function WorkspaceWork({
             <span className="min-w-0 flex-1 truncate">{entry.name}</span>
             <span className="text-[10px] text-muted-foreground">{entry.count}</span>
             <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-          </button>
+          </BeuiButton>
           {entry.editable ? (
             <>
-              <button type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: entry.id, name: entry.name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
+              <BeuiButton nativeButton unstyled type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: entry.id, name: entry.name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
                 <Pencil className="size-3.5" />
-              </button>
-              <button type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAgentGroup(entry.id)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
+              </BeuiButton>
+              <BeuiButton nativeButton unstyled type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAgentGroup(entry.id)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
                 <Trash2 className="size-3.5" />
-              </button>
+              </BeuiButton>
             </>
           ) : null}
         </div>
@@ -1840,7 +1842,7 @@ export function WorkspaceWork({
       )}>
         <div className="relative shrink-0 px-0.5">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <BeuiInput
             value={sessionQuery}
             onChange={(event) => setSessionQuery(event.target.value)}
             placeholder={t('search')}
@@ -1848,9 +1850,9 @@ export function WorkspaceWork({
             className="h-7 w-full rounded-full border-0 bg-muted/70 pl-7 pr-7 text-[11px] outline-none focus:ring-1 focus:ring-brand/35"
           />
           {sessionQuery ? (
-            <button type="button" onClick={() => setSessionQuery('')} aria-label={t('clearSearch')} title={t('clearSearch')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background">
+            <BeuiButton nativeButton unstyled type="button" onClick={() => setSessionQuery('')} aria-label={t('clearSearch')} title={t('clearSearch')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background">
               <X className="size-3" />
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
 
@@ -1862,9 +1864,9 @@ export function WorkspaceWork({
             </Link>
             <Popover.Root>
               <Popover.Trigger asChild>
-                <button type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                <BeuiButton nativeButton unstyled type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
                   <ListFilter className="size-3.5" />
-                </button>
+                </BeuiButton>
               </Popover.Trigger>
               <Popover.Portal>
                 <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
@@ -1872,25 +1874,25 @@ export function WorkspaceWork({
                   {agents.length ? (
                     <>
                       <Popover.Close asChild>
-                        <button type="button" onClick={() => setAllAgentSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                        <BeuiButton nativeButton unstyled type="button" onClick={() => setAllAgentSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                           <ChevronsUpDown className="size-4" />
                           {t('expandAll')}
-                        </button>
+                        </BeuiButton>
                       </Popover.Close>
                       <Popover.Close asChild>
-                        <button type="button" onClick={() => setAllAgentSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                        <BeuiButton nativeButton unstyled type="button" onClick={() => setAllAgentSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                           <ChevronsDownUp className="size-4" />
                           {t('collapseAll')}
-                        </button>
+                        </BeuiButton>
                       </Popover.Close>
                     </>
                   ) : null}
                   <div className="my-1 h-px bg-border" />
                   <Popover.Close asChild>
-                    <button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                    <BeuiButton nativeButton unstyled type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
                       <FolderPlus className="size-4" />
                       {t('newGroup')}
-                    </button>
+                    </BeuiButton>
                   </Popover.Close>
                   <Popover.Close asChild>
                     <Link href={`/app/${encodeURIComponent(slug)}/agents?returnTo=${encodeURIComponent(workReturnTo)}`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
@@ -1916,7 +1918,7 @@ export function WorkspaceWork({
                   draggingSidebarItem?.kind === 'agent' && draggingSidebarItem.id === itemAgent.id && 'opacity-50',
                   sidebarDropIndicatorClassName(dropRow?.kind === 'agent' && dropRow.id === itemAgent.id ? dropRow.edge : undefined),
                 )}>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     draggable
                     aria-label={t('moveToGroup')}
@@ -1927,8 +1929,8 @@ export function WorkspaceWork({
                     className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
                   >
                     <GripVertical className="size-3.5" />
-                  </button>
-                  <button
+                  </BeuiButton>
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     aria-expanded={expanded}
                     aria-controls={`agent-work-sessions-${itemAgent.id}`}
@@ -1950,7 +1952,7 @@ export function WorkspaceWork({
                     <span aria-hidden="true" className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex">
                       <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
                     </span>
-                  </button>
+                  </BeuiButton>
                   <SidebarActionRail hasLeadingSlot revealOnCellFocus>
                     <SidebarEntityActionsMenu
                       actionsLabel={tAgents('agentActions', { name: itemAgent.name })}
@@ -1964,7 +1966,7 @@ export function WorkspaceWork({
                       unpinLabel={tAgents('unpinAgent')}
                     />
                     {itemAgent.supportsWork ? (
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         onClick={() => {
                           setExpandedAgents((current) => ({ ...current, [itemAgent.id]: true }));
@@ -1975,7 +1977,7 @@ export function WorkspaceWork({
                         className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
                       >
                         <Plus className="size-3.5" />
-                      </button>
+                      </BeuiButton>
                     ) : null}
                   </SidebarActionRail>
                 </div>
@@ -2053,9 +2055,9 @@ export function WorkspaceWork({
                             <span className="min-w-0 flex-1 truncate">{item.title || item.task || t('untitled')}</span>
                           </Link>
                           {ARCHIVABLE_STATUSES.has(item.status) ? (
-                            <button type="button" onClick={() => void archiveWork(item.id)} aria-label={t('archive')} title={t('archive')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/session:opacity-100 focus:opacity-100">
+                            <BeuiButton nativeButton unstyled type="button" onClick={() => void archiveWork(item.id)} aria-label={t('archive')} title={t('archive')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/session:opacity-100 focus:opacity-100">
                               <Archive className="size-3.5" />
-                            </button>
+                            </BeuiButton>
                           ) : null}
                         </li>
                       )) : !agentChannels.length ? (
@@ -2107,12 +2109,12 @@ export function WorkspaceWork({
       )}>
         <header className="flex h-11 shrink-0 items-center justify-between gap-2 px-2.5">
           <div className="flex min-w-0 items-center gap-0.5 overflow-hidden">
-            <button type="button" onClick={() => setMobilePane('sessions')} aria-label={t('showSidebar')} title={t('showSidebar')} className="ui-button-ghost ui-icon-button lg:!hidden">
+            <BeuiButton nativeButton unstyled type="button" onClick={() => setMobilePane('sessions')} aria-label={t('showSidebar')} title={t('showSidebar')} className="ui-button-ghost ui-icon-button lg:!hidden">
               <PanelLeftOpen className="size-[18px]" />
-            </button>
-            <button type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')} title={sidebarOpen ? t('hideSidebar') : t('showSidebar')} className="ui-button-ghost ui-icon-button hidden lg:!flex">
+            </BeuiButton>
+            <BeuiButton nativeButton unstyled type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')} title={sidebarOpen ? t('hideSidebar') : t('showSidebar')} className="ui-button-ghost ui-icon-button hidden lg:!flex">
               {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-            </button>
+            </BeuiButton>
             {(selected || conversation) && controlAgent ? (
               <Link
                 href={agentSettingsHref(slug, controlAgent.id, workReturnTo)}
@@ -2169,13 +2171,13 @@ export function WorkspaceWork({
                 } : undefined}
                 onHermesSelectionSaved={conversation ? async () => router.refresh() : selected ? refreshSelected : undefined}
                 trigger={(
-                  <button type="button" aria-label={t('model')} title={t('model')} className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <BeuiButton nativeButton unstyled type="button" aria-label={t('model')} title={t('model')} className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
                     {controlModelLabel !== t('selectModel') ? (
                       <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[9px] font-semibold">{controlModelLabel.charAt(0).toUpperCase()}</span>
                     ) : <Cpu className="size-4 shrink-0" />}
                     <span className="hidden max-w-44 truncate sm:block">{controlModelLabel}</span>
                     <ChevronDown className="size-3.5 shrink-0" />
-                  </button>
+                  </BeuiButton>
                 )}
               />
             ) : null}
@@ -2216,9 +2218,9 @@ export function WorkspaceWork({
               </span>
             ) : null}
             {selected && STOPPABLE_STATUSES.has(selected.status) ? (
-              <button type="button" disabled={busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="ui-button-ghost ui-icon-button text-muted-foreground hover:text-destructive">
+              <BeuiButton nativeButton unstyled type="button" disabled={busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="ui-button-ghost ui-icon-button text-muted-foreground hover:text-destructive">
                 {busy === 'cancel' ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-3.5 fill-current" />}
-              </button>
+              </BeuiButton>
             ) : null}
             {controlSandbox && !controlSandbox.running && controlSandbox.status === 'provisioning' ? (
               <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
@@ -2227,8 +2229,8 @@ export function WorkspaceWork({
               </span>
             ) : controlSandbox && !controlSandbox.running ? (
               <form action={startSandboxAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="sandboxId" value={controlSandbox.id} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="sandboxId" value={controlSandbox.id} />
                 <SubmitButton pendingLabel={tSandboxes('starting')} flash={false} className="ui-button-secondary h-8 px-2 text-xs">
                   <Play className="size-3.5" />
                   {tSandboxes('start')}
@@ -2236,18 +2238,18 @@ export function WorkspaceWork({
               </form>
             ) : null}
             {selected || conversation ? (
-                <button type="button" onClick={() => togglePanel('context')} aria-label={tAgents('contextUsage')} title={tAgents('contextUsage')} aria-pressed={desktopPanel === 'context'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'context' && 'bg-muted text-foreground')}>
+                <BeuiButton nativeButton unstyled type="button" onClick={() => togglePanel('context')} aria-label={tAgents('contextUsage')} title={tAgents('contextUsage')} aria-pressed={desktopPanel === 'context'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'context' && 'bg-muted text-foreground')}>
                   <Activity className="size-4" />
-                </button>
+                </BeuiButton>
             ) : null}
             {controlSandbox ? (
               <>
-                <button type="button" onClick={() => togglePanel('files')} aria-label={tSandboxes('files')} title={tSandboxes('files')} aria-pressed={desktopPanel === 'files'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'files' && 'bg-muted text-foreground')}>
+                <BeuiButton nativeButton unstyled type="button" onClick={() => togglePanel('files')} aria-label={tSandboxes('files')} title={tSandboxes('files')} aria-pressed={desktopPanel === 'files'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'files' && 'bg-muted text-foreground')}>
                   <Folder className="size-4" />
-                </button>
-                <button type="button" onClick={() => togglePanel('terminal')} aria-label={tSandboxes('terminal')} title={tSandboxes('terminal')} aria-pressed={desktopPanel === 'terminal'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'terminal' && 'bg-muted text-foreground')}>
+                </BeuiButton>
+                <BeuiButton nativeButton unstyled type="button" onClick={() => togglePanel('terminal')} aria-label={tSandboxes('terminal')} title={tSandboxes('terminal')} aria-pressed={desktopPanel === 'terminal'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'terminal' && 'bg-muted text-foreground')}>
                   <TerminalSquare className="size-4" />
-                </button>
+                </BeuiButton>
               </>
             ) : null}
           </div>
@@ -2316,7 +2318,7 @@ export function WorkspaceWork({
           </div>
           {!followingTranscript && (selected || conversation) ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => scrollTranscriptToBottom('smooth')}
                 aria-label={tAgents('scrollToLatestMessage')}
@@ -2324,7 +2326,7 @@ export function WorkspaceWork({
                 className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <ArrowDown className="size-4" />
-              </button>
+              </BeuiButton>
             </div>
           ) : null}
         </div>}
@@ -2344,8 +2346,8 @@ export function WorkspaceWork({
                       </details>
                     </div>
                     <div className="flex gap-2">
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'deny')} className="ui-button-secondary h-8 px-3 text-xs">{t('deny')}</button>
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'allow')} className="ui-button-primary h-8 px-3 text-xs">{t('allow')}</button>
+                      <BeuiButton nativeButton unstyled type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'deny')} className="ui-button-secondary h-8 px-3 text-xs">{t('deny')}</BeuiButton>
+                      <BeuiButton nativeButton unstyled type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'allow')} className="ui-button-primary h-8 px-3 text-xs">{t('allow')}</BeuiButton>
                     </div>
                   </div>
                 ))}
@@ -2387,13 +2389,13 @@ export function WorkspaceWork({
                 toolbarEnd={<>
                     <ConversationContextUsage busy={running} usage={contextUsage} />
                     {running ? (
-                      <button type="button" disabled={!selected || busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted disabled:opacity-50">
+                      <BeuiButton nativeButton unstyled type="button" disabled={!selected || busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted disabled:opacity-50">
                         {busy === 'cancel' ? <Loader2 className="size-[18px] animate-spin" /> : <CirclePause className="size-5" />}
-                      </button>
+                      </BeuiButton>
                     ) : (
-                      <button type="submit" disabled={!draft.trim() || (!canSend && !localCommand) || Boolean(busy) || composerPending} aria-label={t('sendInput')} title={t('sendInput')} className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50">
+                      <BeuiButton nativeButton unstyled type="submit" disabled={!draft.trim() || (!canSend && !localCommand) || Boolean(busy) || composerPending} aria-label={t('sendInput')} title={t('sendInput')} className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50">
                         {busy === 'create' || busy === 'input' ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
-                      </button>
+                      </BeuiButton>
                     )}
                 </>}
               />
@@ -2435,7 +2437,7 @@ export function WorkspaceWork({
               {mobilePanel === 'context' ? <Activity className="size-4" /> : mobilePanel === 'files' ? <Folder className="size-4" /> : <TerminalSquare className="size-4" />}
               {mobilePanel === 'context' ? tAgents('contextUsage') : mobilePanel === 'files' ? tSandboxes('files') : tSandboxes('terminal')}
             </span>
-            <button type="button" onClick={() => setMobilePanel(null)} aria-label={mobilePanel === 'context' ? tAgents('close') : t('closeWorkspace')} className="ui-button-ghost ui-icon-button"><X className="size-4" /></button>
+            <BeuiButton nativeButton unstyled type="button" onClick={() => setMobilePanel(null)} aria-label={mobilePanel === 'context' ? tAgents('close') : t('closeWorkspace')} className="ui-button-ghost ui-icon-button"><X className="size-4" /></BeuiButton>
           </header>
           <div className="min-h-0 flex-1 overflow-hidden">
             {mobilePanel === 'context' ? (
@@ -2484,11 +2486,11 @@ export function WorkspaceWork({
             <DialogTitle>{tAgents('deleteAgent')}</DialogTitle>
             <DialogDescription>{tAgents('deleteThisAgentAndItsSandboxesAndAllItsConversations')}</DialogDescription>
             <form action={deleteAgentAction} className="flex justify-end gap-2">
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="agentId" value={deleteAgentTarget?.id ?? ''} />
-              <input type="hidden" name="returnTo" value={`/app/${slug}/work`} />
+              <BeuiInput type="hidden" name="workspace" value={slug} />
+              <BeuiInput type="hidden" name="agentId" value={deleteAgentTarget?.id ?? ''} />
+              <BeuiInput type="hidden" name="returnTo" value={`/app/${slug}/work`} />
               <DialogClose asChild>
-                <button type="button" className="ui-button-secondary h-9 px-3">{tAgents('cancel')}</button>
+                <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary h-9 px-3">{tAgents('cancel')}</BeuiButton>
               </DialogClose>
               <SubmitButton pendingLabel={tAgents('deleting')} className="h-9 bg-destructive px-3 text-destructive-foreground hover:bg-destructive/90">
                 {tAgents('confirmDelete')}

@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -244,8 +246,8 @@ export default async function McpMarketDetailPage({
                   </div>
                 </div>
                 <form action={deployServerAction} className="mt-5">
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="serverId" value={server.id} />
+                  <BeuiInput type="hidden" name="workspace" value={slug} />
+                  <BeuiInput type="hidden" name="serverId" value={server.id} />
                   <SubmitButton
                     flash={false}
                     pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}

@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
@@ -279,13 +281,13 @@ export default async function ToolkitDetailPage({
                         {deploymentLabel(s.deployment).name}
                       </span>
                       <form action={removeServerFromToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input type="hidden" name="deploymentId" value={s.deployment.id} />
-                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
+                        <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                        <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                        <BeuiInput type="hidden" name="deploymentId" value={s.deployment.id} />
+                        <BeuiButton nativeButton unstyled className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
                           <X className="size-3.5" />
                           {t('remove')}
-                        </button>
+                        </BeuiButton>
                       </form>
                     </li>
                   ))}
@@ -332,17 +334,17 @@ export default async function ToolkitDetailPage({
                         {skillLabel(s.installedSkill).name}
                       </span>
                       <form action={removeSkillFromToolkitAction}>
-                        <input type="hidden" name="workspace" value={wsSlug} />
-                        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                        <input
+                        <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                        <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                        <BeuiInput
                           type="hidden"
                           name="installedSkillId"
                           value={s.installedSkill.id}
                         />
-                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
+                        <BeuiButton nativeButton unstyled className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
                           <X className="size-3.5" />
                           {t('remove')}
-                        </button>
+                        </BeuiButton>
                       </form>
                     </li>
                   ))}
@@ -374,8 +376,8 @@ export default async function ToolkitDetailPage({
               </p>
               {canManagePublishing ? (
                 <form action={updateToolkitAvailabilityAction} className="mt-4 flex max-w-xl flex-col gap-3">
-                  <input type="hidden" name="workspace" value={wsSlug} />
-                  <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                  <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                  <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
                   <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                     {t('visibility')}
                     <NativeSelect
@@ -388,7 +390,7 @@ export default async function ToolkitDetailPage({
                     </NativeSelect>
                   </label>
                   <label className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
-                    <input
+                    <BeuiInput
                       type="checkbox"
                       name="enabled"
                       defaultChecked={toolkit.enabled}
@@ -430,11 +432,11 @@ export default async function ToolkitDetailPage({
                 action={renameToolkitAction}
                 className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
               >
-                <input type="hidden" name="workspace" value={wsSlug} />
-                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('toolkitName')}
-                  <input
+                  <BeuiInput
                     name="name"
                     defaultValue={toolkit.name}
                     required
@@ -469,11 +471,11 @@ export default async function ToolkitDetailPage({
                 action={cloneToolkitAction}
                 className="mt-4 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row sm:items-end"
               >
-                <input type="hidden" name="workspace" value={wsSlug} />
-                <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('copyName')}
-                  <input
+                  <BeuiInput
                     name="name"
                     defaultValue={defaultCloneName}
                     required
@@ -510,8 +512,8 @@ export default async function ToolkitDetailPage({
                     </p>
                   </div>
                   <form action={deleteToolkitAction}>
-                    <input type="hidden" name="workspace" value={wsSlug} />
-                    <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
+                    <BeuiInput type="hidden" name="workspace" value={wsSlug} />
+                    <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
                     <ConfirmSubmitButton
                       triggerLabel={
                         <>

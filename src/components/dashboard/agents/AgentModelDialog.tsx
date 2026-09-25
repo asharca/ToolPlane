@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import {
   startTransition,
@@ -328,7 +330,7 @@ export function AgentModelDialog({
             </label>
 
             <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm text-foreground">
-              <input
+              <BeuiInput
                 type="checkbox"
                 checked={useProfileDefault}
                 disabled={hermesPending || profileChatSupported !== true || !hermesConversation?.editable}
@@ -354,10 +356,10 @@ export function AgentModelDialog({
                 pending={profileModelsLoading}
                 onSelect={setHermesModel}
                 trigger={(
-                  <button type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={profileModelsLoading || hermesPending || profileChatSupported !== true}>
+                  <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={profileModelsLoading || hermesPending || profileChatSupported !== true}>
                     <span className="truncate">{hermesModel?.model ?? t('selectModel')}</span>
                     {profileModelsLoading ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
-                  </button>
+                  </BeuiButton>
                 )}
               />
             ) : null}
@@ -368,8 +370,8 @@ export function AgentModelDialog({
               </p>
             ) : null}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <DialogClose asChild><button type="button" className="ui-button-secondary" disabled={hermesPending}>{t('cancel')}</button></DialogClose>
-              <button
+              <DialogClose asChild><BeuiButton nativeButton unstyled type="button" className="ui-button-secondary" disabled={hermesPending}>{t('cancel')}</BeuiButton></DialogClose>
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={saveHermesSelection}
                 className="ui-button-primary gap-2"
@@ -377,7 +379,7 @@ export function AgentModelDialog({
               >
                 {hermesPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
                 {t('save')}
-              </button>
+              </BeuiButton>
             </div>
           </div>
         </DialogContent>

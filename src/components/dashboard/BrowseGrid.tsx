@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { CheckCircle2, ChevronRight } from 'lucide-react';
@@ -134,11 +136,11 @@ export async function BrowseGrid({
               </span>
             ) : (
               <form action={it.marketListing ? installMarketResourceAction : action} className="min-w-0">
-                <input type="hidden" name="workspace" value={slug} />
+                <BeuiInput type="hidden" name="workspace" value={slug} />
                 {it.marketListing ? (
-                  <input type="hidden" name="releaseId" value={it.marketListing.releaseId} />
+                  <BeuiInput type="hidden" name="releaseId" value={it.marketListing.releaseId} />
                 ) : (
-                  <input type="hidden" name={idField} value={it.id} />
+                  <BeuiInput type="hidden" name={idField} value={it.id} />
                 )}
                 <SubmitButton
                   flash={false}

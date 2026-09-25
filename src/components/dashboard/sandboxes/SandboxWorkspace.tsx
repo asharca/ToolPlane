@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useId, useState, type ComponentProps } from 'react';
 import { useTranslations } from 'next-intl';
@@ -37,7 +39,7 @@ export function SandboxWorkspace({
           const Icon = tab.icon;
           const selected = tab.id === view;
           return (
-            <button
+            <BeuiButton nativeButton unstyled
               key={tab.id}
               type="button"
               role="tab"
@@ -49,7 +51,7 @@ export function SandboxWorkspace({
             >
               <Icon className="size-4" />
               {tab.label}
-            </button>
+            </BeuiButton>
           );
         })}
       </div>

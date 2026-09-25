@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Search } from 'lucide-react';
@@ -65,7 +67,7 @@ export async function ListingHero({
         </p>
         <form action={searchAction} className="relative mx-auto mt-7 max-w-2xl">
           <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <BeuiInput
             type="search"
             name="q"
             defaultValue={defaultSearchValue}
@@ -75,7 +77,7 @@ export async function ListingHero({
           />
           {Object.entries(hiddenFields ?? {}).map(([name, value]) =>
             value === null || value === undefined ? null : (
-              <input key={name} type="hidden" name={name} value={String(value)} />
+              <BeuiInput key={name} type="hidden" name={name} value={String(value)} />
             ),
           )}
         </form>

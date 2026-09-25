@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Alert, Button } from '@asharca/ui';
+import { Alert, Button } from "@/components/ui";
 type Approval = { id: string; taskId: string; toolName: string; input: unknown; inputHash: string; status: string; expiresAt: string };
 /** Decisions remain a same-origin human control plane, never an A2A message from a model. */
 export function A2AToolApprovals({ base, rootTaskId, taskId }: { base: string; rootTaskId: string; taskId: string }) {

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { Bot, MessageSquare, Plus, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -56,7 +58,7 @@ function ResourceChecklist({
           key={resource.id}
           className="flex min-h-11 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
         >
-          <input
+          <BeuiInput
             type="checkbox"
             name={name}
             value={resource.id}
@@ -103,8 +105,8 @@ export function AgentListingForm({
 
   return (
     <form action={formAction} className="space-y-6">
-      {initial.id ? <input type="hidden" name="id" value={initial.id} /> : null}
-      <input type="hidden" name="updateConfig" value={configEditable ? 'yes' : 'no'} />
+      {initial.id ? <BeuiInput type="hidden" name="id" value={initial.id} /> : null}
+      <BeuiInput type="hidden" name="updateConfig" value={configEditable ? 'yes' : 'no'} />
 
       <AdminPanel
         title={t(assistantMode ? 'assistantDirectoryMetadata' : 'agentDirectoryMetadata')}
@@ -113,7 +115,7 @@ export function AgentListingForm({
         <div className="grid gap-5 sm:grid-cols-2">
           <label className={LABEL_CLASS}>
             <span>{t('name')}</span>
-            <input
+            <BeuiInput
               name="name"
               defaultValue={initial.name ?? ''}
               maxLength={240}
@@ -128,12 +130,12 @@ export function AgentListingForm({
                 <code className="truncate font-mono text-sm text-foreground">{initial.directorySlug}</code>
                 <AdminBadge tone="neutral">{t('immutable')}</AdminBadge>
               </div>
-              <input type="hidden" name="directorySlug" value={initial.directorySlug ?? ''} />
+              <BeuiInput type="hidden" name="directorySlug" value={initial.directorySlug ?? ''} />
             </div>
           ) : (
             <label className={LABEL_CLASS}>
               <span>{t(assistantMode ? 'assistantTemplateSlug' : 'agentDirectorySlug')}</span>
-              <input
+              <BeuiInput
                 name="directorySlug"
                 required
                 maxLength={120}
@@ -146,7 +148,7 @@ export function AgentListingForm({
           )}
           <label className={LABEL_CLASS}>
             <span>{t('author')}</span>
-            <input
+            <BeuiInput
               name="author"
               defaultValue={initial.author ?? ''}
               maxLength={240}
@@ -163,7 +165,7 @@ export function AgentListingForm({
           </label>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('description')}</span>
-            <textarea
+            <BeuiTextarea
               name="summary"
               defaultValue={initial.summary ?? ''}
               maxLength={4000}
@@ -173,7 +175,7 @@ export function AgentListingForm({
           </label>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('iconUrl')}</span>
-            <input
+            <BeuiInput
               name="iconUrl"
               defaultValue={initial.iconUrl ?? ''}
               maxLength={2000}
@@ -185,7 +187,7 @@ export function AgentListingForm({
           </label>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('agentListingTags')}</span>
-            <input
+            <BeuiInput
               name="tags"
               defaultValue={(initial.tags ?? []).join(', ')}
               placeholder="research, writing, productivity"
@@ -200,7 +202,7 @@ export function AgentListingForm({
         <div className="mt-5 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:gap-5">
           {initial.id ? (
             <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-              <input
+              <BeuiInput
                 type="checkbox"
                 name="curated"
                 defaultChecked={initial.curated ?? true}
@@ -217,7 +219,7 @@ export function AgentListingForm({
             </div>
           )}
           <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input
+            <BeuiInput
               type="checkbox"
               name="isFeatured"
               defaultChecked={initial.isFeatured}
@@ -236,7 +238,7 @@ export function AgentListingForm({
                   key={category.id}
                   className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
                 >
-                  <input
+                  <BeuiInput
                     type="checkbox"
                     name="categoryIds"
                     value={category.id}
@@ -264,7 +266,7 @@ export function AgentListingForm({
           <div className="space-y-6">
             <label className={LABEL_CLASS}>
               <span>{t(assistantMode ? 'assistantSystemPrompt' : 'agentSystemPrompt')}</span>
-              <textarea
+              <BeuiTextarea
                 name="systemPrompt"
                 defaultValue={initial.systemPrompt ?? ''}
                 rows={10}
@@ -275,7 +277,7 @@ export function AgentListingForm({
             <div className="grid gap-5 sm:grid-cols-3">
               <label className={LABEL_CLASS}>
                 <span>{t('agentMaxSteps')}</span>
-                <input
+                <BeuiInput
                   name="maxSteps"
                   type="number"
                   min={AGENT_STEP_BOUNDS.min}
@@ -297,7 +299,7 @@ export function AgentListingForm({
               </label>
               <label className={LABEL_CLASS}>
                 <span>{t('agentModelId')}</span>
-                <input
+                <BeuiInput
                   name="model"
                   defaultValue={initial.model ?? ''}
                   maxLength={240}

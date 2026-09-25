@@ -1,3 +1,5 @@
+
+import { Table as BeuiTable } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { ArrowRight, Braces, ChevronRight, Wrench } from 'lucide-react';
 import type { McpToolDefinition } from '@/lib/process/mcp-tool-catalog';
@@ -165,7 +167,7 @@ export function McpToolCatalog({
 
                   {Object.keys(properties).length ? (
                     <div tabIndex={0} role="region" aria-label={labels.inputSchema} className="mt-3 max-w-full overflow-x-auto overscroll-x-contain rounded-md bg-background/70">
-                      <table className="w-full min-w-[36rem] table-fixed text-left text-xs [overflow-wrap:anywhere]">
+                      <BeuiTable className="w-full min-w-[36rem] table-fixed text-left text-xs [overflow-wrap:anywhere]">
                         <thead className="text-muted-foreground">
                           <tr>
                             <th className="px-3 py-2 font-medium">{labels.parameter}</th>
@@ -193,7 +195,7 @@ export function McpToolCatalog({
                             );
                           })}
                         </tbody>
-                      </table>
+                      </BeuiTable>
                     </div>
                   ) : (
                     <p className="mt-2 text-sm text-muted-foreground">{labels.noArguments}</p>

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useEffect, useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -295,7 +297,7 @@ export function ToolPlayground({
           </NativeSelect>
         </label>
         {selectedSandbox && !selectedSandbox.running ? (
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={startSelectedSandbox}
             disabled={startingSandboxId === selectedSandbox.id}
@@ -305,9 +307,9 @@ export function ToolPlayground({
               ? <Loader2 className="size-4 animate-spin" />
               : <Power className="size-4" />}
             {startingSandboxId === selectedSandbox.id ? t('startingSandbox') : t('startSandbox')}
-          </button>
+          </BeuiButton>
         ) : (
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={connectInspector}
             disabled={!selectedSandbox?.networkEnabled || connecting}
@@ -315,7 +317,7 @@ export function ToolPlayground({
           >
             {connecting ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
             {connecting ? t('connectingInspector') : t('connectInspector')}
-          </button>
+          </BeuiButton>
         )}
       </div> : null}
 
@@ -332,7 +334,7 @@ export function ToolPlayground({
       <nav aria-label={t('inspectorTools')} className="max-h-[min(24rem,50dvh)] min-w-0 space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:top-4 lg:self-start">
         <p className="mb-2 text-xs font-medium text-muted-foreground">{t('inspectorTools')}</p>
         {availableTools.map((tool) => (
-          <button
+          <BeuiButton nativeButton unstyled
             key={tool.name}
             type="button"
             onClick={() => onSelect(tool.name)}
@@ -345,7 +347,7 @@ export function ToolPlayground({
             }`}
           >
             <span className="truncate">{tool.title ?? tool.name}</span>
-          </button>
+          </BeuiButton>
         ))}
       </nav>
 
@@ -386,7 +388,7 @@ export function ToolPlayground({
 
         <div>
           <label htmlFor={argumentsId} className="mb-1.5 block text-xs font-medium text-muted-foreground">{t('argumentsJson')}</label>
-          <textarea
+          <BeuiTextarea
             id={argumentsId}
             value={args}
             onChange={(e) => setArgs(e.target.value)}
@@ -396,10 +398,10 @@ export function ToolPlayground({
           />
         </div>
 
-        <button type="button" onClick={run} disabled={loading || !selected} className="ui-button-primary disabled:opacity-60">
+        <BeuiButton nativeButton unstyled type="button" onClick={run} disabled={loading || !selected} className="ui-button-primary disabled:opacity-60">
           {loading ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
           {t('runTool')}
-        </button>
+        </BeuiButton>
 
         {error ? <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive-text">{error}</pre> : null}
         {result !== null ? (

@@ -1,10 +1,12 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { workbenchHref } from '@/lib/a2a/workbench-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { Alert, Badge, Button, Input, Textarea } from '@asharca/ui';
+import { Alert, Badge, Button, Input, Textarea } from "@/components/ui";
 import { ArrowUpRight, BookOpen, KeyRound, Network, RefreshCw, ShieldCheck } from 'lucide-react';
 import { AgentA2ARemotes } from './AgentA2ARemotes';
 import { AgentA2ATaskMonitor } from './AgentA2ATaskMonitor';
@@ -197,7 +199,7 @@ export function AgentA2APanel({ slug, agentId, runtimeKind }: { slug: string; ag
           <Button variant="secondary" disabled={busy || !taskId.trim() || !view.local.enabled} onClick={() => void operation(async () => {
             const result = await rpc('GetTask', { id: taskId, historyLength: 0 }); if (mounted.current) selectTask(result);
           })}>{t('getTask')}</Button></div>
-        {tasks.length ? <div className="max-h-48 space-y-1 overflow-auto" aria-label={t('myTasks')}>{tasks.map((task) => <button key={task.id} type="button" className="block w-full rounded-md border border-border p-2 text-left text-xs hover:bg-muted" onClick={() => selectTask(task)}><span className="break-all">{task.id}</span><span className="mt-1 block text-muted-foreground">{task.status?.state}</span></button>)}</div> : null}
+        {tasks.length ? <div className="max-h-48 space-y-1 overflow-auto" aria-label={t('myTasks')}>{tasks.map((task) => <BeuiButton nativeButton unstyled key={task.id} type="button" className="block w-full rounded-md border border-border p-2 text-left text-xs hover:bg-muted" onClick={() => selectTask(task)}><span className="break-all">{task.id}</span><span className="mt-1 block text-muted-foreground">{task.status?.state}</span></BeuiButton>)}</div> : null}
         {selected ? <div className="space-y-3 rounded-lg bg-muted/40 p-3"><p className="break-all font-mono text-xs">{selected.id}</p><Badge>{active ?? '—'}</Badge>
           <AgentA2ATaskMonitor key={selected.id} base={base} rootTaskId={selected.id} onRootState={(state) => setSelected((task) => task && task.id === selected.id ? { ...task, status: { ...task.status, state } } : task)} />
           {!terminal ? <Button size="sm" variant="danger-secondary" disabled={busy} onClick={() => {

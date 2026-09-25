@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { ArrowRight } from 'lucide-react';
 import { installAgentFromMarketAction } from '@/lib/agents/actions';
@@ -19,10 +21,10 @@ export function AgentMarketInstallForm({
 }) {
   return (
     <form action={installAgentFromMarketAction}>
-      <input type="hidden" name="workspace" value={workspace} />
-      <input type="hidden" name="releaseId" value={releaseId} />
-      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
-      <input type="hidden" name="returnTo" value={returnTo} />
+      <BeuiInput type="hidden" name="workspace" value={workspace} />
+      <BeuiInput type="hidden" name="releaseId" value={releaseId} />
+      <BeuiInput type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <BeuiInput type="hidden" name="returnTo" value={returnTo} />
       <SubmitButton
         pendingLabel={labels.pending}
         savedLabel={labels.submit}

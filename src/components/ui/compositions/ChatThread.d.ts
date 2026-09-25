@@ -1,0 +1,96 @@
+import { type ComponentType, type ReactNode } from 'react';
+import { type AssistantRuntime, type CompleteAttachment, type TextMessagePartProps } from '@assistant-ui/react';
+export type ChatBranchNavigation = {
+    messageId: string;
+    position: number;
+    total: number;
+    previousMessageId: string;
+    nextMessageId: string;
+};
+export type ChatThreadLabels = {
+    addAttachment: string;
+    allowTool: string;
+    attachment: string;
+    attachmentsUnavailable: string;
+    cancel: string;
+    composerTools: string;
+    conversationBranch: string;
+    copy: string;
+    edit: string;
+    expandComposer: string;
+    generatingReply: string;
+    messagePlaceholder: string;
+    next: string;
+    openComposerTools: string;
+    preparingReply: string;
+    previous: string;
+    processFailed: string;
+    processed: string;
+    processing: string;
+    regenerate: string;
+    rejectTool: string;
+    removeAttachment: (name: string) => string;
+    restoreComposer: string;
+    save: string;
+    scrollToLatestMessage: string;
+    send: string;
+    startBranch: string;
+    startConversation: string;
+    stop: string;
+    thinking: string;
+    thought: string;
+    toolApprovalDescription: string;
+    toolAwaitingApproval: string;
+    toolCompleted: string;
+    toolFailed: string;
+    toolInput: string;
+    toolKindMcp: string;
+    toolKindSandbox: string;
+    toolKindSkill: string;
+    toolKindSubagent: string;
+    toolKindTool: string;
+    toolKindWeb: string;
+    toolOutput: string;
+    toolRunning: string;
+    user: string;
+    usingTool: (toolName: string) => string;
+};
+export declare const chatThreadDefaultLabels: ChatThreadLabels;
+export type ChatThreadProps = {
+    runtime: AssistantRuntime;
+    assistantName: string;
+    allowAttachments?: boolean;
+    allowEdit?: boolean;
+    allowRegenerate?: boolean;
+    branchNavigation?: readonly ChatBranchNavigation[];
+    busy?: boolean;
+    className?: string;
+    components?: ChatThreadComponents;
+    composerEnd?: ReactNode;
+    composerStatus?: ReactNode;
+    composerTools?: ReactNode;
+    disabled?: boolean;
+    emptyState?: ReactNode;
+    error?: ReactNode;
+    labels?: Partial<ChatThreadLabels>;
+    onBranchSelect?: (messageId: string) => void | Promise<void>;
+    onBranchStart?: (messageId: string) => void | Promise<void>;
+    onRegenerateMessage?: (messageId: string) => void | Promise<void>;
+    transformUserText?: (text: string) => string;
+};
+export type ChatThreadComponents = {
+    AssistantText?: ComponentType<TextMessagePartProps>;
+    AssistantMessageBefore?: ComponentType<{
+        messageId: string;
+    }>;
+    AssistantMessageAfter?: ComponentType<{
+        messageId: string;
+    }>;
+    AssistantActions?: ComponentType<{
+        messageId: string;
+    }>;
+    SentAttachment?: ComponentType<{
+        attachment: CompleteAttachment;
+    }>;
+};
+export declare function ChatThread({ runtime, assistantName, allowAttachments, allowEdit, allowRegenerate, branchNavigation, busy, disabled, labels: labelOverrides, transformUserText, ...props }: ChatThreadProps): import("react").JSX.Element;

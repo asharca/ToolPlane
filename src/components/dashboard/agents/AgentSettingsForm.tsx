@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -334,8 +336,8 @@ export function AgentSettingsForm({
       onSubmit={handleSubmit}
       className={className}
     >
-      <input type="hidden" name="workspace" value={slug} />
-      <input type="hidden" name="agentId" value={agentId} />
+      <BeuiInput type="hidden" name="workspace" value={slug} />
+      <BeuiInput type="hidden" name="agentId" value={agentId} />
 
       <div className={showNavigation
         ? 'overflow-hidden rounded-xl border border-border bg-background lg:grid lg:grid-cols-[11.5rem_minmax(0,1fr)]'
@@ -354,7 +356,7 @@ export function AgentSettingsForm({
                   {group.items.map(({ id, label, count, icon: Icon }) => {
                     const active = activeSection === id;
                     return (
-                      <button
+                      <BeuiButton nativeButton unstyled
                         key={id}
                         type="button"
                         aria-current={active ? 'page' : undefined}
@@ -370,7 +372,7 @@ export function AgentSettingsForm({
                             {count}
                           </span>
                         ) : null}
-                      </button>
+                      </BeuiButton>
                     );
                   })}
                 </div>
@@ -389,7 +391,7 @@ export function AgentSettingsForm({
         <div className="space-y-5">
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
-            <input
+            <BeuiInput
               name="name"
               value={nameValue}
               onChange={(event) => setNameValue(event.target.value)}
@@ -399,7 +401,7 @@ export function AgentSettingsForm({
           </label>
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
-            <textarea
+            <BeuiTextarea
               name="description"
               value={descriptionValue}
               onChange={(event) => setDescriptionValue(event.target.value)}
@@ -446,7 +448,7 @@ export function AgentSettingsForm({
         <div className="space-y-6">
           <label className="block max-w-xs">
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('maxToolSteps')}</span>
-            <input
+            <BeuiInput
               name="maxSteps"
               type="number"
               min={AGENT_STEP_BOUNDS.min}
@@ -464,7 +466,7 @@ export function AgentSettingsForm({
                   {isHermes ? t('hermesEnvironmentHelp') : t('runtimeEnvironmentHelp')}
                 </p>
               </div>
-              <textarea
+              <BeuiTextarea
                 name="runtimeEnv"
                 defaultValue={runtimeEnvironment ?? runtime?.environment ?? ''}
                 onChange={(event) => event.stopPropagation()}
@@ -482,7 +484,7 @@ export function AgentSettingsForm({
                 >
                   {envMessage}
                 </p>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="submit"
                   formAction={envFormAction}
                   formNoValidate
@@ -493,7 +495,7 @@ export function AgentSettingsForm({
                 >
                   {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                   {isEnvPending ? t('savingEnvironment') : t('saveEnvironment')}
-                </button>
+                </BeuiButton>
               </div>
             </div>
           ) : null}
@@ -511,7 +513,7 @@ export function AgentSettingsForm({
               </span>
             </div>
             <div className="flex gap-2">
-              <button
+              <BeuiButton nativeButton unstyled
                 type="submit"
                 formAction={syncFormAction}
                 formNoValidate
@@ -528,8 +530,8 @@ export function AgentSettingsForm({
                   <RefreshCw className="size-4" />
                 )}
                 {isSyncPending ? t('syncingRuntime') : lastRuntimeAction === 'sync' && syncState.savedAt ? t('runtimeSynced') : t('syncRuntime')}
-              </button>
-              <button
+              </BeuiButton>
+              <BeuiButton nativeButton unstyled
                 type="submit"
                 formAction={stopFormAction}
                 formNoValidate
@@ -546,7 +548,7 @@ export function AgentSettingsForm({
                   <Square className="size-3.5" />
                 )}
                 {isStopPending ? t('stoppingRuntime') : lastRuntimeAction === 'stop' && stopState.savedAt ? t('runtimeStopped') : t('stopRuntime')}
-              </button>
+              </BeuiButton>
             </div>
           </div>
           <div className="space-y-2 px-4 py-4 text-sm">
@@ -601,7 +603,7 @@ export function AgentSettingsForm({
               disabled={runtimeControlsDisabled}
             />
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <button
+              <BeuiButton nativeButton unstyled
                 type="submit"
                 formAction={upgradeFormAction}
                 formNoValidate
@@ -625,7 +627,7 @@ export function AgentSettingsForm({
                   : lastRuntimeAction === 'upgrade' && upgradeState.savedAt
                     ? t('hermesRuntimeUpgraded')
                     : t('upgradeHermesRuntime')}
-              </button>
+              </BeuiButton>
             </div>
           </div>
         </section>
@@ -742,8 +744,8 @@ export function AgentSettingsForm({
             </div>
           ) : (
             <div className="sm:col-span-2">
-              <input type="hidden" name="providerId" value={selectedProvider} />
-              <input type="hidden" name="model" value={selectedModel} />
+              <BeuiInput type="hidden" name="providerId" value={selectedProvider} />
+              <BeuiInput type="hidden" name="model" value={selectedModel} />
               <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('model')}</span>
               <ModelPicker
                 providers={compatibleProviders}
@@ -759,14 +761,14 @@ export function AgentSettingsForm({
                   window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                 }}
                 trigger={(
-                  <button type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
+                  <BeuiButton nativeButton unstyled type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
                       {selectedProviderOption?.name.charAt(0).toUpperCase() || 'M'}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{selectedModel || t('selectModel')}</span>
                     <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProviderOption?.name}</span>
                     <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  </button>
+                  </BeuiButton>
                 )}
               />
             </div>

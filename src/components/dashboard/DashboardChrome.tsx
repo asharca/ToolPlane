@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import {
   useCallback,
@@ -138,7 +140,7 @@ export function DashboardChrome({
       <DashboardTabsProvider key={slug} slug={slug}>
         <div className="flex h-dvh min-h-dvh overflow-hidden bg-shell text-foreground [--dashboard-page-header-height:2.75rem] [--dashboard-tabbar-height:2.75rem]">
             {open ? (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 aria-label={t('closeMenu')}
                 onClick={closeMenu}
@@ -160,7 +162,7 @@ export function DashboardChrome({
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <div className="flex h-14 shrink-0 items-center gap-3 bg-shell px-3 lg:hidden">
-                <button
+                <BeuiButton nativeButton unstyled
                   ref={menuButtonRef}
                   type="button"
                   aria-label={t('openMenu')}
@@ -170,7 +172,7 @@ export function DashboardChrome({
                   className="ui-button-ghost ui-icon-button"
                 >
                   <Menu className="size-5" />
-                </button>
+                </BeuiButton>
                 <DashboardLogo />
               </div>
               <DashboardTabBar canInstall={isAdmin} />

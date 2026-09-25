@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import { Eye, Loader2, Pencil, RotateCcw, Sparkles } from 'lucide-react';
@@ -73,7 +75,7 @@ export function AgentSystemPromptEditor({
         </div>
         <div className="flex items-center gap-1.5">
           {value.trim() ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               aria-label={preview ? t('editSystemPrompt') : t('previewSystemPrompt')}
               title={preview ? t('editSystemPrompt') : t('previewSystemPrompt')}
@@ -81,9 +83,9 @@ export function AgentSystemPromptEditor({
               className="ui-button-ghost ui-icon-button"
             >
               {preview ? <Pencil className="size-4" /> : <Eye className="size-4" />}
-            </button>
+            </BeuiButton>
           ) : null}
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             disabled={!canGenerate || generating}
             onClick={generatePrompt}
@@ -91,19 +93,19 @@ export function AgentSystemPromptEditor({
           >
             {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
             {value.trim() ? t('improvePrompt') : t('generatePrompt')}
-          </button>
+          </BeuiButton>
         </div>
       </div>
 
       {preview ? (
         <>
-          <input type="hidden" name={fieldName} value={value} />
+          <BeuiInput type="hidden" name={fieldName} value={value} />
           <div role="region" aria-label={t('previewSystemPrompt')} className="min-h-52 rounded-md border border-border bg-muted/20 px-4 py-3">
             <AssistantMarkdown text={value} />
           </div>
         </>
       ) : (
-        <textarea
+        <BeuiTextarea
           name={fieldName}
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -116,7 +118,7 @@ export function AgentSystemPromptEditor({
       )}
 
       {restore ? (
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={() => {
             onChange(restore.previous);
@@ -127,7 +129,7 @@ export function AgentSystemPromptEditor({
         >
           <RotateCcw className="size-3.5" />
           {t('restorePreviousPrompt')}
-        </button>
+        </BeuiButton>
       ) : null}
       {error ? <p role="alert" className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
     </div>

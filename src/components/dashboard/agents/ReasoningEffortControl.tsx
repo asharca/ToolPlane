@@ -1,7 +1,9 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
-import { Popover } from 'radix-ui';
+import { Popover } from '@/components/ui/primitives';
 import { ChevronDown, Gauge } from 'lucide-react';
 import { type ReasoningEffort } from '@/lib/agents/constants';
 
@@ -34,7 +36,7 @@ export function ReasoningEffortControl({
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={disabled}
           aria-label={t('reasoningEffort')}
@@ -44,7 +46,7 @@ export function ReasoningEffortControl({
           <Gauge className="size-4 shrink-0" />
           <span>{valueLabel}</span>
           <ChevronDown className="size-3.5 shrink-0" />
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -57,20 +59,20 @@ export function ReasoningEffortControl({
             <span className="text-muted-foreground">{t('reasoningEffort')}:</span>
             <span className="font-medium">{valueLabel}</span>
             {value !== 'default' ? (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => onChange('default')}
                 className="ml-auto h-6 rounded-md bg-muted px-2 text-[11px] text-muted-foreground hover:text-foreground"
               >
                 {t('reasoningEffortDefault')}
-              </button>
+              </BeuiButton>
             ) : null}
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground" aria-hidden="true">
             <span>{t('reasoningEffortFaster')}</span>
             <span>{t('reasoningEffortSmarter')}</span>
           </div>
-          <input
+          <BeuiInput
             type="range"
             min={0}
             max={EXPLICIT_EFFORTS.length - 1}

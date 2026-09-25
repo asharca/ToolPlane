@@ -1,10 +1,12 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useSyncExternalStore } from 'react';
-import { Popover } from 'radix-ui';
+import { Popover } from '@/components/ui/primitives';
 import { Check, ChevronsUpDown, Plus, Settings } from 'lucide-react';
 import { CreateWorkspaceForm } from './WorkspaceForms';
 import { workspaceInitials, workspaceSwitchHref, type WorkspaceSummary } from '@/lib/workspace/navigation';
@@ -51,7 +53,7 @@ export function WorkspaceSwitcher({
   return (
     <Popover.Root onOpenChange={(nextOpen) => !nextOpen && setCreating(false)}>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
           title={compact ? workspaceName : undefined}
@@ -69,7 +71,7 @@ export function WorkspaceSwitcher({
             </span>
           </span>
           <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
 
       <Popover.Portal>
@@ -123,14 +125,14 @@ export function WorkspaceSwitcher({
             {creating ? (
               <div className="p-3"><CreateWorkspaceForm autoFocus /></div>
             ) : (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => setCreating(true)}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
               >
                 <Plus className="size-4 shrink-0" />
                 {t('createWorkspace')}
-              </button>
+              </BeuiButton>
             )}
           </div>
         </Popover.Content>

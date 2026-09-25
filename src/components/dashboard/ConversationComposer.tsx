@@ -1,9 +1,11 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { Maximize2, Minimize2, Paperclip, Plus, X } from 'lucide-react';
-import { Popover, Tooltip } from 'radix-ui';
+import { Popover, Tooltip } from '@/components/ui/primitives';
 import type { ContextUsageSnapshot } from '@/lib/context-usage';
 
 export const conversationComposerClassName = 'group/composer relative rounded-[20px] border-[0.5px] border-border bg-card pt-2 shadow-sm transition-all duration-200 ease-in-out hover:border-foreground/25 focus-within:border-foreground/25';
@@ -48,7 +50,7 @@ export function ConversationComposerExpand({
         aria-hidden="true"
         className="pointer-events-none absolute right-1 top-1 size-3 origin-top-right scale-100 rounded-tr-[16px] border-r-[1.5px] border-t-[1.5px] border-foreground/60 opacity-70 transition-[opacity,scale] duration-200 ease-out group-focus-within/composer:scale-50 group-focus-within/composer:opacity-0 group-hover/composer:scale-50 group-hover/composer:opacity-0"
       />
-      <button
+      <BeuiButton nativeButton unstyled
         type="button"
         onClick={onToggle}
         aria-label={label}
@@ -57,7 +59,7 @@ export function ConversationComposerExpand({
         className="pointer-events-none absolute right-1 top-1 flex size-[22px] -translate-y-2.5 translate-x-2.5 rotate-[-8deg] scale-80 items-center justify-center rounded-full bg-transparent text-muted-foreground opacity-0 transition-[opacity,translate,scale,rotate,color,background-color] duration-300 ease-out hover:bg-muted hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:translate-y-0 focus-visible:rotate-0 focus-visible:scale-100 focus-visible:bg-muted focus-visible:text-foreground focus-visible:opacity-100 group-focus-within/composer:pointer-events-auto group-focus-within/composer:translate-x-0 group-focus-within/composer:translate-y-0 group-focus-within/composer:rotate-0 group-focus-within/composer:scale-100 group-focus-within/composer:bg-muted/80 group-focus-within/composer:text-foreground group-focus-within/composer:opacity-100 group-hover/composer:pointer-events-auto group-hover/composer:translate-x-0 group-hover/composer:translate-y-0 group-hover/composer:rotate-0 group-hover/composer:scale-100 group-hover/composer:bg-muted/80 group-hover/composer:text-foreground group-hover/composer:opacity-100"
       >
         <Icon className="size-3 transition-transform duration-300 ease-out group-focus-within/composer:scale-110 group-hover/composer:scale-110" />
-      </button>
+      </BeuiButton>
     </div>
   );
 }
@@ -157,7 +159,7 @@ export function ConversationAttachmentRemoveButton({
   onClick?: () => void;
 }) {
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="button"
       aria-label={label}
       title={label}
@@ -165,7 +167,7 @@ export function ConversationAttachmentRemoveButton({
       className="flex size-4 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground"
     >
       <X className="size-3" />
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -200,7 +202,7 @@ export function ConversationAttachmentPicker({
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={disabled}
           aria-label={t('openComposerTools')}
@@ -208,7 +210,7 @@ export function ConversationAttachmentPicker({
           className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
         >
           <Plus className="size-[18px]" />
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -220,7 +222,7 @@ export function ConversationAttachmentPicker({
           className="z-50 w-64 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl"
         >
           <Popover.Close asChild>
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               disabled={!supportsAttachments}
               onClick={openPicker}
@@ -233,7 +235,7 @@ export function ConversationAttachmentPicker({
                   <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('attachmentRuntimeRequired')}</span>
                 ) : null}
               </span>
-            </button>
+            </BeuiButton>
           </Popover.Close>
         </Popover.Content>
       </Popover.Portal>

@@ -1,3 +1,3 @@
 'use client';
 
-export { SubmitButton, type SubmitButtonProps } from '@asharca/ui';
+export { SubmitButton, type SubmitButtonProps } from "@/components/ui";

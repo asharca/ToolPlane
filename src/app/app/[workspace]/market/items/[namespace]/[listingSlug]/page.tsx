@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import { randomUUID } from 'node:crypto';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
@@ -195,9 +197,9 @@ export default async function MarketItemPage({
         </div>
         {!install ? (
           <form action={installMarketResourceAction} className="mt-5">
-            <input type="hidden" name="workspace" value={workspaceSlug} />
-            <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
-            <input type="hidden" name="idempotencyKey" value={randomUUID()} />
+            <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+            <BeuiInput type="hidden" name="releaseId" value={listing.latestRelease.id} />
+            <BeuiInput type="hidden" name="idempotencyKey" value={randomUUID()} />
             <SubmitButton flash={false} pendingLabel={t('installing')} className="ui-button-primary h-10 w-full">
               {t('installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
@@ -205,13 +207,13 @@ export default async function MarketItemPage({
         ) : updateAvailable ? (
           <div className="mt-5 space-y-2">
             <form action={updateMarketInstallAction}>
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="installId" value={install.id} />
-              <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
-              <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="installId" value={install.id} />
+              <BeuiInput type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
+              <BeuiInput type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
               {install.status === 'modified' ? (
                 <label className="mb-3 flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                  <input required type="checkbox" name="force" value="yes" className="mt-1 size-3.5 shrink-0 accent-amber-600" />
+                  <BeuiInput required type="checkbox" name="force" value="yes" className="mt-1 size-3.5 shrink-0 accent-amber-600" />
                   <span>{t('overwriteLocalChangesConfirmation')}</span>
                 </label>
               ) : null}
@@ -220,10 +222,10 @@ export default async function MarketItemPage({
               </SubmitButton>
             </form>
             <form action={ignoreMarketUpdateAction}>
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="installId" value={install.id} />
-              <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
-              <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="installId" value={install.id} />
+              <BeuiInput type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
+              <BeuiInput type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
               <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-secondary h-10 w-full">
                 {t('ignoreThisVersion')}
               </SubmitButton>
@@ -316,9 +318,9 @@ export default async function MarketItemPage({
         </div>
         {!install ? (
           <form action={installMarketResourceAction} className="mt-5">
-            <input type="hidden" name="workspace" value={workspaceSlug} />
-            <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
-            <input type="hidden" name="idempotencyKey" value={randomUUID()} />
+            <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+            <BeuiInput type="hidden" name="releaseId" value={listing.latestRelease.id} />
+            <BeuiInput type="hidden" name="idempotencyKey" value={randomUUID()} />
             <SubmitButton flash={false} pendingLabel={t(connector ? 'connecting' : 'installing')} className="ui-button-primary h-10 w-full">
               {t(connector ? 'connectToWorkspace' : 'installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
@@ -326,19 +328,19 @@ export default async function MarketItemPage({
         ) : updateAvailable ? (
           <div className="mt-5 space-y-2">
             <form action={updateMarketInstallAction}>
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="installId" value={install.id} />
-              <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
-              <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="installId" value={install.id} />
+              <BeuiInput type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
+              <BeuiInput type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
               <SubmitButton flash={false} pendingLabel={t('updating')} className="ui-button-primary h-10 w-full">
                 <RotateCw className="size-4" /> {t('update')}
               </SubmitButton>
             </form>
             <form action={ignoreMarketUpdateAction}>
-              <input type="hidden" name="workspace" value={workspaceSlug} />
-              <input type="hidden" name="installId" value={install.id} />
-              <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
-              <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
+              <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+              <BeuiInput type="hidden" name="installId" value={install.id} />
+              <BeuiInput type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
+              <BeuiInput type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
               <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-secondary h-10 w-full">
                 {t('ignoreThisVersion')}
               </SubmitButton>

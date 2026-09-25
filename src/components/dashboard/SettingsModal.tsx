@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import type { ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -50,9 +52,9 @@ export function SettingsModal({
           <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
             <DialogTitle className="text-sm">{title}</DialogTitle>
             <DialogClose asChild>
-              <button type="button" aria-label={t('close')} className="ui-button-ghost ui-icon-button">
+              <BeuiButton nativeButton unstyled type="button" aria-label={t('close')} className="ui-button-ghost ui-icon-button">
                 <X className="size-4" />
-              </button>
+              </BeuiButton>
             </DialogClose>
           </header>
           <div className="min-h-0 flex-1 overflow-hidden">{children}</div>

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -19,7 +21,7 @@ export function WorkspaceWelcome({ slug, name, isOwner }: { slug: string; name: 
         <Link href={`/app/${slug}/market/agents`} className="ui-button-secondary ui-button-sm">{t('findAgent')}</Link>
         <Link href={`/app/${slug}/market/mcp`} className="ui-button-ghost ui-button-sm">{t('connectTools')}</Link>
       </div>
-      <button type="button" onClick={() => setDismissed(true)} aria-label={t('dismiss')} className="ui-button-ghost ui-icon-button absolute right-2 top-2"><X className="size-4" /></button>
+      <BeuiButton nativeButton unstyled type="button" onClick={() => setDismissed(true)} aria-label={t('dismiss')} className="ui-button-ghost ui-icon-button absolute right-2 top-2"><X className="size-4" /></BeuiButton>
     </section>
   );
 }

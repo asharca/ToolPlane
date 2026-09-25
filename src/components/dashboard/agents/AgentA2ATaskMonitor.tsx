@@ -1,10 +1,12 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { A2AToolApprovals } from './A2AToolApprovals';
 import { A2AArtifactParts, type A2AWirePart } from './A2AArtifactParts';
-import { Alert, Badge, Button } from '@asharca/ui';
+import { Alert, Badge, Button } from "@/components/ui";
 import type { ConsoleTaskTree } from '@/lib/a2a/console-tasks';
 
 type ResultTask = { id: string; status?: { state?: string; message?: { parts?: Array<{ text?: string }> } };
@@ -96,10 +98,10 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState, onUnavailab
     {tree?.restricted ? <Alert tone="warning">{t('restrictedTasks')}</Alert> : null}
     {!tree && !failed ? <p role="status">{t('loading')}</p> : null}
     <ul className="space-y-2">{tree?.nodes.map((node) => <li key={node.id} style={{ marginInlineStart: `${depthOf(node.id)}rem` }}>
-      <button type="button" aria-pressed={selectedId === node.id} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedId(node.id); setRefresh((value) => value + 1); }}>
+      <BeuiButton nativeButton unstyled type="button" aria-pressed={selectedId === node.id} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedId(node.id); setRefresh((value) => value + 1); }}>
         <span className="min-w-0"><span className="block text-sm font-medium">{node.name}</span><code className="block break-all text-xs text-muted-foreground">{node.id}</code></span>
         <span className="flex flex-wrap items-center gap-2 text-xs"><Badge>{node.state}</Badge>{node.pendingApprovals ? <Badge>{t('approvals.pending', { count: node.pendingApprovals })}</Badge> : null}<span>{t(`phase_${node.phase}`)}</span>{node.cancelRequested ? <span>{t('cancellationPending')}</span> : null}</span>
-      </button>
+      </BeuiButton>
     </li>)}</ul>
     {selected ? <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3" role="region" aria-label={t('taskResult')}>
       <code className="block break-all text-xs">{selected.id}</code>

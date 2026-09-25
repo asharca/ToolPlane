@@ -1,3 +1,5 @@
+
+import { Select as BeuiSelect } from '@/components/ui/Controls';
 import { Users } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -76,12 +78,12 @@ export default async function AdminUsersPage({
         clearLabel={t('clear')}
         clearHref="/admin/users"
       >
-        <select name="role" aria-label={t('roleColumn')} defaultValue={role} className="ui-input h-11 w-auto sm:h-9">
+        <BeuiSelect name="role" aria-label={t('roleColumn')} defaultValue={role} className="ui-input h-11 w-auto sm:h-9">
           <option value="">{ops('allRoles')}</option><option value="user">{t('user')}</option><option value="admin">{t('administrator')}</option>
-        </select>
-        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
+        </BeuiSelect>
+        <BeuiSelect name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
           <option value="">{ops('allStatuses')}</option><option value="active">{t('active')}</option><option value="suspended">{t('suspended')}</option>
-        </select>
+        </BeuiSelect>
       </AdminSearchForm>
 
       {items.length === 0 ? (

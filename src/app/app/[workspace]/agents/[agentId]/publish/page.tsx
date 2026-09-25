@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Textarea as BeuiTextarea, Button as BeuiButton } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -170,9 +172,9 @@ export default async function AgentPublishPage({
         ) : null}
 
         <form action={publishAgentReleaseAction} className="space-y-5">
-          <input type="hidden" name="workspace" value={workspaceSlug} />
-          <input type="hidden" name="agentId" value={agentId} />
-          <input type="hidden" name="listingSlug" value={currentListing?.slug ?? agent.slug} />
+          <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+          <BeuiInput type="hidden" name="agentId" value={agentId} />
+          <BeuiInput type="hidden" name="listingSlug" value={currentListing?.slug ?? agent.slug} />
 
           <section className="ui-panel overflow-hidden">
             <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
@@ -185,7 +187,7 @@ export default async function AgentPublishPage({
             <div className="grid gap-4 p-5 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicName')}</span>
-                <input
+                <BeuiInput
                   name="name"
                   required
                   maxLength={80}
@@ -195,7 +197,7 @@ export default async function AgentPublishPage({
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('marketTags')}</span>
-                <input
+                <BeuiInput
                   name="tags"
                   maxLength={240}
                   defaultValue={draftTags.join(', ')}
@@ -206,7 +208,7 @@ export default async function AgentPublishPage({
               </label>
               <label className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicSummary')}</span>
-                <textarea
+                <BeuiTextarea
                   name="summary"
                   required
                   maxLength={360}
@@ -218,7 +220,7 @@ export default async function AgentPublishPage({
               </label>
               <label className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicIconUrl')}</span>
-                <input
+                <BeuiInput
                   name="iconUrl"
                   type="url"
                   maxLength={2000}
@@ -233,7 +235,7 @@ export default async function AgentPublishPage({
                 <div className="mt-2 grid gap-1 sm:grid-cols-2">
                   {categories.map((category) => (
                     <label key={category.id} className="flex min-h-10 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
-                      <input
+                      <BeuiInput
                         type="checkbox"
                         name="categoryIds"
                         value={category.id}
@@ -310,7 +312,7 @@ export default async function AgentPublishPage({
               </div>
             </div>
             <label className="flex cursor-pointer items-start gap-3 p-5 text-sm leading-6 text-foreground">
-              <input
+              <BeuiInput
                 type="checkbox"
                 name="confirmPublicContents"
                 value="yes"
@@ -345,11 +347,11 @@ export default async function AgentPublishPage({
                 <p className="mt-1 text-xs text-muted-foreground">{t('withdrawSubmissionDescription')}</p>
               </div>
               <form action={withdrawPendingAgentReleaseAction}>
-                <input type="hidden" name="workspace" value={workspaceSlug} />
-                <input type="hidden" name="agentId" value={agentId} />
-                <button type="submit" className="ui-button-secondary h-9 px-3 text-xs">
+                <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                <BeuiInput type="hidden" name="agentId" value={agentId} />
+                <BeuiButton nativeButton unstyled type="submit" className="ui-button-secondary h-9 px-3 text-xs">
                   {t('withdrawSubmission')}
-                </button>
+                </BeuiButton>
               </form>
             </div>
           </section>
@@ -367,11 +369,11 @@ export default async function AgentPublishPage({
                 </p>
               </div>
               <form action={unpublishAgentListingAction}>
-                <input type="hidden" name="workspace" value={workspaceSlug} />
-                <input type="hidden" name="agentId" value={agentId} />
-                <button type="submit" className="ui-button-secondary ui-button-danger-secondary h-9 px-3 text-xs">
+                <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+                <BeuiInput type="hidden" name="agentId" value={agentId} />
+                <BeuiButton nativeButton unstyled type="submit" className="ui-button-secondary ui-button-danger-secondary h-9 px-3 text-xs">
                   {t('unpublish')}
-                </button>
+                </BeuiButton>
               </form>
             </div>
           </section>

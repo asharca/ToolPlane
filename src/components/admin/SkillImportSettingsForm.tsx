@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { Save, Upload } from 'lucide-react';
@@ -25,7 +27,7 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
 
         <div className="max-w-sm space-y-1.5 text-sm font-medium text-foreground">
           <label htmlFor="skill-import-max-skills">{t('skillImportMaxSkills')}</label>
-          <input
+          <BeuiInput
             id="skill-import-max-skills"
             name="skillImportMaxSkills"
             type="number"

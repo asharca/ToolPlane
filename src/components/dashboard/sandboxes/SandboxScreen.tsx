@@ -1,4 +1,6 @@
 'use client';
+import { Select as BeuiSelect, Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -189,7 +191,7 @@ export function SandboxScreen({
             <label className="sr-only" htmlFor="sandbox-display">{t('selectDisplay')}</label>
           ) : null}
           {displays.length > 1 ? (
-            <select
+            <BeuiSelect
               id="sandbox-display"
               value={display.id}
               onChange={(event) => {
@@ -202,10 +204,10 @@ export function SandboxScreen({
               className="h-8 rounded-md border border-white/10 bg-zinc-900 px-2 text-xs text-zinc-200"
             >
               {displays.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
-            </select>
+            </BeuiSelect>
           ) : null}
           {snapshot ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={() => { setFrameStatus('loading'); setFrame(Date.now()); }}
               disabled={!running || !visible}
@@ -214,11 +216,11 @@ export function SandboxScreen({
               aria-label={t('refreshScreen')}
             >
               <RefreshCw className="size-3.5" />
-            </button>
+            </BeuiButton>
           ) : display.control ? (
             <div className="flex items-center gap-2">
               {rfbStatus === 'connected' && !viewOnly ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
@@ -234,10 +236,10 @@ export function SandboxScreen({
                   className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100 aria-pressed:bg-white/10 aria-pressed:text-white"
                 >
                   <Keyboard className="size-4" />
-                </button>
+                </BeuiButton>
               ) : null}
               <label className="flex items-center gap-2 text-xs text-zinc-300">
-                <input
+                <BeuiInput
                   type="checkbox"
                   checked={!viewOnly}
                   onChange={(event) => setViewOnly(!event.target.checked)}
@@ -283,7 +285,7 @@ export function SandboxScreen({
               }}
               className="h-full w-full overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white"
             />
-            <textarea
+            <BeuiTextarea
               ref={virtualKeyboard}
               defaultValue={VIRTUAL_KEYBOARD_PAD}
               aria-label={t('virtualKeyboardInput')}
@@ -321,7 +323,7 @@ export function SandboxScreen({
               >
                 <label className="grid gap-1 text-xs text-zinc-300">
                   {t('vncPassword')}
-                  <input
+                  <BeuiInput
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
@@ -329,15 +331,15 @@ export function SandboxScreen({
                     className="h-8 rounded-md border border-white/15 bg-zinc-900 px-2 text-sm text-white"
                   />
                 </label>
-                <button type="submit" className="h-8 rounded-md bg-white px-3 text-xs font-medium text-black">
+                <BeuiButton nativeButton unstyled type="submit" className="h-8 rounded-md bg-white px-3 text-xs font-medium text-black">
                   {t('connectScreen')}
-                </button>
+                </BeuiButton>
               </form>
             ) : null}
             {rfbStatus === 'error' ? (
               <div className="absolute flex items-center gap-3 rounded-md bg-black/80 px-3 py-2 text-sm text-zinc-300">
                 <p role="alert">{t('screenUnavailable')}</p>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => {
                     setPassword('');
@@ -348,7 +350,7 @@ export function SandboxScreen({
                 >
                   <RefreshCw className="size-3.5" />
                   {errorT('tryAgain')}
-                </button>
+                </BeuiButton>
               </div>
             ) : null}
           </>

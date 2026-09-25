@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -52,7 +54,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-dvh min-h-dvh overflow-hidden bg-background text-foreground">
       {mobileOpen ? (
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           aria-label={t('adminCloseMenu')}
           onClick={closeMenu}
@@ -66,7 +68,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
         <header className="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <div className="shrink-0 lg:hidden">
-              <button
+              <BeuiButton nativeButton unstyled
                 ref={menuButtonRef}
                 type="button"
                 aria-label={t('adminOpenMenu')}
@@ -76,7 +78,7 @@ export function AdminChrome({ children }: { children: ReactNode }) {
                 className="ui-button-ghost ui-icon-button"
               >
                 <Menu className="size-5" aria-hidden="true" />
-              </button>
+              </BeuiButton>
             </div>
             <p className="flex min-w-0 items-center gap-2 text-sm">
               <Link href="/admin" className="hidden shrink-0 items-center gap-2 text-muted-foreground hover:text-foreground sm:inline-flex">

@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
@@ -69,7 +71,7 @@ function ModelPreferenceRow({
           onSelect={save}
           onConfigure={() => window.location.assign(`/app/${encodeURIComponent(slug)}/providers`)}
           trigger={(
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               disabled={pending}
               aria-label={`${title}: ${value?.model ?? emptyLabel}`}
@@ -80,11 +82,11 @@ function ModelPreferenceRow({
               </span>
               <span className="min-w-0 flex-1 truncate">{value?.model ?? emptyLabel}</span>
               {pending ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
-            </button>
+            </BeuiButton>
           )}
         />
         {value ? (
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             disabled={pending}
             onClick={() => save(null)}
@@ -93,7 +95,7 @@ function ModelPreferenceRow({
             className="ui-button-ghost ui-icon-button shrink-0"
           >
             <RotateCcw className="size-3.5" />
-          </button>
+          </BeuiButton>
         ) : null}
       </div>
     </div>

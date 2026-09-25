@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useEffect, useState } from 'react';
@@ -47,10 +49,10 @@ function RecipeValidation({
 
   return (
     <form action={action} className="space-y-3 border-t border-border pt-5">
-      <input type="hidden" name="id" value={serverId} />
+      <BeuiInput type="hidden" name="id" value={serverId} />
       <label className={LABEL_CLASS}>
         <span>{t('testEnvForValidationOptionalKeyvaluePerLineNotStored')}</span>
-        <textarea
+        <BeuiTextarea
           name="testEnv"
           rows={4}
           placeholder="FIRECRAWL_API_KEY=fc-..."
@@ -140,7 +142,7 @@ export function RecipeEditor({
     >
       <div className="space-y-6">
         <form action={saveAction} className="space-y-3" onChange={() => setDirty(true)}>
-          <input type="hidden" name="id" value={serverId} />
+          <BeuiInput type="hidden" name="id" value={serverId} />
           <div className="grid gap-4 sm:grid-cols-2">
             <label className={LABEL_CLASS}>
               <span>{t('source')}</span>
@@ -159,7 +161,7 @@ export function RecipeEditor({
             </label>
             <label className={LABEL_CLASS}>
               <span>{source === 'remote' ? t('connectorEndpointUrl') : t('referencePackageImageRepo')}</span>
-              <input
+              <BeuiInput
                 name="recipeRef"
                 defaultValue={initial.ref}
                 placeholder={source === 'remote' ? 'https://mcp.example.com/mcp' : 'firecrawl-mcp'}
@@ -201,7 +203,7 @@ export function RecipeEditor({
               {authType === 'bearer' ? (
                 <label className={LABEL_CLASS}>
                   <span>{t('bearerTokenEnvKey')}</span>
-                  <input
+                  <BeuiInput
                     name="recipeBearerEnv"
                     defaultValue={initial.bearerEnv ?? 'MCP_BEARER_TOKEN'}
                     placeholder="MCP_BEARER_TOKEN"
@@ -214,7 +216,7 @@ export function RecipeEditor({
               {authType === 'headers' ? (
                 <label className={LABEL_CLASS}>
                   <span>{t('customHeaderEnvMappings')}</span>
-                  <textarea
+                  <BeuiTextarea
                     name="recipeHeaderEnv"
                     defaultValue={initial.headerEnv ?? ''}
                     rows={4}
@@ -230,7 +232,7 @@ export function RecipeEditor({
             <>
               <label className={LABEL_CLASS}>
                 <span>{t('startCommandDockerOnly')}</span>
-                <input
+                <BeuiInput
                   name="recipeStartCommand"
                   defaultValue={initial.startCommand}
                   placeholder="node dist/index.js"
@@ -241,7 +243,7 @@ export function RecipeEditor({
               </label>
               <label className={LABEL_CLASS}>
                 <span>{t('requiredEnvKeysUserFillsSpaceOrCommaSeparated')}</span>
-                <input
+                <BeuiInput
                   name="recipeEnv"
                   defaultValue={initial.env}
                   placeholder="GITHUB_TOKEN"
@@ -252,7 +254,7 @@ export function RecipeEditor({
               </label>
               <label className={LABEL_CLASS}>
                 <span>{t('presetEnvValuesFixedWiringKeyvaluePerLine')}</span>
-                <textarea
+                <BeuiTextarea
                   name="recipeEnvValues"
                   defaultValue={initial.envValues}
                   rows={4}
@@ -263,7 +265,7 @@ export function RecipeEditor({
                 />
               </label>
               <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
-                <input
+                <BeuiInput
                   type="checkbox"
                   name="recipeNetwork"
                   defaultChecked={initial.network}
@@ -275,7 +277,7 @@ export function RecipeEditor({
           )}
           <label className={LABEL_CLASS}>
             <span>{t('sourceUrl')}</span>
-            <input
+            <BeuiInput
               name="recipeSourceUrl"
               defaultValue={initial.sourceUrl}
               placeholder="https://github.com/owner/repository"

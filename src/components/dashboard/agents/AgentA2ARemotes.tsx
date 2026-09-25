@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Alert, Badge, Button, Input } from '@asharca/ui';
+import { Alert, Badge, Button, Input } from "@/components/ui";
 import type { RemoteAgentAction, RemoteAgentView } from '@/lib/a2a/remote-registry';
 
 export function AgentA2ARemotes({ base }: { base: string }) {

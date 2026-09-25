@@ -1,1 +1,1 @@
-export { ToolPlaneLogo as Logo, type ToolPlaneLogoProps as LogoProps } from '@asharca/ui';
+export { ToolPlaneLogo as Logo, type ToolPlaneLogoProps as LogoProps } from "@/components/ui";

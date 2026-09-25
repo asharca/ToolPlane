@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -193,10 +195,10 @@ export function ConnectDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <button type="button" className={trigger}>
+        <BeuiButton nativeButton unstyled type="button" className={trigger}>
           {variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
           {label ?? t('connectWith')}
-        </button>
+        </BeuiButton>
       </DialogTrigger>
 
       <DialogPortal>
@@ -206,27 +208,27 @@ export function ConnectDialog({
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 {selected ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => setSelected(null)}
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                   >
                     <ArrowLeft className="size-3.5" />
                     {t('changeClient')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
                 <DialogTitle className="text-base font-semibold text-foreground">
                   {selectedLabel ?? t('installServer')}
                 </DialogTitle>
               </div>
               <DialogClose asChild>
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   aria-label={t('close')}
                   className="ui-button-ghost ui-icon-button !size-8 !min-h-8"
                 >
                   <X className="size-4" />
-                </button>
+                </BeuiButton>
               </DialogClose>
             </div>
 
@@ -242,20 +244,20 @@ export function ConnectDialog({
                   <pre className="overflow-x-auto rounded-md border border-border bg-muted/50 p-3 pr-12 font-mono text-xs text-foreground">
 {selected.snippet(key, endpoint)}
                   </pre>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => copy(selected.snippet(key, endpoint))}
                     className="ui-button-secondary ui-button-sm absolute right-2 top-2 !size-8 !min-h-8 !p-0"
                     aria-label={t('copySnippet')}
                   >
                     {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-                  </button>
+                  </BeuiButton>
                 </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {CLIENTS.map((c) => (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     key={c.id}
                     type="button"
                     onClick={() => {
@@ -265,7 +267,7 @@ export function ConnectDialog({
                     className="rounded-lg border border-border px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:border-input hover:bg-muted"
                   >
                     {c.labelKey ? t(c.labelKey) : c.label}
-                  </button>
+                  </BeuiButton>
                 ))}
               </div>
             )}

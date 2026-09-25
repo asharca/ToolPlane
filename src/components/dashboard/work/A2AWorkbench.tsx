@@ -1,11 +1,13 @@
 'use client';
+import { Select as BeuiSelect, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Task, TaskState, taskStateFromJSON, taskStateToJSON } from '@a2a-js/sdk';
-import { Alert, Badge, Button, Textarea } from '@asharca/ui';
+import { Alert, Badge, Button, Textarea } from "@/components/ui";
 import { ArrowLeft, ArrowUpRight, Network, Plus, RefreshCw, Send } from 'lucide-react';
 import { AgentA2ATaskMonitor } from '@/components/dashboard/agents/AgentA2ATaskMonitor';
 import { CopyButton } from '@/components/dashboard/CopyButton';
@@ -153,18 +155,18 @@ export function A2AWorkbench({ slug, agents, agentId, initialTaskId }: {
     </header>
     <div className="grid min-h-0 flex-1 grid-cols-1 overflow-auto md:grid-cols-[16rem_minmax(0,1fr)] md:overflow-hidden">
       <aside className="space-y-4 border-b border-border p-4 md:overflow-y-auto md:border-r md:border-b-0">
-        <label className="block text-sm font-medium">{t('agent')}<select className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-2 text-sm" aria-label={t('agent')} value={agentId}
+        <label className="block text-sm font-medium">{t('agent')}<BeuiSelect className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-2 text-sm" aria-label={t('agent')} value={agentId}
           disabled={busy || Boolean(pending)} onChange={(event) => router.push(workbenchHref(slug, event.target.value))}>
           {!agents.length ? <option value="">{t('noAgents')}</option> : null}
           {agents.map((item) => <option key={item.id} value={item.id}>{item.name}{!item.enabled ? ` · ${t('disabled')}` : ''}</option>)}
-        </select></label>
+        </BeuiSelect></label>
         {agent ? <Link href={`/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=a2a`} className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-4" onClick={(e) => { if (!navigateAway()) e.preventDefault(); }}>{t('settings')}<ArrowUpRight className="size-3" /></Link> : null}
         <Button variant="secondary" className="w-full" disabled={busy || Boolean(pending)} onClick={newSession}><Plus className="size-4" />{t('newSession')}</Button>
         <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-semibold">{t('recent')}</h2><Button size="sm" variant="ghost" aria-label={t('refresh')} disabled={listLoading || !enabled} onClick={() => { setListLoading(true); void refreshTasks(); }}><RefreshCw className="size-4" /></Button></div>
         {listFailed ? <Alert tone="warning">{t('listFailed')}</Alert> : null}
-        <ul className="max-h-60 space-y-2 overflow-auto md:max-h-none">{tasks.map((task) => <li key={task.id}><button type="button" disabled={busy || Boolean(pending)} aria-current={selected?.id === task.id ? 'page' : undefined}
+        <ul className="max-h-60 space-y-2 overflow-auto md:max-h-none">{tasks.map((task) => <li key={task.id}><BeuiButton nativeButton unstyled type="button" disabled={busy || Boolean(pending)} aria-current={selected?.id === task.id ? 'page' : undefined}
           className="w-full rounded-lg border border-border p-3 text-left hover:bg-muted disabled:opacity-60 aria-[current=page]:bg-muted" onClick={() => selectTask(task)}>
-          <code className="block truncate text-xs">{task.id}</code><span className="mt-1 block text-[11px] text-muted-foreground">{taskStateToJSON(task.status!.state)}</span></button></li>)}</ul>
+          <code className="block truncate text-xs">{task.id}</code><span className="mt-1 block text-[11px] text-muted-foreground">{taskStateToJSON(task.status!.state)}</span></BeuiButton></li>)}</ul>
         {!tasks.length && !listLoading ? <p className="text-xs text-muted-foreground">{t('noTasks')}</p> : null}
         {cursor ? <Button size="sm" variant="secondary" disabled={listLoading || tasks.length >= 200} onClick={() => { setListLoading(true); void refreshTasks(cursor); }}>{t('more')}</Button> : null}
       </aside>

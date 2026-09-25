@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import {
@@ -51,12 +53,12 @@ export function HermesRuntimeManagement({
       <section className="pb-5">
         <h3 className="text-sm font-semibold text-foreground">{t('generalSettings')}</h3>
         <form action={renameSandboxAction} className="mt-3">
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="sandboxId" value={sandboxId} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
           <fieldset disabled={lifecycleBlocked} className="flex items-end gap-2 disabled:opacity-60">
             <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
               {t('sandboxName')}
-              <input
+              <BeuiInput
                 name="name"
                 defaultValue={sandboxName}
                 maxLength={80}
@@ -74,10 +76,10 @@ export function HermesRuntimeManagement({
         <h3 className="text-sm font-semibold text-foreground">{agents('hermesEnvironmentVariables')}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">{agents('hermesEnvironmentHelp')}</p>
         <form action={updateSandboxEnvAction} className="mt-3">
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="sandboxId" value={sandboxId} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
           <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
-            <textarea
+            <BeuiTextarea
               name="env"
               defaultValue={environment}
               rows={6}
@@ -99,11 +101,11 @@ export function HermesRuntimeManagement({
         <h3 className="text-sm font-semibold text-foreground">{t('allowSudoTitle')}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">{t('allowSudoDescription')}</p>
         <form action={updateSandboxSudoAction} className="mt-3">
-          <input type="hidden" name="workspace" value={workspace} />
-          <input type="hidden" name="sandboxId" value={sandboxId} />
+          <BeuiInput type="hidden" name="workspace" value={workspace} />
+          <BeuiInput type="hidden" name="sandboxId" value={sandboxId} />
           <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
             <label className="flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
-              <input
+              <BeuiInput
                 type="checkbox"
                 name="allowSudo"
                 defaultChecked={allowSudo}

@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
@@ -73,7 +75,7 @@ export default async function Page({
 
       <form action="/search" className="relative mt-4 max-w-3xl">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
+        <BeuiInput
           type="search"
           name="q"
           defaultValue={query}

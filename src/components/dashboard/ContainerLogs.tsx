@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -221,7 +223,7 @@ export function ContainerLogs({
             ) : null}
           </dl>
         </div>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={refresh}
           disabled={refreshing}
@@ -229,7 +231,7 @@ export function ContainerLogs({
         >
           <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           {refreshLabel}
-        </button>
+        </BeuiButton>
       </div>
 
       {hasLogs ? (

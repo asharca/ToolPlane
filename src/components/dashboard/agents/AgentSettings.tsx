@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
@@ -213,7 +215,7 @@ export function AgentSettings({
               {navigationItems.map(({ id, label }) => {
                 const active = settingsTab === id;
                 return (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     key={id}
                     ref={active ? activeTabRef : undefined}
                     type="button"
@@ -227,7 +229,7 @@ export function AgentSettings({
                     )}
                   >
                     <span className="whitespace-nowrap">{label}</span>
-                  </button>
+                  </BeuiButton>
                 );
               })}
             </nav>

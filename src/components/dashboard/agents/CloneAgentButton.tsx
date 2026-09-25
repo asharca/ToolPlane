@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -59,7 +61,7 @@ function CloneSubmitButton() {
   const { pending } = useFormStatus();
 
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="submit"
       disabled={pending}
       aria-busy={pending}
@@ -67,7 +69,7 @@ function CloneSubmitButton() {
     >
       {pending ? <Loader2 className="size-[18px] shrink-0 animate-spin" /> : <CopyPlus className="size-[18px] shrink-0" />}
       {pending ? t('cloning') : t('cloneAgent')}
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -86,7 +88,7 @@ function ScopeCheckbox({
 }) {
   return (
     <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-3 transition-colors hover:bg-muted/40">
-      <input
+      <BeuiInput
         type="checkbox"
         name={name}
         checked={checked}
@@ -152,7 +154,7 @@ export function CloneAgentButton({
       }}
     >
       <DialogTrigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={requiresNewSandbox}
           aria-label={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')}
@@ -160,7 +162,7 @@ export function CloneAgentButton({
           className="ui-button-secondary size-10 shrink-0 px-0 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <CopyPlus className="size-[18px] shrink-0" />
-        </button>
+        </BeuiButton>
       </DialogTrigger>
 
       <DialogPortal>
@@ -174,25 +176,25 @@ export function CloneAgentButton({
               <DialogDescription className="mt-1 !text-xs">{t('cloneAgentDialogDescription')}</DialogDescription>
             </div>
             <DialogClose asChild>
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 aria-label={t('close')}
                 title={t('close')}
                 className="ui-button-secondary size-9 shrink-0 px-0"
               >
                 <X className="size-4" />
-              </button>
+              </BeuiButton>
             </DialogClose>
           </header>
 
           <form action={cloneAgentAction} className="space-y-5 px-5 py-5">
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="agentId" value={agentId} />
-              <input type="hidden" name="cloneOptions" value="1" />
+              <BeuiInput type="hidden" name="workspace" value={slug} />
+              <BeuiInput type="hidden" name="agentId" value={agentId} />
+              <BeuiInput type="hidden" name="cloneOptions" value="1" />
 
               <label className="block">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('cloneName')}</span>
-                <input
+                <BeuiInput
                   name="cloneName"
                   defaultValue={t('agentCopyName', { name: agentName })}
                   maxLength={60}
@@ -208,14 +210,14 @@ export function CloneAgentButton({
                     <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('completeCloneDescription')}</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('completeCloneExclusions')}</p>
                   </div>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => setScope(completeScope(runtimeKind))}
                     className="ui-button-secondary h-9 gap-2 px-3 text-xs"
                   >
                     {isComplete ? <Check className="size-3.5" /> : <CopyPlus className="size-3.5" />}
                     {isComplete ? t('completeCloneSelected') : t('selectCompleteClone')}
-                  </button>
+                  </BeuiButton>
                 </div>
               </div>
 
@@ -290,7 +292,7 @@ export function CloneAgentButton({
 
               <footer className="flex justify-end gap-2 border-t border-border pt-4">
                 <DialogClose asChild>
-                  <button type="button" className="ui-button-secondary h-10 px-4">{t('cancel')}</button>
+                  <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary h-10 px-4">{t('cancel')}</BeuiButton>
                 </DialogClose>
                 <CloneSubmitButton />
               </footer>

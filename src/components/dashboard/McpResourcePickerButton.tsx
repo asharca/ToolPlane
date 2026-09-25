@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -134,7 +136,7 @@ export function McpResourcePickerButton({
   return (
     <>
       {!hideTrigger ? (
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={disabled}
           aria-label={t('openMcpResources')}
@@ -143,7 +145,7 @@ export function McpResourcePickerButton({
           className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
         >
           <Database className="size-[17px]" />
-        </button>
+        </BeuiButton>
       ) : null}
       <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogPortal>
@@ -161,7 +163,7 @@ export function McpResourcePickerButton({
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {error ? <p role="alert" className="px-2 py-2 text-sm text-destructive">{error}</p> : null}
                 {resources.length ? resources.map((resource) => (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     key={`${resource.deploymentId}:${resource.id}`}
                     type="button"
                     disabled={resolving}
@@ -175,7 +177,7 @@ export function McpResourcePickerButton({
                       <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{resource.id}</span>
                     </span>
                     {resolving ? <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-                  </button>
+                  </BeuiButton>
                 )) : (
                   <p className="px-2 py-8 text-center text-sm text-muted-foreground">{t('noMcpResources')}</p>
                 )}

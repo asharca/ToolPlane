@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -88,7 +90,7 @@ export function McpServerPickerButton({
   return (
     <>
       {!hideTrigger ? (
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           disabled={disabled}
           aria-label={t('openMcp')}
@@ -97,7 +99,7 @@ export function McpServerPickerButton({
           className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
         >
           <Server className="size-[17px]" />
-        </button>
+        </BeuiButton>
       ) : null}
       <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogPortal>

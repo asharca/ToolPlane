@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { type ComponentType, useCallback, useEffect, useMemo, useState } from 'react';
@@ -157,14 +159,14 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogTrigger asChild>
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             aria-label={t('quickNavigation')}
             title={t('quickNavigation')}
             className="ui-button-ghost ui-icon-button"
           >
             <Search className="size-4" />
-          </button>
+          </BeuiButton>
         </DialogTrigger>
 
         <DialogPortal>
@@ -176,7 +178,7 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
             <DialogTitle className="sr-only">{t('commandPalette')}</DialogTitle>
             <div className="flex items-center gap-2 border-b border-border px-3">
               <Search className="size-4 text-muted-foreground" />
-              <input
+              <BeuiInput
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -197,7 +199,7 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
                   const Icon = c.icon;
                   return (
                     <li key={c.id}>
-                      <button
+                      <BeuiButton nativeButton unstyled
                         type="button"
                         onMouseEnter={() => setActive(i)}
                         onClick={() => c.run()}
@@ -212,7 +214,7 @@ export function DashboardHeaderControls({ canInstall = false }: { canInstall?: b
                         <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                           {c.group}
                         </span>
-                      </button>
+                      </BeuiButton>
                     </li>
                   );
                 })

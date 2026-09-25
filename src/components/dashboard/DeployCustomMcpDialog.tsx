@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
@@ -216,7 +218,7 @@ export function DeployCustomMcpDialog({
 
   return (
     <>
-      <button
+      <BeuiButton nativeButton unstyled
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
@@ -224,7 +226,7 @@ export function DeployCustomMcpDialog({
       >
         <Plus className="size-4" />
         {t('addCustomMcp')}
-      </button>
+      </BeuiButton>
 
       {open && mounted
         ? createPortal(
@@ -249,20 +251,20 @@ export function DeployCustomMcpDialog({
                       </p>
                     </div>
                   </div>
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={closeDialog}
                     aria-label={t('cancel')}
                     className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                       <X className="size-5" />
-                  </button>
+                  </BeuiButton>
                 </div>
 
                 <form action={deployCustomServerAction} onSubmit={validateBeforeSubmit} className="flex min-h-0 flex-1 flex-col">
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="source" value="config" />
-                  <input type="hidden" name="runtimeFiles" value={JSON.stringify(configIsRemote ? [] : runtimeFiles)} />
+                  <BeuiInput type="hidden" name="workspace" value={slug} />
+                  <BeuiInput type="hidden" name="source" value="config" />
+                  <BeuiInput type="hidden" name="runtimeFiles" value={JSON.stringify(configIsRemote ? [] : runtimeFiles)} />
 
                   <div
                     data-testid="deploy-custom-mcp-scroll-area"
@@ -299,19 +301,19 @@ export function DeployCustomMcpDialog({
                               ] as const).map(([key, label]) => (
                                 <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2">
                                   <span className="text-xs font-medium text-foreground">{t(label)}</span>
-                                  <button
+                                  <BeuiButton nativeButton unstyled
                                     type="button"
                                     onClick={() => setJsonConfig(JSON_CONFIG_EXAMPLES[key])}
                                     className="ui-button-secondary ui-button-sm"
                                   >
                                     {t('useJsonExample')}
-                                  </button>
+                                  </BeuiButton>
                                 </div>
                               ))}
                               <p className="text-xs leading-5 text-muted-foreground">{jsonGitHint}</p>
                             </div>
                           </details>
-                          <textarea
+                          <BeuiTextarea
                             ref={configRef}
                             id="config"
                             name="config"
@@ -390,7 +392,7 @@ export function DeployCustomMcpDialog({
                     data-testid="deploy-custom-mcp-footer"
                     className="flex shrink-0 justify-end gap-2 border-t border-border bg-card px-5 py-4 sm:px-6"
                   >
-                    <button type="button" onClick={closeDialog} className="ui-button-secondary h-9 px-4">{t('cancel')}</button>
+                    <BeuiButton nativeButton unstyled type="button" onClick={closeDialog} className="ui-button-secondary h-9 px-4">{t('cancel')}</BeuiButton>
                     <SubmitButton pendingLabel={t('deploying')} className="ui-button-primary h-9 px-4">{t('deploy')}</SubmitButton>
                   </div>
                 </form>

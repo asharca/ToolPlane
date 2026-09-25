@@ -1,1 +1,1 @@
-export { ContentPage, type ContentPageProps } from '@asharca/ui';
+export { ContentPage, type ContentPageProps } from "@/components/ui";

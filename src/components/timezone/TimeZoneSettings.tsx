@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import {
   startTransition,
@@ -41,7 +43,7 @@ export function TimeZoneSettings({
 
   return (
     <form action={formAction} className="flex flex-col gap-3 sm:flex-row sm:items-start">
-      <input
+      <BeuiInput
         type="hidden"
         name="detectedTimeZone"
         value={detectedTimeZone ?? ''}

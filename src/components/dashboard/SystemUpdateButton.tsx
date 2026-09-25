@@ -1,10 +1,12 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { MarkGithubIcon } from '@primer/octicons-react';
 import { useTranslations } from 'next-intl';
-import { Popover } from 'radix-ui';
+import { Popover } from '@/components/ui/primitives';
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH = '/api/v1/admin/system/update?local=1';
 const RESTART_POLL_INTERVAL_MS = 1_500;
@@ -302,7 +304,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
       if (open && !busy) void refresh();
     }}>
       <Popover.Trigger asChild>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           aria-label={triggerLabel}
           title={triggerLabel}
@@ -312,7 +314,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
             {busy ? <RefreshCw className="size-4 animate-spin" /> : <MarkGithubIcon size={16} className="size-4" />}
             {hasUpdate ? <span aria-hidden="true" className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-500" /> : null}
           </span>
-        </button>
+        </BeuiButton>
       </Popover.Trigger>
 
       <Popover.Portal>
@@ -334,7 +336,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
                 </p>
               ) : null}
             </div>
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={refresh}
               disabled={busy}
@@ -343,7 +345,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
               className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
             >
               <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />
-            </button>
+            </BeuiButton>
           </div>
 
           {versionDetail ? (
@@ -391,7 +393,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
           ) : null}
 
           {showUpdate ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={runUpdate}
               disabled={uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'}
@@ -407,7 +409,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
                   : uiState === 'restarting'
                     ? t('restartingShort')
                     : t('updateNow')}
-            </button>
+            </BeuiButton>
           ) : null}
         </Popover.Content>
       </Popover.Portal>

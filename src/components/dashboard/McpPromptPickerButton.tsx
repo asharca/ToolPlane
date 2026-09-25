@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -144,7 +146,7 @@ export function McpPromptPickerButton({
 
   return (
     <>
-      {!hideTrigger && <button
+      {!hideTrigger && <BeuiButton nativeButton unstyled
         type="button"
         disabled={disabled}
         aria-label={t('openMcpPrompts')}
@@ -153,7 +155,7 @@ export function McpPromptPickerButton({
         className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
       >
         <ScrollText className="size-[17px]" />
-      </button>}
+      </BeuiButton>}
       <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogPortal>
           <DialogOverlay className="!bg-black/40" />
@@ -166,7 +168,7 @@ export function McpPromptPickerButton({
                 {selected ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{selected.serverName}</p> : null}
               </div>
               {selected ? (
-                <button
+                <BeuiButton nativeButton unstyled
                   type="button"
                   onClick={() => { setSelected(null); setArgumentsValue({}); setError(null); }}
                   aria-label={common('back')}
@@ -174,7 +176,7 @@ export function McpPromptPickerButton({
                   className="ui-button-ghost ui-icon-button shrink-0"
                 >
                   <ChevronLeft className="size-4" />
-                </button>
+                </BeuiButton>
               ) : null}
             </header>
             {loading ? (
@@ -196,7 +198,7 @@ export function McpPromptPickerButton({
                           {argument.title ?? argument.name}
                           {argument.required ? <span className="text-destructive">*</span> : null}
                         </span>
-                        <input
+                        <BeuiInput
                           value={argumentsValue[argument.name] ?? ''}
                           onChange={(event) => setArgumentsValue((current) => ({
                             ...current,
@@ -213,20 +215,20 @@ export function McpPromptPickerButton({
                   {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
                 </div>
                 <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
-                  <button type="button" onClick={() => setDialogOpen(false)} className="ui-button-secondary h-8 px-3 text-xs">
+                  <BeuiButton nativeButton unstyled type="button" onClick={() => setDialogOpen(false)} className="ui-button-secondary h-8 px-3 text-xs">
                     {common('cancel')}
-                  </button>
-                  <button type="submit" disabled={resolving} className="ui-button-primary h-8 px-3 text-xs">
+                  </BeuiButton>
+                  <BeuiButton nativeButton unstyled type="submit" disabled={resolving} className="ui-button-primary h-8 px-3 text-xs">
                     {resolving ? <Loader2 className="size-3.5 animate-spin" /> : <ScrollText className="size-3.5" />}
                     {t('insertMcpPrompt')}
-                  </button>
+                  </BeuiButton>
                 </footer>
               </form>
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {error ? <p role="alert" className="px-2 py-2 text-sm text-destructive">{error}</p> : null}
                 {prompts.length ? prompts.map((prompt) => (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     key={`${prompt.deploymentId}:${prompt.name}`}
                     type="button"
                     onClick={() => choosePrompt(prompt)}
@@ -239,7 +241,7 @@ export function McpPromptPickerButton({
                       {prompt.description ? <span className="mt-1 block line-clamp-2 text-xs leading-4 text-muted-foreground">{prompt.description}</span> : null}
                     </span>
                     {prompt.arguments.length ? <span className="shrink-0 text-[11px] text-muted-foreground">{prompt.arguments.length}</span> : null}
-                  </button>
+                  </BeuiButton>
                 )) : (
                   <p className="px-2 py-8 text-center text-sm text-muted-foreground">{t('noMcpPrompts')}</p>
                 )}

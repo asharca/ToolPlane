@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import '@xyflow/react/dist/style.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -109,7 +111,7 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
         </div>
         <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/branch-node:opacity-100 group-focus-within/branch-node:opacity-100">
           {data.role === 'assistant' ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               disabled={data.busy}
               className="nodrag nopan flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
@@ -118,10 +120,10 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
               onClick={(event) => { event.stopPropagation(); data.onStart(data.id); }}
             >
               <Split className="size-3.5" />
-            </button>
+            </BeuiButton>
           ) : null}
           {data.awaitingInput ? (
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               disabled={data.busy}
               className="nodrag nopan flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-destructive"
@@ -130,7 +132,7 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
               onClick={(event) => { event.stopPropagation(); data.onDelete(data.id); }}
             >
               <Trash2 className="size-3.5" />
-            </button>
+            </BeuiButton>
           ) : null}
         </div>
       </div>
@@ -306,13 +308,13 @@ export function ChatBranchPanel({
         </div>
         <div className="flex items-center gap-0.5">
           {canMaximize ? (
-            <button type="button" onClick={onMaximize} aria-label={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} title={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
+            <BeuiButton nativeButton unstyled type="button" onClick={onMaximize} aria-label={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} title={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
               {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-            </button>
+            </BeuiButton>
           ) : null}
-          <button type="button" onClick={onClose} aria-label={common('close')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
+          <BeuiButton nativeButton unstyled type="button" onClick={onClose} aria-label={common('close')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
             <X className="size-4" />
-          </button>
+          </BeuiButton>
         </div>
       </header>
       <div className="relative min-h-0 flex-1">

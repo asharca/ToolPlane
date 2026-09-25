@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { type MouseEvent, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -145,7 +147,7 @@ export function DashboardSidebar({
       }`}>
         <div className="lg:hidden"><DashboardLogo /></div>
         {collapsed ? (
-          <button
+          <BeuiButton nativeButton unstyled
             type="button"
             onClick={onToggleCollapsed}
             aria-controls="dashboard-sidebar"
@@ -166,13 +168,13 @@ export function DashboardSidebar({
             >
               <PanelLeftOpen className="size-[18px]" />
             </span>
-          </button>
+          </BeuiButton>
         ) : (
           <>
             <div className="hidden h-9 w-36 items-center px-1.5 lg:flex">
               <DashboardLogo />
             </div>
-            <button
+            <BeuiButton nativeButton unstyled
               type="button"
               onClick={onToggleCollapsed}
               aria-controls="dashboard-sidebar"
@@ -182,11 +184,11 @@ export function DashboardSidebar({
               className="ui-button-ghost ui-icon-button hidden lg:flex"
             >
               <PanelLeftClose className="size-[18px]" />
-            </button>
+            </BeuiButton>
           </>
         )}
         <div className="lg:hidden">
-          <button
+          <BeuiButton nativeButton unstyled
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
@@ -194,7 +196,7 @@ export function DashboardSidebar({
             className="ui-button-ghost ui-icon-button"
           >
             <X className="size-5" />
-          </button>
+          </BeuiButton>
         </div>
       </div>
 

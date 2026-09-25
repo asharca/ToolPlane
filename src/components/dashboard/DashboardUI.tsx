@@ -11,7 +11,7 @@ import {
   Panel,
   Section,
   Toolbar,
-} from '@asharca/ui';
+} from "@/components/ui";
 
 type Icon = ComponentType<{ className?: string }>;
 

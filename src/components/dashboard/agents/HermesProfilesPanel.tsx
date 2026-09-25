@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useActionState, useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -121,7 +123,7 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
           <h3 className="text-sm font-semibold text-foreground">{t('hermesProfileModels')}</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('hermesProfileModelsDescription')}</p>
         </div>
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           onClick={refresh}
           disabled={loadingProfiles || loadingModels || pending}
@@ -130,15 +132,15 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
           className="ui-button-secondary size-8 shrink-0 px-0"
         >
           <RefreshCw className={`size-3.5 ${loadingProfiles || loadingModels ? 'animate-spin' : ''}`} />
-        </button>
+        </BeuiButton>
       </div>
 
       <form action={action} className="space-y-4">
-        <input type="hidden" name="workspace" value={slug} />
-        <input type="hidden" name="agentId" value={agentId} />
-        <input type="hidden" name="profile" value={profile} />
-        <input type="hidden" name="provider" value={selection?.providerId ?? ''} />
-        <input type="hidden" name="model" value={selection?.model ?? ''} />
+        <BeuiInput type="hidden" name="workspace" value={slug} />
+        <BeuiInput type="hidden" name="agentId" value={agentId} />
+        <BeuiInput type="hidden" name="profile" value={profile} />
+        <BeuiInput type="hidden" name="provider" value={selection?.providerId ?? ''} />
+        <BeuiInput type="hidden" name="model" value={selection?.model ?? ''} />
 
         <label className="block space-y-1.5 text-sm font-medium text-foreground">
           {t('hermesProfile')}
@@ -166,10 +168,10 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
             pending={loadingModels}
             onSelect={setSelection}
             trigger={(
-              <button type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={loadingModels || pending || profileChatSupported !== true}>
+              <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={loadingModels || pending || profileChatSupported !== true}>
                 <span className="truncate">{selection?.model ?? current?.model ?? t('selectModel')}</span>
                 {loadingModels ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
-              </button>
+              </BeuiButton>
             )}
           />
           {current?.description ? <p className="text-xs text-muted-foreground">{current.description}</p> : null}
@@ -183,10 +185,10 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
         {state.savedAt ? <p role="status" className="text-xs text-emerald-700 dark:text-emerald-300">{t('hermesProfileModelSaved')}</p> : null}
 
         <div className="flex justify-end border-t border-border pt-4">
-          <button type="submit" className="ui-button-primary gap-2" disabled={!selection || loadingModels || pending || profileChatSupported !== true}>
+          <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary gap-2" disabled={!selection || loadingModels || pending || profileChatSupported !== true}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
             {t('save')}
-          </button>
+          </BeuiButton>
         </div>
       </form>
     </div>

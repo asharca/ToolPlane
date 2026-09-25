@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput } from '@/components/ui/Controls';
 import type { ComponentType, ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
@@ -12,7 +14,7 @@ import {
   Pagination,
   Section,
   type FeedbackTone,
-} from '@asharca/ui';
+} from "@/components/ui";
 
 type Icon = ComponentType<{ className?: string }>;
 
@@ -71,7 +73,7 @@ export function AdminSearchForm({
 
   return (
     <form className="flex w-full flex-wrap items-center gap-2">
-      {Object.entries(hidden).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
+      {Object.entries(hidden).map(([name, value]) => <BeuiInput key={name} type="hidden" name={name} value={value} />)}
       <div className="relative min-w-0 flex-1 sm:max-w-md">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input

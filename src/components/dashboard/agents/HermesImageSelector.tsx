@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -48,7 +50,7 @@ export function HermesImageSelector({
 
   return (
     <div className="space-y-2">
-      <input type="hidden" name={name} value={selectedImage} />
+      <BeuiInput type="hidden" name={name} value={selectedImage} />
       <label className="block">
         <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesVersion')}</span>
         <NativeSelect
@@ -75,7 +77,7 @@ export function HermesImageSelector({
       {selectedOption === CUSTOM_IMAGE_OPTION ? (
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesCustomImage')}</span>
-          <input
+          <BeuiInput
             id={`${id}-custom`}
             value={customImage}
             onChange={(event) => {

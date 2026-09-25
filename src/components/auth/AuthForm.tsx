@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useActionState } from 'react';
@@ -14,13 +16,13 @@ function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
   const t = useTranslations('auth');
   return (
-    <button
+    <BeuiButton nativeButton unstyled
       type="submit"
       disabled={pending}
       className="ui-button-primary h-10 w-full"
     >
       {pending ? t('pending') : label}
-    </button>
+    </BeuiButton>
   );
 }
 
@@ -50,8 +52,8 @@ export function AuthForm({
         </p>
 
         <form action={formAction} className="space-y-4">
-          {next ? <input type="hidden" name="next" value={next} /> : null}
-          <input
+          {next ? <BeuiInput type="hidden" name="next" value={next} /> : null}
+          <BeuiInput
             type="hidden"
             name="detectedTimeZone"
             value={detectedTimeZone ?? ''}
@@ -61,7 +63,7 @@ export function AuthForm({
               <label htmlFor="name" className="text-sm font-medium text-foreground">
                 {t('name')}
               </label>
-              <input
+              <BeuiInput
                 id="name"
                 name="name"
                 type="text"
@@ -75,7 +77,7 @@ export function AuthForm({
             <label htmlFor="email" className="text-sm font-medium text-foreground">
               {t('email')}
             </label>
-            <input
+            <BeuiInput
               id="email"
               name="email"
               type="email"
@@ -99,7 +101,7 @@ export function AuthForm({
                 </Link>
               ) : null}
             </div>
-            <input
+            <BeuiInput
               id="password"
               name="password"
               type="password"

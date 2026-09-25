@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -33,14 +35,14 @@ export function ReadyToConnectBanner({
       </div>
       <div className="flex items-center gap-2">
         <ConnectDialog endpoint={endpoint} name={name} variant="banner" />
-        <button
+        <BeuiButton nativeButton unstyled
           type="button"
           aria-label={t('dismiss')}
           onClick={() => setDismissed(true)}
           className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sky-100 hover:text-foreground dark:hover:bg-sky-500/20"
         >
           <X className="size-4" />
-        </button>
+        </BeuiButton>
       </div>
     </div>
   );

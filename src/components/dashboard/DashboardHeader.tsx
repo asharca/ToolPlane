@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { BreadcrumbItem, Breadcrumbs } from '@asharca/ui';
+import { BreadcrumbItem, Breadcrumbs } from "@/components/ui";
 
 export type Crumb = { label: string; href?: string };
 

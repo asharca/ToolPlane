@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import {
   Dialog,
@@ -46,7 +48,7 @@ export function SidebarGroupDialog({
             <DialogTitle>{title}</DialogTitle>
             <label className="block text-sm font-medium">
               {nameLabel}
-              <input
+              <BeuiInput
                 autoFocus
                 aria-label={nameLabel}
                 className="ui-input mt-1 w-full"
@@ -58,8 +60,8 @@ export function SidebarGroupDialog({
               />
             </label>
             <div className="flex justify-end gap-2">
-              <button type="button" className="ui-button-secondary h-9 px-3" onClick={onClose}>{cancelLabel}</button>
-              <button type="submit" className="ui-button-primary h-9 px-3">{submitLabel}</button>
+              <BeuiButton nativeButton unstyled type="button" className="ui-button-secondary h-9 px-3" onClick={onClose}>{cancelLabel}</BeuiButton>
+              <BeuiButton nativeButton unstyled type="submit" className="ui-button-primary h-9 px-3">{submitLabel}</BeuiButton>
             </div>
           </form>
         </DialogContent>

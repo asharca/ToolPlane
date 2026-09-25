@@ -1,31 +1,9 @@
-# 共享 UI 与 CI
+# UI 组件库
 
-> **English**: [UI_LIBRARY.md](./UI_LIBRARY.md)
+本轮按用户明确选择迁移到 https://asharca.github.io/ui/llms.txt 的源码组件目录，不再使用旧 `@asharca/ui@0.2.1` npm 包。
 
-共享 UI 库维护在 https://github.com/asharca/ui，以 `@asharca/ui` 发布到 npm。ToolPlane
-像其他应用一样消费其发布版本。路由、鉴权、API 客户端和业务适配层保留在 ToolPlane。
+源码固定提交、文件哈希和适配说明见 `src/components/ui/beui/provenance.json`。所有应用按钮、输入、选择框和表格通过 `src/components/ui/Controls.tsx`；弹窗和浮层采用统一 beUI 外观，保留 Radix 的焦点、键盘及嵌套关闭机制。原生表单事件、FormData、重置、校验、文件上传和拖放不能因为视觉替换而改变。
 
-## 更新 UI
+`compositions` 是明确保留来源及许可证的应用组合层，用于维持 assistant-ui 消息流和导航等接口，不冒充新版 registry 的组件。主视觉在统一主题和 `beui-overrides.css` 维护。没有复制旧包名的别名，没有修改业务权限和数据库。
 
-组件或样式改动在 `asharca/ui` 中进行，跑它的检查并合并 PR，再使用该仓库自己的发布工作流发布新包版本。
-ToolPlane 不再拥有 UI 源码或其 npm 发布权。
-
-在 ToolPlane PR 中更新应用：
-
-```bash
-pnpm add @asharca/ui@X.Y.Z --save-exact
-```
-
-升级前检查该版本的 React 和 assistant-ui peer 要求。保留全局样式表中现有的
-`@asharca/ui/styles.css` 导入。重新构建并部署 ToolPlane 以采用包里的组件和样式变更。
-
-## CI 与合并
-
-普通 PR（包括堆叠 PR）运行完整的 [`ci.yml`](../.github/workflows/ci.yml)，也可手动触发。该工作流没有 `push` 触发器，因此合并进 `main` 不会重复运行完整 CI。
-
-同仓库中以 `release-please--branches--` 开头的发布分支是例外：`pull_request_target` 校验变更文件只有 `.release-please-manifest.json`、`CHANGELOG.md` 和 `package.json`，通过后提供 Connector 校验结果；这种纯元数据 PR 不重新执行应用或 Connector 测试。参见[发布](./RELEASES.zh-CN.md)。
-
-工作流提供的检查名称为 `validate`、`connector (ubuntu-latest)`、`connector (macos-latest)` 和 `connector (windows-latest)`。分支保护、必需的 review、管理员绕过权限，以及直接推送或删除限制，都在 GitHub 仓库规则中单独配置，不能仅凭工作流文件断言这些策略已启用或生效。
-
-UI 发布在其自己的仓库中校验 UI 版本。ToolPlane 的 `release-please.yml` 应用发布流程和
-`vX.Y.Z` tag 与此独立；普通功能合并不会发布新的 UI 包。
+验收包含新增组件契约测试和已有全量功能回归、类型检查、Lint、生产构建及运行产物验证。浏览器、真实模型与外部服务未执行时必须另行标注，不能把替身测试称为真实端到端通过。

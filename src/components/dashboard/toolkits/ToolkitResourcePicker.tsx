@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -175,7 +177,7 @@ export function ToolkitResourcePicker({
       <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
+            <BeuiInput
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={kind === 'mcp' ? t('searchAvailableMcp') : t('searchAvailableSkills')}
@@ -198,21 +200,21 @@ export function ToolkitResourcePicker({
             </div>
           ) : null}
           {hasFilters ? (
-            <button type="button" onClick={clearFilters} className="ui-button-ghost h-9 shrink-0">
+            <BeuiButton nativeButton unstyled type="button" onClick={clearFilters} className="ui-button-ghost h-9 shrink-0">
               <X className="size-4" />
               {t('clearFilters')}
-            </button>
+            </BeuiButton>
           ) : null}
       </div>
 
       <form action={formAction}>
-        <input type="hidden" name="workspace" value={workspaceSlug} />
-        <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-        {[...activeSelected].map((id) => <input key={id} type="hidden" name="resourceId" value={id} />)}
+        <BeuiInput type="hidden" name="workspace" value={workspaceSlug} />
+        <BeuiInput type="hidden" name="toolkitSlug" value={toolkitSlug} />
+        {[...activeSelected].map((id) => <BeuiInput key={id} type="hidden" name="resourceId" value={id} />)}
         <div className="flex flex-wrap items-center justify-between gap-2 border-y border-border bg-muted/35 px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-3">
             <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-              <input
+              <BeuiInput
                 ref={selectAllRef}
                 type="checkbox"
                 checked={allFilteredSelected}
@@ -226,9 +228,9 @@ export function ToolkitResourcePicker({
               {t('selectedResources', { count: activeSelected.size })}
             </span>
             {activeSelected.size > 0 ? (
-              <button type="button" onClick={() => setSelected(new Set())} className="text-xs font-medium text-muted-foreground hover:text-foreground">
+              <BeuiButton nativeButton unstyled type="button" onClick={() => setSelected(new Set())} className="text-xs font-medium text-muted-foreground hover:text-foreground">
                 {t('clearSelection')}
-              </button>
+              </BeuiButton>
             ) : null}
             {!allFilteredSelected && selectingAllWouldExceedLimit ? (
               <span className="text-xs text-amber-700 dark:text-amber-300">
@@ -236,10 +238,10 @@ export function ToolkitResourcePicker({
               </span>
             ) : null}
           </div>
-          <button type="submit" disabled={activeSelected.size === 0 || isPending} className="ui-button-primary ui-button-sm disabled:cursor-not-allowed disabled:opacity-50">
+          <BeuiButton nativeButton unstyled type="submit" disabled={activeSelected.size === 0 || isPending} className="ui-button-primary ui-button-sm disabled:cursor-not-allowed disabled:opacity-50">
             <Plus className="size-3.5" />
             {isPending ? t('addingSelected') : t('addSelected', { count: activeSelected.size })}
-          </button>
+          </BeuiButton>
         </div>
 
         {state.error ? <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300" role="alert">{state.error}</p> : null}
@@ -253,9 +255,9 @@ export function ToolkitResourcePicker({
       {filteredItems.length === 0 ? (
         <div className="px-4 py-10 text-center">
           <p className="text-sm text-muted-foreground">{t('noResourcesMatchFilters')}</p>
-          <button type="button" onClick={clearFilters} className="ui-button-ghost ui-button-sm mt-2">
+          <BeuiButton nativeButton unstyled type="button" onClick={clearFilters} className="ui-button-ghost ui-button-sm mt-2">
             {t('clearFilters')}
-          </button>
+          </BeuiButton>
         </div>
       ) : (
         <>
@@ -274,7 +276,7 @@ export function ToolkitResourcePicker({
               return (
                 <li key={item.id}>
                   <label className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/50 ${isSelected ? 'bg-muted' : ''}`}>
-                    <input
+                    <BeuiInput
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleItem(item.id)}

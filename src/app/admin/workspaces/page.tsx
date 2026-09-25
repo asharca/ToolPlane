@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Select as BeuiSelect } from '@/components/ui/Controls';
 import { Building2 } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -76,10 +78,10 @@ export default async function AdminWorkspacesPage({
         clearLabel={t('clear')}
         clearHref="/admin/workspaces"
       >
-        <input name="owner" defaultValue={owner} aria-label={ops('ownerFilter')} placeholder={ops('ownerFilter')} maxLength={200} className="ui-input h-11 w-full sm:h-9 sm:w-56" />
-        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
+        <BeuiInput name="owner" defaultValue={owner} aria-label={ops('ownerFilter')} placeholder={ops('ownerFilter')} maxLength={200} className="ui-input h-11 w-full sm:h-9 sm:w-56" />
+        <BeuiSelect name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
           <option value="">{ops('allStatuses')}</option>{(['active', 'deleting', 'delete_failed'] as const).map((value) => <option key={value} value={value}>{ops(value)}</option>)}
-        </select>
+        </BeuiSelect>
       </AdminSearchForm>
 
       {items.length === 0 ? (

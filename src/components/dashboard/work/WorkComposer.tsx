@@ -1,4 +1,6 @@
 'use client';
+import { Button as BeuiButton, Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
@@ -255,24 +257,24 @@ export function WorkComposer({
       onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setPanel(null); }}>
       {menuOpen && panel ? <div id={menuId} data-ui="composer.menu" className="absolute inset-x-0 bottom-full z-30 mb-2 flex max-h-[min(24rem,50dvh)] flex-col overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg">
         <header className="flex shrink-0 items-center gap-2 px-2 py-1.5">
-          {panel.view !== 'root' ? <button type="button" aria-label={common('back')} title={common('back')} className="ui-button-ghost ui-icon-button" onClick={() => setPanel({ ...panel, view: 'root', query: '', index: 0 })}><ChevronLeft className="size-4" /></button> : <Plus className="size-4 text-muted-foreground" />}
-          {panel.source === 'button' ? <input ref={searchRef} value={panel.query} onChange={(event) => setPanel({ ...panel, query: event.target.value, index: 0 })} onKeyDown={keyDown} role="combobox" aria-expanded aria-controls={`${menuId}-list`} aria-activedescendant={options.length ? `${menuId}-${activeIndex}` : undefined} aria-label={t('search')} placeholder={t('search')} className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none" /> : <span className="text-xs font-medium text-muted-foreground">{t(panel.view === 'root' ? 'tools' : 'references')}</span>}
+          {panel.view !== 'root' ? <BeuiButton nativeButton unstyled type="button" aria-label={common('back')} title={common('back')} className="ui-button-ghost ui-icon-button" onClick={() => setPanel({ ...panel, view: 'root', query: '', index: 0 })}><ChevronLeft className="size-4" /></BeuiButton> : <Plus className="size-4 text-muted-foreground" />}
+          {panel.source === 'button' ? <BeuiInput ref={searchRef} value={panel.query} onChange={(event) => setPanel({ ...panel, query: event.target.value, index: 0 })} onKeyDown={keyDown} role="combobox" aria-expanded aria-controls={`${menuId}-list`} aria-activedescendant={options.length ? `${menuId}-${activeIndex}` : undefined} aria-label={t('search')} placeholder={t('search')} className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none" /> : <span className="text-xs font-medium text-muted-foreground">{t(panel.view === 'root' ? 'tools' : 'references')}</span>}
           {loading ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : <Search className="ml-auto size-3.5 text-muted-foreground" />}
         </header>
         <div role="listbox" id={`${menuId}-list`} aria-label={t(panel.view === 'root' ? 'tools' : panel.view)} className="min-h-0 overflow-y-auto">
           {options.map(({ id, label, description, icon: Icon, disabled: unavailable, group }, index) => <div key={id} role="presentation">
             {group && group !== options[index - 1]?.group ? <div role="presentation" className="px-3 py-1 text-[11px] font-medium text-muted-foreground">{group}</div> : null}
-            <button id={`${menuId}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={index === activeIndex} aria-disabled={unavailable} disabled={unavailable}
+            <BeuiButton nativeButton unstyled id={`${menuId}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={index === activeIndex} aria-disabled={unavailable} disabled={unavailable}
               onMouseDown={(event) => event.preventDefault()} onPointerMove={() => setPanel({ ...panel, index })} onClick={() => activateOption(options[index])}
               className={`flex min-h-10 w-full items-center gap-3 rounded-md px-3 py-2 text-left disabled:opacity-40 ${index === activeIndex ? 'bg-muted' : 'hover:bg-muted/60'}`}>
               <Icon className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1"><span className="block break-words text-sm">{label}</span>{description ? <span className="block truncate text-xs text-muted-foreground">{description}</span> : null}</span>
               {['resources', 'skills', 'prompts', 'mcp-prompts'].includes(id) ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" /> : null}
-            </button>
+            </BeuiButton>
           </div>)}
           {!loading && !options.length ? <p className="px-3 py-6 text-center text-xs text-muted-foreground">{loaded.key === requestKey && loaded.error ? loaded.error : t('empty')}</p> : null}
         </div>
         {section === 'references' && loaded.key === requestKey && loaded.filesUnavailable ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{t('filesUnavailable')}</p> : null}
-        {panel.view === 'root' ? <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { consumeTrigger(); setPanel(null); setCustomizing(true); }} className="mt-1 flex shrink-0 items-center gap-3 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted"><SlidersHorizontal className="size-4" />{t('customizeToolbar')}</button> : null}
+        {panel.view === 'root' ? <BeuiButton nativeButton unstyled type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { consumeTrigger(); setPanel(null); setCustomizing(true); }} className="mt-1 flex shrink-0 items-center gap-3 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted"><SlidersHorizontal className="size-4" />{t('customizeToolbar')}</BeuiButton> : null}
       </div> : null}
       <ConversationComposerExpand expanded={expanded} onToggle={toggle} />
       {waitingQuestion ? <p className="px-[15px] pb-2 pt-1 text-xs font-medium">{waitingQuestion}</p> : null}
@@ -281,17 +283,17 @@ export function WorkComposer({
         {references.map((reference, index) => { const Icon = referenceIcon[reference.kind]; return <ConversationAttachmentChip key={`${reference.kind}:${reference.deploymentId ?? ''}:${reference.id}`} name={reference.label} thumbnail={<Icon className="size-3.5 text-muted-foreground" />} removeButton={<ConversationAttachmentRemoveButton label={t('removeReference', { name: reference.label })} onClick={() => onReferencesChange(references.filter((_, position) => position !== index))} />} />; })}
         {resolving ? <Loader2 aria-label={common('loading')} className="my-1 size-4 animate-spin text-muted-foreground" /> : null}
       </div> : null}
-      <textarea ref={inputRef} value={draft} role="combobox" aria-label={workT('taskPlaceholder')} aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={menuOpen} aria-controls={menuOpen ? `${menuId}-list` : undefined} aria-activedescendant={menuOpen && options.length ? `${menuId}-${activeIndex}` : undefined}
+      <BeuiTextarea ref={inputRef} value={draft} role="combobox" aria-label={workT('taskPlaceholder')} aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={menuOpen} aria-controls={menuOpen ? `${menuId}-list` : undefined} aria-activedescendant={menuOpen && options.length ? `${menuId}-${activeIndex}` : undefined}
         readOnly={resolving} maxLength={20_000} onChange={(event) => { onDraftChange(event.target.value); updateTrigger(event.target); }} onKeyDown={keyDown}
         onSelect={(event) => { if (panel?.source !== 'button' && panel && !composerTrigger(draft, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)) setPanel(null); }}
         placeholder={t('hint')} rows={minRows} className={conversationComposerInputClassName(expanded)} />
-      <input ref={fileRef} type="file" multiple hidden onChange={(event) => { const files = [...attachments, ...Array.from(event.target.files ?? [])]; if (files.length > 5) onError(agentsT('attachmentLimitReached', { count: 5 })); onAttachmentsChange(files.slice(0, 5)); event.target.value = ''; focusInput(); }} />
+      <BeuiInput ref={fileRef} type="file" multiple hidden onChange={(event) => { const files = [...attachments, ...Array.from(event.target.files ?? [])]; if (files.length > 5) onError(agentsT('attachmentLimitReached', { count: 5 })); onAttachmentsChange(files.slice(0, 5)); event.target.value = ''; focusInput(); }} />
       <div data-ui="part:composer-actions" data-composer-toolbar="" className={conversationComposerToolbarClassName}>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
-          <button type="button" disabled={disabled || resolving} aria-label={agentsT('openComposerTools')} title={agentsT('openComposerTools')} aria-haspopup="listbox" aria-expanded={menuOpen && panel?.view === 'root'}
+          <BeuiButton nativeButton unstyled type="button" disabled={disabled || resolving} aria-label={agentsT('openComposerTools')} title={agentsT('openComposerTools')} aria-haspopup="listbox" aria-expanded={menuOpen && panel?.view === 'root'}
             onClick={() => { const start = inputRef.current?.selectionStart ?? draft.length; setPanel(menuOpen ? null : { source: 'button', view: 'root', query: '', start, end: inputRef.current?.selectionEnd ?? start, index: 0 }); }}
-            className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="size-[18px]" /></button>
-          {pinnedOptions.map((option) => { const Icon = option.icon; return <button key={option.id} type="button" data-composer-shortcut={option.id} disabled={disabled || resolving || option.disabled} aria-label={option.label} title={option.label} onClick={() => activateOption(option)} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Icon className="size-[17px]" /></button>; })}
+            className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="size-[18px]" /></BeuiButton>
+          {pinnedOptions.map((option) => { const Icon = option.icon; return <BeuiButton nativeButton unstyled key={option.id} type="button" data-composer-shortcut={option.id} disabled={disabled || resolving || option.disabled} aria-label={option.label} title={option.label} onClick={() => activateOption(option)} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Icon className="size-[17px]" /></BeuiButton>; })}
           {toolbarStart}
         </div>
         <div className="flex shrink-0 items-center gap-2">{toolbarEnd}</div>
@@ -301,19 +303,19 @@ export function WorkComposer({
     {agentId && promptsOpen ? <ComposerPromptManager agentId={agentId} onClose={() => { setPromptsOpen(false); focusInput(); }} onInsert={insertText} /> : null}
     <Dialog open={customizing} onOpenChange={(open) => { setCustomizing(open); if (!open) focusInput(); }}>
       <DialogPortal><DialogOverlay /><DialogContent aria-describedby={undefined} className="!max-h-[calc(100dvh-2rem)] !max-w-md !overflow-y-auto !rounded-lg">
-        <header className="flex items-center justify-between gap-3"><DialogTitle className="!text-base !tracking-normal">{t('customizeToolbar')}</DialogTitle><DialogClose asChild><button type="button" aria-label={common('close')} title={common('close')} className="ui-button-ghost ui-icon-button"><X className="size-4" /></button></DialogClose></header>
+        <header className="flex items-center justify-between gap-3"><DialogTitle className="!text-base !tracking-normal">{t('customizeToolbar')}</DialogTitle><DialogClose asChild><BeuiButton nativeButton unstyled type="button" aria-label={common('close')} title={common('close')} className="ui-button-ghost ui-icon-button"><X className="size-4" /></BeuiButton></DialogClose></header>
         <div className="mt-3 divide-y divide-border">
           {[...pinnedOptions, ...rootOptions.filter((option) => !pinnedIds.includes(option.id))].map((option) => {
             const index = pinnedIds.indexOf(option.id);
             const Icon = option.icon;
             return <div key={option.id} draggable={index >= 0} onDragStart={(event) => { event.dataTransfer.setData('text/plain', option.id); event.dataTransfer.effectAllowed = 'move'; }} onDragOver={(event) => { if (index >= 0) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); const from = pinnedIds.indexOf(event.dataTransfer.getData('text/plain')); if (from >= 0 && index >= 0) moveShortcut(from, index - from); }} className="flex min-h-11 items-center gap-2 py-1">
               <GripVertical aria-hidden className={`size-4 shrink-0 ${index >= 0 ? 'cursor-grab text-muted-foreground' : 'invisible'}`} />
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-sm"><input type="checkbox" checked={index >= 0} onChange={(event) => saveToolbar(event.target.checked ? [...pinnedIds, option.id] : pinnedIds.filter((id) => id !== option.id))} className="accent-brand" /><Icon className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{option.label}</span></label>
-              {index >= 0 ? <><button type="button" disabled={index === 0} aria-label={t('moveShortcutUp', { name: option.label })} title={t('moveShortcutUp', { name: option.label })} onClick={() => moveShortcut(index, -1)} className="ui-button-ghost ui-icon-button"><ArrowUp className="size-3.5" /></button><button type="button" disabled={index === pinnedIds.length - 1} aria-label={t('moveShortcutDown', { name: option.label })} title={t('moveShortcutDown', { name: option.label })} onClick={() => moveShortcut(index, 1)} className="ui-button-ghost ui-icon-button"><ArrowDown className="size-3.5" /></button></> : null}
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-sm"><BeuiInput type="checkbox" checked={index >= 0} onChange={(event) => saveToolbar(event.target.checked ? [...pinnedIds, option.id] : pinnedIds.filter((id) => id !== option.id))} className="accent-brand" /><Icon className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{option.label}</span></label>
+              {index >= 0 ? <><BeuiButton nativeButton unstyled type="button" disabled={index === 0} aria-label={t('moveShortcutUp', { name: option.label })} title={t('moveShortcutUp', { name: option.label })} onClick={() => moveShortcut(index, -1)} className="ui-button-ghost ui-icon-button"><ArrowUp className="size-3.5" /></BeuiButton><BeuiButton nativeButton unstyled type="button" disabled={index === pinnedIds.length - 1} aria-label={t('moveShortcutDown', { name: option.label })} title={t('moveShortcutDown', { name: option.label })} onClick={() => moveShortcut(index, 1)} className="ui-button-ghost ui-icon-button"><ArrowDown className="size-3.5" /></BeuiButton></> : null}
             </div>;
           })}
         </div>
-        <footer className="mt-3 flex justify-end border-t border-border pt-3"><button type="button" disabled={!pinnedIds.length} onClick={() => saveToolbar([])} className="ui-button-secondary text-xs"><RotateCcw className="size-3.5" />{t('resetToolbar')}</button></footer>
+        <footer className="mt-3 flex justify-end border-t border-border pt-3"><BeuiButton nativeButton unstyled type="button" disabled={!pinnedIds.length} onClick={() => saveToolbar([])} className="ui-button-secondary text-xs"><RotateCcw className="size-3.5" />{t('resetToolbar')}</BeuiButton></footer>
       </DialogContent></DialogPortal>
     </Dialog>
   </>;

@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { useActionState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -64,11 +66,11 @@ function MarketPublishForm({
         <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
       </summary>
       <form action={action} className="mt-4 grid gap-3 rounded-lg bg-muted/35 p-4 sm:grid-cols-2">
-        <input type="hidden" name="workspace" value={workspace} />
-        <input type="hidden" name={sourceField} value={resource.id} />
+        <BeuiInput type="hidden" name="workspace" value={workspace} />
+        <BeuiInput type="hidden" name={sourceField} value={resource.id} />
         <label className="text-xs font-medium text-foreground">
           {t('listingName')}
-          <input
+          <BeuiInput
             name="name"
             required
             maxLength={240}
@@ -81,7 +83,7 @@ function MarketPublishForm({
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
             {categories.map((category) => (
               <label key={category.id} className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                <input
+                <BeuiInput
                   type="checkbox"
                   name="categoryIds"
                   value={category.id}
@@ -95,7 +97,7 @@ function MarketPublishForm({
         </fieldset>
         <label className="text-xs font-medium text-foreground">
           {t('listingSlug')}
-          <input
+          <BeuiInput
             name="slug"
             required
             maxLength={100}
@@ -105,7 +107,7 @@ function MarketPublishForm({
         </label>
         <label className="text-xs font-medium text-foreground sm:col-span-2">
           {t('listingSummary')}
-          <textarea
+          <BeuiTextarea
             name="summary"
             required
             maxLength={4000}
@@ -116,7 +118,7 @@ function MarketPublishForm({
         </label>
         <label className="text-xs font-medium text-foreground">
           {t('listingTags')}
-          <input
+          <BeuiInput
             name="tags"
             maxLength={400}
             defaultValue={listing?.tags.join(', ') ?? ''}
@@ -126,7 +128,7 @@ function MarketPublishForm({
         </label>
         <label className="text-xs font-medium text-foreground">
           {t('releaseNotes')}
-          <input
+          <BeuiInput
             name="releaseNotes"
             maxLength={10000}
             placeholder={t('releaseNotesPlaceholder')}

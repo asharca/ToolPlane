@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Textarea as BeuiTextarea } from '@/components/ui/Controls';
+
 
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -32,15 +34,15 @@ function ReviewActionForm({
 
   return (
     <form action={formAction} className="space-y-3">
-      <input type="hidden" name="listingId" value={listingId} />
-      <input type="hidden" name="releaseId" value={releaseId} />
+      <BeuiInput type="hidden" name="listingId" value={listingId} />
+      <BeuiInput type="hidden" name="releaseId" value={releaseId} />
       {approving ? (
         <fieldset>
           <legend className="text-xs font-semibold text-muted-foreground">{t('categories')}</legend>
           <div className="mt-2 grid max-h-48 gap-1 overflow-y-auto">
             {categories.map((category) => (
               <label key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
-                <input
+                <BeuiInput
                   type="checkbox"
                   name="categoryIds"
                   value={category.id}
@@ -56,7 +58,7 @@ function ReviewActionForm({
       <label htmlFor={noteId} className="block text-sm font-medium text-foreground">
         {t('agentReviewNote')}
       </label>
-      <textarea
+      <BeuiTextarea
         id={noteId}
         name="reviewNote"
         rows={3}
@@ -66,7 +68,7 @@ function ReviewActionForm({
       />
       {approving ? (
         <label className="flex items-start gap-2 rounded-md border border-border bg-background/70 p-3 text-xs leading-5 text-foreground">
-          <input
+          <BeuiInput
             type="checkbox"
             name="reviewConfirmed"
             value="yes"

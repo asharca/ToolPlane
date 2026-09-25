@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import {
   useDeferredValue,
@@ -154,7 +156,7 @@ export function AgentResourceSelect({
       </legend>
 
       {[...activeSelected].map((id) => (
-        <input key={id} type="hidden" name={name} value={id} />
+        <BeuiInput key={id} type="hidden" name={name} value={id} />
       ))}
 
       {options.length === 0 ? (
@@ -164,7 +166,7 @@ export function AgentResourceSelect({
           <div className="space-y-2 border-b border-border px-3 pb-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <BeuiInput
                 type="search"
                 value={query}
                 onChange={(event) => {
@@ -218,7 +220,7 @@ export function AgentResourceSelect({
                   </NativeSelect>
                 ) : null}
                 {hasFilters ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={clearFilters}
                     aria-label={t('clearFilters')}
@@ -226,7 +228,7 @@ export function AgentResourceSelect({
                     className="ui-button-ghost size-9 shrink-0 p-0"
                   >
                     <X className="size-4" />
-                  </button>
+                  </BeuiButton>
                 ) : null}
               </div>
             ) : null}
@@ -235,7 +237,7 @@ export function AgentResourceSelect({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-background/60 px-3 py-2.5">
             {selectionMode === 'multiple' ? (
               <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
-                <input
+                <BeuiInput
                   ref={selectAllRef}
                   type="checkbox"
                   checked={allFilteredSelected}
@@ -253,13 +255,13 @@ export function AgentResourceSelect({
               {t('selectedResources', { count: activeSelected.size })}
             </span>
             {selectionMode === 'multiple' && activeSelected.size > 0 ? (
-              <button
+              <BeuiButton nativeButton unstyled
                 type="button"
                 onClick={() => onSelectionChange(new Set())}
                 className="text-xs font-medium text-muted-foreground hover:text-foreground"
               >
                 {t('clearSelection')}
-              </button>
+              </BeuiButton>
             ) : null}
           </div>
 
@@ -267,9 +269,9 @@ export function AgentResourceSelect({
             <div className="px-3 py-6 text-center">
               <p className="text-sm text-muted-foreground">{t('noResourcesMatchFilters')}</p>
               {hasFilters ? (
-                <button type="button" onClick={clearFilters} className="ui-button-ghost mt-2 h-8 px-2 text-xs">
+                <BeuiButton nativeButton unstyled type="button" onClick={clearFilters} className="ui-button-ghost mt-2 h-8 px-2 text-xs">
                   {t('clearFilters')}
-                </button>
+                </BeuiButton>
               ) : null}
             </div>
           ) : (
@@ -287,7 +289,7 @@ export function AgentResourceSelect({
                       key={option.id}
                       className={`flex min-h-10 cursor-pointer items-start gap-2.5 border-b border-border/60 px-3 py-2 text-sm transition-colors last:border-b-0 hover:bg-background ${isSelected ? 'bg-background' : ''}`}
                     >
-                      <input
+                      <BeuiInput
                         type={selectionMode === 'single-required' ? 'radio' : 'checkbox'}
                         checked={isSelected}
                         onChange={(event) => {

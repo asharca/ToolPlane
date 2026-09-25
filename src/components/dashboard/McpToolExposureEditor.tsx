@@ -1,4 +1,6 @@
 'use client';
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
+
 
 import { useActionState, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -100,9 +102,9 @@ export function McpToolExposureEditor({
 
   return (
     <form action={formAction} className="max-w-4xl">
-      <input type="hidden" name="workspace" value={workspace} />
-      <input type="hidden" name="deploymentId" value={deploymentId} />
-      <input type="hidden" name="revision" value={revision} />
+      <BeuiInput type="hidden" name="workspace" value={workspace} />
+      <BeuiInput type="hidden" name="deploymentId" value={deploymentId} />
+      <BeuiInput type="hidden" name="revision" value={revision} />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
@@ -114,14 +116,14 @@ export function McpToolExposureEditor({
             </p>
           </div>
         </div>
-        <button
+        <BeuiButton nativeButton unstyled
           type="submit"
           disabled={isPending}
           className="ui-button-primary ui-button-sm disabled:cursor-wait disabled:opacity-70"
         >
           <Save className="size-3.5" />
           {isPending ? t('savingToolExposure') : t('saveToolExposure')}
-        </button>
+        </BeuiButton>
       </div>
 
       <fieldset disabled={isPending} className="mt-4">
@@ -141,7 +143,7 @@ export function McpToolExposureEditor({
                     : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
                 }`}
               >
-                <input
+                <BeuiInput
                   type="radio"
                   name="mode"
                   value={value}
@@ -164,7 +166,7 @@ export function McpToolExposureEditor({
               </span>
               <div className="flex items-center gap-3">
                 {entries.length > 0 ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => {
                       setSelected(new Set(
@@ -175,10 +177,10 @@ export function McpToolExposureEditor({
                     className="ui-button-ghost ui-button-sm"
                   >
                     {t('selectAllTools')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
                 {selected.size > 0 ? (
-                  <button
+                  <BeuiButton nativeButton unstyled
                     type="button"
                     onClick={() => {
                       setSelected(new Set());
@@ -187,7 +189,7 @@ export function McpToolExposureEditor({
                     className="ui-button-ghost ui-button-sm"
                   >
                     {t('clearToolSelection')}
-                  </button>
+                  </BeuiButton>
                 ) : null}
               </div>
             </div>
@@ -197,7 +199,7 @@ export function McpToolExposureEditor({
                 {entries.map((tool) => (
                   <li key={tool.name}>
                     <label className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/30">
-                      <input
+                      <BeuiInput
                         type="checkbox"
                         name="toolName"
                         value={tool.name}
@@ -239,7 +241,7 @@ export function McpToolExposureEditor({
       </fieldset>
 
       <label className="mt-4 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-        <input
+        <BeuiInput
           type="checkbox"
           name="publicInvocable"
           defaultChecked={initialPublicInvocable}

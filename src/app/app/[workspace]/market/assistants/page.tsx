@@ -1,3 +1,5 @@
+
+import { Input as BeuiInput, Button as BeuiButton } from '@/components/ui/Controls';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -82,18 +84,18 @@ export default async function AssistantMarketPage({
       </div>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
-        <input type="hidden" name="category" value={category} />
+        <BeuiInput type="hidden" name="category" value={category} />
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">{t('searchAssistants')}</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchAssistants')} className="ui-input ui-input-icon h-10 w-full" />
+          <BeuiInput name="q" defaultValue={q} placeholder={t('searchAssistants')} className="ui-input ui-input-icon h-10 w-full" />
         </label>
         <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortResources')} className="ui-input h-10 sm:w-40">
           <option value="popular">{t('sortPopular')}</option>
           <option value="newest">{t('sortNewest')}</option>
           <option value="name">{t('sortName')}</option>
         </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
+        <BeuiButton nativeButton unstyled className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</BeuiButton>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
