@@ -1,0 +1,39 @@
+/* App adapters for the pinned asharca/ui source registry. */
+@layer components {
+  .ui-button-primary, .ui-button-secondary, .ui-button-ghost { border-radius: 999px; gap: .5rem; min-height: 2.25rem; transition: background-color 160ms, border-color 160ms, color 160ms, box-shadow 160ms; }
+  .ui-input, .ui-textarea { border-radius: .75rem; }
+  .ui-input:focus-visible, .ui-textarea:focus-visible { outline: 2px solid hsl(var(--ring) / .4); outline-offset: 2px; }
+  .ui-icon-button { border-radius: .65rem; }
+  .ui-panel, .ui-card { border-radius: 1rem; }
+  .beui-structural-button { -webkit-tap-highlight-color: transparent; }
+  .beui-choice { display: inline-flex; position: relative; flex: none; vertical-align: middle; }
+  .beui-checkbox, .beui-radio { appearance: none; width: 1.125rem; height: 1.125rem; flex: none; padding: 0; border: 1.5px solid hsl(var(--muted-foreground) / .65); background: hsl(var(--background)); color: hsl(var(--primary-foreground)); cursor: pointer; transition: background-color 160ms, border-color 160ms; }
+  .beui-checkbox { border-radius: .3rem; }
+  .beui-checkbox:checked, .beui-checkbox:indeterminate { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+  .beui-choice-mark { pointer-events: none; position: absolute; width: 75%; height: 75%; left: 12.5%; top: 12.5%; color: hsl(var(--primary-foreground)); }
+  .beui-choice-mark path { stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 30; stroke-dashoffset: 30; transition: stroke-dashoffset 180ms; }
+  .beui-checkbox:checked + .beui-choice-mark path:first-child { stroke-dashoffset: 0; }
+  .beui-checkbox:indeterminate + .beui-choice-mark path:first-child { stroke-dashoffset: 30; }
+  .beui-checkbox:indeterminate + .beui-choice-mark path:last-child { stroke-dashoffset: 0; }
+  .beui-checkbox:disabled + .beui-choice-mark { opacity: .5; }
+  .beui-radio { border-radius: 999px; }
+  .beui-radio:checked { border-color: hsl(var(--primary)); background: radial-gradient(circle, hsl(var(--primary)) 0 42%, transparent 46%); }
+  .beui-checkbox:focus-visible, .beui-radio:focus-visible { outline: 2px solid hsl(var(--ring) / .5); outline-offset: 3px; }
+  .beui-checkbox:disabled, .beui-radio:disabled { cursor: not-allowed; opacity: .5; }
+  .beui-native-input[type=file]::file-selector-button { border: 1px solid hsl(var(--border)); border-radius: 999px; background: hsl(var(--card)); padding: .4rem .8rem; color: inherit; margin-right: .75rem; cursor: pointer; }
+  .beui-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .875rem; }
+  .beui-table th { color: hsl(var(--muted-foreground)); font-weight: 500; }
+  .beui-table th, .beui-table td { vertical-align: middle; }
+  .beui-table tbody tr { border-bottom: 1px solid hsl(var(--border) / .7); }
+  .beui-table tbody tr:last-child { border-bottom: 0; }
+  .beui-dialog-content[data-state=open] { animation: beui-dialog-in 180ms cubic-bezier(.2,0,.2,1); }
+  .beui-dialog-overlay[data-state=open] { animation: beui-fade-in 140ms ease-out; }
+  .beui-overlay[data-state=open], .beui-overlay[data-state=delayed-open], .beui-overlay[data-state=instant-open] { animation: beui-panel-in 140ms cubic-bezier(.22,1,.36,1); transform-origin: var(--radix-popover-content-transform-origin, var(--radix-dropdown-menu-content-transform-origin, center)); }
+  @keyframes beui-dialog-in { from { opacity: 0; clip-path: inset(8% 8% round 24px); } to { opacity: 1; clip-path: inset(0 round 24px); } }
+  @keyframes beui-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes beui-panel-in { from { opacity: 0; scale: .97; } to { opacity: 1; scale: 1; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-engine=beui], [data-ui-engine=beui] *, .beui-choice-mark path, .beui-overlay, .beui-dialog-content, .beui-dialog-overlay { animation: none !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) { .beui-checkbox, .beui-radio { appearance: auto; } .beui-choice-mark { display: none; } }
