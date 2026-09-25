@@ -36,7 +36,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const classes = cn(unstyled ? 'beui-structural-button' : variants[variant], !unstyled && sizes[size], className);
   const common = {
     'data-toolplane-ui': 'button', 'data-ui-engine': 'beui', ...props, ref, className: classes,
-    'aria-busy': loading || ariaBusy || undefined,
+    'aria-busy': loading ? true : ariaBusy,
   };
   if (asChild) {
     // Radix composes the child's handler before the slot handler. Gate the child

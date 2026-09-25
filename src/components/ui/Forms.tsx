@@ -22,7 +22,7 @@ export function SubmitButton({ children = 'Save', className, pendingLabel = 'Sav
     return () => clearTimeout(timer);
   }, [pending, flash, error]);
   return <Button type="submit" variant="primary" className={className} disabled={disabled} loading={pending}
-    loadingLabel={pendingLabel} aria-label={ariaLabel} title={title} data-toolplane-ui="submit-button">
+    loadingLabel={pendingLabel} aria-busy={pending} aria-label={ariaLabel} title={title} data-toolplane-ui="submit-button">
     {saved && !error ? <><Check aria-hidden="true" className="size-3.5" />{savedLabel}</> : children}
   </Button>;
 }

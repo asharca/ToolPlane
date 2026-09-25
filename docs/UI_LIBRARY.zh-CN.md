@@ -1,5 +1,7 @@
 # UI 组件库
 
+[English](./UI_LIBRARY.md)
+
 本轮按用户明确选择迁移到 https://asharca.github.io/ui/llms.txt 的源码组件目录，不再使用旧 `@asharca/ui@0.2.1` npm 包。
 
 源码固定提交、文件哈希和适配说明见 `src/components/ui/beui/provenance.json`。所有应用按钮、输入、选择框和表格通过 `src/components/ui/Controls.tsx`；弹窗和浮层采用统一 beUI 外观，保留 Radix 的焦点、键盘及嵌套关闭机制。原生表单事件、FormData、重置、校验、文件上传和拖放不能因为视觉替换而改变。

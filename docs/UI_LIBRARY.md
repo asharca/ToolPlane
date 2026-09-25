@@ -1,5 +1,7 @@
 # UI library
 
+[简体中文](./UI_LIBRARY.zh-CN.md)
+
 The platform uses the source registry selected at https://asharca.github.io/ui/llms.txt, pinned to `85b080aafe2f7e3aaf720e5a2ffdf035289c49c1`. The former `@asharca/ui@0.2.1` npm package is not the same catalog and has been removed.
 
 ## Ownership and architecture
