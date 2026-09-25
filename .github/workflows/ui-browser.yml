@@ -1,0 +1,67 @@
+name: ui-browser
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ui-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_PASSWORD: mcp
+          POSTGRES_DB: toolplane_ui_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U mcp -d toolplane_ui_e2e'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_ui_e2e
+      AUTH_SECRET: isolated-ui-browser-session-signing-key
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      NEXT_TELEMETRY_DISABLED: '1'
+      TOOLPLANE_UI_E2E: '1'
+      UI_E2E_PASSWORD: disposable-browser-fixture-password
+      UI_BROWSER_TOOLS: ${{ runner.temp }}/toolplane-browser-tools
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare isolated real database
+        run: |
+          pnpm exec prisma generate
+          psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS vector'
+          pnpm exec prisma db push
+          pnpm exec tsx scripts/ui/seed-browser.ts
+      - name: Install isolated browser tooling (not runtime dependencies)
+        run: |
+          mkdir -p "$UI_BROWSER_TOOLS"
+          printf '{"name":"toolplane-browser-tests","private":true}' > "$UI_BROWSER_TOOLS/package.json"
+          pnpm --dir "$UI_BROWSER_TOOLS" add --save-exact playwright@1.63.0
+          pnpm --dir "$UI_BROWSER_TOOLS" exec playwright install --with-deps chromium
+      - name: Build the production application
+        run: pnpm build
+      - name: Verify desktop, mobile, native forms and role boundaries
+        run: node tests/browser/platform-ui.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-browser-evidence
+          path: .playwright-cli/ui-ci/
+          if-no-files-found: warn
+          retention-days: 7
