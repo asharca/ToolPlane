@@ -55,7 +55,6 @@ jobs:
               assert (not file.exists()) if digest is None else hashlib.sha256(file.read_bytes()).hexdigest() == digest, relative
           pathlib.Path('/tmp/ui-changed-paths.json').write_text(json.dumps(list(manifest['files'])))
           shutil.rmtree(parts)
-          (root/'.github/workflows/ui-refactor-apply.yml').unlink()
           print('All 26 source paths match the locally verified changes.')
           PY
       - uses: pnpm/action-setup@v4
@@ -77,14 +76,16 @@ jobs:
           PY
       - name: Test source UI and host behavior
         run: pnpm exec vitest run tests/unit/beui-native-contracts.test.tsx tests/unit/beui-workspace-contracts.test.tsx tests/unit/beui-architecture.test.ts tests/unit/beui-migration.test.ts tests/unit/dashboard-tabs.test.tsx tests/unit/dashboard-chrome.test.tsx
-      - name: Publish only verified changes to the existing PR
+      - name: Publish only verified source changes to the existing PR
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, pathlib, subprocess
-          paths=json.loads(pathlib.Path('/tmp/ui-changed-paths.json').read_text())
-          subprocess.run(['git','add','--all','--',*paths,'.ui-refactor-parts','.github/workflows/ui-refactor-apply.yml'],check=True)
+          paths=[p for p in json.loads(pathlib.Path('/tmp/ui-changed-paths.json').read_text()) if not p.startswith('.github/workflows/')]
+          subprocess.run(['git','add','--all','--',*paths,'.ui-refactor-parts'],check=True)
+          changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert not any(p.startswith('.github/workflows/') for p in changed)
           PY
           git diff --cached --check
           git config user.name 'github-actions[bot]'
