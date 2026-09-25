@@ -33,6 +33,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Apply fixed source-registry migration
         run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const file = 'scripts/ui/migrate-beui.mjs';
+          let source = readFileSync(file, 'utf8');
+          source = source.replace("import { createRequire } from 'node:module';\n", '');
+          source = source.replace('  const require = createRequire(import.meta.url);\n', '');
+          source = source.replace("path.dirname(path.dirname(require.resolve('@asharca/ui')))", "path.dirname(path.dirname(fileURLToPath(import.meta.resolve('@asharca/ui'))))");
+          writeFileSync(file, source);
+          JS
           node scripts/ui/migrate-beui.mjs
           pnpm remove @asharca/ui
           pnpm add --save-exact motion@11.18.2 clsx@2.1.1 tailwind-merge@3.6.0
@@ -45,7 +54,7 @@ jobs:
           test "$current" = "$GITHUB_SHA"
           git config user.name 'asharca'
           git config user.email '129170100+asharca@users.noreply.github.com'
-          git add src tests docs AGENTS.md package.json pnpm-lock.yaml vitest.config.ts eslint.config.mjs
+          git add src tests docs scripts/ui AGENTS.md package.json pnpm-lock.yaml vitest.config.ts eslint.config.mjs
           git diff --cached --stat
           git commit -m 'refactor: migrate platform controls to pinned beUI source registry'
           git push origin HEAD:refs/heads/refactor/beui-platform-ui
@@ -54,4 +63,17 @@ jobs:
         run: pnpm exec tsc --noEmit
       - name: New UI behavior contracts
         if: always()
-        run: pnpm exec vitest run tests/unit/beui-native-contracts.test.tsx tests/unit/beui-migration.test.ts
+        run: pnpm exec vitest run tests/unit/beui-native-contracts.test.tsx tests/unit/beui-migration.test.ts tests/unit/beui-architecture.test.ts
+      - name: Prepare isolated source and dependency review context
+        if: always()
+        run: |
+          mkdir -p /tmp/beui-context
+          git rev-parse HEAD > /tmp/beui-context/commit.txt
+          tar --exclude=./.git --exclude=./.env --exclude=./.env.local --exclude=./.next --exclude=./dist --exclude=./.playwright-cli --exclude=./.remember -czf /tmp/beui-context/source.tgz .
+          cp "$(command -v node)" /tmp/beui-context/node
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beui-development-context
+          path: /tmp/beui-context/
+          retention-days: 1
