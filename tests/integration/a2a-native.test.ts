@@ -13,6 +13,16 @@ import { A2A_LIMITS } from '@/lib/a2a/model';
 import { textArtifact } from '@/lib/a2a/model';
 import { executeA2ATask, startA2AWorker, stopA2AWorker } from '@/lib/a2a/worker';
 
+// AgentApiClient/AgentEndpoint CHECK constraints floor dailyOutputCharacterLimit
+// at 200000, while the default per-task charge is 65536. Raise the per-task
+// charge via the env override so 'client limit < charge' scenarios stay expressible.
+// vi.hoisted runs before imports: A2A_LIMITS is resolved once at module load.
+const { OUTPUT_CHARGE } = vi.hoisted(() => {
+  const charge = 250_000;
+  process.env.TOOLPLANE_A2A_OUTPUT_CHARACTERS = String(charge);
+  return { OUTPUT_CHARGE: charge };
+});
+
 // The embedded local transport requires a single client. CI uses the real PostgreSQL
 // adapter unchanged, including the concurrent row-lock test below.
 vi.mock('@/lib/db', async (original) => {
@@ -199,7 +209,7 @@ describe('native task resource accounting', () => {
   });
   it('does not start an executor or partially charge other scopes when its output quota is exhausted', async () => {
     const task = await submitTask(grant, request());
-    await db.agentApiClient.update({ where: { id: clientId }, data: { dailyOutputCharacterLimit: A2A_LIMITS.outputCharacters - 1 } });
+    await db.agentApiClient.update({ where: { id: clientId }, data: { dailyOutputCharacterLimit: OUTPUT_CHARGE - 1 } });
     const executor = vi.fn(); await startA2AWorker();
     try { await executeA2ATask(task.id, executor); } finally { stopA2AWorker(); }
     expect(executor).not.toHaveBeenCalled(); expect((await getTask(grant, task.id)).status?.state).toBe(TaskState.TASK_STATE_FAILED);
@@ -245,7 +255,7 @@ describe('native task resource accounting', () => {
   });
   it.skipIf(process.env.TOOLPLANE_TEST_PGLITE === '1')('serializes competing task claims at the shared output ceiling in PostgreSQL', async () => {
     const one = await submitTask(grant, request()); const two = await submitTask(grant, request());
-    await db.agentApiClient.update({ where: { id: clientId }, data: { dailyOutputCharacterLimit: A2A_LIMITS.outputCharacters } });
+    await db.agentApiClient.update({ where: { id: clientId }, data: { dailyOutputCharacterLimit: OUTPUT_CHARGE } });
     const results = await Promise.allSettled([claimTask(one.id), claimTask(two.id)]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
