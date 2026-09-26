@@ -71,7 +71,6 @@ vi.mock('@/lib/process/supervisor', () => ({ effectiveStatus: mocks.effectiveSta
 
 vi.mock('@/lib/a2a/ingress', async (importOriginal) => ({ ...(await importOriginal<object>()), runNativeEntry: mocks.runNativeEntry }));
 
-import { Task } from '@a2a-js/sdk';
 
 describe('Work coordinator', () => {
   beforeEach(async () => {
@@ -229,7 +228,7 @@ describe('Work coordinator', () => {
       const agent = await mocks.getAgentForRun();
       mocks.workFindUnique.mockResolvedValue({ ...work, runtimeKind, a2aActorId: 'user-1' });
       mocks.getAgentForRun.mockResolvedValue({ ...agent, runtimeKind, provider: { id: 'provider-1' }, model: 'model-a' });
-      mocks.runNativeEntry.mockResolvedValue({ task: Task.fromJSON({ id: 'native-1', contextId: 'ctx', status: { state: 'TASK_STATE_COMPLETED' }, artifacts: [{ artifactId: 'r', parts: [{ text: 'Done' }] }] }), path: '/native-task' });
+      mocks.runDedicatedSandboxTurn.mockResolvedValue('Done');
     }
     let resolveTitle!: (value: string) => void;
     mocks.generateWorkSessionTitle.mockReturnValueOnce(new Promise<string>((resolve) => { resolveTitle = resolve; }));
@@ -333,7 +332,7 @@ describe('Work coordinator', () => {
     });
   });
 
-  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('submits %s through the native task core, never the legacy runner', async (runtimeKind) => {
+  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('streams %s through the legacy sandbox runner with text deltas', async (runtimeKind) => {
     mocks.workFindUnique.mockResolvedValue({
       id: 'work-1', workspaceId: 'workspace-1', agentId: 'agent-1', a2aActorId: 'user-1', sandboxId: 'sandbox-1', conversationId: 'conversation-1',
       task: 'Original task', runtimeKind, runtimeSnapshot: { workingDirectory: 'src', systemPrompt: 'Saved instructions' }, status: 'running',
@@ -344,52 +343,41 @@ describe('Work coordinator', () => {
       ] },
     });
     mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind, provider: { name: 'P', format: 'openai' }, model: 'test' });
-    mocks.runNativeEntry.mockImplementation(async (options) => {
-      const task = Task.fromJSON({ id: 'native-1', contextId: 'ctx', status: { state: 'TASK_STATE_COMPLETED' }, artifacts: [{ artifactId: 'report', parts: [{ text: 'Done' }] }] });
-      await options.onAccepted?.(task, '/native-task');
-      return { task, path: '/native-task' };
+    mocks.resolveAgentTools.mockReturnValue({ deploymentIds: [], sandboxDeploymentIds: [], skills: [], subAgents: [] });
+    mocks.runDedicatedSandboxTurn.mockImplementation(async (options) => {
+      options.onTextDelta('partial ');
+      options.onTextDelta('answer');
+      return 'partial answer';
     });
     const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
     const { subscribeWorkOutput } = await import('@/lib/work/run-control');
     kickWorkCoordinator();
     await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledTimes(1));
-    expect(mocks.runNativeEntry).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'work', sourceId: 'work-1', actorId: 'user-1', messageId: 'new-message', text: 'Inspect the repository',
+    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(expect.objectContaining({
+      sandboxId: 'sandbox-1', runtimeSessionId: 'conversation-1', workingDirectory: 'src',
     }));
-    expect(mocks.runDedicatedSandboxTurn).not.toHaveBeenCalled();
+    expect(mocks.runNativeEntry).not.toHaveBeenCalled();
     expect(mocks.runHermesWork).not.toHaveBeenCalled();
     const { snapshot, unsubscribe } = subscribeWorkOutput('work-1', () => undefined);
     expect(snapshot.done).toBe(true);
-    expect(snapshot.text).toContain('/native-task');
-    expect(snapshot.text).toContain('Done');
+    expect(snapshot.text).toContain('partial answer');
     unsubscribe();
     expect(mocks.messageCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: 'assistant', parts: expect.arrayContaining([
-      { type: 'text', text: 'Done', state: 'done' },
+      { type: 'text', text: 'partial answer', state: 'done' },
     ]) }) });
   });
 
-  it('does not silently restore the old executor if native admission fails', async () => {
-    const base = await mocks.workFindUnique();
-    mocks.workFindUnique.mockResolvedValue({ ...base, runtimeKind: 'pi', a2aActorId: 'user-1' });
-    mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind: 'pi', provider: { format: 'openai' }, model: 'test' });
-    mocks.runNativeEntry.mockRejectedValue(new Error('Native actor or approval gate unavailable'));
-    const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
-    kickWorkCoordinator();
-    await vi.waitFor(() => expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) })));
-    expect(mocks.runDedicatedSandboxTurn).not.toHaveBeenCalled();
-    expect(mocks.runHermesWork).not.toHaveBeenCalled();
-  });
-
-  it('rejects old CLI commands instead of executing them outside native approval', async () => {
+  it('executes available CLI commands through the sandbox runner', async () => {
     const base = await mocks.workFindUnique();
     mocks.workFindUnique.mockResolvedValue({ ...base, runtimeKind: 'pi', a2aActorId: 'user-1', conversation: {
       messages: [{ id: 'cmd', role: 'user', parts: [{ type: 'text', text: '/compact' }] }],
     } });
     mocks.getAgentForRun.mockResolvedValue({ id: 'agent-1', runtimeKind: 'pi', provider: { format: 'openai' }, model: 'test' });
+    mocks.resolveAgentTools.mockReturnValue({ deploymentIds: [], sandboxDeploymentIds: [], skills: [], subAgents: [] });
+    mocks.runDedicatedSandboxTurn.mockResolvedValue('compacted');
     const { kickWorkCoordinator } = await import('@/lib/work/coordinator');
     kickWorkCoordinator();
-    await vi.waitFor(() => expect(mocks.workUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) })));
-    expect(mocks.runNativeEntry).not.toHaveBeenCalled();
-    expect(mocks.runDedicatedSandboxTurn).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mocks.messageCreate).toHaveBeenCalledTimes(1));
+    expect(mocks.runDedicatedSandboxTurn).toHaveBeenCalledWith(expect.objectContaining({ command: '/compact' }));
   });
 });
