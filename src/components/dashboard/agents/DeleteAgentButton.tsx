@@ -33,11 +33,9 @@ export function DeleteAgentButton({
         cancelLabel={t('cancel')}
         prompt={prompt ?? t('deleteThisAgentAndItsSandboxesAndAllItsConversations')}
         pendingLabel={t('deleting')}
-        triggerClassName={compact
-          ? 'inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-red-200 p-0 text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30'
-          : 'inline-flex size-10 shrink-0 items-center justify-center rounded-md border border-red-200 p-0 text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-950/30'}
-        confirmClassName="inline-flex h-10 items-center rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700"
-        cancelClassName="ui-button-secondary h-10 px-4 text-sm"
+        triggerVariant="ghost" triggerSize="icon"
+        
+        
       />
     </form>
   );

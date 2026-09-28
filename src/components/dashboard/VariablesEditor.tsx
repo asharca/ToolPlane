@@ -1,14 +1,13 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+
 
 import { useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import {
-  CheckCircle2,
-  KeyRound,
-  Plus,
-  Trash2,
-  Undo2,
-} from 'lucide-react';
+import { CheckCircle2, KeyRound, Plus, Trash2, Undo2 } from 'lucide-react';
 import { setDeploymentEnvAction } from '@/lib/workspace/actions';
 import { SubmitButton } from './SubmitButton';
 
@@ -126,7 +125,7 @@ function VariablesEditorForm({
   }
 
   return (
-    <form action={setDeploymentEnvAction} className="ui-panel max-w-5xl overflow-hidden">
+    <form action={setDeploymentEnvAction} className="rounded-xl border border-border bg-card max-w-5xl overflow-hidden">
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
       <input type="hidden" name="changes" value={JSON.stringify(changes)} />
@@ -136,18 +135,16 @@ function VariablesEditorForm({
           <div className="flex items-center gap-2">
             <KeyRound className="size-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">{t('variables')}</h2>
-            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
               {t('configuredVariableCount', { count: configuredCount })}
-            </span>
+            </AnimatedBadge>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
             {t('environmentVariablesDescription')}
           </p>
         </div>
-        <button type="button" onClick={addRow} className="ui-button-secondary ui-button-sm shrink-0">
-          <Plus className="size-3.5" />
-          {t('addVariable')}
-        </button>
+        <Button type="button" onClick={addRow} variant="secondary" size="sm" className="shrink-0"><Plus className="size-3.5" />
+        {t('addVariable')}</Button>
       </header>
 
       {rows.length === 0 ? (
@@ -155,10 +152,8 @@ function VariablesEditorForm({
           <KeyRound className="mx-auto size-6 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium text-foreground">{t('noEnvironmentVariables')}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t('environmentVariablesDescription')}</p>
-          <button type="button" onClick={addRow} className="ui-button-secondary ui-button-sm mt-4">
-            <Plus className="size-3.5" />
-            {t('addVariable')}
-          </button>
+          <Button type="button" onClick={addRow} variant="secondary" size="sm" className="mt-4"><Plus className="size-3.5" />
+          {t('addVariable')}</Button>
         </div>
       ) : (
         <div className="divide-y divide-border">
@@ -173,22 +168,12 @@ function VariablesEditorForm({
                     <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                       {t('variableName')}
                       {row.required ? (
-                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                        <AnimatedBadge  status="warning" size="sm" showIcon={false}>
                           {t('required')}
-                        </span>
+                        </AnimatedBadge>
                       ) : null}
                     </span>
-                    <input
-                      value={row.key}
-                      onChange={(event) => updateRow(row.id, { key: event.target.value })}
-                      placeholder="API_KEY"
-                      disabled={row.removed || !row.isNew}
-                      required={row.isNew && Boolean(row.key.trim())}
-                      pattern="[A-Za-z_][A-Za-z0-9_]*"
-                      title={t('validEnvironmentVariableName')}
-                      aria-invalid={rowInvalid || undefined}
-                      className="ui-input h-9 font-mono text-xs disabled:cursor-not-allowed disabled:bg-muted/40"
-                    />
+                    <Input value={row.key} onChange={(value) => updateRow(row.id, { key: value })} placeholder="API_KEY" disabled={row.removed || !row.isNew} required={row.isNew && Boolean(row.key.trim())} pattern="[A-Za-z_][A-Za-z0-9_]*" title={t('validEnvironmentVariableName')} error={rowInvalid || undefined} />
                     {!row.isNew ? (
                       <p className="text-[11px] text-muted-foreground">{t('variableNameCannotBeChanged')}</p>
                     ) : null}
@@ -199,14 +184,14 @@ function VariablesEditorForm({
                       {common('value')}
                       {!row.removed ? (
                         row.configured && !row.value ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                          <span className="inline-flex items-center gap-1 text-(--color-success) dark:text-(--color-success)">
                             <CheckCircle2 className="size-3.5" />
                             {t('configured')}
                           </span>
                         ) : row.value ? (
-                          <span className="text-amber-700 dark:text-amber-300">{t('willReplaceOnSave')}</span>
+                          <span className="text-(--color-warning) dark:text-(--color-warning)">{t('willReplaceOnSave')}</span>
                         ) : row.required ? (
-                          <span className="text-amber-700 dark:text-amber-300">{t('valueRequired')}</span>
+                          <span className="text-(--color-warning) dark:text-(--color-warning)">{t('valueRequired')}</span>
                         ) : null
                       ) : null}
                     </span>
@@ -215,16 +200,7 @@ function VariablesEditorForm({
                         {t('variableWillBeRemoved')}
                       </p>
                     ) : (
-                      <input
-                        type="password"
-                        value={row.value}
-                        onChange={(event) => updateRow(row.id, { value: event.target.value })}
-                        autoComplete="new-password"
-                        placeholder={row.configured ? t('replaceValue') : common('value')}
-                        required={valueRequired}
-                        disabled={row.removed}
-                        className="ui-input h-9 font-mono text-xs"
-                      />
+                      <Input type="password" value={row.value} onChange={(value) => updateRow(row.id, { value: value })} autoComplete="new-password" placeholder={row.configured ? t('replaceValue') : common('value')} required={valueRequired} disabled={row.removed} />
                     )}
                     {row.configured && !row.removed ? (
                       <p className="text-[11px] text-muted-foreground">{t('existingValueNeverShown')}</p>
@@ -233,23 +209,11 @@ function VariablesEditorForm({
 
                   <div className="flex items-end gap-2 lg:justify-end lg:pb-0.5">
                     {row.removed ? (
-                      <button
-                        type="button"
-                        onClick={() => updateRow(row.id, { removed: false })}
-                        className="ui-button-secondary h-9 text-xs"
-                      >
-                        <Undo2 className="size-3.5" />
-                        {t('undo')}
-                      </button>
+                      <Button type="button" onClick={() => updateRow(row.id, { removed: false })} variant="secondary" size="sm"><Undo2 className="size-3.5" />
+                      {t('undo')}</Button>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => removeRow(row)}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-700 dark:hover:text-red-400"
-                      >
-                        <Trash2 className="size-3.5" />
-                        {row.isNew ? t('discardVariable') : t('remove')}
-                      </button>
+                      <Button type="button" onClick={() => removeRow(row)} variant="secondary" size="sm" className="inline-flex items-center"><Trash2 className="size-3.5" />
+                      {row.isNew ? t('discardVariable') : t('remove')}</Button>
                     )}
                   </div>
                 </div>
@@ -271,12 +235,7 @@ function VariablesEditorForm({
                   ? t('enterRequiredVariableValue')
                   : t('variablesSaveHint')}
         </div>
-        <SubmitButton
-          pendingLabel={t('savingVariables')}
-          savedLabel={t('variablesSaved')}
-          disabled={!canSave}
-          className="ui-button-primary h-9"
-        >
+        <SubmitButton pendingLabel={t('savingVariables')} savedLabel={t('variablesSaved')} disabled={!canSave} variant="primary" size="sm">
           {common('save')}
         </SubmitButton>
       </footer>

@@ -53,6 +53,7 @@ export default async function KnowledgePage({ params }: { params: Promise<{ work
             primaryType: model.primaryType,
             capabilities: model.capabilities,
             inputModalities: model.inputModalities,
+            cost: model.cost,
           })),
         }))}
         sandboxes={sandboxes.map((sandbox) => ({ id: sandbox.id, name: sandbox.name, running: sandbox.deployment.status === 'running' }))}

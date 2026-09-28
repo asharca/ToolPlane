@@ -24,7 +24,7 @@ function MarketResourceCard({
   icon: LucideIcon;
 }) {
   return (
-    <Link href={href} className="ui-panel flex min-h-40 flex-col p-4 transition-colors hover:border-foreground/25">
+    <Link href={href} className="flex min-h-40 flex-col rounded-2xl border border-border bg-card p-4">
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <Icon className="size-4" aria-hidden="true" />

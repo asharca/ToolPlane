@@ -1,4 +1,6 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { FormSelect } from '@/components/ui/FormSelect';
 
 import { useActionState, useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -8,7 +10,7 @@ import {
   type ModelProviderOption,
   type ModelSelection,
 } from '@/components/dashboard/models/ModelPicker';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import {
   updateHermesProfileDefaultModelAction,
   type ActionState,
@@ -121,16 +123,9 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
           <h3 className="text-sm font-semibold text-foreground">{t('hermesProfileModels')}</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('hermesProfileModelsDescription')}</p>
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={loadingProfiles || loadingModels || pending}
-          aria-label={t('refreshHermesProfiles')}
-          title={t('refreshHermesProfiles')}
-          className="ui-button-secondary size-8 shrink-0 px-0"
-        >
+        <Button type="button" onClick={refresh} disabled={loadingProfiles || loadingModels || pending} aria-label={t('refreshHermesProfiles')} title={t('refreshHermesProfiles')} variant={"secondary"} size={"icon"} className="shrink-0">
           <RefreshCw className={`size-3.5 ${loadingProfiles || loadingModels ? 'animate-spin' : ''}`} />
-        </button>
+        </Button>
       </div>
 
       <form action={action} className="space-y-4">
@@ -140,23 +135,15 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
         <input type="hidden" name="provider" value={selection?.providerId ?? ''} />
         <input type="hidden" name="model" value={selection?.model ?? ''} />
 
-        <label className="block space-y-1.5 text-sm font-medium text-foreground">
+        <div className="block space-y-1.5 text-sm font-medium text-foreground">
           {t('hermesProfile')}
-          <NativeSelect
-            value={profile}
-            disabled={loadingProfiles || pending || profileChatSupported !== true}
-            onChange={(event) => {
-              setProfile(event.target.value);
+          <FormSelect value={profile} disabled={loadingProfiles || pending || profileChatSupported !== true} label={t('hermesProfile')} options={[profiles.length === 0 ? ({ value: profile, label: loadingProfiles ? t('loadingHermesProfiles') : profile }) : null, profiles.map((item) => ({ value: item.name, label: item.name }))].flat().filter((option) => option != null)} onValueChange={(value) => {
+              setProfile(value);
               setSelection(null);
               setLoadingModels(true);
               setError(null);
-            }}
-            className="ui-input h-10 w-full"
-          >
-            {profiles.length === 0 ? <option value={profile}>{loadingProfiles ? t('loadingHermesProfiles') : profile}</option> : null}
-            {profiles.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-          </NativeSelect>
-        </label>
+            }} className="w-full" />
+        </div>
 
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">{t('profileDefaultModel')}</p>
@@ -166,27 +153,25 @@ export function HermesProfilesPanel({ slug, agentId }: { slug: string; agentId: 
             pending={loadingModels}
             onSelect={setSelection}
             trigger={(
-              <button type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={loadingModels || pending || profileChatSupported !== true}>
-                <span className="truncate">{selection?.model ?? current?.model ?? t('selectModel')}</span>
-                {loadingModels ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
-              </button>
+              <Button variant="secondary" type="button" className="w-full justify-between" disabled={loadingModels || pending || profileChatSupported !== true}><span className="truncate">{selection?.model ?? current?.model ?? t('selectModel')}</span>
+              {loadingModels ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}</Button>
             )}
           />
           {current?.description ? <p className="text-xs text-muted-foreground">{current.description}</p> : null}
         </div>
 
         {profileChatSupported === false || error || state.error ? (
-          <p role="alert" className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+          <p role="alert" className="text-sm text-destructive">
             {profileChatSupported === false ? profileChatRequiresUpgradeMessage : error || state.error}
           </p>
         ) : null}
-        {state.savedAt ? <p role="status" className="text-xs text-emerald-700 dark:text-emerald-300">{t('hermesProfileModelSaved')}</p> : null}
+        {state.savedAt ? <p role="status" className="text-xs text-muted-foreground text-muted-foreground">{t('hermesProfileModelSaved')}</p> : null}
 
         <div className="flex justify-end border-t border-border pt-4">
-          <button type="submit" className="ui-button-primary gap-2" disabled={!selection || loadingModels || pending || profileChatSupported !== true}>
+          <Button type="submit" disabled={!selection || loadingModels || pending || profileChatSupported !== true} variant={"primary"}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
             {t('save')}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { writeAudit } from '@/lib/observability/audit';
 import { conversationTitleFromParts } from '@/lib/agents/conversation-title';
-import { defaultProviderModel, type ProviderModelValues } from '@/lib/agents/model-catalog';
+import { defaultProviderModel, fillProviderModelMetadata, type ProviderModelValues } from '@/lib/agents/model-catalog';
+import { matchingPiModelReferences } from '@/lib/agents/provider-catalog';
 import { HERMES_RUNTIME_KIND, resolveHermesImage } from '@/lib/agents/hermes/constants';
 import { hermesProviderName } from '@/lib/agents/hermes/config';
 import { withoutHermesChannelEnv } from '@/lib/agents/hermes/env-merge-script';
@@ -818,9 +819,9 @@ async function lockProvider(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   providerId: string,
-): Promise<{ id: string; format: string; models: string[] } | null> {
-  const providers = await tx.$queryRaw<Array<{ id: string; format: string; models: string[] }>>`
-    SELECT "id", "format", "models"
+): Promise<{ id: string; format: string; baseUrl: string; models: string[] } | null> {
+  const providers = await tx.$queryRaw<Array<{ id: string; format: string; baseUrl: string; models: string[] }>>`
+    SELECT "id", "format", "baseUrl", "models"
     FROM "ModelProvider"
     WHERE "id" = ${providerId} AND "workspaceId" = ${workspaceId}
     FOR UPDATE
@@ -1642,9 +1643,75 @@ export async function deleteProvider(workspaceId: string, providerId: string, ac
   });
 }
 
+function providerModelData(model: ProviderModelValues) {
+  return {
+    ...model,
+    cost: model.cost ? model.cost as unknown as Prisma.InputJsonValue : Prisma.DbNull,
+  };
+}
+
+async function fillStoredProviderModels(
+  tx: Prisma.TransactionClient,
+  provider: { id: string; format: string; baseUrl: string; models: string[] },
+) {
+  const records = await tx.providerModel.findMany({
+    where: { providerId: provider.id },
+    select: {
+      modelId: true, name: true, group: true, primaryType: true, source: true,
+      capabilities: true, inputModalities: true,
+      contextWindow: true, maxInputTokens: true, maxOutputTokens: true, cost: true,
+    },
+  });
+  const storedIds = new Set(records.map(({ modelId }) => modelId));
+  const missing = uniqueIds(provider.models).filter((modelId) => !storedIds.has(modelId));
+  if (missing.length) {
+    await tx.providerModel.createMany({
+      data: missing.map((modelId) => ({
+        ...providerModelData(fillProviderModelMetadata(defaultProviderModel(modelId),
+          matchingPiModelReferences(provider.format, [modelId], provider.baseUrl)[0] ?? null)),
+        providerId: provider.id,
+        source: 'remote',
+      })),
+    });
+  }
+  for (const record of records) {
+    const { source, ...model } = record as ProviderModelValues & { source: string };
+    const reference = matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null;
+    const filled = fillProviderModelMetadata(source === 'remote' && reference ? {
+      ...model,
+      contextWindow: reference.contextWindow,
+      maxOutputTokens: reference.maxOutputTokens,
+      cost: reference.cost,
+    } : model, reference);
+    const data = Object.fromEntries(Object.entries(filled)
+      .filter(([key, value]) => value !== model[key as keyof ProviderModelValues])) as Prisma.ProviderModelUpdateInput;
+    if (Object.keys(data).length) {
+      await tx.providerModel.update({
+        where: { providerId_modelId: { providerId: provider.id, modelId: model.modelId } },
+        data,
+      });
+    }
+  }
+}
+
+export async function backfillProviderModels(workspaceId: string) {
+  const providers = await db.modelProvider.findMany({
+    where: { workspaceId },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  for (const { id } of providers) {
+    await db.$transaction(async (tx) => {
+      const provider = await lockProvider(tx, workspaceId, id);
+      if (provider) await fillStoredProviderModels(tx, provider);
+    });
+  }
+}
+
 export async function setProviderModels(workspaceId: string, providerId: string, models: string[]) {
   await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) return;
+    const provider = await lockProvider(tx, workspaceId, providerId);
+    if (!provider) return;
     const remoteModelIds = uniqueIds(models.map((model) => model.trim()).filter(Boolean));
     await tx.providerModel.deleteMany({
       where: {
@@ -1653,22 +1720,13 @@ export async function setProviderModels(workspaceId: string, providerId: string,
         ...(remoteModelIds.length ? { modelId: { notIn: remoteModelIds } } : {}),
       },
     });
-    if (remoteModelIds.length) {
-      await tx.providerModel.createMany({
-        data: remoteModelIds.map((modelId) => ({
-          providerId,
-          ...defaultProviderModel(modelId),
-          source: 'remote',
-        })),
-        skipDuplicates: true,
-      });
-    }
     const manualModels = await tx.providerModel.findMany({
       where: { providerId, source: 'manual' },
       select: { modelId: true },
       orderBy: { createdAt: 'asc' },
     });
     const nextModels = uniqueIds([...remoteModelIds, ...manualModels.map(({ modelId }) => modelId)]);
+    await fillStoredProviderModels(tx, { ...provider, models: nextModels });
     await tx.modelProvider.update({
       where: { id: providerId },
       data: {
@@ -1695,24 +1753,24 @@ export async function addProviderModels(
   models: ProviderModelValues[],
 ) {
   await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) {
-      throw new ProviderModelError('Provider not found.');
-    }
-    const provider = await tx.modelProvider.findUnique({
-      where: { id: providerId },
-      select: { models: true },
-    });
+    const provider = await lockProvider(tx, workspaceId, providerId);
+    if (!provider) throw new ProviderModelError('Provider not found.');
     const requestedIds = models.map(({ modelId }) => modelId);
     if (new Set(requestedIds).size !== requestedIds.length
-      || requestedIds.some((modelId) => provider?.models.includes(modelId))) {
+      || requestedIds.some((modelId) => provider.models.includes(modelId))) {
       throw new ProviderModelError('A model with that ID already exists.');
     }
     await tx.providerModel.createMany({
-      data: models.map((model) => ({ ...model, providerId, source: 'manual' })),
+      data: models.map((model) => ({
+        ...providerModelData(fillProviderModelMetadata(model,
+          matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null)),
+        providerId,
+        source: 'manual',
+      })),
     });
     await tx.modelProvider.update({
       where: { id: providerId },
-      data: { models: [...(provider?.models ?? []), ...requestedIds] },
+      data: { models: [...provider.models, ...requestedIds] },
     });
   });
 }
@@ -1723,17 +1781,20 @@ export async function updateProviderModel(
   model: ProviderModelValues,
 ) {
   await db.$transaction(async (tx) => {
-    if (!await lockProvider(tx, workspaceId, providerId)) {
-      throw new ProviderModelError('Provider not found.');
-    }
-    const provider = await tx.modelProvider.findUnique({
-      where: { id: providerId },
-      select: { models: true },
-    });
-    if (!provider?.models.includes(model.modelId)) {
+    const provider = await lockProvider(tx, workspaceId, providerId);
+    if (!provider) throw new ProviderModelError('Provider not found.');
+    if (!provider.models.includes(model.modelId)) {
       throw new ProviderModelError('Model not found.');
     }
-    const { modelId, ...values } = model;
+    const stored = await tx.providerModel.findUnique({
+      where: { providerId_modelId: { providerId, modelId: model.modelId } },
+      select: { cost: true },
+    });
+    const metadata = fillProviderModelMetadata({
+      ...model,
+      cost: model.cost ?? stored?.cost as ProviderModelValues['cost'],
+    }, matchingPiModelReferences(provider.format, [model.modelId, model.name], provider.baseUrl)[0] ?? null);
+    const { modelId, ...values } = providerModelData(metadata);
     await tx.providerModel.upsert({
       where: { providerId_modelId: { providerId, modelId } },
       create: { providerId, modelId, ...values, source: 'manual' },

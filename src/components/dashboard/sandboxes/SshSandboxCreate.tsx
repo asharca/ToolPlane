@@ -1,8 +1,13 @@
 'use client';
+
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
   const t = useTranslations('console.sandboxes'); const router = useRouter();
@@ -27,17 +32,17 @@ export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
     } catch { setError(t('sshOperationFailed')); setBusy(false); }
   }
   return <div className="space-y-3">
-    <button type="button" className="ui-button-secondary h-9 text-sm" onClick={() => open ? setOpen(false) : void show()} aria-expanded={open}>{t('sshCreate')}</button>
+    <Button type="button" variant="secondary" size="sm" onClick={() => open ? setOpen(false) : void show()} aria-expanded={open}>{t('sshCreate')}</Button>
     {open ? <form onSubmit={create} className="w-full max-w-lg space-y-3 rounded-md border border-border bg-card p-4">
       <p className="text-sm font-semibold">{t('sshCreate')}</p><p className="text-xs leading-5 text-muted-foreground">{t('sshTargetHint')}</p>
       <fieldset disabled={busy} className="space-y-3 disabled:opacity-60">
-        <label className="block space-y-1 text-xs">{t('sandboxName')}<input name="name" required maxLength={80} className="ui-input h-9 w-full" /></label>
-        <label className="block space-y-1 text-xs">{t('sshApprovedTarget')}<NativeSelect name="targetId" required className="h-9 w-full" defaultValue=""><option value="" disabled>{t('sshSelectTarget')}</option>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</NativeSelect></label>
+        <div className="block space-y-1 text-xs"><Input label={t('sandboxName')} name="name" required maxLength={80} className="w-full" /></div>
+        <label className="block space-y-1 text-xs">{t('sshApprovedTarget')}<FormSelect name="targetId" required defaultValue="" label={t('sshApprovedTarget')} options={[{ value: "", label: t('sshSelectTarget'), disabled: true }, ...targets.map((target) => ({ value: target.id, label: target.name }))]} className="w-full" /></label>
         {!targets.length && !busy ? <p className="text-xs text-muted-foreground">{t('sshNoTargets')}</p> : null}
-        <label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" name="ack" required className="mt-1" /><span>{t('sshHostAccessWarning')}</span></label>
-        <button type="submit" disabled={!targets.length} className="ui-button-primary h-9 text-sm">{t('sshCreate')}</button>
+        <FormCheckbox name="ack" required label={t('sshHostAccessWarning')} />
+        <Button type="submit" disabled={!targets.length} variant="primary" size="sm">{t('sshCreate')}</Button>
       </fieldset>
-      {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
     </form> : null}
   </div>;
 }

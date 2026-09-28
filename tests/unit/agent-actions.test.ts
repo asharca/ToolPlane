@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as SandboxRuntime from '@/lib/agents/sandbox-runtime';
+import type * as AgentQueries from '@/lib/agents/queries';
 
 const mocks = vi.hoisted(() => ({
   systemLog: vi.fn(),
@@ -42,6 +44,8 @@ const mocks = vi.hoisted(() => ({
   materializeAgentRelease: vi.fn(),
   deleteManagedAgent: vi.fn(),
   redirect: vi.fn(),
+  getPiRuntimeVersion: vi.fn(),
+  updatePiRuntimeVersion: vi.fn(),
 }));
 
 vi.mock('@/lib/observability/system', () => ({ systemLog: mocks.systemLog }));
@@ -49,7 +53,7 @@ vi.mock('@/lib/auth/current-user', () => ({ getCurrentUser: mocks.getCurrentUser
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.getWorkspaceForUser }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
-vi.mock('@/lib/agents/queries', () => ({ getProvider: mocks.getProvider }));
+vi.mock('@/lib/agents/queries', async (importOriginal) => ({ ...await importOriginal<typeof AgentQueries>(), getProvider: mocks.getProvider }));
 vi.mock('@/lib/agents/conversation-naming', () => ({
   generateConsoleConversationTitle: mocks.generateConsoleConversationTitle,
 }));
@@ -67,6 +71,11 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/process/spawn-spec', () => ({ resolveSpawnSpec: mocks.resolveSpawnSpec }));
 vi.mock('@/lib/process/supervisor', () => ({ startProcess: mocks.startProcess }));
 vi.mock('@/lib/sandboxes/actions', () => ({ updateSandboxEnvAction: mocks.updateSandboxEnvAction }));
+vi.mock('@/lib/agents/sandbox-runtime', async (importOriginal) => ({
+  ...await importOriginal<typeof SandboxRuntime>(),
+  getPiRuntimeVersion: mocks.getPiRuntimeVersion,
+  updatePiRuntimeVersion: mocks.updatePiRuntimeVersion,
+}));
 vi.mock('@/lib/agents/mutations', () => ({
   cloneAgent: mocks.cloneAgent,
   cloneHermesVolumeData: mocks.cloneHermesVolumeData,
@@ -148,6 +157,8 @@ import {
   updateAgentRuntimeEnvAction,
   updateHermesRuntimeEnvAction,
   upgradeHermesRuntimeAction,
+  checkPiRuntimesAction,
+  updatePiRuntimesAction,
   createConversationAction,
   generateConversationTitleAction,
   renameConversationAction,
@@ -240,6 +251,120 @@ describe('upgradeHermesRuntimeAction', () => {
     await expect(upgradeHermesRuntimeAction({}, upgradeForm())).resolves.toEqual({
       error: 'Could not pull Hermes image: manifest unknown',
     });
+  });
+});
+
+describe('workspace Pi version management actions', () => {
+  const agentIds = ['agent-1', 'agent-2', 'agent-3'];
+  let pins: Record<string, string>;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthorizedAgent();
+    pins = { 'agent-1': '0.80.3', 'agent-2': '0.80.3', 'agent-3': '0.80.3' };
+    mocks.agentFindMany.mockReset().mockResolvedValue([
+      { id: 'agent-1', name: 'First' }, { id: 'agent-2', name: 'Second' }, { id: 'agent-3', name: 'Third' },
+    ]);
+    mocks.getPiRuntimeVersion.mockReset().mockImplementation(async (_workspace: string, id: string) => ({ version: pins[id], installed: true }));
+    mocks.updatePiRuntimeVersion.mockReset().mockImplementation(async (_workspace: string, id: string, version: string) => {
+      pins[id] = version;
+      return { version, installed: true };
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); mocks.agentFindMany.mockReset(); });
+
+  it('rejects unauthenticated and cross-workspace requests before enumerating or changing runtimes', async () => {
+    mocks.getCurrentUser.mockResolvedValue(null);
+    expect((await checkPiRuntimesAction('acme')).error).toBe('Not authorized.');
+    mockAuthorizedAgent();
+    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    expect((await updatePiRuntimesAction('foreign-workspace', 'latest', agentIds)).error).toBe('Not authorized.');
+    expect(mocks.agentFindMany).not.toHaveBeenCalled();
+    expect(mocks.getPiRuntimeVersion).not.toHaveBeenCalled();
+    expect(mocks.updatePiRuntimeVersion).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe package specifiers and rechecks public allocation visibility before updates', async () => {
+    expect((await updatePiRuntimesAction('acme', 'file:/tmp/package', agentIds)).error).toMatch(/exact Pi version/);
+    mocks.agentFindFirst.mockResolvedValue({ publicRuntimeAllocation: { id: 'public' } });
+    const result = await updatePiRuntimesAction('acme', '0.87.1', agentIds);
+    expect(result.agents?.map((agent) => agent.status)).toEqual(['error', 'error', 'error']);
+    expect(Object.values(pins)).toEqual(['0.80.3', '0.80.3', '0.80.3']);
+    expect(mocks.updatePiRuntimeVersion).not.toHaveBeenCalled();
+  });
+
+  it('keeps the full version inventory visible on registry failure without choosing an unknown release', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })));
+    const checked = await checkPiRuntimesAction('acme');
+    expect(checked.warning).toBeTruthy();
+    expect(checked.agents?.map((agent) => [agent.agentId, agent.version, agent.status])).toEqual([
+      ['agent-1', '0.80.3', 'ready'], ['agent-2', '0.80.3', 'ready'], ['agent-3', '0.80.3', 'ready'],
+    ]);
+    expect((await updatePiRuntimesAction('acme', 'latest', agentIds)).error).toBeTruthy();
+    expect(Object.values(pins)).toEqual(['0.80.3', '0.80.3', '0.80.3']);
+  });
+
+  it('resolves latest once and upgrades every agent to the same exact version', async () => {
+    const registry = vi.fn().mockResolvedValueOnce(Response.json({ version: '0.87.1' }))
+      .mockResolvedValue(Response.json({ version: '0.88.0' }));
+    vi.stubGlobal('fetch', registry);
+    const result = await updatePiRuntimesAction('acme', 'latest', agentIds);
+    expect(result.targetVersion).toBe('0.87.1');
+    expect(result.agents?.map((agent) => agent.status)).toEqual(['updated', 'updated', 'updated']);
+    expect(Object.values(pins)).toEqual(['0.87.1', '0.87.1', '0.87.1']);
+    expect(registry).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips current agents, preserves failed agents, and continues updating later agents', async () => {
+    pins['agent-1'] = '0.87.1';
+    mocks.updatePiRuntimeVersion.mockRejectedValueOnce(new Error('package failed to launch'));
+    const result = await updatePiRuntimesAction('acme', '0.87.1', agentIds);
+    expect(result.agents?.map((agent) => [agent.agentId, agent.version, agent.status])).toEqual([
+      ['agent-1', '0.87.1', 'unchanged'], ['agent-2', '0.80.3', 'error'], ['agent-3', '0.87.1', 'updated'],
+    ]);
+    expect(Object.values(pins)).toEqual(['0.87.1', '0.80.3', '0.87.1']);
+    expect(result.finishedAt).toEqual(expect.any(Number));
+  });
+
+  it('reports busy or unavailable runtimes without hiding them or stopping the batch', async () => {
+    mocks.getPiRuntimeVersion.mockRejectedValueOnce(new Error('sandbox unavailable'));
+    const result = await updatePiRuntimesAction('acme', '0.87.1', agentIds);
+    expect(result.agents?.map((agent) => agent.status)).toEqual(['error', 'updated', 'updated']);
+    expect(pins).toEqual({ 'agent-1': '0.80.3', 'agent-2': '0.87.1', 'agent-3': '0.87.1' });
+  });
+
+  it('updates only selected agents once and leaves every unselected pin untouched', async () => {
+    const result = await updatePiRuntimesAction('acme', '0.87.1', ['agent-2', 'agent-2']);
+    expect(result.agents?.map((agent) => [agent.agentId, agent.version, agent.status])).toEqual([
+      ['agent-2', '0.87.1', 'updated'],
+    ]);
+    expect(pins).toEqual({ 'agent-1': '0.80.3', 'agent-2': '0.87.1', 'agent-3': '0.80.3' });
+    expect(mocks.getPiRuntimeVersion).toHaveBeenCalledTimes(1);
+    expect(mocks.updatePiRuntimeVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[], undefined, null, 'agent-1', [null], [' ']].map((selection) => ({ selection })))('rejects an empty or malformed selection: $selection', async ({ selection }) => {
+    const result = await updatePiRuntimesAction('acme', 'latest', selection as unknown as string[]);
+    expect(result.error).toBeTruthy();
+    expect(pins).toEqual({ 'agent-1': '0.80.3', 'agent-2': '0.80.3', 'agent-3': '0.80.3' });
+    expect(mocks.getPiRuntimeVersion).not.toHaveBeenCalled();
+    expect(mocks.updatePiRuntimeVersion).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mixed valid and unavailable selection before changing any agent', async () => {
+    const result = await updatePiRuntimesAction('acme', '0.87.1', ['agent-1', 'outside-authorized-collection']);
+    expect(result.error).toMatch(/unavailable in this workspace/);
+    expect(pins).toEqual({ 'agent-1': '0.80.3', 'agent-2': '0.80.3', 'agent-3': '0.80.3' });
+    expect(mocks.getPiRuntimeVersion).not.toHaveBeenCalled();
+    expect(mocks.updatePiRuntimeVersion).not.toHaveBeenCalled();
+  });
+
+  it('continues within the selected subset after failure without updating unselected agents', async () => {
+    mocks.updatePiRuntimeVersion.mockRejectedValueOnce(new Error('package failed to launch'));
+    const result = await updatePiRuntimesAction('acme', '0.87.1', ['agent-1', 'agent-3']);
+    expect(result.agents?.map((agent) => [agent.agentId, agent.status])).toEqual([
+      ['agent-1', 'error'], ['agent-3', 'updated'],
+    ]);
+    expect(pins).toEqual({ 'agent-1': '0.80.3', 'agent-2': '0.80.3', 'agent-3': '0.87.1' });
   });
 });
 

@@ -1,4 +1,6 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
+
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import {
@@ -194,7 +196,7 @@ export default async function McpMarketDetailPage({
           ) : null}
 
           {server.mcpKind === 'connector' && server.deploymentId ? (
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-3xl border border-border bg-card overflow-hidden">
               <header className="border-b border-border px-5 py-4">
                 <h2 className="text-sm font-semibold text-foreground">{t('inspector')}</h2>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('inspectorDescription')}</p>
@@ -218,15 +220,15 @@ export default async function McpMarketDetailPage({
             {deploymentHref ? (
               <>
                 <div className="flex items-start gap-2.5">
-                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+                  <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
                   <div>
                     <h2 className="text-sm font-semibold text-foreground">{t('alreadyAddedTitle')}</h2>
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('alreadyAddedDescription')}</p>
                   </div>
                 </div>
-                <Link href={deploymentHref} className="ui-button-primary mt-5 h-10 w-full">
+                <ButtonLink href={deploymentHref} variant="primary" size="md" className="mt-5 w-full">
                   {t('manageDeployment')} <ArrowRight className="size-4" />
-                </Link>
+                </ButtonLink>
               </>
             ) : (
               <>
@@ -249,7 +251,7 @@ export default async function McpMarketDetailPage({
                   <SubmitButton
                     flash={false}
                     pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
-                    className="ui-button-primary h-10 w-full"
+                    variant="primary" size="md" className="w-full"
                   >
                     {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')} <ArrowRight className="size-4" />
                   </SubmitButton>

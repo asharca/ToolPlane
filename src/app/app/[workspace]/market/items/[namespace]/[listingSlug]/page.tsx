@@ -1,5 +1,9 @@
+
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
+import { ButtonLink } from '@/components/motion/button';
 import { randomUUID } from 'node:crypto';
-import Link from 'next/link';
+
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import {
@@ -178,7 +182,7 @@ export default async function MarketItemPage({
       <section className="rounded-lg bg-muted/35 p-5">
         <div className="flex items-start gap-2.5">
           {install ? (
-            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
           ) : (
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
           )}
@@ -198,7 +202,7 @@ export default async function MarketItemPage({
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
             <input type="hidden" name="idempotencyKey" value={randomUUID()} />
-            <SubmitButton flash={false} pendingLabel={t('installing')} className="ui-button-primary h-10 w-full">
+            <SubmitButton flash={false} pendingLabel={t('installing')} variant="primary" size="md" className="w-full">
               {t('installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
           </form>
@@ -210,12 +214,9 @@ export default async function MarketItemPage({
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
               {install.status === 'modified' ? (
-                <label className="mb-3 flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                  <input required type="checkbox" name="force" value="yes" className="mt-1 size-3.5 shrink-0 accent-amber-600" />
-                  <span>{t('overwriteLocalChangesConfirmation')}</span>
-                </label>
+                <FormCheckbox required name="force" value="yes" label={t('overwriteLocalChangesConfirmation')} />
               ) : null}
-              <SubmitButton flash={false} pendingLabel={t('updating')} className="ui-button-primary h-10 w-full">
+              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md" className="w-full">
                 <RotateCw className="size-4" /> {t('update')}
               </SubmitButton>
             </form>
@@ -224,15 +225,15 @@ export default async function MarketItemPage({
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-secondary h-10 w-full">
+              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="secondary" size="md" className="w-full">
                 {t('ignoreThisVersion')}
               </SubmitButton>
             </form>
           </div>
         ) : installedSkill ? (
-          <Link href={`/app/${workspaceSlug}/skills/${installedSkill.id}`} className="ui-button-primary mt-5 h-10 w-full">
+          <ButtonLink href={`/app/${workspaceSlug}/skills/${installedSkill.id}`} variant="primary" size="md" className="mt-5 w-full">
             {t('manageSkill')} <ArrowRight className="size-4" />
-          </Link>
+          </ButtonLink>
         ) : null}
       </section>
       <dl id="capabilities" className="scroll-mt-24 space-y-3 text-xs">
@@ -260,12 +261,12 @@ export default async function MarketItemPage({
         <MessageCircle className="size-5 text-foreground" />
         <h2 className="mt-3 text-base font-semibold text-foreground">{t('useAssistantTemplate')}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{t('useAssistantTemplateDescription')}</p>
-        <Link
+        <ButtonLink
           href={`/app/${encodeURIComponent(workspaceSlug)}/chat?newAssistant=1&template=${encodeURIComponent(listing.latestRelease.id)}`}
-          className="ui-button-primary mt-5 h-10 w-full"
+          variant="primary" size="md" className="mt-5 w-full"
         >
           {t('createFromTemplate')} <ArrowRight className="size-4" />
-        </Link>
+        </ButtonLink>
       </section>
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-foreground">{t('configurationSummary')}</h2>
@@ -299,7 +300,7 @@ export default async function MarketItemPage({
       {resourceCanInstall ? <section className="rounded-lg bg-muted/35 p-5">
         <div className="flex items-start gap-2.5">
           {install ? (
-            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+            <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
           ) : (
             <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
           )}
@@ -319,7 +320,7 @@ export default async function MarketItemPage({
             <input type="hidden" name="workspace" value={workspaceSlug} />
             <input type="hidden" name="releaseId" value={listing.latestRelease.id} />
             <input type="hidden" name="idempotencyKey" value={randomUUID()} />
-            <SubmitButton flash={false} pendingLabel={t(connector ? 'connecting' : 'installing')} className="ui-button-primary h-10 w-full">
+            <SubmitButton flash={false} pendingLabel={t(connector ? 'connecting' : 'installing')} variant="primary" size="md" className="w-full">
               {t(connector ? 'connectToWorkspace' : 'installToWorkspace')} <ArrowRight className="size-4" />
             </SubmitButton>
           </form>
@@ -330,7 +331,7 @@ export default async function MarketItemPage({
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('updating')} className="ui-button-primary h-10 w-full">
+              <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="md" className="w-full">
                 <RotateCw className="size-4" /> {t('update')}
               </SubmitButton>
             </form>
@@ -339,15 +340,15 @@ export default async function MarketItemPage({
               <input type="hidden" name="installId" value={install.id} />
               <input type="hidden" name="targetReleaseId" value={listing.latestRelease.id} />
               <input type="hidden" name="currentReleaseId" value={install.currentReleaseId} />
-              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-secondary h-10 w-full">
+              <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="secondary" size="md" className="w-full">
                 {t('ignoreThisVersion')}
               </SubmitButton>
             </form>
           </div>
         ) : installedResourceHref ? (
-          <Link href={installedResourceHref} className="ui-button-primary mt-5 h-10 w-full">
+          <ButtonLink href={installedResourceHref} variant="primary" size="md" className="mt-5 w-full">
             {t('manage')} <ArrowRight className="size-4" />
-          </Link>
+          </ButtonLink>
         ) : null}
       </section> : null}
       <dl id="capabilities" className="scroll-mt-24 space-y-3 text-xs">
@@ -555,7 +556,7 @@ export default async function MarketItemPage({
               )}
             </div> : null}
             {connector && installedMcpDeployment ? (
-              <section id="inspector" className="ui-panel scroll-mt-24 overflow-hidden">
+              <section id="inspector" className="rounded-3xl border border-border bg-card scroll-mt-24 overflow-hidden">
                 <header className="border-b border-border px-5 py-4">
                   <h2 className="text-sm font-semibold text-foreground">{t('inspector')}</h2>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('inspectorDescription')}</p>

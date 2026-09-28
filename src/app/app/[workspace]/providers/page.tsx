@@ -1,3 +1,4 @@
+import type { ModelCost } from '@earendil-works/pi-ai';
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -5,6 +6,7 @@ import { ProvidersPanel } from '@/components/dashboard/agents/ProvidersPanel';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { listProviders } from '@/lib/agents/queries';
 import { piProviderPresets } from '@/lib/agents/provider-catalog';
+import { backfillProviderModels } from '@/lib/agents/mutations';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 
@@ -31,6 +33,7 @@ export default async function ProvidersPage({
   }
 
   const timeZone = resolveUserTimeZone(user);
+  await backfillProviderModels(ws.id);
   const providers = await listProviders(ws.id);
   const presets = piProviderPresets();
 
@@ -57,6 +60,7 @@ export default async function ProvidersPage({
             contextWindow: model.contextWindow,
             maxInputTokens: model.maxInputTokens,
             maxOutputTokens: model.maxOutputTokens,
+            cost: model.cost as ModelCost | null,
             source: model.source,
           })),
           modelsFetchedAt: provider.modelsFetchedAt

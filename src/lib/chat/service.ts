@@ -187,6 +187,18 @@ export async function listChatAssistantsForUser(userId: string, workspaceId: str
   return listChatAssistantsForWorkspace(workspaceId);
 }
 
+export async function listRunningChatThreadIds(userId: string, workspaceId: string) {
+  await requireWorkspace(userId, workspaceId);
+  const turns = await db.chatTurn.findMany({
+    where: {
+      thread: { workspaceId }, status: 'pending',
+      createdAt: { gte: new Date(Date.now() - CHAT_TURN_STALE_AFTER_MS) },
+    },
+    select: { threadId: true },
+  });
+  return turns.map((turn) => turn.threadId);
+}
+
 export async function getChatAssistantForWorkspace(workspaceId: string, assistantId: string) {
   return db.chatAssistant.findFirst({
     where: { id: assistantId, workspaceId },
@@ -995,6 +1007,7 @@ export async function finishChatTurn(
   status: 'failed' | 'cancelled',
   error?: string,
   assistantMessageId?: string,
+  parts?: Array<Record<string, unknown>>,
 ) {
   return db.$transaction(async (tx) => {
     const turn = await tx.chatTurn.updateMany({
@@ -1009,7 +1022,7 @@ export async function finishChatTurn(
     if (assistantMessageId) {
       const message = await tx.chatMessage.updateMany({
         where: { id: assistantMessageId, threadId, turnId, status: 'pending' },
-        data: { status },
+        data: { status, ...(parts ? { parts: parts as Prisma.InputJsonValue } : {}) },
       });
       if (message.count !== 1) throw new ChatServiceError(409, 'Chat response is no longer pending');
     }

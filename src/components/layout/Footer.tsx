@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { FaGithub } from 'react-icons/fa';
 import { getLocale } from 'next-intl/server';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { getMarketingContent } from '@/lib/marketing/content';
@@ -11,7 +12,7 @@ type FooterLink = {
 };
 
 const itemClass =
-  'inline-flex min-h-8 items-center text-[13px] text-muted-foreground transition-colors hover:text-brand';
+  'inline-flex min-h-8 items-center text-[13px] text-muted-foreground transition-colors hover:text-foreground';
 
 function FooterItem({ link }: { link: FooterLink }) {
   const external = link.href.startsWith('http');
@@ -23,6 +24,7 @@ function FooterItem({ link }: { link: FooterLink }) {
         target="_blank"
         rel="noopener noreferrer"
       >
+        {link.href === SITE.sourceUrl && <FaGithub aria-hidden="true" className="mr-1.5 size-3.5" />}
         {link.label}
       </a>
     );

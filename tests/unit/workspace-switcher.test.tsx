@@ -34,11 +34,11 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    const trigger = screen.getByRole('button', { name: /Acme/ });
-    expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull();
+    const trigger = screen.getByRole('button', { name: '切换工作区' });
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     await user.click(trigger);
-    expect(await screen.findByRole('dialog', { name: /workspaces/i })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('link', { name: /Acme/ })).toHaveAttribute(
@@ -72,7 +72,7 @@ describe('WorkspaceSwitcher', () => {
         workspaces={workspaces}
       />,
     );
-    await user.click(screen.getByRole('button', { name: /Acme/ }));
+    await user.click(screen.getByRole('button', { name: '切换工作区' }));
     await user.click(screen.getByRole('button', { name: /create workspace/i }));
     const input = screen.getByRole('textbox', { name: 'Workspace name' });
     expect(input).toBeInTheDocument();
@@ -97,11 +97,11 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    const trigger = screen.getByRole('button', { name: /Acme/ });
+    const trigger = screen.getByRole('button', { name: '切换工作区' });
     await user.click(trigger);
     await user.keyboard('{Escape}');
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull());
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
@@ -119,11 +119,12 @@ describe('WorkspaceSwitcher', () => {
       </>,
     );
 
-    await user.click(screen.getByRole('button', { name: /Acme/ }));
+    const trigger = screen.getByRole('button', { name: '切换工作区' });
+    await user.click(trigger);
     const outside = screen.getByRole('button', { name: 'Outside' });
     await user.click(outside);
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /workspaces/i })).toBeNull());
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
     expect(outside).toHaveFocus();
   });
 
@@ -138,7 +139,7 @@ describe('WorkspaceSwitcher', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Acme/ }));
+    await user.click(screen.getByRole('button', { name: '切换工作区' }));
 
     expect(screen.getByRole('link', { name: 'Workspace settings' })).toHaveAttribute(
       'href',

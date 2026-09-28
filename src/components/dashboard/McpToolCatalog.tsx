@@ -1,5 +1,10 @@
+
+import { ButtonLink } from '@/components/motion/button';
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
 import Link from 'next/link';
-import { ArrowRight, Braces, ChevronRight, Wrench } from 'lucide-react';
+import { ArrowRight, Braces, Wrench } from 'lucide-react';
 import type { McpToolDefinition } from '@/lib/process/mcp-tool-catalog';
 
 type Labels = {
@@ -64,7 +69,7 @@ export function McpToolCatalog({
               <p className="mt-1 text-xs leading-5 text-muted-foreground">{labels.description}</p>
             </div>
           </div>
-          <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">{labels.count}</span>
+          <AnimatedBadge  status="neutral" size="sm" showIcon={false}>{labels.count}</AnimatedBadge>
         </header>
         <div className="divide-y divide-border px-3 pb-3 sm:px-5 sm:pb-5">
           {tools.map((tool) => {
@@ -85,7 +90,7 @@ export function McpToolCatalog({
             );
             const className = 'flex min-w-0 items-start gap-3 rounded-md px-3 py-3 hover:bg-muted/35';
             return hrefForTool ? (
-              <Link key={tool.name} href={hrefForTool(tool.name)} aria-label={tool.name} className={className}>{content}</Link>
+              <ButtonLink key={tool.name} href={hrefForTool(tool.name)} aria-label={tool.name} variant="secondary" size="lg" className="w-full justify-start text-left">{content}</ButtonLink>
             ) : (
               <div key={tool.name} className={className}>{content}</div>
             );
@@ -105,9 +110,9 @@ export function McpToolCatalog({
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{labels.description}</p>
           </div>
         </div>
-        <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+        <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
           {labels.count}
-        </span>
+        </AnimatedBadge>
       </header>
 
       <div className="space-y-2 px-3 pb-3 sm:px-5 sm:pb-5">
@@ -121,21 +126,13 @@ export function McpToolCatalog({
           );
 
           return (
-            <details
-              key={tool.name}
-              open={index === 0}
-              className="group relative rounded-lg bg-muted/25 open:bg-muted/35"
-            >
-              <summary className={`flex cursor-pointer list-none items-start gap-3 px-3 py-3 marker:content-none sm:px-4 ${hrefForTool ? 'pr-12 sm:pr-12' : ''}`}>
-                <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+            <BouncyAccordion key={tool.name} defaultValue={index === 0 ? 'details' : null} items={[{ id: 'details', title: <>
                 <span className="min-w-0 flex-1">
                   <code className="break-all font-mono text-sm font-semibold text-foreground">{tool.name}</code>
                   {'title' in tool && typeof tool.title === 'string' && tool.title !== tool.name ? (
                     <span className="ml-2 text-xs text-muted-foreground">{tool.title}</span>
                   ) : null}
-                </span>
-              </summary>
-              {hrefForTool ? (
+                </span></>, description: <>{hrefForTool ? (
                 <Link
                   href={hrefForTool(tool.name)}
                   aria-label={tool.name}
@@ -199,17 +196,11 @@ export function McpToolCatalog({
                     <p className="mt-2 text-sm text-muted-foreground">{labels.noArguments}</p>
                   )}
 
-                  <details className="group/schema mt-3">
-                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
-                      {labels.schemaJson}
-                    </summary>
-                    <pre tabIndex={0} className="mt-2 max-h-[min(24rem,50dvh)] max-w-full overflow-auto overscroll-contain rounded-md bg-background/70 p-3 font-mono text-xs leading-5 text-foreground">
+                  <BouncyAccordion items={[{ id: 'schema', title: <>{labels.schemaJson}</>, description: <><pre tabIndex={0} className="mt-2 max-h-[min(24rem,50dvh)] max-w-full overflow-auto overscroll-contain rounded-md bg-background/70 p-3 font-mono text-xs leading-5 text-foreground">
                       {JSON.stringify(schema, null, 2)}
-                    </pre>
-                  </details>
+                    </pre></> }]} />
                 </section>
-              </div>
-            </details>
+              </div></> }]} />
           );
         })}
       </div>

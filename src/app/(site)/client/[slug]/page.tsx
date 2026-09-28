@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -7,6 +6,7 @@ import { getMarketingContent } from '@/lib/marketing/content';
 import { SITE } from '@/lib/site';
 import { getPublicClient } from '../../_lib/catalog';
 import { siteMetadata } from '../../_lib/metadata';
+import { ButtonLink } from '@/components/motion/button';
 
 export async function generateMetadata({
   params,
@@ -70,17 +70,17 @@ export default async function Page({
       {client.categories.length > 0 ? (
         <div className="mt-6 flex flex-wrap gap-2">
           {client.categories.map((category) => (
-            <Link key={category.id} href={`/categories/${category.slug}`} className="ui-chip">
+            <ButtonLink key={category.id} href={`/categories/${category.slug}`} variant="secondary" size="sm">
               {category.name}
-            </Link>
+            </ButtonLink>
           ))}
         </div>
       ) : null}
 
       <section className="mt-10 rounded-lg border border-border bg-card p-5">
-        <Link href="/server" className="ui-button-secondary">
+        <ButtonLink href="/server" variant="secondary">
           {t('browseMcpServers')}
-        </Link>
+        </ButtonLink>
       </section>
     </article>
   );

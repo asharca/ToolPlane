@@ -1,3 +1,7 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
 import { History } from 'lucide-react';
 import Link from 'next/link';
 import { ReleaseChanges } from '@/components/admin/ReleaseChanges';
@@ -135,7 +139,7 @@ export default async function EditAgentListingPage({
         meta={<AdminBadge tone="neutral">/{listing.directorySlug}</AdminBadge>}
         backHref={backHref}
         backLabel={t('directoryAgents')}
-        actions={<Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'agentListing', targetId: id, returnTo: detailHref })} className="ui-button-secondary"><History className="size-4" />{ops('audit')}</Link>}
+        actions={<ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'agentListing', targetId: id, returnTo: detailHref })} variant="secondary" size="md"><History className="size-4" />{ops('audit')}</ButtonLink>}
       />
 
       {reviewRelease && reviewManifest ? (
@@ -150,7 +154,7 @@ export default async function EditAgentListingPage({
           tone="danger"
         >
           <div className="space-y-4">
-            <p className="text-sm text-destructive-text">{t('agentInvalidPendingReleaseDescription')}</p>
+            <p className="text-sm text-destructive">{t('agentInvalidPendingReleaseDescription')}</p>
             {canReview ? <ConfirmDialog
               label={t('agentRejectRelease')}
               prompt={t('agentRejectReleaseDescription')}
@@ -182,41 +186,28 @@ export default async function EditAgentListingPage({
         padded={false}
       >
         {listing.releases.length > 0 ? (
-          <DashboardTable
-            ariaLabel={t('agentReleaseHistory')}
-            minWidth="46rem"
-            headers={[
+          <DashboardTable ariaLabel={t('agentReleaseHistory')}
+minWidth="46rem"
+headers={[
               { label: t('agentVersionColumn') },
               { label: t('statusColumn') },
               { label: ops('reviewer') },
               { label: ops('reviewNote') },
-              { label: t('agentReleaseChecksum'), className: 'w-full' },
+              { label: t('agentReleaseChecksum'), width: "35%" },
               { label: t('installsColumn'), align: 'right' },
             ]}
-          >
-            {listing.releases.map((release) => (
-              <tr key={release.id}>
-                <td className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums text-foreground">
-                  <Link href={adminHref(`/admin/agents/${id}/edit`, { releaseId: release.id, returnTo: backHref })} className="hover:underline" aria-current={release.id === reviewRelease?.id ? 'page' : undefined}>v{release.version}</Link>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  <AdminBadge tone={releaseStatusTone(release.reviewStatus)} dot>
+rows={listing.releases.map((release) => (
+              ({ id: release.id, cells: [<Link href={adminHref(`/admin/agents/${id}/edit`, { releaseId: release.id, returnTo: backHref })} className="hover:underline" aria-current={release.id === reviewRelease?.id ? 'page' : undefined}>v{release.version}</Link>,
+<AdminBadge tone={releaseStatusTone(release.reviewStatus)} dot>
                     {ops.has(release.reviewStatus) ? ops(release.reviewStatus) : release.reviewStatus}
-                  </AdminBadge>
-                </td>
-                <td className="px-4 py-3 text-sm"><span className="block">{release.reviewedBy?.name ?? release.reviewedBy?.email ?? '-'}</span>{release.reviewedAt ? <LogTimestamp date={release.reviewedAt} /> : null}</td>
-                <td className="max-w-64 whitespace-pre-wrap break-words px-4 py-3 text-xs">{release.reviewNote ?? '-'}</td>
-                <td className="px-4 py-3">
-                  <code className="block max-w-xl truncate font-mono text-xs text-muted-foreground">
+                  </AdminBadge>,
+<> <span className="block">{release.reviewedBy?.name ?? release.reviewedBy?.email ?? '-'}</span>{release.reviewedAt ? <LogTimestamp date={release.reviewedAt} /> : null} </>,
+<div className="min-w-0 max-w-64">{release.reviewNote ? <CenterMorphModal><CenterMorphModalTrigger><Button variant="ghost" size="sm" className="max-w-full"><span className="truncate">{release.reviewNote}</span></Button></CenterMorphModalTrigger><CenterMorphModalContent ariaLabel={ops('reviewNote')} closeButtonLabel={t('cancel')} className="max-w-2xl"><div className="space-y-4 p-6"><h2 className="pr-8 text-sm font-semibold">{ops('reviewNote')}</h2><p tabIndex={0} className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-sm">{release.reviewNote}</p></div></CenterMorphModalContent></CenterMorphModal> : '-'}</div>,
+<code className="block max-w-xl truncate font-mono text-xs text-muted-foreground">
                     sha256:{release.checksum}
-                  </code>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                  {release._count.installs}
-                </td>
-              </tr>
-            ))}
-          </DashboardTable>
+                  </code>,
+release._count.installs] })
+            ))} />
         ) : (
           <p className="px-5 py-8 text-sm text-muted-foreground">{t('agentNoReleases')}</p>
         )}

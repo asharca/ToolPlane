@@ -14,13 +14,13 @@ A2AEntryBinding maps the authenticated actor, entry kind and source record to a 
 
 The first migrated conversation starts a new native Context. Old history remains readable, but old tool operations and full native memory are **not imported or replayed**. WorkSession and Conversation remain presentation records, not independent executors for these runtimes. Actors do not share one another's native contexts.
 
-Disconnect detaches observation, not execution. The classic chat stop-reading action is not task cancellation: use the linked native workbench to explicitly cancel. Explicit Work cancellation is propagated to the root and descendants. Failed Work cannot silently replay its previous accepted message as new work; submit a new explicit input. External effects are not rolled back.
+Disconnect detaches observation, not execution. The classic chat stop-reading action is not task cancellation. Local A2A tasks can be explicitly canceled through CancelTask; authenticated task links retain monitoring and root-tool approval access. Explicit Work cancellation is propagated to the root and descendants. Failed Work cannot silently replay its previous accepted message as new work; submit a new explicit input. External effects are not rolled back.
 
 ## Messaging connections
 
 An external sender ID is not a platform identity. A workspace administrator must bind their current account under **Agent settings → A2A access → Messaging execution identity**. Incoming payloads and models cannot choose a platform actor. Existing sender/source/sandbox restrictions remain in force.
 
-Execution and approval access recheck the bound operator, connection state, configuration and ancestor permissions. Revoking the connection stops subsequent access. Missing operators never fall back to the workspace owner. The workbench link returned to a channel grants no access; the bound operator must sign in. A message saying “approve” is not an approval.
+Execution and approval access recheck the bound operator, connection state, configuration and ancestor permissions. Revoking the connection stops subsequent access. Missing operators never fall back to the workspace owner. The Agent settings task link returned to a channel grants no access; the bound operator must sign in. A message saying “approve” is not an approval.
 
 This increment does not add a durable channel outbox. A durable task must not be confused with guaranteed final-response delivery after process failure.
 
@@ -28,7 +28,9 @@ This increment does not add a durable channel outbox. A durable task must not be
 
 A2AToolApproval binds the task, execution lease, native call ID, tool name, canonical input hash and expiry. The runtime registers interception before reporting readiness; model/MCP access for that lease is blocked until ready. Persistent CLI process reuse includes the credential digest, preventing a subsequent round from reusing expired authority while keeping native conversation state.
 
-The private console shows the exact JSON input and approve-once/deny actions. Initial policy conservatively approves each native tool call, not a permanent allowlist. Input is limited to 16 KiB, 32 approvals per task and five minutes bounded by the original deadline. Transactions serialize decisions and consumption. Changed arguments, duplicate consumption, revocation, cancellation, old leases and expiry fail closed. Uncertain permission delivery is not replayed. Audits store identifiers, hashes and decisions, not full inputs.
+Root tasks retain human approve-once/deny decisions, accessible through their authenticated task links. For an internal child task, a verified parent delegation authorizes its already-configured tools without another human decision. The server rechecks the current selected edge, ancestry, actor, workspace, cancellation and lease before atomically authorizing and consuming the per-call receipt. Existing pending child calls may proceed; denied, expired or consumed decisions are not reopened. Audits distinguish `agent.a2a.delegated_tool_authorized` from human decisions and record the parent task without claiming that a human clicked approve.
+
+Input is limited to 16 KiB, 32 approval receipts per task and five minutes bounded by the original deadline. Transactions serialize decisions and consumption. Changed arguments, duplicate consumption, revocation, cancellation, old leases and expiry fail closed. Uncertain permission delivery is not replayed. Audits store identifiers, hashes and decisions, not full inputs. These rules do not grant additional tools, cross-workspace access or external-peer permissions.
 
 A live blocked pre-tool callback leaves the public state WORKING. No custom A2A status is added; AUTH_REQUIRED is not repurposed for model-driven approvals. The process keeps its execution slot and sandbox while waiting. Unresolved approvals prevent successful task completion; this is not transparent process checkpointing.
 
@@ -51,7 +53,7 @@ GET  /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/approvals?rootTaskId
 POST /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/approvals
 ```
 
-The runtime uses a task/lease-bound Bearer for ready/check only, never approval. Console actions use same-origin authenticated sessions, no API-token fallback. Cross-origin requests, caller-supplied actors/arguments and stale hashes are rejected. Classic UIs link to the native workbench for decisions; not every legacy surface has an embedded approval panel.
+The runtime uses a task/lease-bound Bearer for ready/check only, never approval. Console actions use same-origin authenticated sessions, no API-token fallback. Cross-origin requests, caller-supplied actors/arguments and stale hashes are rejected. Classic UIs link to Agent settings → A2A integration for decisions; not every legacy surface has an embedded approval panel.
 
 ## Migrations and acceptance
 

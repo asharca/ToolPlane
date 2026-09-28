@@ -1,21 +1,15 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { CenterMorphModal, CenterMorphModalTrigger, CenterMorphModalClose, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Check, CopyPlus, Loader2, X } from 'lucide-react';
-import { useFormStatus } from 'react-dom';
+import { Check, CopyPlus } from 'lucide-react';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { cloneAgentAction } from '@/lib/agents/actions';
 import { isDedicatedSandboxRuntimeKind } from '@/lib/agents/runtime-kind';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog';
 
 type CloneScope = {
   mcp: boolean;
@@ -54,23 +48,6 @@ function completeScope(runtimeKind: string): CloneScope {
   };
 }
 
-function CloneSubmitButton() {
-  const t = useTranslations('console.agents');
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      aria-busy={pending}
-      className="ui-button-primary h-10 gap-2 px-4 disabled:cursor-wait disabled:opacity-70"
-    >
-      {pending ? <Loader2 className="size-[18px] shrink-0 animate-spin" /> : <CopyPlus className="size-[18px] shrink-0" />}
-      {pending ? t('cloning') : t('cloneAgent')}
-    </button>
-  );
-}
-
 function ScopeCheckbox({
   checked,
   description,
@@ -85,19 +62,12 @@ function ScopeCheckbox({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-3 transition-colors hover:bg-muted/40">
-      <input
-        type="checkbox"
-        name={name}
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="mt-0.5 size-4 rounded border-border"
-      />
+    <div className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-3 transition-colors hover:bg-muted/40">
+      <FormCheckbox name={name} checked={checked} label={label} onCheckedChange={(checked) => onChange(checked)} />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
         <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -144,45 +114,26 @@ export function CloneAgentButton({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
+    <CenterMorphModal open={open} onOpenChange={(nextOpen) => {
         if (nextOpen) setScope(defaultScope());
         setOpen(nextOpen);
-      }}
-    >
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          disabled={requiresNewSandbox}
-          aria-label={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')}
-          title={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')}
-          className="ui-button-secondary size-10 shrink-0 px-0 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+      }}>
+      <CenterMorphModalTrigger>
+        <Button type="button" disabled={requiresNewSandbox} aria-label={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')} title={requiresNewSandbox ? t('cloneRequiresNewSandbox') : t('cloneAgent')} variant={"secondary"} size={"icon"} className="shrink-0">
           <CopyPlus className="size-[18px] shrink-0" />
-        </button>
-      </DialogTrigger>
+        </Button>
+      </CenterMorphModalTrigger>
 
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent className="ui-panel !block !max-h-[calc(100vh-2rem)] !w-full !max-w-2xl !gap-0 !overflow-y-auto !p-0 shadow-xl">
-          <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+      <>
+        
+        <CenterMorphModalContent ariaLabel={t('cloneAgentDialogTitle')} closeButtonLabel={t('close')} className="max-w-2xl">
+          <header className="flex items-center gap-3 border-b border-border pl-5 pr-16 py-4">
             <div>
-              <DialogTitle className="!text-base !leading-normal !tracking-normal text-foreground">
+              <h2 className="text-base font-semibold text-foreground">
                 {t('cloneAgentDialogTitle')}
-              </DialogTitle>
-              <DialogDescription className="mt-1 !text-xs">{t('cloneAgentDialogDescription')}</DialogDescription>
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t('cloneAgentDialogDescription')}</p>
             </div>
-            <DialogClose asChild>
-              <button
-                type="button"
-                aria-label={t('close')}
-                title={t('close')}
-                className="ui-button-secondary size-9 shrink-0 px-0"
-              >
-                <X className="size-4" />
-              </button>
-            </DialogClose>
           </header>
 
           <form action={cloneAgentAction} className="space-y-5 px-5 py-5">
@@ -190,16 +141,10 @@ export function CloneAgentButton({
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="cloneOptions" value="1" />
 
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('cloneName')}</span>
-                <input
-                  name="cloneName"
-                  defaultValue={t('agentCopyName', { name: agentName })}
-                  maxLength={60}
-                  autoFocus
-                  className="ui-input h-10 w-full"
-                />
-              </label>
+              <div className="block">
+                
+                <Input label={t('cloneName')} name="cloneName" maxLength={60} autoFocus defaultValue={String(t('agentCopyName', { name: agentName }))} className="w-full" />
+              </div>
 
               <div className="rounded-md border border-primary/25 bg-primary/5 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -208,14 +153,10 @@ export function CloneAgentButton({
                     <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('completeCloneDescription')}</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('completeCloneExclusions')}</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setScope(completeScope(runtimeKind))}
-                    className="ui-button-secondary h-9 gap-2 px-3 text-xs"
-                  >
+                  <Button type="button" onClick={() => setScope(completeScope(runtimeKind))} variant={"secondary"} size={"sm"}>
                     {isComplete ? <Check className="size-3.5" /> : <CopyPlus className="size-3.5" />}
                     {isComplete ? t('completeCloneSelected') : t('selectCompleteClone')}
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -284,19 +225,19 @@ export function CloneAgentButton({
                   ) : null}
                 </div>
                 {isHermes && scope.hermesVolume ? (
-                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{t('copyHermesVolumeConversationHint')}</p>
+                  <p className="mt-2 text-xs text-muted-foreground text-muted-foreground">{t('copyHermesVolumeConversationHint')}</p>
                 ) : null}
               </fieldset>
 
               <footer className="flex justify-end gap-2 border-t border-border pt-4">
-                <DialogClose asChild>
-                  <button type="button" className="ui-button-secondary h-10 px-4">{t('cancel')}</button>
-                </DialogClose>
-                <CloneSubmitButton />
+                <CenterMorphModalClose>
+                  <Button type="button" variant={"secondary"}>{t('cancel')}</Button>
+                </CenterMorphModalClose>
+                <SubmitButton pendingLabel={t('cloning')} flash={false}><CopyPlus className="size-4" />{t('cloneAgent')}</SubmitButton>
               </footer>
           </form>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      </>
+    </CenterMorphModal>
   );
 }

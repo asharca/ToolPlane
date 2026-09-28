@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -70,7 +72,7 @@ export default async function AdminWorkspaceDetailPage({ params, searchParams }:
         meta={<><AdminBadge tone="neutral">/{w.slug}</AdminBadge><AdminBadge tone={w.status === 'active' ? 'success' : 'warning'}>{ops.has(w.status) ? ops(w.status) : w.status}</AdminBadge></>}
         backHref={backHref}
         backLabel={t('workspaces')}
-        actions={<><Link href={logsHref()} className="ui-button-secondary"><Activity className="size-4" />{ops('activity')}</Link><Link href={logsHref({ tab: 'audit' })} className="ui-button-secondary"><ShieldCheck className="size-4" />{ops('audit')}</Link></>}
+        actions={<><ButtonLink href={logsHref()} variant="secondary" size="md"><Activity className="size-4" />{ops('activity')}</ButtonLink><ButtonLink href={logsHref({ tab: 'audit' })} variant="secondary" size="md"><ShieldCheck className="size-4" />{ops('audit')}</ButtonLink></>}
       />
 
       <AdminPanel
@@ -88,7 +90,7 @@ export default async function AdminWorkspaceDetailPage({ params, searchParams }:
                 <span className="min-w-0 truncate text-sm font-medium text-foreground">
                   {member.user.email}
                 </span>
-                <AdminBadge tone={member.role === 'owner' ? 'brand' : 'neutral'}>
+                <AdminBadge tone={member.role === 'owner' ? 'info' : 'neutral'}>
                   {roleLabels[member.role] ?? member.role}
                 </AdminBadge>
               </Link>
@@ -143,7 +145,7 @@ export default async function AdminWorkspaceDetailPage({ params, searchParams }:
         </AdminPanel>
       </div>
 
-      <AdminPanel title={ops('recentErrors')} actions={<Link href={logsHref({ outcome: 'error' })} className="ui-button-ghost"><Activity className="size-4" />{ops('activity')}</Link>} padded={false}>
+      <AdminPanel title={ops('recentErrors')} actions={<ButtonLink href={logsHref({ outcome: 'error' })} variant="ghost" size="md"><Activity className="size-4" />{ops('activity')}</ButtonLink>} padded={false}>
         {w.recentErrors.length ? <ul className="divide-y divide-border">{w.recentErrors.map((event) => <li key={event.id}>
           <Link href={adminHref(`/admin/logs/${event.id}`, { returnTo: selfHref })} className="flex min-w-0 flex-wrap items-center gap-3 px-5 py-3 hover:bg-muted/55"><LogOutcomeBadge outcome={event.outcome} /><span className="min-w-0 flex-1"><span className="block truncate text-sm">{event.message}</span><code className="text-xs text-muted-foreground">{event.eventName}</code></span><LogTimestamp date={event.createdAt} /></Link>
         </li>)}</ul> : <p className="px-5 py-6 text-sm text-muted-foreground">{ops('noErrors')}</p>}

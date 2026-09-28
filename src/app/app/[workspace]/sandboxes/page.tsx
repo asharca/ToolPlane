@@ -1,3 +1,8 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
@@ -46,7 +51,6 @@ import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/co
 
 export const dynamic = 'force-dynamic';
 
-const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
 const LIFECYCLE_BLOCKED_STATUSES = new Set([
   'copying',
   'copy_failed',
@@ -313,8 +317,7 @@ export default async function SandboxesPage({
                 { label: t('created') },
                 { label: t('actions'), align: 'right' },
               ]}
-            >
-              {sandboxRows.map((row) => {
+             rows={sandboxRows.map((row) => {
                 if (row.type === 'hermes') {
                   const runtime = row.runtime;
                   const status = managedStatus(runtime);
@@ -322,10 +325,9 @@ export default async function SandboxesPage({
                   const lifecycleBlocked = LIFECYCLE_BLOCKED_STATUSES.has(status);
                   const imported = isImportedHermesArchive(runtime.sandbox.config);
                   return (
-                    <tr key={runtime.id}>
-                      <td className="px-4 py-3">
+                    { id: runtime.id, cells: [<div className="min-w-0">
                         <div className="flex items-center gap-2.5">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/35 text-(--color-warning) dark:text-(--color-warning)">
                             <Container className="size-4" />
                           </span>
                           <div className="min-w-0">
@@ -335,22 +337,22 @@ export default async function SandboxesPage({
                             </div>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
+                      </div>,
+<div className="min-w-0">
+                        <AnimatedBadge status="neutral" size="sm">
                           <Container className="size-3.5" />
                           {t('hermes')}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
+                        </AnimatedBadge>
+                      </div>,
+<div className="min-w-0">
                         <StatusBadge status={status} />
                         {runtime.lastError ? (
-                          <div className="mt-1 max-w-48 truncate text-xs text-red-600" title={runtime.lastError}>
+                          <div className="mt-1 max-w-48 truncate text-xs text-destructive" title={runtime.lastError}>
                             {runtime.lastError}
                           </div>
                         ) : null}
-                      </td>
-                      <td className="max-w-xs px-4 py-3 text-xs text-muted-foreground">
+                      </div>,
+<div className="min-w-0">
                         <div className="truncate" title={runtime.image}>{runtime.image}</div>
                         <div
                           className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-muted-foreground/70"
@@ -359,30 +361,30 @@ export default async function SandboxesPage({
                           <HardDrive className="size-3 shrink-0" />
                           {compactVolumeName(runtime.sandbox.id)}
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
+                      </div>,
+<div className="min-w-0">
+                        <ButtonLink
                           href={`/app/${slug}/agents/${runtime.agent.id}`}
-                          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
+                          variant="ghost" size="sm"
                         >
                           <Bot className="size-3.5 text-muted-foreground" />
                           {runtime.agent.name}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{runtime.sandbox.snapshots.length}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{formatDate(runtime.sandbox.createdAt, timeZone, locale)}</td>
-                      <td className="px-4 py-3">
+                        </ButtonLink>
+                      </div>,
+<div className="min-w-0">{runtime.sandbox.snapshots.length}</div>,
+<div className="min-w-0">{formatDate(runtime.sandbox.createdAt, timeZone, locale)}</div>,
+<div className="min-w-0">
                         <div className="flex items-center justify-end gap-3">
                           <HermesRuntimeDialogLauncher compact runtime={managedRuntimeDialogData(runtime, status)} />
-                          <Link href={`/app/${slug}/agents/${runtime.agent.id}?settings=channels`} title={t('channels')} aria-label={t('channels')}
-                            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+                          <ButtonLink href={`/app/${slug}/agents/${runtime.agent.id}?settings=channels`} title={t('channels')} aria-label={t('channels')}
+                            variant="ghost" size="icon">
                             <Radio className="size-4" />
-                          </Link>
+                          </ButtonLink>
                           {!lifecycleBlocked ? running ? (
                             <form action={stopSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />
                               <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
-                              <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                              <SubmitButton flash={false} pendingLabel={t('stopping')} variant="ghost" size="sm">
                                 {t('stop')}
                               </SubmitButton>
                             </form>
@@ -390,14 +392,13 @@ export default async function SandboxesPage({
                             <form action={startSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />
                               <input type="hidden" name="sandboxId" value={runtime.sandbox.id} />
-                              <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                              <SubmitButton flash={false} pendingLabel={t('starting')} variant="ghost" size="sm">
                                 {t('start')}
                               </SubmitButton>
                             </form>
                           ) : null}
                         </div>
-                      </td>
-                    </tr>
+                      </div>] }
                   );
                 }
 
@@ -409,8 +410,7 @@ export default async function SandboxesPage({
                 const disabledLegacy = s.kind === 'host' || (s.kind === 'ssh' && !sshTargetIdFromConfig(s.config)) || (s.kind === 'connector' && !connector);
                 const agent = s.agentLinks[0]?.agent;
                 return (
-                  <tr key={s.id}>
-                    <td className="p-0">
+                  { id: s.id, cells: [<div className="min-w-0">
                       <Link
                         href={`/app/${slug}/sandboxes/${s.id}`}
                         className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
@@ -425,17 +425,17 @@ export default async function SandboxesPage({
                           </div>
                         </div>
                       </Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
+                    </div>,
+<div className="min-w-0">
+                      <AnimatedBadge status="neutral" size="sm">
                         {s.kind === 'connector' ? <Laptop className="size-3.5" /> : <Cpu className="size-3.5" />}
                         {modeLabel(s.kind, t)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
+                      </AnimatedBadge>
+                    </div>,
+<div className="min-w-0">
                       <StatusBadge status={status} />
-                    </td>
-                    <td className="max-w-xs px-4 py-3 text-xs text-muted-foreground">
+                    </div>,
+<div className="min-w-0">
                       <div className="truncate">
                         {backingStore(s, t)}
                       </div>
@@ -449,35 +449,35 @@ export default async function SandboxesPage({
                           <SandboxConnectorStatus workspace={slug} sandboxId={s.id} />
                         </div>
                       ) : null}
-                    </td>
-                    <td className="px-4 py-3">
+                    </div>,
+<div className="min-w-0">
                       {agent ? (
-                        <Link
+                        <ButtonLink
                           href={`/app/${slug}/agents/${agent.id}`}
-                          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
+                          variant="ghost" size="sm"
                         >
                           <Bot className="size-3.5 text-muted-foreground" />
                           {agent.name}
-                        </Link>
+                        </ButtonLink>
                       ) : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{s._count.snapshots}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt, timeZone, locale)}</td>
-                    <td className="px-4 py-3">
+                    </div>,
+<div className="min-w-0">{s._count.snapshots}</div>,
+<div className="min-w-0">{formatDate(s.createdAt, timeZone, locale)}</div>,
+<div className="min-w-0">
                       <div className="flex items-center justify-end gap-3">
                         {disabledLegacy || lifecycleBlocked ? null : running ? (
                           <>
                             <form action={stopSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />
                               <input type="hidden" name="sandboxId" value={s.id} />
-                              <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                              <SubmitButton flash={false} pendingLabel={t('stopping')} variant="ghost" size="sm">
                                 {t('stop')}
                               </SubmitButton>
                             </form>
                             <form action={restartSandboxAction}>
                               <input type="hidden" name="workspace" value={slug} />
                               <input type="hidden" name="sandboxId" value={s.id} />
-                              <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
+                              <SubmitButton flash={false} pendingLabel={t('restarting')} variant="ghost" size="sm">
                                 {t('restart')}
                               </SubmitButton>
                             </form>
@@ -486,15 +486,15 @@ export default async function SandboxesPage({
                           <form action={startSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
                             <input type="hidden" name="sandboxId" value={s.id} />
-                            <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                            <SubmitButton flash={false} pendingLabel={t('starting')} variant="ghost" size="sm">
                               {t('start')}
                             </SubmitButton>
                           </form>
                         )}
                         {agent ? (
-                          <Link href={`/app/${slug}/agents/${agent.id}`} className={rowButton}>
+                          <ButtonLink href={`/app/${slug}/agents/${agent.id}`} variant="ghost" size="sm">
                             {t('openAgent')}
-                          </Link>
+                          </ButtonLink>
                         ) : (
                           <form action={deleteSandboxAction}>
                             <input type="hidden" name="workspace" value={slug} />
@@ -505,19 +505,17 @@ export default async function SandboxesPage({
                               cancelLabel={common('cancel')}
                               prompt={t('deleteSandboxShortPrompt', { name: s.name })}
                               pendingLabel={t('deletingSandbox')}
-                              triggerClassName="text-xs text-muted-foreground transition-colors hover:text-red-600"
-                              confirmClassName="text-xs font-medium text-red-600 hover:text-red-700"
-                              cancelClassName="text-xs text-muted-foreground hover:text-foreground"
+                              
+                              
+                              
                               promptClassName="max-w-36 text-right text-xs text-muted-foreground"
                             />
                           </form>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </div>] }
                 );
-              })}
-            </DashboardTable>
+              })} />
           )}
         </DashboardSection>
 

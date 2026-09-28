@@ -1,6 +1,7 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { Plus } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
 import {
   AdminPage,
   AdminPageHeader,
@@ -38,10 +39,10 @@ export default async function AdminAssistantsPage({
         description={t('assistantsDirectoryDescription')}
         meta={t('assistantListingCount', { count: result.total.toLocaleString() })}
         actions={(
-          <Link href="/admin/assistants/new" className="ui-button-primary">
+          <ButtonLink href="/admin/assistants/new" variant="primary" size="md">
             <Plus className="size-4" aria-hidden="true" />
             {t('addAssistantTemplate')}
-          </Link>
+          </ButtonLink>
         )}
       />
 

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { requireAdmin } from '@/lib/auth/admin';
-import { Alert, CopyButton } from '@asharca/ui';
+import { CopyButton } from '@/components/dashboard/CopyButton';
 import { ChevronDown, ChevronRight, FileJson, GitBranch, ScrollText } from 'lucide-react';
 import { AdminBadge, AdminPage, AdminPageHeader, AdminPanel } from '@/components/admin/AdminUI';
 import { LogOutcomeBadge, LogTimestamp } from '@/components/admin/LogUI';
@@ -36,7 +36,7 @@ export default async function LogDetailPage({ params, searchParams }: { params: 
   return <AdminPage>
     <AdminPageHeader title={event.eventName} description={<span className="break-words [overflow-wrap:anywhere]">{event.message}</span>}
       meta={<LogOutcomeBadge outcome={event.outcome} />} backHref={backHref} backLabel={t('logsTitle')}
-      actions={<CopyButton text={event.id} label={t('logsCopyEventId')} copiedLabel={t('logsCopied')} failedLabel={t('logsCopyFailed')} />} />
+      actions={<CopyButton text={event.id} label={t('logsCopyEventId')} />} />
 
     <dl className="grid grid-cols-2 gap-px border-y border-border bg-border xl:grid-cols-4">
       {[
@@ -66,9 +66,9 @@ export default async function LogDetailPage({ params, searchParams }: { params: 
 
         <AdminPanel title={<span className="flex items-center gap-2"><GitBranch className="size-4 text-muted-foreground" aria-hidden="true" />{t('logsTrace')}</span>}
           actions={<AdminBadge>{t('logsTraceCount', { count: Math.min(trace.length, 500) })}</AdminBadge>}>
-          {trace.length > 500 ? <Alert tone="warning" role="status" className="mb-4">{t('logsTruncated')}</Alert> : null}
+          {trace.length > 500 ? <p role="status" className="mb-4 text-sm text-muted-foreground">{t('logsTruncated')}</p> : null}
           <ol className="ml-2 border-l border-border">{trace.slice(0, 500).map((row) => <li key={row.id} className="relative pl-5">
-            <span aria-hidden="true" className={`absolute -left-[4.5px] top-5 size-2 rounded-full ring-4 ring-background ${row.outcome === 'error' ? 'bg-destructive-text' : row.outcome === 'success' ? 'bg-brand' : 'bg-muted-foreground'}`} />
+            <span aria-hidden="true" className={`absolute -left-[4.5px] top-5 size-2 rounded-full ring-4 ring-background ${row.outcome === 'error' ? 'bg-destructive' : row.outcome === 'success' ? 'bg-primary' : 'bg-muted-foreground'}`} />
             <Link href={adminHref(`/admin/logs/${row.id}`, { returnTo: backHref })} aria-current={row.id === event.id ? 'step' : undefined} className={`block rounded-md p-3 transition-colors hover:bg-muted/50 ${row.id === event.id ? 'bg-muted/50 ring-1 ring-border' : ''}`}>
               <span className="flex flex-wrap items-center justify-between gap-2"><LogTimestamp date={row.createdAt} compact /><LogOutcomeBadge outcome={row.outcome} /></span>
               <span className="mt-2 block break-all font-mono text-xs font-semibold">{row.eventName}</span>
@@ -82,16 +82,16 @@ export default async function LogDetailPage({ params, searchParams }: { params: 
       <aside className="min-w-0 space-y-6" aria-label={t('logsMetadata')}>
         <AdminPanel title={ops('related')}>
           <div className="space-y-3 text-sm">
-            {workspace ? <Link href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: selfHref })} className="block break-words text-brand hover:underline">{t('workspaces')}: {workspace.name}</Link> : null}
-            {actor ? <Link href={adminHref(`/admin/users/${actor.id}`, { returnTo: selfHref })} className="block break-all text-brand hover:underline">{t('user')}: {actor.name ?? actor.email}</Link> : null}
-            {(['deploymentId', 'agentId'] as const).filter((key) => event[key]).map((key) => <Link key={key} href={adminHref('/admin/logs', { domain: 'all', [key]: event[key]!, returnTo: selfHref })} className="block text-brand hover:underline">{t(`logFields.${key}`)} / {ops('activity')}</Link>)}
-            <Link href={adminHref('/admin/logs', { tab: 'audit', traceId: event.traceId, since: new Date(event.createdAt.getTime() - 3600_000).toISOString(), until: new Date(Math.min(observedAt, event.createdAt.getTime() + 86400_000)).toISOString(), returnTo: selfHref })} className="block text-brand hover:underline">{ops('audit')}</Link>
+            {workspace ? <Link href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: selfHref })} className="block break-words text-primary hover:underline">{t('workspaces')}: {workspace.name}</Link> : null}
+            {actor ? <Link href={adminHref(`/admin/users/${actor.id}`, { returnTo: selfHref })} className="block break-all text-primary hover:underline">{t('user')}: {actor.name ?? actor.email}</Link> : null}
+            {(['deploymentId', 'agentId'] as const).filter((key) => event[key]).map((key) => <Link key={key} href={adminHref('/admin/logs', { domain: 'all', [key]: event[key]!, returnTo: selfHref })} className="block text-primary hover:underline">{t(`logFields.${key}`)} / {ops('activity')}</Link>)}
+            <Link href={adminHref('/admin/logs', { tab: 'audit', traceId: event.traceId, since: new Date(event.createdAt.getTime() - 3600_000).toISOString(), until: new Date(Math.min(observedAt, event.createdAt.getTime() + 86400_000)).toISOString(), returnTo: selfHref })} className="block text-primary hover:underline">{ops('audit')}</Link>
           </div>
         </AdminPanel>
         <AdminPanel title={t('logsCorrelation')}>
           <dl className="space-y-4">{(['requestId', 'traceId'] as const).filter((key) => event[key]).map((key) => <div key={key}>
             <dt className="text-xs font-medium text-muted-foreground">{t(`logFields.${key}`)}</dt>
-            <dd className="mt-1 flex min-w-0 items-start gap-2"><code className="min-w-0 flex-1 break-all pt-1.5 text-xs leading-5">{event[key]}</code><CopyButton text={event[key]!} iconOnly label={t('logsCopyField', { field: t(`logFields.${key}`) })} copiedLabel={t('logsCopied')} failedLabel={t('logsCopyFailed')} /></dd>
+            <dd className="mt-1 flex min-w-0 items-start gap-2"><code className="min-w-0 flex-1 break-all pt-1.5 text-xs leading-5">{event[key]}</code><CopyButton text={event[key]!} iconOnly label={t('logsCopyField', { field: t(`logFields.${key}`) })} /></dd>
           </div>)}</dl>
         </AdminPanel>
         {context.length ? <AdminPanel title={t('logsMetadata')}>

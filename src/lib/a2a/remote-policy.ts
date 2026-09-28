@@ -27,6 +27,7 @@ export async function assertRemoteGrant(grant: RemoteA2AGrant, tx: Prisma.Transa
   const authority = parent?.grant as unknown as TaskGrant | undefined;
   if (!parent || !authority || !isLocalGrant(authority) || authority.workspaceId !== grant.workspaceId
     || authority.actorId !== grant.actorId || authority.agentId !== grant.sourceAgentId) throw missing();
+  if (!(await tx.agent.count({ where: { id: grant.sourceAgentId, workspaceId: grant.workspaceId, a2aInternalEnabled: true } }))) throw missing();
   if (JSON.stringify(grant.ancestorTaskIds) !== JSON.stringify([...authority.ancestorTaskIds, parent.id])
     || JSON.stringify(grant.ancestorAgentIds) !== JSON.stringify([...authority.ancestorAgentIds, authority.agentId])
     || grant.expiresAt > Math.min(authority.expiresAt, parent.deadlineAt.getTime())) throw missing();
@@ -45,7 +46,7 @@ export async function remoteChildGrant(parentId: string, lease: string, remoteId
   if (!parent || !caller || !isLocalGrant(caller) || parent.state !== TaskState.TASK_STATE_WORKING
     || parent.phase !== 'executing' || parent.leaseToken !== lease || parent.cancelRequestedAt) throw missing();
   await assertLocalGrant(caller);
-  if (caller.entryPolicy && !(await db.agent.count({ where: { id: caller.agentId,
+  if (!(await db.agent.count({ where: { id: caller.agentId,
     workspaceId: caller.workspaceId, a2aInternalEnabled: true } }))) throw missing();
   if (caller.ancestorTaskIds.length + 1 > LOCAL_LIMITS.depth) throw new UnsupportedOperationError('Remote delegation depth limit reached.');
   const target = await remoteTarget(db, caller.workspaceId, caller.agentId, remoteId);

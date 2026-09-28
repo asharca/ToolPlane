@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { AlertTriangle, Download, FileLock2 } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
@@ -55,7 +57,7 @@ export async function AgentReleaseReview({
     >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,.75fr)]">
         <div className="min-w-0 space-y-5">
-          {canReview ? <div className="flex items-start gap-3 rounded-md bg-amber-500/10 p-4 text-sm leading-6 text-amber-800 dark:text-amber-200">
+          {canReview ? <div className="flex items-start gap-3 rounded-md bg-muted p-4 text-sm leading-6 text-muted-foreground">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <p>{t('agentReviewSafetyNotice')}</p>
           </div> : null}
@@ -112,7 +114,7 @@ export async function AgentReleaseReview({
                   <span className="text-sm font-semibold text-foreground">{agent.name}</span>
                   <code className="text-[11px] text-muted-foreground">{agent.key}</code>
                   {agent.key === release.manifest.rootAgentKey ? (
-                    <AdminBadge tone="brand">{t('agentRootDefinition')}</AdminBadge>
+                    <AdminBadge tone="info">{t('agentRootDefinition')}</AdminBadge>
                   ) : null}
                 </div>
                 <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs leading-6 text-foreground">
@@ -152,15 +154,10 @@ export async function AgentReleaseReview({
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
               {t('agentCompleteArtifactDescription')}
             </p>
-            <a
-              href={`/api/v1/admin/agent-releases/${encodeURIComponent(release.id)}/manifest`}
-              target="_blank"
-              rel="noreferrer"
-              className="ui-button-secondary mt-4 inline-flex h-9 gap-2 px-3 text-xs"
-            >
+            <ButtonLink href={`/api/v1/admin/agent-releases/${encodeURIComponent(release.id)}/manifest`} target="_blank" rel="noreferrer" variant="secondary" size="sm" className="mt-4 inline-flex">
               <Download className="size-4" />
               {t('agentOpenCompleteArtifact')}
-            </a>
+            </ButtonLink>
           </div>
         </div>
 

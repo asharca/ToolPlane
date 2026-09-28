@@ -1,28 +1,28 @@
 'use client';
 
-import { code } from '@streamdown/code';
+import { useMemo } from 'react';
 import { mermaid } from '@streamdown/mermaid';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
+import { assistantCodeRenderers } from '@/components/dashboard/ConversationMessage';
 
 export default function MermaidAssistantMarkdown({
   text,
   streaming = false,
-  className,
 }: {
   text: string;
   streaming?: boolean;
-  className: string;
 }) {
+  const renderers = useMemo(() => assistantCodeRenderers(text), [text]);
   return (
     <SafeStreamdown
+      assistant
       mode={streaming ? 'streaming' : 'static'}
       parseIncompleteMarkdown={streaming}
       isAnimating={streaming}
-      plugins={{ code, mermaid }}
+      plugins={{ mermaid, renderers }}
       mermaid={{ config: { securityLevel: 'strict' } }}
       preserveSoftBreaks
       linkSafety={{ enabled: true }}
-      className={className}
     >
       {text}
     </SafeStreamdown>

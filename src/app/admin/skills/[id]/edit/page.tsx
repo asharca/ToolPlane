@@ -1,5 +1,6 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
 import { History } from 'lucide-react';
 import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
 import { notFound } from 'next/navigation';
@@ -29,7 +30,7 @@ export default async function EditSkillPage({ params, searchParams }: { params: 
         meta={<AdminBadge tone="neutral">/{skill.slug}</AdminBadge>}
         backHref={backHref}
         backLabel={t('skillsMarket')}
-        actions={<Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'skill', targetId: id, returnTo: adminHref(`/admin/skills/${id}/edit`, { returnTo: backHref }) })} className="ui-button-secondary"><History className="size-4" />{ops('audit')}</Link>}
+        actions={<ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'skill', targetId: id, returnTo: adminHref(`/admin/skills/${id}/edit`, { returnTo: backHref }) })} variant="secondary" size="md"><History className="size-4" />{ops('audit')}</ButtonLink>}
       />
       <section className="border-t border-border pt-6" aria-label={`${t('edit')} ${skill.name}`}>
         <SkillForm

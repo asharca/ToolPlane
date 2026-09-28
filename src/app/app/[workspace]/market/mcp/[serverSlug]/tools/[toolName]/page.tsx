@@ -1,4 +1,6 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
+
 import { notFound, redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { Box, ChevronRight } from 'lucide-react';
@@ -98,19 +100,19 @@ export default async function McpMarketToolPage({
             <h2 className="text-sm font-semibold text-foreground">{t('tools')}</h2>
             <div className="mt-3 space-y-1">
               {tools.filter((candidate) => candidate.name !== tool.name).slice(0, 12).map((candidate) => (
-                <Link
+                <ButtonLink
                   key={candidate.name}
                   href={`${serverHref}/tools/${encodeURIComponent(candidate.name)}`}
-                  className="flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-xs text-muted-foreground hover:bg-background hover:text-foreground"
+                  variant="ghost" size="sm"
                 >
                   <code className="min-w-0 flex-1 truncate font-mono">{candidate.name}</code>
                   <ChevronRight className="size-3.5 shrink-0" />
-                </Link>
+                </ButtonLink>
               ))}
             </div>
-            <Link href={serverHref} className="ui-button-secondary mt-4 h-9 w-full">
+            <ButtonLink href={serverHref} variant="secondary" size="sm" className="mt-4 w-full">
               {t('viewDetails')}
-            </Link>
+            </ButtonLink>
           </section>
         )}
       >

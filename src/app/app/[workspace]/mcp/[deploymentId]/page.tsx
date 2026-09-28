@@ -1,50 +1,30 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import Link from 'next/link';
-import {
-  Activity,
-  BarChart3,
-  CheckCircle2,
-  CircleAlert,
-  CopyPlus,
-  KeyRound,
-  LoaderCircle,
-  Pencil,
-  Play,
-  Plug,
-  RefreshCw,
-  Wrench,
-} from 'lucide-react';
+import { Activity, BarChart3, CheckCircle2, CircleAlert, CopyPlus, KeyRound, LoaderCircle, Pencil, Play, Plug, RefreshCw, Wrench } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
 import { originFromHeaders } from '@/lib/http/origin';
-import {
-  effectiveStatus,
-  getDeploymentRuntimeLogChunk,
-  getDeploymentRuntimeSnapshot,
-} from '@/lib/process/supervisor';
+import { effectiveStatus, getDeploymentRuntimeLogChunk, getDeploymentRuntimeSnapshot } from '@/lib/process/supervisor';
 import { listMcpTools } from '@/lib/process/mcp-client';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
 import { listSandboxes } from '@/lib/sandboxes/queries';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import { ReadyToConnectBanner } from '@/components/dashboard/ReadyToConnectBanner';
 import { ConnectDialog } from '@/components/dashboard/ConnectDialog';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { ToolPlayground } from '@/components/dashboard/ToolPlayground';
-import {
-  startDeploymentAction,
-  stopDeploymentAction,
-  restartDeploymentAction,
-  rebuildDeploymentAction,
-  removeDeploymentAction,
-  renameDeploymentAction,
-  cloneDeploymentAction,
-} from '@/lib/workspace/actions';
+import { startDeploymentAction, stopDeploymentAction, restartDeploymentAction, rebuildDeploymentAction, removeDeploymentAction, renameDeploymentAction, cloneDeploymentAction } from '@/lib/workspace/actions';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { VariablesEditor } from '@/components/dashboard/VariablesEditor';
@@ -60,19 +40,9 @@ import { McpToolExposureEditor } from '@/components/dashboard/McpToolExposureEdi
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 import { RuntimeFilesEditor } from '@/components/dashboard/RuntimeFilesEditor';
 import { SafeStreamdown } from '@/components/dashboard/SafeStreamdown';
-import {
-  isEditableMcpSource,
-  serializeMcpDeploymentConfig,
-} from '@/lib/workspace/custom-mcp';
-import {
-  parseServerRecipe,
-  storedRequiredEnvironment,
-} from '@/lib/workspace/server-recipe';
-import {
-  DashboardEmptyState,
-  DashboardPage,
-  DashboardPanel,
-} from '@/components/dashboard/DashboardUI';
+import { isEditableMcpSource, serializeMcpDeploymentConfig } from '@/lib/workspace/custom-mcp';
+import { parseServerRecipe, storedRequiredEnvironment } from '@/lib/workspace/server-recipe';
+import { DashboardEmptyState, DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
 
 export const dynamic = 'force-dynamic';
 
@@ -94,8 +64,6 @@ function fmtTime(d: Date, timeZone: string, locale: string): string {
   }, locale);
 }
 
-const secondaryAction = 'ui-button-secondary h-9';
-const primaryAction = 'ui-button-primary h-9';
 const transitioningStatuses = new Set([
   'provisioning',
   'copying',
@@ -304,25 +272,19 @@ export default async function DeploymentInspectorPage({
         deploymentId={deploymentId}
         initialStatus={status}
       />
-      <DashboardHeader
-        breadcrumb={[
-          { label: 'MCP', href: `/app/${slug}/mcp` },
-          { label: dep.server?.slug ?? label.name },
-        ]}
-      />
       <DashboardPage className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
-        <section className="ui-panel overflow-hidden">
+        <section className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-5 px-5 py-5 sm:px-6">
             <div className="flex min-w-0 items-start gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-primary">
                 <Plug className="size-5" />
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground">{label.name}</h1>
-                  <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                     {sourceLabel}
-                  </span>
+                  </AnimatedBadge>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                   <StatusBadge status={status} />
@@ -335,28 +297,28 @@ export default async function DeploymentInspectorPage({
               {running ? <ConnectDialog endpoint={endpoint} name={label.name} label={t('connect')} variant="outline" /> : null}
               {transitioning ? (
                 <>
-                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
+                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
                   {status !== 'deleting' ? (
                     <form action={stopDeploymentAction}>
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="deploymentId" value={deploymentId} />
-                      <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
+                      <SubmitButton flash={false} pendingLabel={t('stopping')} variant="secondary" size="sm">
                         {t('stop')}
                       </SubmitButton>
                     </form>
                   ) : null}
                 </>
               ) : setupRequired ? (
-                <Link href={`${base}?tab=variables`} className={primaryAction}>
+                <ButtonLink href={`${base}?tab=variables`} variant="primary" size="sm">
                   <KeyRound className="size-4" />
                   {t('configureVariables')}
-                </Link>
+                </ButtonLink>
               ) : running ? (
                 <>
                   <form action={restartDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="deploymentId" value={deploymentId} />
-                    <SubmitButton flash={false} pendingLabel={t('restarting')} className={secondaryAction}>
+                    <SubmitButton flash={false} pendingLabel={t('restarting')} variant="secondary" size="sm">
                       <RefreshCw className="size-3.5" />
                       {t('restart')}
                     </SubmitButton>
@@ -364,7 +326,7 @@ export default async function DeploymentInspectorPage({
                   <form action={stopDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="deploymentId" value={deploymentId} />
-                    <SubmitButton flash={false} pendingLabel={t('stopping')} className={secondaryAction}>
+                    <SubmitButton flash={false} pendingLabel={t('stopping')} variant="secondary" size="sm">
                       {t('stop')}
                     </SubmitButton>
                   </form>
@@ -373,7 +335,7 @@ export default async function DeploymentInspectorPage({
                 <form action={startDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
+                  <SubmitButton flash={false} pendingLabel={t('starting')} variant="secondary" size="sm">
                     <Play className="size-3.5" />
                     {t('start')}
                   </SubmitButton>
@@ -398,7 +360,7 @@ export default async function DeploymentInspectorPage({
         </div>
 
         {provisioning ? (
-          <section className="rounded-lg border border-brand/25 bg-brand-soft px-4 py-3">
+          <section className="rounded-lg border border-primary/25 bg-muted px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-foreground">{t('startingMcpRuntime')}</p>
@@ -409,7 +371,7 @@ export default async function DeploymentInspectorPage({
               <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('autorefreshing')}</span>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-brand" />
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
             </div>
           </section>
         ) : null}
@@ -468,7 +430,7 @@ export default async function DeploymentInspectorPage({
               {setupRequired ? (
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-300" />
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-(--color-warning) dark:text-(--color-warning)" />
                     <div>
                       <p className="text-sm font-medium text-foreground">{t('variablesNeedAttention', { count: missingRequiredVariables.length })}</p>
                       {missingRequiredVariables.length ? (
@@ -476,37 +438,37 @@ export default async function DeploymentInspectorPage({
                       ) : null}
                     </div>
                   </div>
-                  <Link href={`${base}?tab=variables`} className={primaryAction}>
+                  <ButtonLink href={`${base}?tab=variables`} variant="primary" size="sm">
                     <KeyRound className="size-4" />
                     {t('configureVariables')}
-                  </Link>
+                  </ButtonLink>
                 </div>
               ) : transitioning ? (
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
-                    <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-brand" />
+                    <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-primary" />
                     <div>
                       <p className="text-sm font-medium text-foreground">{t('runtimeStartingDescription')}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{t('runtimeStartingHint')}</p>
                     </div>
                   </div>
-                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
+                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
                 </div>
               ) : status === 'error' ? (
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-red-600 dark:text-red-400" />
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-destructive dark:text-destructive" />
                     <div>
                       <p className="text-sm font-medium text-foreground">{t('runtimeErrorDescription')}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{t('runtimeErrorHint')}</p>
                     </div>
                   </div>
-                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('viewRuntimeLogs')}</Link>
+                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('viewRuntimeLogs')}</ButtonLink>
                 </div>
               ) : running ? (
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
-                    <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success) dark:text-(--color-success)" />
                     <div>
                       <p className="text-sm font-medium text-foreground">{t('runningNextStep')}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{t('runningNextStepHint')}</p>
@@ -526,7 +488,7 @@ export default async function DeploymentInspectorPage({
                   <form action={startDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="deploymentId" value={deploymentId} />
-                    <SubmitButton flash={false} pendingLabel={t('starting')} className={primaryAction}>
+                    <SubmitButton flash={false} pendingLabel={t('starting')} variant="secondary" size="sm">
                       <Play className="size-3.5" />
                       {t('start')}
                     </SubmitButton>
@@ -567,7 +529,7 @@ export default async function DeploymentInspectorPage({
                     <BarChart3 className="mt-0.5 size-5 text-muted-foreground" />
                     <p className="max-w-sm text-sm leading-6 text-muted-foreground">{t('viewToolCallsLatencyAndErrorsInObservability')}</p>
                   </div>
-                  <Link href={`${base}?tab=logs`} className={secondaryAction}>{t('openObservability')}</Link>
+                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="sm">{t('openObservability')}</ButtonLink>
                 </div>
               </DashboardPanel>
             </div>
@@ -617,7 +579,7 @@ export default async function DeploymentInspectorPage({
               />
             ) : null}
 
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
                 <div className="flex min-w-0 items-start gap-2.5">
                   <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -627,9 +589,9 @@ export default async function DeploymentInspectorPage({
                   </div>
                 </div>
                 {running ? (
-                  <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                  <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                     {t('toolsCount', { count: tools.length })}
-                  </span>
+                  </AnimatedBadge>
                 ) : null}
               </header>
               <div className="px-5 py-5">
@@ -646,7 +608,7 @@ export default async function DeploymentInspectorPage({
             </section>
 
             {playgroundAvailable ? (
-              <section className="ui-panel overflow-hidden">
+              <section className="rounded-xl border border-border bg-card overflow-hidden">
                 <header className="border-b border-border px-5 py-4">
                   <h2 className="text-sm font-semibold text-foreground">{t('manualToolTesting')}</h2>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('manualToolTestingDescription')}</p>
@@ -674,9 +636,9 @@ export default async function DeploymentInspectorPage({
                   ? t('deploymentNotRunningTesting', { status })
                   : t('deploymentNotRunningTools', { status })}
                 actions={(
-                  <Link href={`${base}?tab=logs`} className="ui-button-secondary">
+                  <ButtonLink href={`${base}?tab=logs`} variant="secondary" size="md">
                     {t('viewRuntimeLogs')}
-                  </Link>
+                  </ButtonLink>
                 )}
                 className="min-h-44"
               />
@@ -692,17 +654,9 @@ export default async function DeploymentInspectorPage({
                 <input type="hidden" name="deploymentId" value={deploymentId} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('mcpName')}
-                  <input
-                    name="name"
-                    defaultValue={label.name}
-                    required
-                    maxLength={80}
-                    pattern=".*\S.*"
-                    title={t('nameCannotBeBlank')}
-                    className="ui-input h-9 min-w-0 text-sm"
-                  />
+                  <Input name="name" defaultValue={label.name} required maxLength={80} pattern=".*\S.*" title={t('nameCannotBeBlank')} className="min-w-0" />
                 </label>
-                <SubmitButton pendingLabel={t('renaming')} savedLabel={t('renamed')} className={`${secondaryAction} shrink-0`}>
+                <SubmitButton pendingLabel={t('renaming')} savedLabel={t('renamed')} variant="secondary" size="sm">
                   <Pencil className="size-3.5" />
                   {t('rename')}
                 </SubmitButton>
@@ -717,34 +671,26 @@ export default async function DeploymentInspectorPage({
                 <input type="hidden" name="copyRuntimeFiles" value="false" />
                 <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('copyName')}
-                  <input
-                    name="name"
-                    defaultValue={defaultCloneName}
-                    required
-                    maxLength={80}
-                    pattern=".*\S.*"
-                    title={t('nameCannotBeBlank')}
-                    className="ui-input h-9 text-sm"
-                  />
+                  <Input name="name" defaultValue={defaultCloneName} required maxLength={80} pattern=".*\S.*" title={t('nameCannotBeBlank')} />
                 </label>
-                <p className="rounded-md border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                <p className="rounded-md border border-border bg-muted/[0.06] px-3 py-2 text-xs leading-5 text-foreground text-foreground">
                   {t('cloneSensitiveDataHint')}
                 </p>
-                <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input type="checkbox" name="copyEnvironmentVariables" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
+                <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <FormCheckbox name="copyEnvironmentVariables" value="true" defaultChecked label={t('copyEnvironmentVariables')} />
                   <span>
-                    <span className="block text-sm font-medium text-foreground">{t('copyEnvironmentVariables')}</span>
+                    
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyEnvironmentVariablesDescription')}</span>
                   </span>
-                </label>
-                <label className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <input type="checkbox" name="copyRuntimeFiles" value="true" defaultChecked className="mt-0.5 size-4 rounded border-border accent-brand" />
+                </div>
+                <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <FormCheckbox name="copyRuntimeFiles" value="true" defaultChecked label={t('copyRuntimeFiles')} />
                   <span>
-                    <span className="block text-sm font-medium text-foreground">{t('copyRuntimeFiles')}</span>
+                    
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{t('copyRuntimeFilesDescription')}</span>
                   </span>
-                </label>
-                <SubmitButton flash={false} pendingLabel={t('cloning')} className={secondaryAction}>
+                </div>
+                <SubmitButton flash={false} pendingLabel={t('cloning')} variant="secondary" size="sm">
                   <CopyPlus className="size-3.5" />
                   {t('clone')}
                 </SubmitButton>
@@ -760,7 +706,7 @@ export default async function DeploymentInspectorPage({
                 <form action={rebuildDeploymentAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="deploymentId" value={deploymentId} />
-                  <SubmitButton flash={false} pendingLabel={t('rebuilding')} className={secondaryAction}>
+                  <SubmitButton flash={false} pendingLabel={t('rebuilding')} variant="secondary" size="sm">
                     <RefreshCw className="size-3.5" />
                     {t('rebuild')}
                   </SubmitButton>
@@ -773,17 +719,7 @@ export default async function DeploymentInspectorPage({
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="deploymentId" value={deploymentId} />
                 <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{t('removeMcpWarning')}</p>
-                <ConfirmSubmitButton
-                  triggerLabel={t('remove')}
-                  confirmLabel={common('confirm')}
-                  cancelLabel={common('cancel')}
-                  prompt={t('removeMcpPrompt', { name: label.name })}
-                  pendingLabel={t('removing')}
-                  className="items-center"
-                  triggerClassName="inline-flex h-9 items-center rounded-md border border-red-300 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
-                  confirmClassName="inline-flex h-9 items-center rounded-md bg-red-600 px-3 text-sm font-medium text-white transition-colors hover:bg-red-700"
-                  cancelClassName="ui-button-secondary h-9"
-                />
+                <ConfirmSubmitButton triggerLabel={t('remove')} confirmLabel={common('confirm')} cancelLabel={common('cancel')} prompt={t('removeMcpPrompt', { name: label.name })} pendingLabel={t('removing')} className="items-center" triggerVariant="secondary" triggerSize="sm" triggerClassName="inline-flex items-center" confirmVariant="secondary" confirmSize="sm" confirmClassName="inline-flex items-center" cancelVariant="secondary" cancelSize="sm" />
               </form>
             </DashboardPanel>
           </div>
@@ -791,7 +727,7 @@ export default async function DeploymentInspectorPage({
 
         {current === 'logs' ? (
           <div className="space-y-6">
-            <section id="runtime-logs" className="ui-panel scroll-mt-6 px-5 py-5">
+            <section id="runtime-logs" className="rounded-xl border border-border bg-card scroll-mt-6 px-5 py-5">
               <ContainerLogs
                 key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}
                 deploymentId={deploymentId}
@@ -811,14 +747,14 @@ export default async function DeploymentInspectorPage({
               />
             </section>
 
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className="border-b border-border px-5 py-4">
                 <h2 className="text-sm font-semibold text-foreground">{t('requestLogs')}</h2>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('requestLogsDescription')}</p>
               </header>
               <div className="px-5 py-5">
                 {logs.length === 0 ? (
-                  <div className="ui-empty min-h-48">
+                  <div className="flex flex-col items-center justify-center text-center min-h-48">
                     <p className="text-sm text-muted-foreground">
                       {t('noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere')}
                     </p>

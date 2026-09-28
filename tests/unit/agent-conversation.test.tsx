@@ -32,6 +32,7 @@ vi.mock('@assistant-ui/react-streamdown', async () => {
 });
 
 vi.mock('streamdown', () => ({
+  defaultRehypePlugins: {},
   defaultRemarkPlugins: {},
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
 }));
@@ -99,6 +100,30 @@ describe('AgentConversation', () => {
     vi.unstubAllGlobals();
   });
 
+  it('explicitly stops the server turn without treating unmount as cancellation', async () => {
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), status: 'streaming' });
+    apiMocks.fetch.mockResolvedValueOnce(new Response('data: [DONE]\n\n', { headers: {
+      'content-type': 'text/event-stream', 'X-Chat-Turn-Id': 'server-turn-1',
+    } }));
+    const view = renderConversation({ serverManaged: true, apiPath: '/api/v1/chat/threads/conv-1/turns', includeConversationIdInBody: false });
+    const { transport } = chatMocks.useChat.mock.calls.at(-1)![0];
+    const stream = await transport.sendMessages({
+      chatId: 'conv-1', trigger: 'submit-message',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Work on the server' }] }],
+      abortSignal: new AbortController().signal,
+    });
+    await stream.cancel();
+    apiMocks.fetch.mockResolvedValueOnce(Response.json({ cancelled: true }));
+    await userEvent.click(screen.getByRole('button', { name: /stop/i }));
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith('/api/v1/chat/threads/conv-1/turns', {
+      method: 'DELETE', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ turnId: 'server-turn-1' }),
+    }));
+    expect(chatMocks.stop).not.toHaveBeenCalled();
+    view.unmount();
+    expect(apiMocks.fetch.mock.calls.filter(([, options]) => options?.method === 'DELETE')).toHaveLength(1);
+  });
+
   it('uses the Cherry composer geometry and expand control', async () => {
     renderConversation();
 
@@ -108,7 +133,6 @@ describe('AgentConversation', () => {
     expect(input.closest('form')).toHaveClass('group/composer', 'rounded-[20px]', 'border-[0.5px]', 'border-border', 'transition-all', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
     expect(screen.getAllByRole('button', { name: 'Open tools' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Open tools' }).querySelector('svg')).toHaveClass('lucide-plus');
-    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('size-[30px]', 'text-brand');
     const expand = screen.getByRole('button', { name: 'Expand composer' });
     expect(expand).toHaveClass('group-hover/composer:opacity-100', 'group-focus-within/composer:opacity-100');
     await userEvent.click(expand);
@@ -509,22 +533,44 @@ describe('AgentConversation', () => {
     expect(screen.queryByText('Processed')).not.toBeInTheDocument();
   });
 
-  it('sends the Cherry-style web search toggle with the turn', async () => {
+  it.each(['menu', 'slash', 'pinned'])('shows web search state and sends it when toggled from %s', async (entry) => {
     const user = userEvent.setup();
+    if (entry === 'pinned') {
+      window.localStorage.setItem('toolplane.conversation.composer.toolbar', '["web-search"]');
+    }
     renderConversation({ webSearchAvailable: true });
 
+    if (entry === 'pinned') {
+      await user.click(screen.getByRole('button', { name: 'Enable web search', pressed: false }));
+    } else {
+      if (entry === 'slash') {
+        await user.type(screen.getByPlaceholderText('Message this agent'), '/');
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Open tools' }));
+      }
+      await user.click(await screen.findByRole('menuitem', { name: 'Enable web search' }));
+    }
+    const toggle = screen.getByRole('button', { name: 'Disable web search', pressed: true });
+    expect(toggle).toBeVisible();
+    expect(document.querySelectorAll('[data-composer-shortcut="web-search"]')).toHaveLength(1);
     const input = screen.getByPlaceholderText('Message this agent');
-    await user.type(input, '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    await user.click(within(menu).getByRole('option', { name: 'Enable web search' }));
     await user.type(input, 'Find current sources');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
-
-    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+    await user.click(screen.getByRole('button', { name: 'Send prompt' }));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({ role: 'user' }),
-      expect.objectContaining({
-        body: expect.objectContaining({ webSearchEnabled: true }),
-      }),
+      expect.objectContaining({ body: expect.objectContaining({ webSearchEnabled: true }) }),
+    ));
+
+    await user.click(toggle);
+    expect(screen.queryByRole('button', { name: 'Disable web search' })).not.toBeInTheDocument();
+    if (entry === 'pinned') {
+      expect(screen.getByRole('button', { name: 'Enable web search', pressed: false })).toBeVisible();
+    }
+    await user.type(input, 'Answer without searching');
+    await user.click(screen.getByRole('button', { name: 'Send prompt' }));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ role: 'user' }),
+      expect.objectContaining({ body: expect.objectContaining({ webSearchEnabled: false }) }),
     ));
   });
 
@@ -582,18 +628,34 @@ describe('AgentConversation', () => {
     });
     renderConversation({ mcpResourceApiPath: '/composer' });
 
-    await user.type(screen.getByPlaceholderText('Message this agent'), '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    await user.click(within(menu).getByRole('option', { name: 'Customize toolbar' }));
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Customize toolbar' }));
     const customizer = await screen.findByRole('dialog', { name: 'Customize toolbar' });
-    expect(within(customizer).getByRole('checkbox', { name: 'Add attachment' })).toBeInTheDocument();
+    await user.click(within(customizer).getByRole('checkbox', { name: 'Add attachment' }));
     await user.click(within(customizer).getByRole('checkbox', { name: 'MCP resources' }));
+    const resources = within(customizer).getByRole('checkbox', { name: 'MCP resources' });
+    const attachment = within(customizer).getByRole('checkbox', { name: 'Add attachment' });
+    const data = new Map<string, string>();
+    const dataTransfer = { setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? '', effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(resources.closest('[draggable]')!, { dataTransfer });
+    fireEvent.dragOver(attachment.closest('[draggable]')!, { dataTransfer });
+    fireEvent.drop(attachment.closest('[draggable]')!, { dataTransfer });
+    expect([...document.querySelectorAll('[data-composer-shortcut]')].map((el) => el.getAttribute('aria-label'))).toEqual(['MCP resources', 'Add attachment']);
     await user.click(within(customizer).getByRole('button', { name: 'Close' }));
 
     await user.click(screen.getByRole('button', { name: 'MCP resources' }));
     const picker = await screen.findByRole('dialog', { name: 'MCP resources' });
     await user.click(within(picker).getByRole('button', { name: /Project plan/ }));
     expect((screen.getByPlaceholderText('Message this agent') as HTMLTextAreaElement).value).toContain('docs://plan');
+
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Customize toolbar' }));
+    const resetDialog = await screen.findByRole('dialog', { name: 'Customize toolbar' });
+    await user.click(within(resetDialog).getByRole('button', { name: 'Restore default toolbar' }));
+    expect(document.querySelector('[data-composer-shortcut]')).toBeNull();
+    await user.click(within(resetDialog).getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(await screen.findByRole('menuitem', { name: 'MCP resources' })).toBeInTheDocument();
   });
 
   it('offers runtime slash commands and sends them through the command endpoint', async () => {

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ principal: vi.fn(), workspace: vi.fn(), active: vi.fn(), view: vi.fn(), mutate: vi.fn(), grant: vi.fn(), rpc: vi.fn(), tree: vi.fn() }));
 vi.mock('@/lib/auth/request-user', () => ({ resolveRequestPrincipal: mocks.principal }));
 vi.mock('@/lib/workspace/queries', () => ({ getWorkspaceForUser: mocks.workspace }));
@@ -16,7 +16,7 @@ function req(method = 'GET', body?: unknown, headers: Record<string, string> = {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 }
 beforeEach(() => {
-  vi.clearAllMocks(); process.env.NEXT_PUBLIC_APP_URL = 'https://tp.example';
+  vi.clearAllMocks(); vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://tp.example');
   mocks.principal.mockResolvedValue({ user: { id: 'u' }, credential: 'session' });
   mocks.workspace.mockResolvedValue({ id: 'w', slug: 'ws', status: 'active' });
   mocks.active.mockResolvedValue(1); mocks.view.mockResolvedValue({ canManage: true });
@@ -24,12 +24,32 @@ beforeEach(() => {
   mocks.grant.mockResolvedValue({ kind: 'local', workspaceId: 'w', agentId: 'a', actorId: 'u' });
   mocks.rpc.mockImplementation(async (request, id, resolve) => Response.json({ result: await resolve(request), id }));
 });
+afterEach(() => vi.unstubAllEnvs());
 describe('same-origin A2A console boundary', () => {
   it('loads safe session configuration without issuing credentials', async () => {
     const response = await handleA2AConsole(req(), 'ws', 'a');
     expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toContain('no-store');
     expect(mocks.view).toHaveBeenCalledWith({ workspaceId: 'w', actorId: 'u', agentId: 'a', slug: 'ws' });
     expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+  it.each([
+    { mode: 'development', origin: 'http://10.0.10.2:3002', session: true, status: 200 },
+    { mode: 'production', origin: 'http://10.0.10.2:3002', session: true, status: 503 },
+    { mode: 'development', origin: 'http://10.0.10.3:3002', session: true, status: 403 },
+    { mode: 'development', origin: null, session: true, status: 403 },
+    { mode: 'development', origin: 'http://10.0.10.2:3002', session: false, status: 401 },
+  ])('enforces LAN console policy: $mode, origin=$origin, session=$session', async ({ mode, origin, session, status }) => {
+    vi.stubEnv('NODE_ENV', mode);
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://10.0.10.2:3002');
+    if (!session) mocks.principal.mockResolvedValue(null);
+    mocks.mutate.mockResolvedValue({});
+    const request = new Request('http://10.0.10.2:3002/api/console', { method: 'POST',
+      headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) },
+      body: JSON.stringify({ action: 'set-local', enabled: false }) });
+    const response = await handleA2AConsole(request, 'ws', 'a');
+    expect(response.status).toBe(status);
+    if (status === 200) expect(await response.json()).toEqual({ ok: true });
+    else expect(mocks.mutate).not.toHaveBeenCalled();
   });
   it.each(['Bearer personal', 'Bearer tp_agent_private', 'Bearer toolkit', 'bad'])('never falls back from explicit %s to a browser cookie', async (authorization) => {
     expect((await handleA2AConsole(req('GET', undefined, { authorization }), 'ws', 'a')).status).toBe(401);

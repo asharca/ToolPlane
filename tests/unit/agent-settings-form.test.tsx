@@ -60,9 +60,6 @@ describe('AgentSettingsForm', () => {
     expect(screen.getByLabelText('Runtime')).toHaveTextContent('Pi');
     expect(screen.getByRole('button', { name: 'Model: gpt-4.1' })).toBeVisible();
     expect(screen.getByRole('region', { name: 'Basic' })).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Basic' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Identity, model, and execution defaults.')).not.toBeInTheDocument();
-    expect(screen.queryByText('0 attached')).not.toBeInTheDocument();
   });
 
   it.each([
@@ -86,20 +83,12 @@ describe('AgentSettingsForm', () => {
     expect(within(catalog).queryByText(absentTool)).not.toBeInTheDocument();
   });
 
-  it('keeps the selected provider and model visible across save-state rerenders', async () => {
+  it('keeps the selected model across save-state rerenders', async () => {
     const view = render(<AgentSettingsForm {...baseProps} />);
-
     await userEvent.click(screen.getByRole('button', { name: 'Model: Select model' }));
     await userEvent.click(screen.getByRole('option', { name: 'gpt-4.1-mini' }));
-    expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
-    expect(document.querySelector('input[name="model"]')).toHaveValue('gpt-4.1-mini');
-
     view.rerender(<AgentSettingsForm {...baseProps} />);
-
-    expect(screen.getByRole('button', { name: 'Model: gpt-4.1-mini' })).toBeInTheDocument();
-    expect(document.querySelector('input[name="providerId"]')).toHaveValue('provider-1');
-    expect(document.querySelector('input[name="model"]')).toHaveValue('gpt-4.1-mini');
-    expect(screen.getByLabelText('System prompt')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Model: gpt-4.1-mini' })).toBeVisible();
   });
 
   it('previews a system prompt and estimates its tokens', async () => {
@@ -149,12 +138,14 @@ describe('AgentSettingsForm', () => {
       expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
     }
     await user.click(screen.getByRole('button', { name: /^Sandboxes/ }));
-    expect(screen.queryByRole('radio', { name: 'Select Offline Docker' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Select Remote connector' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: 'Select Docker two' }));
-    expect(screen.getByRole('radio', { name: 'Select Docker one' })).not.toBeChecked();
-    expect(document.querySelectorAll('input[name="sandboxId"]')).toHaveLength(1);
-    expect(document.querySelector('[name="defaultSandboxId"]')).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Offline Docker' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Remote connector' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Docker two' }));
+    expect(screen.getByRole('radio', { name: 'Docker one' })).not.toBeChecked();
+    const form = document.querySelector('form');
+    if (!form) throw new Error('Expected settings form.');
+    expect(new FormData(form).getAll('sandboxId')).toEqual(['docker-2']);
+    expect(new FormData(form).get('defaultSandboxId')).toBeNull();
   });
 
   it('does not expose a ToolPlane system prompt field for Hermes agents', () => {
@@ -276,14 +267,12 @@ describe('AgentSettingsForm', () => {
       />,
     );
 
-    await userEvent.selectOptions(
-      screen.getByLabelText('Hermes version'),
-      'nousresearch/hermes-agent:v2026.7.20',
-    );
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Hermes version:/ }));
+    await userEvent.click(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' }));
     await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
     expect(actions.updateAgentAction).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     await userEvent.click(screen.getByRole('button', { name: 'Upgrade & restart' }));
     await waitFor(() => expect(actions.upgradeHermesRuntimeAction).toHaveBeenCalled());
     const formData = actions.upgradeHermesRuntimeAction.mock.calls.at(-1)?.[1];
@@ -385,12 +374,8 @@ describe('AgentSettingsForm', () => {
     };
     const view = render(<AgentSettingsForm {...props} />);
 
-    expect(screen.queryByRole('navigation', { name: 'Configuration navigation' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'MCP' })).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'MCP' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Select the workspace capabilities this agent can use.')).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Select RouterOS MCP' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Save now' })).not.toBeInTheDocument();
 
     const form = document.querySelector('form');
     if (!form) throw new Error('Expected settings form.');

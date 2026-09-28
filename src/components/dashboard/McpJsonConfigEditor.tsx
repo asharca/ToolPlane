@@ -1,19 +1,16 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink, Button } from '@/components/motion/button';
+
 
 import { useActionState, useState, useTransition } from 'react';
 import { useTranslations } from 'next-intl';
-import Link from 'next/link';
+
 import { Eye, KeyRound, Loader2, RefreshCw } from 'lucide-react';
-import {
-  revealMcpJsonConfigAction,
-  updateMcpJsonConfigAction,
-  type McpJsonConfigActionState,
-} from '@/lib/workspace/actions';
+import { revealMcpJsonConfigAction, updateMcpJsonConfigAction, type McpJsonConfigActionState } from '@/lib/workspace/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import {
-  McpNetworkModeControl,
-  type McpNetworkMode,
-} from '@/components/dashboard/McpNetworkModeControl';
+import { McpNetworkModeControl, type McpNetworkMode } from '@/components/dashboard/McpNetworkModeControl';
 
 function errorMessage(
   error: McpJsonConfigActionState['error'],
@@ -73,7 +70,7 @@ export function McpJsonConfigEditor({
   };
 
   return (
-    <form action={formAction} className="ui-panel max-w-4xl overflow-hidden">
+    <form action={formAction} className="rounded-xl border border-border bg-card max-w-4xl overflow-hidden">
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
       <header className="border-b border-border px-5 py-4">
@@ -92,9 +89,9 @@ export function McpJsonConfigEditor({
                 </p>
               </div>
             </div>
-            <Link href={variablesHref} className="ui-button-secondary ui-button-sm shrink-0">
+            <ButtonLink href={variablesHref} variant="secondary" size="sm" className="shrink-0">
               {t('manageVariables')}
-            </Link>
+            </ButtonLink>
           </div>
         ) : null}
         <McpNetworkModeControl
@@ -111,22 +108,10 @@ export function McpJsonConfigEditor({
             {t('jsonConfig')}
           </p>
         {revealed ? (
-          <textarea
-            id="mcp-json-config"
-            name="config"
-            required
-            disabled={isPending}
-            value={config}
-            onChange={(event) => {
+          <textarea id="mcp-json-config" name="config" required disabled={isPending} value={config} onChange={(event) => {
               setConfig(event.target.value);
               setLastEditAt(Date.now());
-            }}
-            spellCheck={false}
-            aria-label={t('jsonConfig')}
-            aria-invalid={Boolean(error)}
-            aria-describedby={error ? 'mcp-json-config-error' : undefined}
-            className="h-[min(28rem,50dvh)] min-h-32 max-h-[60dvh] w-full resize-y overflow-auto overscroll-contain rounded-md border border-border bg-background p-4 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring"
-          />
+            }} spellCheck={false} aria-label={t('jsonConfig')} aria-invalid={Boolean(error)} aria-describedby={error ? 'mcp-json-config-error' : undefined} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring h-[min(28rem,50dvh)] min-h-32 max-h-[60dvh]" />
         ) : (
           <>
             <pre
@@ -136,40 +121,27 @@ export function McpJsonConfigEditor({
             >
               {maskedConfig}
             </pre>
-            <button
-              type="button"
-              onClick={revealConfig}
-              disabled={isRevealPending}
-              aria-busy={isRevealPending}
-              className="mt-2 inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-wait disabled:opacity-70"
-            >
-              {isRevealPending ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
-              {isRevealPending ? t('revealingSensitiveConfig') : t('revealSensitiveConfigAndEdit')}
-            </button>
+            <Button type="button" onClick={revealConfig} disabled={isRevealPending} aria-busy={isRevealPending} variant="secondary" size="sm" className="mt-2 inline-flex items-center">{isRevealPending ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
+            {isRevealPending ? t('revealingSensitiveConfig') : t('revealSensitiveConfigAndEdit')}</Button>
           </>
         )}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-h-5">
             {error ? (
-              <p id="mcp-json-config-error" className="text-sm text-red-600 dark:text-red-400" role="alert">
+              <p id="mcp-json-config-error" className="text-sm text-destructive dark:text-destructive" role="alert">
                 {error}
               </p>
             ) : state.savedAt && state.savedAt > lastEditAt ? (
-              <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+              <p role="status"><AnimatedBadge status="success">
                 {state.requiresSetup
                   ? t('configurationSavedVariablesRequired')
                   : t('configurationSavedAndRebuildSubmitted')}
-              </p>
+              </AnimatedBadge></p>
             ) : null}
           </div>
           {revealed ? (
-            <SubmitButton
-              error={error}
-              flash={false}
-              pendingLabel={t('savingAndRebuilding')}
-              className="ui-button-primary h-9"
-            >
+            <SubmitButton error={error} flash={false} pendingLabel={t('savingAndRebuilding')} variant="primary" size="sm">
               <RefreshCw className="size-4" />
               {t('saveAndRebuild')}
             </SubmitButton>

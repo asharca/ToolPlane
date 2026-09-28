@@ -1,4 +1,5 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
 import { ClipboardCheck } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
 import { AdminPage, AdminPageHeader, AdminSearchForm } from '@/components/admin/AdminUI';
@@ -21,7 +22,7 @@ export default async function AdminMarketPage({ searchParams = Promise.resolve({
   ]);
   return <AdminPage>
     <AdminPageHeader title={ops('catalog')} meta={t('marketAdministrationCount', { listings: listings.total, toolkits: toolkits.total })}
-      actions={<Link href="/admin/reviews" className="ui-button-secondary"><ClipboardCheck className="size-4" />{ops('reviewQueue')}</Link>} />
+      actions={<ButtonLink href="/admin/reviews" variant="secondary" size="md"><ClipboardCheck className="size-4" />{ops('reviewQueue')}</ButtonLink>} />
     <AdminSearchForm defaultValue={q} placeholder={t('marketCatalogSearchPlaceholder')} label={t('marketCatalogSearchLabel')} searchLabel={t('search')} clearLabel={t('clear')} clearHref="/admin/market" />
     <MarketCatalogManagement categories={categories} listings={listings.items} toolkits={toolkits.items}
       listingPage={listings.page} listingPageSize={listings.pageSize} listingTotal={listings.total}

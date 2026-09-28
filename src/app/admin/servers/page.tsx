@@ -1,3 +1,6 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { ButtonLink } from '@/components/motion/button';
 import { Plus, Server as ServerIcon } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -62,10 +65,10 @@ export default async function AdminServersPage({
         description={t('serversDescription')}
         meta={t('serverCount', { count: total.toLocaleString() })}
         actions={
-          <Link href="/admin/servers/new" className="ui-button-primary">
+          <ButtonLink href="/admin/servers/new" variant="primary" size="md">
             <Plus className="size-4" aria-hidden="true" />
             {t('addServer')}
-          </Link>
+          </ButtonLink>
         }
       />
 
@@ -84,29 +87,25 @@ export default async function AdminServersPage({
           title={t('noServers')}
           description={q ? t('noServersDescription') : t('emptyServersDescription')}
           actions={q ? null : (
-            <Link href="/admin/servers/new" className="ui-button-primary">
+            <ButtonLink href="/admin/servers/new" variant="primary" size="md">
               <Plus className="size-4" aria-hidden="true" />
               {t('addServer')}
-            </Link>
+            </ButtonLink>
           )}
         />
       ) : (
-        <DashboardTable
-          ariaLabel={t('serversTableLabel')}
-          minWidth="72rem"
-          headers={[
-            { label: t('serverColumn'), className: 'w-full' },
+        <DashboardTable ariaLabel={t('serversTableLabel')}
+minWidth="72rem"
+headers={[
+            { label: t('serverColumn'), width: "35%" },
             { label: t('verificationColumn') },
             { label: t('starsColumn'), align: 'right' },
             { label: t('deploymentsColumn'), align: 'right' },
             { label: t('flagsColumn') },
             { label: <span className="sr-only">{t('edit')}</span> },
           ]}
-        >
-          {items.map((server) => (
-            <tr key={server.id}>
-              <td className="px-4 py-3">
-                <AdminEntity
+rows={items.map((server) => (
+            ({ id: server.id, cells: [<> <AdminEntity
                   title={
                     <Link
                       href={adminHref(`/admin/servers/${server.id}/edit`, { returnTo: hrefForPage(currentPage) })}
@@ -117,10 +116,8 @@ export default async function AdminServersPage({
                   }
                   description={`/${server.slug}`}
                   initials={server.name}
-                />
-              </td>
-              <td className="whitespace-nowrap px-4 py-3">
-                {server.verifiedAt ? (
+                /> </>,
+server.verifiedAt ? (
                   <div className="flex flex-col items-start gap-1">
                     <AdminBadge tone="success" dot>
                       {t('verified')}
@@ -136,18 +133,12 @@ export default async function AdminServersPage({
                   <AdminBadge tone="warning" dot>
                     {t('unverified')}
                   </AdminBadge>
-                )}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {server.stars.toLocaleString()}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {server._count.deployments}
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex min-w-52 flex-wrap gap-1.5">
+                ),
+server.stars.toLocaleString(),
+server._count.deployments,
+<div className="flex min-w-52 flex-wrap gap-1.5">
                   {server.isOfficial ? (
-                    <AdminBadge tone="brand">{t('official')}</AdminBadge>
+                    <AdminBadge tone="info">{t('official')}</AdminBadge>
                   ) : null}
                   {server.isFeatured ? (
                     <AdminBadge tone="neutral">{t('featured')}</AdminBadge>
@@ -158,17 +149,12 @@ export default async function AdminServersPage({
                   {!server.isOfficial && !server.isFeatured && !server.curated ? (
                     <span className="text-sm text-muted-foreground">{t('none')}</span>
                   ) : null}
-                </div>
-              </td>
-              <td className="px-2 py-3">
-                <AdminTableLink
+                </div>,
+<> <AdminTableLink
                   href={adminHref(`/admin/servers/${server.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('edit')}: ${server.name}`}
-                />
-              </td>
-            </tr>
-          ))}
-        </DashboardTable>
+                /> </>] })
+          ))} />
       )}
 
       <AdminPagination

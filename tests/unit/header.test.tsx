@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 vi.mock('next-intl', async () => {
   const en = (await import('../../messages/en.json')).default as Record<string, unknown>;
@@ -11,15 +12,12 @@ vi.mock('next-intl', async () => {
   return { useTranslations: (ns: string) => (k: string) => getNs(ns)[k] ?? k, useLocale: () => 'en' };
 });
 
-vi.mock('next-intl/server', async () => {
-  return { getLocale: () => Promise.resolve('en') };
-});
 
 import { Header } from '@/components/layout/Header';
 
 describe('Header', () => {
   it('renders desktop and mobile navigation with a stable console entry', async () => {
-    render(await Header());
+    render(<Header />);
 
     expect(screen.getByRole('link', { name: /ToolPlane/ })).toHaveAttribute(
       'href',
@@ -38,6 +36,10 @@ describe('Header', () => {
           .every((link) => link.getAttribute('href') === href),
       ).toBe(true);
     }
-    expect(document.querySelector('summary[aria-label="Menu"]')).toBeInTheDocument();
+    const menu = screen.getByRole('button', { name: 'Menu' });
+    await userEvent.click(menu);
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.keyboard('{Escape}');
+    expect(menu).toHaveAttribute('aria-expanded', 'false');
   });
 });

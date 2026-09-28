@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
 import {
   ArrowLeft,
   Bot,
@@ -16,13 +15,25 @@ import {
   ShieldCheck,
   Tags,
   Users,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Logo } from '@/components/layout/Logo';
+import {
+  AnimatedSidebar,
+  AnimatedSidebarClose,
+  AnimatedSidebarContent,
+  AnimatedSidebarFooter,
+  AnimatedSidebarGroup,
+  AnimatedSidebarGroupLabel,
+  AnimatedSidebarHeader,
+  AnimatedSidebarMenu,
+  AnimatedSidebarMenuButton,
+  AnimatedSidebarMenuItem,
+} from '@/components/motion/animated-sidebar';
+import { Tooltip } from '@/components/motion/tooltip';
 
 type AdminPageLabelKey =
   | 'adminNavOverview'
@@ -127,149 +138,58 @@ export function getAdminPageLabelKey(pathname: string): AdminPageLabelKey {
   return 'adminNavOverview';
 }
 
-export function AdminSidebar({
-  mobileOpen = false,
-  onClose,
-}: {
-  mobileOpen?: boolean;
-  onClose?: () => void;
-}) {
+export function AdminSidebar() {
   const pathname = usePathname() ?? '/admin';
   const t = useTranslations('admin');
-  const sidebarRef = useRef<HTMLElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    const sidebar = sidebarRef.current;
-    if (!sidebar) return;
-
-    const desktopQuery = window.matchMedia('(min-width: 1024px)');
-    const syncInert = () => {
-      sidebar.toggleAttribute('inert', !desktopQuery.matches && !mobileOpen);
-    };
-
-    syncInert();
-    desktopQuery.addEventListener('change', syncInert);
-    return () => desktopQuery.removeEventListener('change', syncInert);
-  }, [mobileOpen]);
-
-  useEffect(() => {
-    const sidebar = sidebarRef.current;
-    if (!mobileOpen || !sidebar) return;
-    const activeSidebar: HTMLElement = sidebar;
-
-    closeButtonRef.current?.focus();
-
-    function keepFocusInside(event: KeyboardEvent) {
-      if (event.key !== 'Tab') return;
-
-      const focusable = Array.from(
-        activeSidebar.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => element.offsetParent !== null);
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener('keydown', keepFocusInside);
-    return () => document.removeEventListener('keydown', keepFocusInside);
-  }, [mobileOpen]);
 
   return (
-    <aside
-      ref={sidebarRef}
-      id="admin-sidebar"
-      role={mobileOpen ? 'dialog' : undefined}
-      aria-modal={mobileOpen ? true : undefined}
-      aria-label={mobileOpen ? t('adminNavigation') : undefined}
-      className={`fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col border-r border-border bg-shell text-shell-foreground shadow-2xl transition-transform duration-200 motion-reduce:transition-none lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:self-start lg:translate-x-0 lg:shadow-none ${
-        mobileOpen ? 'translate-x-0' : '-translate-x-full'
-      }`}
-    >
-      <div className="flex h-20 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-5">
-        <Link
-          href="/admin"
-          onClick={onClose}
-          aria-label={t('adminConsoleTitle')}
-          className="flex min-w-0 flex-col items-start"
-        >
-          <Logo wordmarkClass="text-xl" />
-          <span className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <ShieldCheck className="size-3 text-brand" aria-hidden="true" />
-            {t('adminConsoleTitle')}
-          </span>
-        </Link>
-
-        <div className="shrink-0 lg:hidden">
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={onClose}
-            aria-label={t('adminCloseMenu')}
-            className="ui-button-ghost ui-icon-button"
-          >
-            <X className="size-5" aria-hidden="true" />
-          </button>
+    <AnimatedSidebar id="admin-sidebar" ariaLabel={t('adminNavigation')}>
+      <AnimatedSidebarHeader>
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/admin" aria-label={t('adminConsoleTitle')}>
+            <Logo wordmarkClass="text-xl" />
+          </Link>
+          <Tooltip content={t('adminCloseMenu')} wrapperClassName="md:hidden"><AnimatedSidebarClose aria-label={t('adminCloseMenu')} /></Tooltip>
         </div>
-      </div>
-
-      <nav
-        aria-label={t('adminNavigation')}
-        className="flex-1 space-y-6 overflow-y-auto px-3 py-5"
-      >
-        {NAV_SECTIONS.map((section) => (
-          <div key={section.labelKey}>
-            <p className="px-3 pb-2 text-xs font-medium text-muted-foreground">
-              {t(section.labelKey)}
-            </p>
-            <ul className="space-y-0.5">
-              {section.items.map((item) => {
-                const active = isNavItemActive(item, pathname);
-                const Icon = item.icon;
-
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={onClose}
-                      aria-current={active ? 'page' : undefined}
-                      className={`flex min-h-11 items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-colors lg:min-h-10 ${
-                        active
-                          ? 'border-brand/15 bg-brand-soft font-semibold text-foreground'
-                          : 'border-transparent text-muted-foreground hover:bg-accent/70 hover:text-foreground'
-                      }`}
-                    >
-                      <Icon className={`size-4 shrink-0 ${active ? 'text-brand' : ''}`} aria-hidden="true" />
-                      <span>{t(item.labelKey)}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </nav>
-
-      <div className="border-t border-border/70 p-3">
-        <Link
-          href="/app"
-          onClick={onClose}
-          className="ui-button-ghost w-full justify-start"
-        >
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          {t('adminBackToConsole')}
-        </Link>
-      </div>
-    </aside>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground group-data-[state=collapsed]/sidebar:hidden">
+          <ShieldCheck className="size-3" aria-hidden="true" />
+          {t('adminConsoleTitle')}
+        </span>
+      </AnimatedSidebarHeader>
+      <AnimatedSidebarContent>
+        <nav aria-label={t('adminNavigation')}>
+          {NAV_SECTIONS.map((section) => (
+            <AnimatedSidebarGroup key={section.labelKey}>
+              <AnimatedSidebarGroupLabel>{t(section.labelKey)}</AnimatedSidebarGroupLabel>
+              <AnimatedSidebarMenu>
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <AnimatedSidebarMenuItem key={item.href}>
+                      <AnimatedSidebarMenuButton
+                        href={item.href}
+                        icon={<Icon className="size-4" />}
+                        isActive={isNavItemActive(item, pathname)}
+                      >
+                        {t(item.labelKey)}
+                      </AnimatedSidebarMenuButton>
+                    </AnimatedSidebarMenuItem>
+                  );
+                })}
+              </AnimatedSidebarMenu>
+            </AnimatedSidebarGroup>
+          ))}
+        </nav>
+      </AnimatedSidebarContent>
+      <AnimatedSidebarFooter>
+        <AnimatedSidebarMenu>
+          <AnimatedSidebarMenuItem>
+            <AnimatedSidebarMenuButton href="/app" icon={<ArrowLeft className="size-4" />}>
+              {t('adminBackToConsole')}
+            </AnimatedSidebarMenuButton>
+          </AnimatedSidebarMenuItem>
+        </AnimatedSidebarMenu>
+      </AnimatedSidebarFooter>
+    </AnimatedSidebar>
   );
 }

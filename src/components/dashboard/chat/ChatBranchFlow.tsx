@@ -1,5 +1,7 @@
 'use client';
 
+import { Button } from '@/components/motion/button';
+
 import '@xyflow/react/dist/style.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -64,10 +66,10 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 function statusClass(status: string, awaitingInput: boolean) {
-  if (awaitingInput) return 'bg-warning';
-  if (status === 'pending') return 'bg-warning';
+  if (awaitingInput) return 'bg-muted';
+  if (status === 'pending') return 'bg-muted';
   if (status === 'failed' || status === 'cancelled') return 'bg-destructive';
-  return 'bg-brand';
+  return 'bg-primary';
 }
 
 function BranchNode({ data }: NodeProps<BranchFlowNode>) {
@@ -93,9 +95,9 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
       data-active-path={data.active ? 'true' : 'false'}
       className={cx(
         'group/branch-node relative h-[106px] w-[220px] rounded-md border bg-card px-3 py-2 shadow-sm transition-[border-color,box-shadow,opacity]',
-        data.role === 'user' ? 'border-brand/35 bg-brand-soft/35' : 'border-border bg-muted/35',
-        data.awaitingInput && 'border-warning/60 bg-warning/10',
-        data.id === data.activeMessageId && 'border-brand ring-2 ring-brand/20',
+        data.role === 'user' ? 'border-primary/35 bg-muted/35' : 'border-border bg-muted/35',
+        data.awaitingInput && 'border-primary/60 bg-muted/10',
+        data.id === data.activeMessageId && 'border-primary ring-2 ring-primary/20',
         !data.active && 'opacity-55 hover:opacity-100',
       )}
     >
@@ -109,28 +111,10 @@ function BranchNode({ data }: NodeProps<BranchFlowNode>) {
         </div>
         <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/branch-node:opacity-100 group-focus-within/branch-node:opacity-100">
           {data.role === 'assistant' ? (
-            <button
-              type="button"
-              disabled={data.busy}
-              className="nodrag nopan flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
-              aria-label={t('newBranch')}
-              title={t('newBranch')}
-              onClick={(event) => { event.stopPropagation(); data.onStart(data.id); }}
-            >
-              <Split className="size-3.5" />
-            </button>
+            <Button type="button" disabled={data.busy} aria-label={t('newBranch')} title={t('newBranch')} onClick={(event) => { event.stopPropagation(); data.onStart(data.id); }} variant={"ghost"} size={"icon"} className="flex items-center justify-center"><Split className="size-3.5" /></Button>
           ) : null}
           {data.awaitingInput ? (
-            <button
-              type="button"
-              disabled={data.busy}
-              className="nodrag nopan flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-destructive"
-              aria-label={t('deleteEmptyBranch')}
-              title={t('deleteEmptyBranch')}
-              onClick={(event) => { event.stopPropagation(); data.onDelete(data.id); }}
-            >
-              <Trash2 className="size-3.5" />
-            </button>
+            <Button type="button" disabled={data.busy} aria-label={t('deleteEmptyBranch')} title={t('deleteEmptyBranch')} onClick={(event) => { event.stopPropagation(); data.onDelete(data.id); }} variant={"ghost"} size={"icon"} className="flex items-center justify-center"><Trash2 className="size-3.5" /></Button>
           ) : null}
         </div>
       </div>
@@ -185,7 +169,7 @@ function branchFlow(
   const edges: Edge[] = branch.nodes.flatMap((node) => {
     if (!node.parentId || !ids.has(node.parentId)) return [];
     const active = node.active && activeIds.has(node.parentId);
-    const color = active ? 'hsl(var(--brand))' : 'hsl(var(--border))';
+    const color = active ? 'var(--primary)' : 'var(--border)';
     return [{
       id: `${node.parentId}:${node.id}`,
       source: node.parentId,
@@ -248,7 +232,7 @@ function BranchCanvas({
           onNodeClick={(_event, node) => { if (!busy) onSelect(node.id); }}
           onlyRenderVisibleElements
         >
-          <Background gap={18} size={1} color="hsl(var(--border))" />
+          <Background gap={18} size={1} color="var(--border)" />
           <Controls
             className="[&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground [&>button]:!text-foreground"
             position="bottom-left"
@@ -256,8 +240,8 @@ function BranchCanvas({
           />
           <MiniMap
             className="overflow-hidden rounded-md border border-border bg-card shadow-sm"
-            nodeColor={(node) => node.data.role === 'user' ? 'hsl(var(--brand))' : 'hsl(var(--muted-foreground))'}
-            maskColor="hsl(var(--background) / 0.72)"
+            nodeColor={(node) => node.data.role === 'user' ? 'var(--primary)' : 'var(--muted-foreground)'}
+            maskColor="color-mix(in oklch, var(--background) 72%, transparent)"
             pannable
             position="bottom-right"
             style={{ height: 96, width: 128 }}
@@ -284,7 +268,7 @@ export function ChatBranchPanel({
   busy: boolean;
   canMaximize?: boolean;
   maximized?: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   onDelete: (messageId: string) => void;
   onMaximize?: () => void;
   onSelect: (messageId: string) => void;
@@ -296,7 +280,7 @@ export function ChatBranchPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <header className="flex h-11 shrink-0 items-center justify-between px-3">
+      <header className={`flex shrink-0 items-center justify-between ${onClose ? 'h-11 px-3' : 'h-16 pl-3 pr-16'}`}>
         <div className="flex min-w-0 items-center gap-2">
           <GitBranch className="size-4 text-muted-foreground" />
           <div className="min-w-0">
@@ -306,13 +290,9 @@ export function ChatBranchPanel({
         </div>
         <div className="flex items-center gap-0.5">
           {canMaximize ? (
-            <button type="button" onClick={onMaximize} aria-label={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} title={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
-              {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-            </button>
+            <Button type="button" onClick={onMaximize} aria-label={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} title={maximized ? t('restoreBranchPanel') : t('maximizeBranchPanel')} variant={"ghost"} size={"icon"} className="flex items-center justify-center">{maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</Button>
           ) : null}
-          <button type="button" onClick={onClose} aria-label={common('close')} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
-            <X className="size-4" />
-          </button>
+          {onClose ? <Button type="button" onClick={onClose} aria-label={common('close')} variant={"ghost"} size={"icon"} className="flex items-center justify-center"><X className="size-4" /></Button> : null}
         </div>
       </header>
       <div className="relative min-h-0 flex-1">

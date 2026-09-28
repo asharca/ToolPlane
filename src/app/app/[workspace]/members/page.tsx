@@ -1,3 +1,5 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
@@ -6,11 +8,7 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { WorkspaceInviteForm } from '@/components/dashboard/WorkspaceInviteForm';
 import { WorkspaceMemberAction } from '@/components/dashboard/WorkspaceForms';
 import { db } from '@/lib/db';
-import {
-  DashboardPage,
-  DashboardSection,
-  DashboardTable,
-} from '@/components/dashboard/DashboardUI';
+import { DashboardPage, DashboardSection, DashboardTable } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -53,19 +51,13 @@ export default async function MembersPage({
               {management('sharedHint')}
             </p>
             <DashboardSection title={t('currentMembers')} count={members.length}>
-              <DashboardTable
-                headers={[
+              <DashboardTable minWidth="34rem" headers={[
                   { label: t('member') },
                   { label: t('role') },
                   { label: t('joined') },
                   { label: management('actions') },
-                ]}
-                minWidth="34rem"
-              >
-                {members.map((m) => (
-                  <tr key={m.id}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
+                ]} rows={members.map((m) => (
+                  {id: m.id, cells: [<><div className="flex items-center gap-2.5">
                         <span className="flex size-7 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
                           {(m.user.name ?? m.user.email).slice(0, 1).toUpperCase()}
                         </span>
@@ -82,22 +74,13 @@ export default async function MembersPage({
                             {m.user.email}
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
+                      </div></>,
+<><AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                         {m.userId === ws.ownerId ? t('ownerRole') : t('memberRole')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {fmt(m.createdAt, timeZone, locale)}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {m.userId !== ws.ownerId && (canInvite || m.userId === user.id) ? <WorkspaceMemberAction slug={slug} memberId={m.userId} kind={m.userId === user.id ? 'leave' : 'remove'} /> : null}
-                    </td>
-                  </tr>
-                ))}
-              </DashboardTable>
+                      </AnimatedBadge></>,
+<>{fmt(m.createdAt, timeZone, locale)}</>,
+<>{m.userId !== ws.ownerId && (canInvite || m.userId === user.id) ? <WorkspaceMemberAction slug={slug} memberId={m.userId} kind={m.userId === user.id ? 'leave' : 'remove'} /> : null}</>]}
+                ))} />
             </DashboardSection>
             {canInvite && invitations.length > 0 ? <DashboardSection title={management('pendingInvitations')} count={invitations.length}>
               <ul className="divide-y divide-border rounded-lg border border-border">

@@ -1,5 +1,7 @@
 'use client';
 
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 import { useTranslations } from 'next-intl';
 import {
   agentRuntimeBuiltinToolGroups,
@@ -42,22 +44,16 @@ export function AgentBuiltInTools({
           return (
             <div key={group.category} role="listitem" className="min-w-0">
               {selectable ? (
-                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    onChange={() => {
+                <div className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-foreground">
+                  <FormCheckbox checked={enabled} label={t('enableBuiltInToolGroup', { category: labels[group.category] })} onCheckedChange={() => {
                       const next = new Set(disabledTools);
                       for (const tool of group.tools) {
                         if (enabled) next.add(tool);
                         else next.delete(tool);
                       }
                       onDisabledToolsChange(next);
-                    }}
-                    className="size-4 rounded border-border"
-                  />
-                  {t('enableBuiltInToolGroup', { category: labels[group.category] })}
-                </label>
+                    }} />
+                </div>
               ) : (
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {labels[group.category]}

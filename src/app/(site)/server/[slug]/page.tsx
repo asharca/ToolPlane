@@ -10,6 +10,7 @@ import {
   getPublicServer,
 } from '../../_lib/catalog';
 import { siteMetadata } from '../../_lib/metadata';
+import { ButtonLink } from '@/components/motion/button';
 
 type RelatedItem = {
   slug: string;
@@ -111,9 +112,9 @@ export default async function Page({
         {server.categories.length > 0 ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {server.categories.map((category) => (
-              <Link key={category.id} href={`/categories/${category.slug}`} className="ui-chip">
+              <ButtonLink key={category.id} href={`/categories/${category.slug}`} variant="secondary" size="sm">
                 {category.name}
-              </Link>
+              </ButtonLink>
             ))}
           </div>
         ) : null}
@@ -153,14 +154,14 @@ Content-Type: application/json
 
         <aside className="min-w-0 space-y-6">
           <div className="rounded-lg border border-border bg-card p-4">
-            <Link
+            <ButtonLink
               href={server.deployable
                 ? `/app?server=${encodeURIComponent(server.slug)}`
                 : `/app?market=mcp&q=${encodeURIComponent(server.slug)}`}
-              className="ui-button-primary flex min-h-10 w-full"
+              className="w-full"
             >
               {server.deployable ? t('signInToRunOnToolplane') : t('browseDeployableServers')}
-            </Link>
+            </ButtonLink>
             <p className="mt-2 text-center text-xs text-muted-foreground">
               {server.deployable ? t('oneclickCloudHosting') : t('verifiedRecipesOnly')}
             </p>

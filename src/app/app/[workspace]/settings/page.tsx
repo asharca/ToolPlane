@@ -37,7 +37,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ works
           <DashboardPanel title={t('modelPreferences')} description={t('modelPreferencesDesc')}>
             {isOwner ? <WorkspaceModelSettings slug={slug} providers={providers.map((provider) => ({
               id: provider.id, name: provider.name, models: provider.models,
-              modelRecords: (provider.modelRecords ?? []).map((model) => ({ modelId: model.modelId, primaryType: model.primaryType, capabilities: model.capabilities, inputModalities: model.inputModalities })),
+              modelRecords: (provider.modelRecords ?? []).map((model) => ({ modelId: model.modelId, primaryType: model.primaryType, capabilities: model.capabilities, inputModalities: model.inputModalities, cost: model.cost })),
             }))} defaultModel={modelSelection(ws.defaultModelProviderId, ws.defaultModel)} titleModel={modelSelection(ws.titleModelProviderId, ws.titleModel)} /> : <p className="text-sm text-muted-foreground">{management('ownerOnly')}</p>}
           </DashboardPanel>
           {isOwner ? (

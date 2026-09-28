@@ -1,5 +1,9 @@
 'use client';
 
+import { Button } from '@/components/motion/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/motion/tabs';
+import { useTheme } from 'next-themes';
+
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
@@ -7,6 +11,21 @@ import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
 import { ArrowLeft, ChevronRight, Download, FileText, Folder, FolderOpen, Loader2, RefreshCw, TerminalIcon, Trash2, Upload } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
 import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
+
+function terminalTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext('2d')!;
+  const color = (token: string) => {
+    context.fillStyle = styles.getPropertyValue(token).trim();
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+  const foreground = color('--foreground');
+  return { background: color('--background'), foreground, cursor: foreground, selectionBackground: color('--muted') };
+}
 
 type RpcResult = {
   content?: { type: string; text: string }[];
@@ -187,6 +206,7 @@ export function SandboxConsole({
   waitingForConnector?: boolean;
 }) {
   const t = useTranslations('console.sandboxes');
+  const { resolvedTheme } = useTheme();
   const terminalBase = terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
   const rpcBase = rpcApiBase ?? `/api/v1/mcp/${deploymentId}/rpc`;
   const uploadBase = `/api/v1/mcp/${deploymentId}/files/upload`;
@@ -306,6 +326,10 @@ export function SandboxConsole({
   }, [terminalBase]);
 
   useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.theme = terminalTheme();
+  }, [resolvedTheme]);
+
+  useEffect(() => {
     let disposed = false;
     let eventSource: EventSource | null = null;
     let resizeObserver: ResizeObserver | null = null;
@@ -323,16 +347,11 @@ export function SandboxConsole({
       const fit = new FitAddon();
       terminal = new Terminal({
         cursorBlink: true,
-        fontFamily: 'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+        fontFamily: getComputedStyle(element).fontFamily,
         fontSize: 13,
         lineHeight: 1.45,
         scrollback: 4000,
-        theme: {
-          background: '#111419',
-          foreground: '#e5e7eb',
-          cursor: '#f9fafb',
-          selectionBackground: '#314158',
-        },
+        theme: terminalTheme(),
       });
       terminal.loadAddon(fit);
       terminal.open(element);
@@ -572,35 +591,30 @@ export function SandboxConsole({
           aria-expanded={isFolder ? expanded : undefined}
           aria-selected={selected || selectedFolder}
         >
-          <div className={`group flex min-h-7 items-center rounded-md transition-colors ${selected || selectedFolder ? 'bg-brand-soft text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
-            <button
-              type="button"
-              onClick={() => (isFolder ? void toggleDirectory(fullPath) : void openFile(fullPath))}
-              disabled={!running || loadingPath !== null}
-              aria-expanded={isFolder ? expanded : undefined}
-              title={entry.name}
-              style={{ paddingLeft: `${depth * 12 + 8}px` }}
-              className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left text-sm disabled:opacity-50"
-            >
-              {isFolder ? (
-                <ChevronRight className={`size-[11px] shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-              ) : (
-                <span aria-hidden className="size-[11px] shrink-0" />
-              )}
-              {loading ? (
-                <Loader2 className="size-4 shrink-0 animate-spin" />
-              ) : isFolder ? (
-                expanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />
-              ) : (
-                <FileText className="size-4 shrink-0" />
-              )}
-              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-              {!isFolder ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}
-            </button>
+          <div style={{ paddingLeft: `${depth * 12}px` }} className={`group flex min-h-7 items-center rounded-md transition-colors ${selected || selectedFolder ? 'bg-muted text-accent-foreground' : isFolder ? 'text-foreground hover:bg-muted/70' : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'}`}>
+            <Button type="button"
+            onClick={() => (isFolder ? void toggleDirectory(fullPath) : void openFile(fullPath))}
+            disabled={!running || loadingPath !== null}
+            aria-expanded={isFolder ? expanded : undefined}
+            title={entry.name}
+            variant="ghost" size="md" className="min-w-0 flex-1">{isFolder ? (
+              <ChevronRight className={`size-[11px] shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+            ) : (
+              <span aria-hidden className="size-[11px] shrink-0" />
+            )}
+            {loading ? (
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+            ) : isFolder ? (
+              expanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />
+            ) : (
+              <FileText className="size-4 shrink-0" />
+            )}
+            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+            {!isFolder ? <span className="shrink-0 text-[10px] opacity-70">{formatSize(entry.size)}</span> : null}</Button>
             {!isFolder ? (
               <div className="flex shrink-0 items-center pr-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                <button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></button>
-                <button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-300" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></button>
+                <Button type="button" onClick={() => void downloadFile(fullPath)} disabled={!running || loadingPath !== null} variant="ghost" size="icon" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-3.5" /></Button>
+                <Button type="button" onClick={() => void deleteFile(fullPath)} disabled={!running || loadingPath !== null} variant="ghost" size="icon" title={t('deleteFile')} aria-label={t('deleteFile')}><Trash2 className="size-3.5" /></Button>
               </div>
             ) : null}
           </div>
@@ -623,34 +637,30 @@ export function SandboxConsole({
   const terminalPanel = (
     <section
       className={terminalOnly || compact
-        ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#111419]'
-        : 'ui-panel flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-[#111419]'}
+        ? 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background'
+        : 'rounded-3xl border border-border bg-card flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-background'}
     >
-      <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-white/10'}`}>
-        <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-          <TerminalIcon className="size-4 text-zinc-400" />
+      <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-border'}`}>
+        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+          <TerminalIcon className="size-4 text-muted-foreground" />
           {terminalLabel ?? t('terminal')}
         </div>
-        <div className="flex min-w-0 items-center gap-2 text-xs text-zinc-400">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           <span>{terminalStatus}</span>
           <span className="hidden max-w-80 truncate font-mono sm:inline">
             {terminalSubtitle ?? deploymentId}
           </span>
-          <button
-            type="button"
-            onClick={() => {
-              setTerminalStatus(t('terminalConnecting'));
-              setTerminalGeneration((value) => value + 1);
-            }}
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100"
-            title={t('reconnectTerminal')}
-            aria-label={t('reconnectTerminal')}
-          >
-            <RefreshCw className="size-3.5" />
-          </button>
+          <Button type="button"
+          onClick={() => {
+            setTerminalStatus(t('terminalConnecting'));
+            setTerminalGeneration((value) => value + 1);
+          }}
+          variant="ghost" size="icon" className="shrink-0"
+          title={t('reconnectTerminal')}
+          aria-label={t('reconnectTerminal')}><RefreshCw className="size-3.5" /></Button>
         </div>
       </div>
-      <div ref={terminalElementRef} className="sandbox-terminal min-h-0 flex-1 overflow-hidden" />
+      <div ref={terminalElementRef} className="sandbox-terminal min-h-0 flex-1 overflow-hidden font-mono" />
     </section>
   );
 
@@ -659,7 +669,7 @@ export function SandboxConsole({
   const rootEntries = entriesByPath[rootPath];
 
   const filesPanel = (
-    <aside className={compact ? 'flex h-full min-h-0 flex-col overflow-hidden bg-card' : 'ui-panel order-2 flex min-h-96 flex-col overflow-hidden xl:order-1'}>
+    <aside className={compact ? 'flex h-full min-h-0 flex-col overflow-hidden bg-card' : 'rounded-3xl border border-border bg-card order-2 flex min-h-96 flex-col overflow-hidden xl:order-1'}>
       <div className={compact ? 'flex items-center justify-between gap-2 px-3 pb-2 pt-3' : 'flex items-center justify-between gap-2 border-b border-border px-3 py-3'}>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Folder className="size-4 text-muted-foreground" />
@@ -673,22 +683,16 @@ export function SandboxConsole({
             className="hidden"
             onChange={(event) => void uploadFiles(Array.from(event.target.files ?? []))}
           />
-          <button type="button" onClick={() => uploadInputRef.current?.click()} disabled={!running || loadingPath !== null || uploading} className="ui-button-ghost ui-button-sm" title={t('uploadFilesTo', { path: displayWorkspacePath(selectedDirectory, workspaceRoot) })} aria-label={t('uploadFiles')}>
-            {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-          </button>
-          <button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null || uploading} className="ui-button-ghost ui-button-sm" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>
-            {loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-          </button>
+          <Button type="button" onClick={() => uploadInputRef.current?.click()} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('uploadFilesTo', { path: displayWorkspacePath(selectedDirectory, workspaceRoot) })} aria-label={t('uploadFiles')}>{uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}</Button>
+          <Button type="button" onClick={() => void refreshTree()} disabled={!running || loadingPath !== null || uploading} variant="ghost" size="icon" title={t('refreshDirectory')} aria-label={t('refreshDirectory')}>{loadingPath === rootPath ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}</Button>
         </div>
       </div>
       <div role="tree" aria-label={t('files')} className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         <div role="treeitem" aria-expanded="true" aria-selected={selectedDirectory === rootPath}>
-          <button type="button" onClick={() => setSelectedDirectory(rootPath)} title={displayedRootPath} className={`flex min-h-7 w-full items-center gap-1.5 rounded-md py-1 pl-2 pr-2 text-left text-sm font-medium ${selectedDirectory === rootPath ? 'bg-brand-soft text-accent-foreground' : 'text-foreground hover:bg-muted/70'}`}>
-            <ChevronRight className="size-[11px] shrink-0 rotate-90" />
-            <FolderOpen className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{rootName}</span>
-          </button>
-          {fileError && rootEntries ? <p role="alert" className="px-5 py-1 text-xs text-destructive">{fileError}</p> : null}
+          <Button type="button" onClick={() => setSelectedDirectory(rootPath)} title={displayedRootPath} variant="ghost" size="md"><ChevronRight className="size-[11px] shrink-0 rotate-90" />
+          <FolderOpen className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{rootName}</span></Button>
+          {fileError && rootEntries ? <p role="alert" className="text-sm text-destructive">{fileError}</p> : null}
           <div role="group">
             {rootEntries?.length ? renderTreeEntries(rootPath, 1) : (
               <p className="px-5 py-5 text-sm text-muted-foreground">
@@ -708,9 +712,9 @@ export function SandboxConsole({
   const previewPanel = preview ? (
     <section className={`absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-card ${compact ? '' : 'border border-border'}`}>
       <div className={`flex items-center justify-between gap-3 px-4 py-3 ${compact ? '' : 'border-b border-border'}`}>
-        <button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} className="ui-button-ghost ui-icon-button shrink-0" title={t('close')} aria-label={t('close')}><ArrowLeft className="size-4" /></button>
+        <Button type="button" onClick={() => { setPreview(null); setSelectedPath(''); }} variant="ghost" size="icon" className="shrink-0" title={t('close')} aria-label={t('close')}><ArrowLeft className="size-4" /></Button>
         <div className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{displayWorkspacePath(preview.path, workspaceRoot)}</div>
-        <button type="button" onClick={() => void downloadFile(preview.path)} disabled={loadingPath !== null} className="ui-button-ghost ui-icon-button shrink-0" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-4" /></button>
+        <Button type="button" onClick={() => void downloadFile(preview.path)} disabled={loadingPath !== null} variant="ghost" size="icon" className="shrink-0" title={t('downloadFile')} aria-label={t('downloadFile')}><Download className="size-4" /></Button>
       </div>
       {preview.kind === 'image' && preview.url ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-muted/20 p-4">
@@ -718,7 +722,7 @@ export function SandboxConsole({
           <img src={preview.url} alt={preview.path.split('/').pop() || preview.path} className="max-h-full max-w-full object-contain" />
         </div>
       ) : preview.kind === 'pdf' && preview.url ? (
-        <iframe src={preview.url} title={preview.path.split('/').pop() || preview.path} sandbox="" referrerPolicy="no-referrer" className="min-h-0 flex-1 bg-white" />
+        <iframe src={preview.url} title={preview.path.split('/').pop() || preview.path} sandbox="" referrerPolicy="no-referrer" className="min-h-0 flex-1 bg-border" />
       ) : preview.kind === 'markdown' ? (
         <div className="min-h-0 flex-1 overflow-auto p-4 text-sm leading-6"><AssistantMarkdown text={preview.content ?? ''} /></div>
       ) : preview.kind === 'text' ? (
@@ -727,7 +731,7 @@ export function SandboxConsole({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
           <FileText className="size-10 opacity-40" />
           <p>{t('filePreviewUnavailable')}</p>
-          <button type="button" onClick={() => void downloadFile(preview.path)} className="ui-button-secondary h-8 gap-2 px-3 text-xs"><Download className="size-3.5" />{t('downloadFile')}</button>
+          <Button type="button" onClick={() => void downloadFile(preview.path)} variant="secondary" size="sm"><Download className="size-3.5" />{t('downloadFile')}</Button>
         </div>
       )}
     </section>
@@ -739,10 +743,12 @@ export function SandboxConsole({
 
   if (compact) return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <div className="grid h-10 shrink-0 grid-cols-2 bg-muted/30 p-1">
-        <button type="button" onClick={() => setCompactView('terminal')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'terminal' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><TerminalIcon className="size-3.5" />{t('terminal')}</button>
-        <button type="button" onClick={() => setCompactView('files')} className={`flex items-center justify-center gap-2 rounded text-xs font-medium ${compactView === 'files' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><Folder className="size-3.5" />{t('files')}</button>
-      </div>
+      <Tabs value={compactView} onValueChange={(next) => setCompactView(next as 'terminal' | 'files')} className="shrink-0">
+        <TabsList>
+          <TabsTrigger value="terminal"><span className="flex items-center gap-2"><TerminalIcon className="size-3.5" />{t('terminal')}</span></TabsTrigger>
+          <TabsTrigger value="files"><span className="flex items-center gap-2"><Folder className="size-3.5" />{t('files')}</span></TabsTrigger>
+        </TabsList>
+      </Tabs>
       <div className="relative min-h-0 flex-1">{compactView === 'terminal' ? terminalPanel : filesPanel}{previewPanel}</div>
     </div>
   );

@@ -8,10 +8,8 @@ import { listMcpTools } from '@/lib/process/mcp-client';
 import { hasMcpToolCatalog, readMcpToolCatalog } from '@/lib/process/mcp-tool-catalog';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { usesDefaultRemoteRuntime } from '@/lib/workspace/deployment-provenance';
 import { readMcpInspectorConnection } from '@/lib/workspace/inspector-connection';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { McpToolCatalog } from '@/components/dashboard/McpToolCatalog';
 
@@ -101,7 +99,6 @@ export default async function DeploymentToolPage({
   const tool = tools.find((candidate) => candidate.name === toolName);
   if (!tool) notFound();
 
-  const label = deploymentLabel(deployment);
   const labels = {
     title: t('toolCatalog'),
     description: t('toolCatalogDescription'),
@@ -120,11 +117,6 @@ export default async function DeploymentToolPage({
 
   return (
     <>
-      <DashboardHeader breadcrumb={[
-        { label: 'MCP', href: `/app/${encodeURIComponent(slug)}/mcp` },
-        { label: label.name, href: `${base}?tab=tools` },
-        { label: tool.name },
-      ]} />
       <DashboardPage className="space-y-6">
         <header>
           <Link
@@ -150,7 +142,7 @@ export default async function DeploymentToolPage({
         <McpToolCatalog tools={[tool]} labels={labels} />
 
         {tools.length > 1 ? (
-          <section className="ui-panel p-4 sm:p-5">
+          <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
             <h2 className="text-sm font-semibold text-foreground">{t('tools')}</h2>
             <div className="mt-3 grid gap-1 sm:grid-cols-2">
               {tools.filter((candidate) => candidate.name !== tool.name).map((candidate) => (

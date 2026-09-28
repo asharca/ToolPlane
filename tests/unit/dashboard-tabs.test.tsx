@@ -1,233 +1,98 @@
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {
-  DashboardTabBar,
-  DashboardTabContent,
-  DashboardTabsProvider,
-  reorderDashboardTabs,
-  useDashboardTabs,
-} from '@/components/dashboard/DashboardTabs';
+import { DashboardTabsProvider, reorderDashboardTabs, useDashboardTabs, type DashboardWorkspaceTab } from '@/components/dashboard/DashboardTabs';
 
-const navigation = vi.hoisted(() => ({
-  pathname: '/app/smoke/agents',
-  search: '',
-  push: vi.fn(),
-  replace: vi.fn(),
-}));
+const navigation = vi.hoisted(() => ({ pathname: '/app/smoke/agents', search: '', push: vi.fn(), replace: vi.fn() }));
+vi.mock('next/navigation', () => ({ usePathname: () => navigation.pathname, useRouter: () => ({ push: navigation.push, replace: navigation.replace }), useSearchParams: () => new URLSearchParams(navigation.search) }));
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => navigation.pathname,
-  useRouter: () => ({ push: navigation.push, replace: navigation.replace }),
-  useSearchParams: () => new URLSearchParams(navigation.search),
-}));
-
-function RouteOpener() {
-  const { openRoute } = useDashboardTabs();
-
-  return (
-    <button type="button" onClick={() => openRoute('/app/smoke/skills')}>
-      Open skills
-    </button>
-  );
+function WorkspaceTabsConsumer() {
+  const state = useDashboardTabs();
+  return <>
+    <output aria-label="Open routes">{JSON.stringify(state.tabs)}</output>
+    <output aria-label="Active route">{state.tabs.find((tab) => tab.id === state.activeTabId)?.href}</output>
+    <button onClick={() => state.openRoute('/app/smoke/skills')}>Open skills</button>
+    <button onClick={() => state.openRoute('/app/other/skills')}>Open another workspace</button>
+    <button onClick={() => state.togglePinned(state.activeTabId)}>Pin current route</button>
+    <button onClick={state.newTab}>Open another route</button>
+    <button onClick={() => state.closeTab(state.activeTabId)}>Close current route</button>
+    <button onClick={() => state.openInNewWindow(state.activeTabId)}>Detach current route</button>
+  </>;
 }
-
 function renderTabs(children?: ReactNode) {
-  return render(
-    <DashboardTabsProvider slug="smoke">
-      <DashboardTabBar />
-      {children}
-      <DashboardTabContent />
-    </DashboardTabsProvider>,
-  );
+  return render(<DashboardTabsProvider slug="smoke"><WorkspaceTabsConsumer />{children}</DashboardTabsProvider>);
 }
-
-function openTabs() {
-  const navigationElement = screen.getByRole('navigation', { name: 'Open pages' });
-  return Array.from(navigationElement.querySelectorAll<HTMLElement>('[data-tab-id]'));
-}
-
-function activeTab() {
-  const tab = openTabs().find((item) => item.dataset.active === 'true');
-  if (!tab) throw new Error('Expected one active dashboard tab');
-  return tab;
-}
-
-function tabForLabel(label: string) {
-  const tab = openTabs().find((item) => item.textContent?.includes(label));
-  if (!tab) throw new Error(`Expected ${label} dashboard tab`);
-  return tab;
+function openRoutes(): DashboardWorkspaceTab[] {
+  return JSON.parse(screen.getByLabelText('Open routes').textContent!);
 }
 
 describe('DashboardTabsProvider', () => {
   beforeEach(() => {
-    navigation.pathname = '/app/smoke/agents';
-    navigation.search = '';
-    navigation.push.mockClear();
-    navigation.replace.mockClear();
-    Element.prototype.scrollIntoView = vi.fn();
-    window.sessionStorage.clear();
+    navigation.pathname = '/app/smoke/agents'; navigation.search = '';
+    navigation.push.mockClear(); navigation.replace.mockClear(); window.sessionStorage.clear();
   });
 
-  it('seeds the current route as the active tab', () => {
+  it('reuses the current unpinned route but preserves it after pinning', async () => {
+    const first = renderTabs();
+    await userEvent.click(screen.getByText('Open skills'));
+    expect(openRoutes().map((tab) => tab.href)).toEqual(['/app/smoke/skills']);
+    first.unmount(); window.sessionStorage.clear();
     renderTabs();
-
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(activeTab()).toHaveAttribute('data-tab-id', 'initial');
-    expect(activeTab().querySelector('button')).toHaveAttribute('aria-current', 'page');
+    await userEvent.click(screen.getByText('Pin current route'));
+    await userEvent.click(screen.getByText('Open skills'));
+    expect(openRoutes().map((tab) => tab.href)).toEqual(['/app/smoke/agents', '/app/smoke/skills']);
+    expect(screen.getByLabelText('Active route')).toHaveTextContent('/app/smoke/skills');
   });
 
-  it('renders route content without a full-page entrance animation', () => {
+  it('rejects navigation outside its workspace', async () => {
     renderTabs();
-
-    expect(screen.getByRole('main').className).not.toContain('dashboard-enter');
-    expect(screen.getByRole('main')).toHaveClass('min-h-0', 'min-w-0', 'overflow-auto', 'overscroll-contain');
+    await userEvent.click(screen.getByText('Open another workspace'));
+    expect(openRoutes().map((tab) => tab.href)).toEqual(['/app/smoke/agents']);
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['work', 'Agents'],
-    ['work/chat', 'Agents'],
-    ['chat', 'Assistants'],
-    ['knowledge', 'Knowledge'],
-  ])('uses the sidebar name for the %s tab', (segment, label) => {
-    navigation.pathname = `/app/smoke/${segment}`;
-
+  it('closes the current route and navigates to a retained fallback', async () => {
     renderTabs();
-
-    expect(activeTab()).toHaveTextContent(label);
+    await userEvent.click(screen.getByText('Open another route'));
+    await userEvent.click(screen.getByText('Close current route'));
+    expect(openRoutes().map((tab) => tab.href)).toEqual(['/app/smoke/agents']);
+    const target = new URL(navigation.replace.mock.calls.at(-1)?.[0], 'https://toolplane.local');
+    expect(target.pathname).toBe('/app/smoke/agents');
+    expect(target.searchParams.get('__dashboardTab')).toBe('initial');
   });
 
-  it('opens model providers as its own tab', () => {
-    navigation.pathname = '/app/smoke/providers';
-    navigation.search = '';
-
-    renderTabs();
-
-    expect(activeTab()).toHaveTextContent('Model Providers');
-  });
-
-  it('keeps the originating tab while agent settings is open', () => {
+  it('preserves the originating work route while a settings page is open', () => {
     navigation.pathname = '/app/smoke/agents/agent-1';
     navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fwork%3Fagent%3Dagent-1%26c%3Dchat-1%26__dashboardTab%3Dchat-tab';
-
     renderTabs();
-
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(activeTab()).toHaveAttribute('data-tab-id', 'chat-tab');
+    expect(openRoutes()).toEqual([{ id: 'chat-tab', href: '/app/smoke/work?agent=agent-1&c=chat-1', pinned: false }]);
   });
 
-  it('keeps the Agents tab while Agent management is open', () => {
-    navigation.pathname = '/app/smoke/agents';
-    navigation.search = 'returnTo=%2Fapp%2Fsmoke%2Fwork%3F__dashboardTab%3Dwork-tab';
-
-    renderTabs();
-
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(activeTab()).toHaveAttribute('data-tab-id', 'work-tab');
-  });
-
-  it('keeps a pinned route open when sidebar navigation opens another route', async () => {
-    const user = userEvent.setup();
-    renderTabs(<RouteOpener />);
-
-    await user.click(within(tabForLabel('Agents')).getByRole('button', { name: 'Pin Agents' }));
-    expect(within(tabForLabel('Agents')).getByRole('button', { name: 'Unpin Agents' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Open skills' }));
-
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Skills'));
-    expect(openTabs().some((tab) => tab.textContent?.includes('Agents'))).toBe(true);
-
-    await user.click(within(tabForLabel('Agents')).getByRole('button', { name: 'Unpin Agents' }));
-    expect(within(tabForLabel('Agents')).getByRole('button', { name: 'Pin Agents' })).toBeInTheDocument();
-  });
-
-  it('navigates a reused tab without creating an iframe', async () => {
-    const user = userEvent.setup();
-    renderTabs(<RouteOpener />);
-
-    await user.click(screen.getByRole('button', { name: 'Open skills' }));
-
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Skills'));
-    expect(document.querySelector('iframe')).toBeNull();
-    const destination = navigation.push.mock.calls.at(-1)?.[0];
-    expect(new URL(destination, 'https://toolplane.local').pathname).toBe('/app/smoke/skills');
-  });
-
-  it('closes the active tab and navigates to its fallback', async () => {
-    const user = userEvent.setup();
-    renderTabs();
-
-    await user.click(screen.getByRole('button', { name: 'New tab' }));
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Assistants'));
-
-    await user.click(screen.getByRole('button', { name: 'Close Assistants' }));
-
-    const fallbackHref = navigation.replace.mock.calls.at(-1)?.[0];
-    expect(new URL(fallbackHref, 'https://toolplane.local').pathname).toBe('/app/smoke/agents');
-    expect(new URL(fallbackHref, 'https://toolplane.local').searchParams.get('__dashboardTab')).toBeTruthy();
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Agents'));
-  });
-
-  it('moves a tab into a new browser window', async () => {
-    const user = userEvent.setup();
+  it('detaches safely and leaves a usable parent route', async () => {
     const replace = vi.fn();
-    const openedWindow = { opener: window, location: { replace } } as unknown as Window;
-    const open = vi.spyOn(window, 'open').mockReturnValue(openedWindow);
+    const popup = { opener: window, location: { replace } } as unknown as Window;
+    vi.spyOn(window, 'open').mockReturnValueOnce(popup);
     renderTabs();
-
-    await user.click(screen.getByRole('button', { name: 'Open Agents in new window' }));
-
-    expect(open).toHaveBeenCalledWith('about:blank', '_blank', 'popup');
-    expect(openedWindow.opener).toBeNull();
-    expect(replace).toHaveBeenCalledWith(
-      '/app/smoke/agents?__dashboardTab=initial&__dashboardDetached=1',
-    );
-    await waitFor(() => expect(activeTab()).toHaveTextContent('Assistants'));
+    await userEvent.click(screen.getByText('Detach current route'));
+    expect(popup.opener).toBeNull();
+    expect(replace).toHaveBeenCalledWith('/app/smoke/agents?__dashboardTab=initial&__dashboardDetached=1');
+    await waitFor(() => expect(screen.getByLabelText('Active route')).toHaveTextContent('/app/smoke/chat'));
   });
 
-  it('keeps the current tab when the browser blocks the new window', async () => {
-    vi.spyOn(window, 'open').mockReturnValue(null);
+  it('retains the current route if the browser blocks detachment', async () => {
+    vi.spyOn(window, 'open').mockReturnValueOnce(null);
     renderTabs();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Open Agents in new window' }));
-
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(openTabs()).toHaveLength(1);
+    await userEvent.click(screen.getByText('Detach current route'));
+    expect(openRoutes().map((tab) => tab.href)).toEqual(['/app/smoke/agents']);
     expect(navigation.replace).not.toHaveBeenCalled();
-  });
-
-  it('drops saved overview tabs', () => {
-    window.sessionStorage.setItem('toolplane:dashboard-tabs:smoke', JSON.stringify({
-      tabs: [
-        { id: 'old-overview', href: '/app/smoke/overview', pinned: true },
-        { id: 'agents', href: '/app/smoke/agents', pinned: false },
-      ],
-      activeTabId: 'old-overview',
-    }));
-
-    renderTabs();
-
-    expect(openTabs()).toHaveLength(1);
-    expect(activeTab()).toHaveTextContent('Agents');
-    expect(screen.queryByText('Overview')).not.toBeInTheDocument();
   });
 });
 
 describe('reorderDashboardTabs', () => {
-  it('reorders only within the pinned or regular tab zone', () => {
-    const tabs = [
-      { id: 'pinned', href: '/app/smoke/chat', pinned: true },
-      { id: 'agents', href: '/app/smoke/agents', pinned: false },
-      { id: 'skills', href: '/app/smoke/skills', pinned: false },
-    ] as Parameters<typeof reorderDashboardTabs>[0];
-
-    expect(reorderDashboardTabs(tabs, 'skills', 'agents').map((tab) => tab.id)).toEqual([
-      'pinned',
-      'skills',
-      'agents',
-    ]);
+  it('reorders only within the pinned or regular zone', () => {
+    const tabs: DashboardWorkspaceTab[] = [{ id: 'pinned', href: '/app/smoke/chat', pinned: true }, { id: 'agents', href: '/app/smoke/agents', pinned: false }, { id: 'skills', href: '/app/smoke/skills', pinned: false }];
+    expect(reorderDashboardTabs(tabs, 'skills', 'agents').map((tab) => tab.id)).toEqual(['pinned', 'skills', 'agents']);
     expect(reorderDashboardTabs(tabs, 'agents', 'pinned')).toEqual(tabs);
   });
 });

@@ -22,7 +22,7 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/conversations/[
   }
   try {
     if (body.action === 'compact' && isDedicatedSandboxRuntimeKind(agent.runtimeKind)) return Response.json(await executeRuntimeCommand({ workspaceId: agent.workspaceId, agentId, conversationId,
-      line: `/compact${body.instructions ? ` ${body.instructions}` : ''}`, signal: req.signal }));
+      actorId: user.id, line: `/compact${body.instructions ? ` ${body.instructions}` : ''}`, signal: req.signal }));
     return Response.json(await operateConversation({ workspaceId: agent.workspaceId, agentId, conversationId,
       action: body.action, instructions: body.instructions, signal: req.signal }));
   } catch (error) {

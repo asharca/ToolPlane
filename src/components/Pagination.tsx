@@ -1,5 +1,5 @@
 import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
+import { Button, ButtonLink } from '@/components/motion/button';
 
 function pageWindow(page: number, total: number): number[] {
   const span = 2;
@@ -10,8 +10,6 @@ function pageWindow(page: number, total: number): number[] {
   return out;
 }
 
-const itemCls =
-  'inline-flex h-9 min-w-9 items-center justify-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent';
 
 type PaginationProps = {
   page: number;
@@ -44,55 +42,51 @@ export async function Pagination(props: PaginationProps) {
       className="mt-10 flex flex-wrap items-center justify-center gap-1"
     >
       {page > 1 ? (
-        <Link href={href(page - 1)} className={itemCls}>
+        <ButtonLink href={href(page - 1)} variant="secondary" size="sm">
           {t('previous')}
-        </Link>
+        </ButtonLink>
       ) : (
-        <span className={`${itemCls} pointer-events-none opacity-40`}>
+        <Button disabled variant="secondary" size="sm">
           {t('previous')}
-        </span>
+        </Button>
       )}
 
       {nums[0] > 1 ? (
         <>
-          <Link href={href(1)} className={itemCls}>
+          <ButtonLink href={href(1)} variant="secondary" size="sm">
             1
-          </Link>
+          </ButtonLink>
           <span className="px-1 text-muted-foreground">…</span>
         </>
       ) : null}
 
       {nums.map((n) =>
         n === page ? (
-          <span
-            key={n}
-            aria-current="page"
-            className={`${itemCls} border-foreground bg-primary text-primary-foreground`}
-          >
+          <ButtonLink key={n} href={href(n)} aria-current="page" size="sm">
             {n}
-          </span>
+          </ButtonLink>
         ) : (
-          <Link key={n} href={href(n)} className={itemCls}>
+          <ButtonLink key={n} href={href(n)} variant="secondary" size="sm">
             {n}
-          </Link>
+          </ButtonLink>
         ),
       )}
 
       {nums[nums.length - 1] < totalPages ? (
         <>
           <span className="px-1 text-muted-foreground">…</span>
-          <Link href={href(totalPages)} className={itemCls}>
+          <ButtonLink href={href(totalPages)} variant="secondary" size="sm">
             {totalPages}
-          </Link>
+          </ButtonLink>
         </>
       ) : null}
 
       {page < totalPages ? (
-        <Link href={href(page + 1)} className={itemCls}>
+        <ButtonLink href={href(page + 1)} variant="secondary" size="sm">
           {t('next')}
-        </Link>
+        </ButtonLink>
       ) : (
-        <span className={`${itemCls} pointer-events-none opacity-40`}>{t('next')}</span>
+        <Button disabled variant="secondary" size="sm">{t('next')}</Button>
       )}
     </nav>
   );

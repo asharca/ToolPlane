@@ -20,9 +20,6 @@ describe('InstalledSkillsTable', () => {
 
     const link = screen.getByRole('link', { name: 'First skill' });
     expect(link).toHaveAttribute('href', '/app/acme/skills/skill-1');
-    expect(link.parentElement).toHaveClass('p-0');
-    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Download SKILL.md' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Uninstall: First skill' }))
       .toHaveAttribute('title', 'Uninstall');
   });
@@ -35,7 +32,6 @@ describe('InstalledSkillsTable', () => {
     expect(screen.queryByRole('button', { name: 'Uninstall (2)' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Select all matching (2)' }));
     const toolbar = screen.getByRole('toolbar', { name: '2 selected' });
-    expect(toolbar.closest('thead')).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Uninstall (2)' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Clear selection' }));

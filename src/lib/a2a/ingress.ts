@@ -89,7 +89,7 @@ export async function runNativeEntry(input: NativeEntryInput & { signal?: AbortS
   onAccepted?: (task: Task, path: string) => void | Promise<void> }) {
   const accepted = await submitNativeEntry(input);
   const workspace = await db.workspace.findUniqueOrThrow({ where: { id: input.workspaceId }, select: { slug: true } });
-  const path = `/app/${encodeURIComponent(workspace.slug)}/work?mode=a2a&agent=${encodeURIComponent(input.agentId)}&task=${encodeURIComponent(accepted.row.id)}${accepted.grant.entryPolicy ? '&view=entry' : ''}`;
+  const path = `/app/${encodeURIComponent(workspace.slug)}/agents/${encodeURIComponent(input.agentId)}?settings=a2a&task=${encodeURIComponent(accepted.row.id)}`;
   await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
   try {
     while (true) {

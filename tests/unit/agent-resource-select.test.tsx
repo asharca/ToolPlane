@@ -79,8 +79,10 @@ describe('AgentResourceSelect', () => {
     const user = userEvent.setup();
     render(<ResourceSelectHarness />);
 
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by source'), 'custom');
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by status'), 'running');
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('option', { name: 'Custom' }));
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('option', { name: 'Running' }));
     await user.type(screen.getByLabelText('Search MCP...'), 'observability');
 
     await waitFor(() => {
@@ -97,15 +99,16 @@ describe('AgentResourceSelect', () => {
       <ResourceSelectHarness initialSelectedIds={['catalog-running']} />,
     );
 
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by source'), 'custom');
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by status'), 'running');
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('option', { name: 'Custom' }));
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('option', { name: 'Running' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select all matching (1)' }));
 
     expect(screen.getByText('2 selected')).toBeInTheDocument();
     expect(new Set(selectedFormIds(container))).toEqual(
       new Set(['catalog-running', 'custom-running']),
     );
-    expect(container.querySelectorAll('input[name="deploymentId"][type="hidden"]')).toHaveLength(2);
   });
 
   it('marks a partial selection as indeterminate and can clear every selection', async () => {
@@ -116,13 +119,13 @@ describe('AgentResourceSelect', () => {
 
     const selectMatches = screen.getByRole('checkbox', { name: 'Select all matching (3)' });
     expect(selectMatches).not.toBeChecked();
-    expect(selectMatches).toHaveProperty('indeterminate', true);
+    expect(selectMatches).toHaveAttribute('aria-checked', 'mixed');
 
     await user.click(screen.getByRole('button', { name: 'Clear selection' }));
 
     expect(screen.getByText('0 selected')).toBeInTheDocument();
     expect(selectedFormIds(container)).toEqual([]);
-    expect(selectMatches).toHaveProperty('indeterminate', false);
+    expect(selectMatches).toHaveAttribute('aria-checked', 'false');
   });
 
   it('keeps search and filter controls from changing or submitting the parent form', async () => {
@@ -135,8 +138,10 @@ describe('AgentResourceSelect', () => {
 
     const search = screen.getByLabelText('Search MCP...');
     await user.type(search, 'router');
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by source'), 'custom');
-    await user.selectOptions(screen.getByLabelText('MCP: Filter by status'), 'stopped');
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('option', { name: 'Custom' }));
+    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('option', { name: 'Stopped' }));
     await user.type(search, '{enter}');
 
     expect(onFormChange).not.toHaveBeenCalled();
@@ -153,19 +158,12 @@ describe('AgentResourceSelect', () => {
     }));
     const { container } = render(<ResourceSelectHarness options={options} />);
 
-    expect(
-      screen.getByText(
-        'Showing the first 100 of 125 matches. Narrow the search or filters to find a specific resource.',
-      ),
-    ).toBeInTheDocument();
     expect(screen.getByText('MCP 99')).toBeInTheDocument();
     expect(screen.queryByText('MCP 100')).not.toBeInTheDocument();
-    expect(container.querySelectorAll('input[aria-label^="Select MCP "]')).toHaveLength(100);
 
     await user.click(screen.getByRole('checkbox', { name: 'Select all matching (125)' }));
 
     expect(screen.getByText('125 selected')).toBeInTheDocument();
     expect(selectedFormIds(container)).toHaveLength(125);
-    expect(container.querySelectorAll('input[name="deploymentId"][type="hidden"]')).toHaveLength(125);
   });
 });

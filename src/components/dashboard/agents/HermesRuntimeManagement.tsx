@@ -1,4 +1,6 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
 
 import { useTranslations } from 'next-intl';
 import {
@@ -54,16 +56,11 @@ export function HermesRuntimeManagement({
           <input type="hidden" name="workspace" value={workspace} />
           <input type="hidden" name="sandboxId" value={sandboxId} />
           <fieldset disabled={lifecycleBlocked} className="flex items-end gap-2 disabled:opacity-60">
-            <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-              {t('sandboxName')}
-              <input
-                name="name"
-                defaultValue={sandboxName}
-                maxLength={80}
-                className="ui-input h-9 min-w-0 text-sm"
-              />
-            </label>
-            <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-9 text-xs">
+            <div className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+              
+              <Input label={t('sandboxName')} name="name" maxLength={80} defaultValue={String(sandboxName)} className="min-w-0" />
+            </div>
+            <SubmitButton pendingLabel={t('renaming')} variant="secondary">
               {t('rename')}
             </SubmitButton>
           </fieldset>
@@ -83,11 +80,11 @@ export function HermesRuntimeManagement({
               rows={6}
               spellCheck={false}
               placeholder={agents('hermesEnvPlaceholder')}
-              className="ui-input min-h-32 w-full resize-y font-mono text-xs leading-5"
+              className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={agents('hermesEnvironmentVariables')}
             />
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <SubmitButton pendingLabel={agents('savingAndSyncingEnvironment')} className="ui-button-secondary h-8 text-xs">
+              <SubmitButton pendingLabel={agents('savingAndSyncingEnvironment')} variant="secondary" size="sm">
                 {agents('saveEnvironment')}
               </SubmitButton>
             </div>
@@ -102,17 +99,11 @@ export function HermesRuntimeManagement({
           <input type="hidden" name="workspace" value={workspace} />
           <input type="hidden" name="sandboxId" value={sandboxId} />
           <fieldset disabled={lifecycleBlocked} className="space-y-3 disabled:opacity-60">
-            <label className="flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
-              <input
-                type="checkbox"
-                name="allowSudo"
-                defaultChecked={allowSudo}
-                className="mt-0.5 size-3.5 shrink-0 accent-brand"
-              />
-              {t('allowSudo')}
-            </label>
+            <div className="flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
+              <FormCheckbox name="allowSudo" defaultChecked={allowSudo} label={t('allowSudo')} />
+            </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+              <SubmitButton pendingLabel={t('saving')} variant="secondary" size="sm">
                 {t('saveAllowSudo')}
               </SubmitButton>
             </div>

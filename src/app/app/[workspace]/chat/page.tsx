@@ -10,6 +10,7 @@ import {
 import {
   getChatThreadForWorkspace,
   listChatAssistantsForWorkspace,
+  listRunningChatThreadIds,
 } from '@/lib/chat/service';
 import { parseChatAssistantModelParameters } from '@/lib/chat/schemas';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
@@ -75,7 +76,7 @@ export default async function WorkspaceChatPage({
     return redirect(`/app/${encodeURIComponent(slug)}/work?${destination}`);
   }
 
-  const [assistants, providers, deployments, selectedTemplate, listedTemplates] = await Promise.all([
+  const [assistants, providers, deployments, selectedTemplate, listedTemplates, runningThreadIds] = await Promise.all([
     listChatAssistantsForWorkspace(workspace.id),
     listProviders(workspace.id),
     listAgentDeploymentOptions(workspace.id),
@@ -83,6 +84,7 @@ export default async function WorkspaceChatPage({
       ? getAssistantMarketTemplate(query.template)
       : Promise.resolve(null),
     listAssistantMarketTemplates({ limit: 12 }),
+    listRunningChatThreadIds(user.id, workspace.id),
   ]);
   const templates = selectedTemplate && !listedTemplates.some((item) => item.releaseId === selectedTemplate.releaseId)
     ? [selectedTemplate, ...listedTemplates]
@@ -152,6 +154,7 @@ export default async function WorkspaceChatPage({
       <WorkspaceAssistantChat
         slug={slug}
         workspaceId={workspace.id}
+        initialRunningThreadIds={runningThreadIds}
         initialExpandedAssistants={initialExpandedAssistants}
         initialGroupPreferences={initialGroupPreferences}
         initialSidebarOpen={initialSidebarOpen}
@@ -173,6 +176,7 @@ export default async function WorkspaceChatPage({
             primaryType: model.primaryType,
             capabilities: model.capabilities,
             inputModalities: model.inputModalities,
+            cost: model.cost,
           })),
         }))}
         deployments={deployments.map((deployment) => ({

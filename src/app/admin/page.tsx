@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Activity, ArrowUpRight, Building2, ClipboardCheck, CircleAlert } from 'lucide-react';
@@ -50,7 +52,7 @@ export default async function AdminOverviewPage() {
   return (
     <AdminPage>
       <AdminPageHeader title={t('systemOverview')} description={t('overviewDescription')} actions={
-        <Link href="/admin/logs" className="ui-button-secondary"><Activity className="size-4" aria-hidden="true" />{t('overviewViewLogs')}</Link>
+        <ButtonLink href="/admin/logs" variant="secondary" size="md"><Activity className="size-4" aria-hidden="true" />{t('overviewViewLogs')}</ButtonLink>
       } />
 
       <section className="grid grid-cols-2 gap-px border-y border-border bg-border xl:grid-cols-4">
@@ -135,12 +137,12 @@ export default async function AdminOverviewPage() {
                 className={`px-4 py-5 ${index > 0 ? 'border-t border-border sm:border-l sm:border-t-0' : ''}`}
               >
                 <dt className="text-xs font-medium text-muted-foreground">{item.label}</dt>
-                <dd className={`mt-3 text-2xl font-semibold tabular-nums ${index === 0 && o.requests.errors ? 'text-destructive-text' : 'text-foreground'}`}>{item.value}</dd>
+                <dd className={`mt-3 text-2xl font-semibold tabular-nums ${index === 0 && o.requests.errors ? 'text-destructive' : 'text-foreground'}`}>{item.value}</dd>
                 <dd className="mt-1 text-xs text-muted-foreground">{item.note}</dd>
               </div>
             ))}
           </dl>
-          <Link href={requestsHref} className="ui-button-ghost mt-2 text-xs">{t('overviewViewLogs')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></Link>
+          <ButtonLink href={requestsHref} variant="ghost" size="md" className="mt-2">{t('overviewViewLogs')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></ButtonLink>
         </AdminPanel>
 
         <AdminPanel title={t('resourceInventory')} description={t('currentTotals')} padded={false}>
@@ -173,7 +175,7 @@ export default async function AdminOverviewPage() {
         <AdminPanel
           title={t('recentSignups')}
           description={t('latestAccounts', { count: o.recentUsers.length })}
-          actions={<Link href="/admin/users" className="ui-button-ghost text-xs">{t('overviewAllUsers')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></Link>}
+          actions={<ButtonLink href="/admin/users" variant="ghost" size="md">{t('overviewAllUsers')}<ArrowUpRight className="size-3.5" aria-hidden="true" /></ButtonLink>}
           padded={false}
         >
           {o.recentUsers.length === 0 ? (
@@ -188,7 +190,7 @@ export default async function AdminOverviewPage() {
                   >
                     <span className="flex min-w-0 items-center gap-3"><span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">{(u.name ?? u.email).slice(0, 2).toUpperCase()}</span><span className="min-w-0"><span className="block truncate text-sm font-medium text-foreground">{u.name ?? u.email}</span>{u.name ? <span className="block truncate text-xs text-muted-foreground">{u.email}</span> : null}</span></span>
                     <span className="flex shrink-0 items-center gap-2">
-                      {u.role === 'admin' ? <AdminBadge tone="brand">{t('admin')}</AdminBadge> : null}
+                      {u.role === 'admin' ? <AdminBadge tone="info">{t('admin')}</AdminBadge> : null}
                       {u.status === 'suspended' ? <AdminBadge tone="warning">{t('suspended')}</AdminBadge> : null}
                       <span className="hidden text-xs text-muted-foreground sm:inline">
                         {formatInTimeZone(u.createdAt, timeZone, {
@@ -208,7 +210,7 @@ export default async function AdminOverviewPage() {
           {deployTotal ? <dl className="space-y-5">{Object.entries(o.counts.deployments).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
             <div key={status}>
               <div className="mb-2 flex items-center justify-between gap-3 text-sm"><dt>{deploymentLabels[status] ?? status}</dt><dd className="font-semibold tabular-nums">{count.toLocaleString(locale)}</dd></div>
-              <progress aria-label={deploymentLabels[status] ?? status} value={count} max={deployTotal} className={`block h-1.5 w-full overflow-hidden rounded [&::-webkit-progress-bar]:bg-muted ${status === 'running' ? 'accent-brand [&::-webkit-progress-value]:bg-brand' : status === 'error' || status === 'failed' ? 'accent-destructive-text [&::-webkit-progress-value]:bg-destructive-text' : 'accent-muted-foreground [&::-webkit-progress-value]:bg-muted-foreground'}`} />
+              <progress aria-label={deploymentLabels[status] ?? status} value={count} max={deployTotal} className={`block h-1.5 w-full overflow-hidden rounded [&::-webkit-progress-bar]:bg-muted ${status === 'running' ? 'accent-primary [&::-webkit-progress-value]:bg-primary' : status === 'error' || status === 'failed' ? 'accent-destructive [&::-webkit-progress-value]:bg-destructive' : 'accent-muted-foreground [&::-webkit-progress-value]:bg-muted-foreground'}`} />
             </div>
           ))}</dl> : <p className="py-6 text-sm text-muted-foreground">{t('overviewNoDeployments')}</p>}
         </AdminPanel>

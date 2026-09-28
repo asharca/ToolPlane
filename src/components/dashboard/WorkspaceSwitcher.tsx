@@ -1,140 +1,40 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useSyncExternalStore } from 'react';
-import { Popover } from 'radix-ui';
+import { useState } from 'react';
 import { Check, ChevronsUpDown, Plus, Settings } from 'lucide-react';
+import { ButtonLink } from '@/components/motion/button/base';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/motion/popover';
+import { Tooltip } from '@/components/motion/tooltip';
 import { CreateWorkspaceForm } from './WorkspaceForms';
 import { workspaceInitials, workspaceSwitchHref, type WorkspaceSummary } from '@/lib/workspace/navigation';
 
-const WIDE_VIEWPORT_QUERY = '(min-width: 1024px)';
-
-function subscribeToWideViewport(onChange: () => void) {
-  const media = window.matchMedia?.(WIDE_VIEWPORT_QUERY);
-  if (!media) return () => undefined;
-  media.addEventListener('change', onChange);
-  return () => media.removeEventListener('change', onChange);
-}
-
-function getWideViewportSnapshot() {
-  return window.matchMedia?.(WIDE_VIEWPORT_QUERY).matches ?? false;
-}
-
-export function WorkspaceSwitcher({
-  slug,
-  workspaceName,
-  userLabel,
-  workspaces,
-  compact = false,
-}: {
-  slug: string;
-  workspaceName: string;
-  userLabel: string;
-  workspaces: WorkspaceSummary[];
-  isAdmin?: boolean;
-  compact?: boolean;
-}) {
+export function WorkspaceSwitcher({ slug, workspaceName, workspaces, compact = false }: { slug: string; workspaceName: string; userLabel: string; workspaces: WorkspaceSummary[]; isAdmin?: boolean; compact?: boolean }) {
   const t = useTranslations('console.workspaceSwitcher');
   const managementT = useTranslations('console.workspaces');
   const pathname = usePathname() ?? '';
   const [creating, setCreating] = useState(false);
-  const wideViewport = useSyncExternalStore(
-    subscribeToWideViewport,
-    getWideViewportSnapshot,
-    () => false,
-  );
-  const compactDesktop = compact && wideViewport;
-  const current = workspaces.find((workspace) => workspace.slug === slug);
-
-  return (
-    <Popover.Root onOpenChange={(nextOpen) => !nextOpen && setCreating(false)}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          aria-label={compact ? `${workspaceName} · ${userLabel}` : undefined}
-          title={compact ? workspaceName : undefined}
-          className={`flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-accent/70 ${compact ? 'lg:justify-center lg:px-0' : ''}`}
-        >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-brand-foreground shadow-sm ring-1 ring-brand/20">
-            {workspaceInitials(workspaceName)}
-          </span>
-          <span className={`min-w-0 flex-1 ${compact ? 'lg:hidden' : ''}`}>
-            <span className="block truncate text-sm font-medium text-foreground">
-              {workspaceName}
-            </span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {managementT(current?.role ?? 'member')}
-            </span>
-          </span>
-          <ChevronsUpDown className={`size-4 shrink-0 text-muted-foreground ${compact ? 'lg:hidden' : ''}`} />
-        </button>
-      </Popover.Trigger>
-
-      <Popover.Portal>
-        <Popover.Content
-          side={compactDesktop ? 'right' : 'bottom'}
-          align="start"
-          sideOffset={8}
-          collisionPadding={8}
-          aria-label={t('workspaces')}
-          className={`z-50 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl lg:z-20 ${
-            compactDesktop ? 'w-72 max-w-[calc(100vw-2rem)]' : 'w-72 max-w-[calc(100vw-2rem)]'
-          }`}
-        >
-          <div className="max-h-64 overflow-y-auto py-1">
-            <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {t('workspaces')}
-            </p>
-            {workspaces.map((w) => {
-              const active = w.slug === slug;
-              return (
-                <Popover.Close key={w.id} asChild>
-                  <Link
-                    href={workspaceSwitchHref(slug, w.slug, pathname)}
-                    onClick={(event) => { if (active) event.preventDefault(); }}
-                    aria-current={active ? 'page' : undefined}
-                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
-                  >
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[10px] font-semibold text-foreground ring-1 ring-brand/10">
-                      {workspaceInitials(w.name)}
-                    </span>
-                    <span className="min-w-0 flex-1"><span className="block truncate">{w.name}</span><span className="block text-xs text-muted-foreground">{managementT(w.role ?? 'member')}</span></span>
-                    {active ? (
-                      <Check className="size-4 shrink-0 text-brand" />
-                    ) : null}
-                  </Link>
-                </Popover.Close>
-              );
-            })}
-          </div>
-
-          <div className="border-t border-border p-1">
-            <Popover.Close asChild>
-              <Link
-                href={`/app/${encodeURIComponent(slug)}/settings?returnTo=${encodeURIComponent(pathname)}`}
-                className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-accent"
-              >
-                <Settings className="size-4" />
-                {managementT('settings')}
-              </Link>
-            </Popover.Close>
-            {creating ? (
-              <div className="p-3"><CreateWorkspaceForm autoFocus /></div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCreating(true)}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
-              >
-                <Plus className="size-4 shrink-0" />
-                {t('createWorkspace')}
-              </button>
-            )}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
+  const [open, setOpen] = useState(false);
+  return <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setCreating(false); }} side="top" align="start" className="w-full">
+    <Tooltip content={`${t('workspaces')}: ${workspaceName}`} open={compact ? undefined : false} side="right" wrapperClassName="flex w-full">
+    <PopoverTrigger><button type="button" aria-label="切换工作区" className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-1 py-1 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-background text-foreground">{workspaceInitials(workspaceName)}</span>
+      {!compact && <><span className="min-w-0 flex-1 truncate">{workspaceName}</span><ChevronsUpDown className="size-3.5 shrink-0" /></>}
+    </button></PopoverTrigger>
+    </Tooltip>
+    <PopoverContent className="w-60 max-w-[calc(100vw-2rem)] p-1.5">
+      <p className="px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">{t('workspaces')}</p>
+      <div className="max-h-64 overflow-y-auto">
+        {workspaces.map((workspace) => <ButtonLink key={workspace.id} href={workspaceSwitchHref(slug, workspace.slug, pathname)} variant="ghost" className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-2 text-xs text-foreground" aria-current={workspace.slug === slug ? 'page' : undefined}
+          onClick={(event) => { if (workspace.slug === slug) event.preventDefault(); setOpen(false); }}>
+          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold">{workspaceInitials(workspace.name)}</span><span className="min-w-0 flex-1 text-left"><span className="block truncate text-xs font-medium">{workspace.name}</span><span className="block truncate text-[10px] text-muted-foreground">{managementT(workspace.role ?? 'member')}</span></span>{workspace.slug === slug && <Check className="size-3.5 shrink-0" />}
+        </ButtonLink>)}
+      </div>
+      <div className="mt-1 border-t border-border pt-1">
+        <ButtonLink href={`/app/${encodeURIComponent(slug)}/settings?returnTo=${encodeURIComponent(pathname)}`} variant="ghost" className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-2 text-xs text-foreground" onClick={() => setOpen(false)}><Settings className="size-3.5 text-muted-foreground" />{managementT('settings')}</ButtonLink>
+        {creating ? <div className="p-3"><CreateWorkspaceForm autoFocus /></div> : <button type="button" className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60" onClick={() => setCreating(true)}><Plus className="size-3.5 text-muted-foreground" />{t('createWorkspace')}</button>}
+      </div>
+    </PopoverContent>
+  </Popover>;
 }

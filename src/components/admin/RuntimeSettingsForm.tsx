@@ -1,4 +1,7 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
+
 
 import { useActionState } from 'react';
 import { HardDriveUpload, RotateCcw, Save } from 'lucide-react';
@@ -39,10 +42,10 @@ export function RuntimeSettingsForm({
     <AdminPanel
       title={t('agentAttachmentUploads')}
       description={t('agentAttachmentUploadsDescription')}
-      actions={<AdminBadge tone={source === 'database' ? 'brand' : 'neutral'}>{sourceLabel}</AdminBadge>}
+      actions={<AdminBadge tone={source === 'database' ? 'info' : 'neutral'}>{sourceLabel}</AdminBadge>}
     >
       <form action={action} className="space-y-5">
-        {cached && <p role="alert" className="text-sm text-destructive-text">{t('attachmentLimitCached')}</p>}
+        {cached && <p role="alert" className="text-sm text-destructive">{t('attachmentLimitCached')}</p>}
         <div className="flex items-start gap-3 rounded-md border border-border bg-muted/25 p-4">
           <HardDriveUpload className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <div className="min-w-0 text-sm">
@@ -56,18 +59,7 @@ export function RuntimeSettingsForm({
             {t('maximumAttachmentSize')}
           </label>
           <div className="flex items-center gap-2">
-            <input
-              id="max-agent-attachment-size"
-              name="maxAttachmentSizeMb"
-              type="number"
-              min={minMegabytes}
-              max={maxMegabytes}
-              step={1}
-              defaultValue={megabytes}
-              aria-describedby="max-agent-attachment-size-help"
-              className="ui-input h-11 min-w-0 flex-1 font-mono tabular-nums"
-              required
-            />
+            <Input id="max-agent-attachment-size" name="maxAttachmentSizeMb" type="number" min={minMegabytes} max={maxMegabytes} step={1} defaultValue={String(megabytes)} aria-describedby="max-agent-attachment-size-help" required className="min-w-0 flex-1" />
             <span className="text-sm text-muted-foreground">MB</span>
           </div>
           <p id="max-agent-attachment-size-help" className="text-xs text-muted-foreground">
@@ -80,27 +72,18 @@ export function RuntimeSettingsForm({
             pendingLabel={t('saving')}
             savedLabel={t('saved')}
             error={state.error}
-            className="ui-button-primary h-11"
+            variant="primary" size="md"
           >
             <Save className="size-4" />
             {t('saveChanges')}
           </SubmitButton>
           {source === 'database' ? (
-            <button
-              type="submit"
-              name="intent"
-              value="reset"
-              formNoValidate
-              disabled={isPending}
-              className="ui-button-secondary h-11"
-            >
-              <RotateCcw className="size-4" />
-              {t('restoreEnvironmentDefault')}
-            </button>
+            <Button type="submit" name="intent" value="reset" formNoValidate disabled={isPending} variant="secondary" size="md"><RotateCcw className="size-4" />
+            {t('restoreEnvironmentDefault')}</Button>
           ) : null}
         </div>
 
-        {state.error ? <p className="text-sm text-destructive-text" role="alert">{state.error}</p> : null}
+        {state.error ? <p className="text-sm text-destructive" role="alert">{state.error}</p> : null}
         {state.ok ? <p className="text-sm text-accent-foreground" aria-live="polite">{t('runtimeSettingsSaved')}</p> : null}
       </form>
     </AdminPanel>

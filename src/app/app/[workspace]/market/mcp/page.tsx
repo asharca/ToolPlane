@@ -1,3 +1,9 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -28,8 +34,6 @@ import {
   DashboardPagination,
   DashboardSection,
 } from '@/components/dashboard/DashboardUI';
-import { NativeSelect } from '@/components/ui/NativeSelect';
-import { Tab, TabList } from '@asharca/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,13 +93,13 @@ function McpMarketplaceAction({
 
   if (deploymentId) {
     return (
-      <Link
+      <ButtonLink
         href={`/app/${encodeURIComponent(workspace)}/mcp/${encodeURIComponent(deploymentId)}`}
-        className="ui-button-primary h-9 w-full min-w-0 px-3"
+        variant="primary" size="sm" className="w-full min-w-0"
       >
         <CheckCircle2 className="size-3.5" />
         {t('manageDeployment')}
-      </Link>
+      </ButtonLink>
     );
   }
 
@@ -110,7 +114,7 @@ function McpMarketplaceAction({
       <SubmitButton
         flash={false}
         pendingLabel={t(server.mcpKind === 'connector' ? 'connecting' : 'adding')}
-        className="ui-button-primary h-9 w-full min-w-0 px-3"
+        variant="primary" size="sm" className="w-full min-w-0"
       >
         <ArrowRight className="size-3.5" />
         {t(server.mcpKind === 'connector' ? 'connectToWorkspace' : 'addToWorkspace')}
@@ -137,7 +141,7 @@ function McpMarketCard({
     : `/app/${encodeURIComponent(workspace)}/market/mcp/${encodeURIComponent(server.slug)}`;
 
   return (
-    <article className="ui-panel flex min-w-0 flex-col p-4">
+    <article className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
       <div className="flex min-w-0 items-start gap-3">
         <McpIcon iconUrl={server.iconUrl} name={server.name} />
         <div className="min-w-0 flex-1">
@@ -145,14 +149,14 @@ function McpMarketCard({
             <Link href={detailHref} className="min-w-0 truncate text-base font-semibold text-foreground hover:underline">
               {server.name}
             </Link>
-            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            <AnimatedBadge status="neutral" size="sm">
               {t(server.mcpKind === 'connector' ? 'connectorBadge' : 'serverBadge')}
-            </span>
+            </AnimatedBadge>
             {server.isOfficial ? (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+              <AnimatedBadge status="success" size="sm">
                 <BadgeCheck className="size-3" aria-hidden="true" />
                 {t('official')}
-              </span>
+              </AnimatedBadge>
             ) : null}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{server.author ?? t('unknownPublisher')}</p>
@@ -166,13 +170,13 @@ function McpMarketCard({
       {server.categories.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {server.categories.slice(0, 3).map((category) => (
-            <Link
+            <ButtonLink
               key={category.slug}
               href={marketHref(workspace, { category: category.slug, type: server.mcpKind })}
-              className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+              variant="ghost" size="sm"
             >
               {category.name}
-            </Link>
+            </ButtonLink>
           ))}
         </div>
       ) : null}
@@ -187,7 +191,7 @@ function McpMarketCard({
           {server.stars.toLocaleString(locale)}
         </span>
         {server.mcpKind === 'connector' && deploymentId ? (
-          <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-(--color-success) dark:text-(--color-success)">
             <CheckCircle2 className="size-3.5" aria-hidden="true" />
             {t('addedToWorkspace')}
           </span>
@@ -195,10 +199,10 @@ function McpMarketCard({
       </div>
 
       <div className={`mt-4 grid gap-2 border-t border-border pt-4 ${server.mcpKind === 'connector' ? 'grid-cols-2' : ''}`}>
-        <Link href={detailHref} className="ui-button-secondary h-9 min-w-0 px-3">
+        <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
           {t('viewDetails')}
           <ChevronRight className="size-3.5" />
-        </Link>
+        </ButtonLink>
         <McpMarketplaceAction
           workspace={workspace}
           server={server}
@@ -277,36 +281,24 @@ export default async function McpMarketPage({
         </p>
       </div>
 
-      <TabList navigation label={t('mcpTypeNavigation')} className="w-fit rounded-lg ring-0">
+      <nav aria-label={t('mcpTypeNavigation')} className="flex flex-wrap gap-2">
         {(['server', 'connector'] as const).map((item) => (
-          <Tab
-            key={item}
-            asChild
-            navigation
-            current={type === item}
-            className="rounded-md ring-0"
-          >
-            <Link href={marketHref(slug, { q, sort, type: item })}>
-              {t(item === 'connector' ? 'mcpConnectors' : 'mcpServers')}
-            </Link>
-          </Tab>
+          <ButtonLink key={item} href={marketHref(slug, { q, sort, type: item })} variant={type === item ? 'primary' : 'secondary'} size="sm" aria-current={type === item ? 'page' : undefined}>
+            {t(item === 'connector' ? 'mcpConnectors' : 'mcpServers')}
+          </ButtonLink>
         ))}
-      </TabList>
+      </nav>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
         <input type="hidden" name="category" value={category} />
         {type === 'connector' ? <input type="hidden" name="type" value="connector" /> : null}
-        <label className="relative min-w-0 flex-1">
-          <span className="sr-only">{t('searchMcp')}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchMcp')} className="ui-input ui-input-icon h-10 w-full" />
-        </label>
-        <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortResources')} className="ui-input h-10 sm:w-40">
-          <option value="popular">{t('sortPopular')}</option>
-          <option value="newest">{t('sortNewest')}</option>
-          <option value="name">{t('sortName')}</option>
-        </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
+        <div className="relative min-w-0 flex-1">
+          
+          
+          <Input label={t('searchMcp')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchMcp')} className="w-full" />
+        </div>
+        <FormSelect name="sort" defaultValue={sort} label={t('sortResources')} options={[{ value: "popular", label: t('sortPopular') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} className="sm:w-40" />
+        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -329,14 +321,14 @@ export default async function McpMarketPage({
             <p className="text-muted-foreground">{t('mcpResultSummary', { count: total })}</p>
             <div className="flex flex-wrap items-center gap-3">
               {hasFilters ? (
-                <Link href={marketHref(slug, { type })} className="font-medium text-foreground hover:underline">{t('clearFilters')}</Link>
+                <ButtonLink href={marketHref(slug, { type })} variant="ghost" size="sm">{t('clearFilters')}</ButtonLink>
               ) : null}
               {deployedCatalogCount > 0 ? (
-                <Link href={`/app/${encodeURIComponent(slug)}/mcp`} className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline">
-                  <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                <ButtonLink href={`/app/${encodeURIComponent(slug)}/mcp`} variant="ghost" size="sm">
+                  <CheckCircle2 className="size-4 text-(--color-success) dark:text-(--color-success)" aria-hidden="true" />
                   {t('workspaceDeploymentSummary', { count: deployedCatalogCount })}
                   <ChevronRight className="size-3.5" aria-hidden="true" />
-                </Link>
+                </ButtonLink>
               ) : null}
             </div>
           </div>
@@ -366,7 +358,7 @@ export default async function McpMarketPage({
               <DashboardEmptyState
                 title={t('noMcpTitle')}
                 description={q ? t('noSearchResults', { query: q }) : t('noMcpDescription')}
-                actions={hasFilters ? <Link href={marketHref(slug, { type })} className="ui-button-secondary">{t('clearFilters')}</Link> : undefined}
+                actions={hasFilters ? <ButtonLink href={marketHref(slug, { type })} variant="secondary" size="md">{t('clearFilters')}</ButtonLink> : undefined}
               />
             ) : (
               <>

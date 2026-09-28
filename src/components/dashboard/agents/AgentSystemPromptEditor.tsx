@@ -1,4 +1,5 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
 
 import { useState } from 'react';
 import { Eye, Loader2, Pencil, RotateCcw, Sparkles } from 'lucide-react';
@@ -73,25 +74,14 @@ export function AgentSystemPromptEditor({
         </div>
         <div className="flex items-center gap-1.5">
           {value.trim() ? (
-            <button
-              type="button"
-              aria-label={preview ? t('editSystemPrompt') : t('previewSystemPrompt')}
-              title={preview ? t('editSystemPrompt') : t('previewSystemPrompt')}
-              onClick={() => setPreview((current) => !current)}
-              className="ui-button-ghost ui-icon-button"
-            >
+            <Button type="button" aria-label={preview ? t('editSystemPrompt') : t('previewSystemPrompt')} title={preview ? t('editSystemPrompt') : t('previewSystemPrompt')} onClick={() => setPreview((current) => !current)} variant={"ghost"} size={"icon"}>
               {preview ? <Pencil className="size-4" /> : <Eye className="size-4" />}
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            disabled={!canGenerate || generating}
-            onClick={generatePrompt}
-            className="ui-button-secondary h-8 gap-1.5 px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <Button type="button" disabled={!canGenerate || generating} onClick={generatePrompt} variant={"secondary"} size={"sm"}>
             {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
             {value.trim() ? t('improvePrompt') : t('generatePrompt')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -110,26 +100,22 @@ export function AgentSystemPromptEditor({
           rows={10}
           maxLength={100_000}
           placeholder={t('youAreAHelpfulAssistant')}
-          className="ui-input min-h-56 w-full resize-y py-3"
+          className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={t('systemPrompt')}
         />
       )}
 
       {restore ? (
-        <button
-          type="button"
-          onClick={() => {
+        <Button type="button" onClick={() => {
             onChange(restore.previous);
             setRestore(null);
             setPreview(false);
-          }}
-          className="ui-button-ghost h-8 gap-1.5 px-2 text-xs"
-        >
+          }} variant={"ghost"} size={"sm"}>
           <RotateCcw className="size-3.5" />
           {t('restorePreviousPrompt')}
-        </button>
+        </Button>
       ) : null}
-      {error ? <p role="alert" className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
+      {error ? <p role="alert" className="text-xs text-destructive text-destructive">{error}</p> : null}
     </div>
   );
 }

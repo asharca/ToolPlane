@@ -1,4 +1,8 @@
-import Link from 'next/link';
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { Search, SlidersHorizontal } from 'lucide-react';
@@ -17,7 +21,6 @@ import {
   DashboardPagination,
   DashboardSection,
 } from '@/components/dashboard/DashboardUI';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
 
 export const dynamic = 'force-dynamic';
@@ -130,27 +133,15 @@ export default async function SkillMarketPage({
 
       <form className="grid w-full grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_7.5rem_10rem_8.5rem_auto]">
         <input type="hidden" name="category" value={category === 'all' ? '' : category} />
-        <label className="relative min-w-0 sm:col-span-2 xl:col-span-1">
-          <span className="sr-only">{t('searchSkills')}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchSkills')} className="ui-input ui-input-icon h-10 w-full" />
-        </label>
-        <NativeSelect name="source" defaultValue={source} aria-label={t('filterBySource')} className="ui-input h-10">
-          <option value="all">{t('allSources')}</option>
-          <option value="github">{t('github')}</option>
-          <option value="other">{t('otherSources')}</option>
-        </NativeSelect>
-        <NativeSelect name="installation" defaultValue={installation} aria-label={t('filterByInstallation')} className="ui-input h-10">
-          <option value="all">{t('allInstallations')}</option>
-          <option value="available">{t('available')}</option>
-          <option value="installed">{t('installed')}</option>
-        </NativeSelect>
-        <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortSkills')} className="ui-input h-10">
-          <option value="top">{t('sortTop')}</option>
-          <option value="newest">{t('sortNewest')}</option>
-          <option value="name">{t('sortName')}</option>
-        </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
+        <div className="relative min-w-0 sm:col-span-2 xl:col-span-1">
+          
+          
+          <Input label={t('searchSkills')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchSkills')} className="w-full" />
+        </div>
+        <FormSelect name="source" defaultValue={source} label={t('filterBySource')} options={[{ value: "all", label: t('allSources') }, { value: "github", label: t('github') }, { value: "other", label: t('otherSources') }]} />
+        <FormSelect name="installation" defaultValue={installation} label={t('filterByInstallation')} options={[{ value: "all", label: t('allInstallations') }, { value: "available", label: t('available') }, { value: "installed", label: t('installed') }]} />
+        <FormSelect name="sort" defaultValue={sort} label={t('sortSkills')} options={[{ value: "top", label: t('sortTop') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} />
+        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -175,7 +166,7 @@ export default async function SkillMarketPage({
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
             <p className="text-muted-foreground">{t('skillResultSummary', { count: total })}</p>
             {hasFilters ? (
-              <Link href={skillMarketHref(slug, {})} className="font-medium text-foreground hover:underline">{t('clearFilters')}</Link>
+              <ButtonLink href={skillMarketHref(slug, {})} variant="ghost" size="sm">{t('clearFilters')}</ButtonLink>
             ) : null}
           </div>
 
@@ -184,7 +175,7 @@ export default async function SkillMarketPage({
                 <DashboardEmptyState
                   title={t('noSkillsTitle')}
                   description={hasFilters ? t('noSkillsMatchFilters') : t('noSkillsDescription')}
-                  actions={hasFilters ? <Link href={skillMarketHref(slug, {})} className="ui-button-secondary">{t('clearFilters')}</Link> : undefined}
+                  actions={hasFilters ? <ButtonLink href={skillMarketHref(slug, {})} variant="secondary" size="md">{t('clearFilters')}</ButtonLink> : undefined}
                 />
               ) : (
                 <BrowseGrid

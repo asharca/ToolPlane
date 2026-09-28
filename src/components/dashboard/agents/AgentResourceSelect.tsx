@@ -1,16 +1,19 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Button } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+import { Checkbox } from '@/components/motion/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/motion/radio';
 
 import {
   useDeferredValue,
-  useEffect,
   useMemo,
-  useRef,
   useState,
   type SyntheticEvent,
 } from 'react';
 import { Search, X, type LucideIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
 const RESOURCE_RENDER_LIMIT = 100;
 
@@ -76,7 +79,6 @@ export function AgentResourceSelect({
   const [source, setSource] = useState('all');
   const [status, setStatus] = useState('all');
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
-  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const availableIds = useMemo(() => new Set(options.map((option) => option.id)), [options]);
   const activeSelected = useMemo(
@@ -110,12 +112,6 @@ export function AgentResourceSelect({
   const someFilteredSelected = filteredOptions.some((option) => activeSelected.has(option.id));
   const hasFilters = Boolean(query || source !== 'all' || status !== 'all');
 
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
-    }
-  }, [allFilteredSelected, someFilteredSelected]);
-
   function stopFormChange(event: SyntheticEvent) {
     event.stopPropagation();
   }
@@ -144,6 +140,38 @@ export function AgentResourceSelect({
     onSelectionChange(next);
   }
 
+  const resourceRows = renderedOptions.map((option) => {
+                  const isSelected = activeSelected.has(option.id);
+                  return (
+                    <div
+                      key={option.id}
+                      className={`flex min-h-10 cursor-pointer items-start gap-2.5 border-b border-border/60 px-3 py-2 text-sm transition-colors last:border-b-0 hover:bg-background ${isSelected ? 'bg-background' : ''}`}
+                    >
+                      {selectionMode === 'single-required' ? <RadioGroupItem value={option.id} label={option.label} /> : <Checkbox checked={isSelected} aria-label={t('selectResource', { name: option.label })} onCheckedChange={(checked) => toggleOption(option.id, checked)} />}
+                      <span className="min-w-0 flex-1">
+                        {selectionMode !== 'single-required' ? <span className="block truncate text-foreground">{option.label}</span> : null}
+                        {option.description ? (
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">{option.description}</span>
+                        ) : null}
+                      </span>
+                      {option.source || option.status ? (
+                        <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                          {option.source ? (
+                            <AnimatedBadge status="neutral">
+                              {sourceLabel(option.source, t)}
+                            </AnimatedBadge>
+                          ) : null}
+                          {option.status ? (
+                            <AnimatedBadge status="neutral">
+                              {statusLabel(option.status, t)}
+                            </AnimatedBadge>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                });
+
   return (
     <fieldset className="min-w-0 rounded-md border border-border bg-muted/15">
       <legend className="ml-3 px-1">
@@ -161,72 +189,36 @@ export function AgentResourceSelect({
         <p className="px-4 py-4 text-sm text-muted-foreground">{t('nothingAvailableInThisWorkspace')}</p>
       ) : (
         <div className="mt-1">
-          <div className="space-y-2 border-b border-border px-3 pb-3">
+          <div className="space-y-2 border-b border-border px-3 pb-3" onChange={stopFormChange}>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => {
-                  stopFormChange(event);
-                  setQuery(event.target.value);
-                }}
-                onKeyDown={(event) => {
+              <Input leftIcon={<Search />} type="search" onKeyDown={(event) => {
                   if (event.key === 'Enter') event.preventDefault();
                   event.stopPropagation();
-                }}
-                placeholder={t('searchResources', { resource: label })}
-                aria-label={t('searchResources', { resource: label })}
-                className="ui-input ui-input-icon h-9 w-full"
-              />
+                }} placeholder={t('searchResources', { resource: label })} aria-label={t('searchResources', { resource: label })} value={String(query)} className="w-full" onChange={(value) => {
+                  setQuery(value);
+                }} />
             </div>
 
             {sourceOptions.length > 1 || statusOptions.length > 1 ? (
               <div className="flex gap-2">
                 {sourceOptions.length > 1 ? (
-                  <NativeSelect
-                    value={source}
-                    onChange={(event) => {
-                      stopFormChange(event);
-                      setSource(event.target.value);
-                    }}
-                    aria-label={`${label}: ${t('filterBySource')}`}
-                    className="ui-input h-9"
-                    wrapperClassName="min-w-0 flex-1"
-                  >
-                    <option value="all">{t('allSources')}</option>
-                    {sourceOptions.map((value) => (
-                      <option key={value} value={value}>{sourceLabel(value, t)}</option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect value={source} label={`${label}: ${t('filterBySource')}`} options={[({ value: "all", label: t('allSources') }), sourceOptions.map((value) => (
+                      ({ value: value, label: sourceLabel(value, t) })
+                    ))].flat().filter((option) => option != null)} onValueChange={(value) => {
+                      setSource(value);
+                    }} className="min-w-0 flex-1" />
                 ) : null}
                 {statusOptions.length > 1 ? (
-                  <NativeSelect
-                    value={status}
-                    onChange={(event) => {
-                      stopFormChange(event);
-                      setStatus(event.target.value);
-                    }}
-                    aria-label={`${label}: ${t('filterByStatus')}`}
-                    className="ui-input h-9"
-                    wrapperClassName="min-w-0 flex-1"
-                  >
-                    <option value="all">{t('allStatuses')}</option>
-                    {statusOptions.map((value) => (
-                      <option key={value} value={value}>{statusLabel(value, t)}</option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect value={status} label={`${label}: ${t('filterByStatus')}`} options={[({ value: "all", label: t('allStatuses') }), statusOptions.map((value) => (
+                      ({ value: value, label: statusLabel(value, t) })
+                    ))].flat().filter((option) => option != null)} onValueChange={(value) => {
+                      setStatus(value);
+                    }} className="min-w-0 flex-1" />
                 ) : null}
                 {hasFilters ? (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    aria-label={t('clearFilters')}
-                    title={t('clearFilters')}
-                    className="ui-button-ghost size-9 shrink-0 p-0"
-                  >
+                  <Button type="button" onClick={clearFilters} aria-label={t('clearFilters')} title={t('clearFilters')} variant={"ghost"} size={"icon"} className="shrink-0">
                     <X className="size-4" />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ) : null}
@@ -234,32 +226,17 @@ export function AgentResourceSelect({
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-background/60 px-3 py-2.5">
             {selectionMode === 'multiple' ? (
-              <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  disabled={filteredOptions.length === 0}
-                  onChange={(event) => {
-                    stopFormChange(event);
-                    toggleFiltered();
-                  }}
-                  className="size-4 shrink-0"
-                />
-                <span className="truncate">{t('selectMatches', { count: filteredOptions.length })}</span>
-              </label>
+              <div className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+                <Checkbox checked={allFilteredSelected} indeterminate={someFilteredSelected && !allFilteredSelected} disabled={filteredOptions.length === 0} label={t('selectMatches', { count: filteredOptions.length })} onCheckedChange={toggleFiltered} />
+              </div>
             ) : null}
             <span className="text-xs tabular-nums text-muted-foreground">
               {t('selectedResources', { count: activeSelected.size })}
             </span>
             {selectionMode === 'multiple' && activeSelected.size > 0 ? (
-              <button
-                type="button"
-                onClick={() => onSelectionChange(new Set())}
-                className="text-xs font-medium text-muted-foreground hover:text-foreground"
-              >
+              <Button type="button" onClick={() => onSelectionChange(new Set())} variant={"ghost"} size={"sm"}>
                 {t('clearSelection')}
-              </button>
+              </Button>
             ) : null}
           </div>
 
@@ -267,9 +244,9 @@ export function AgentResourceSelect({
             <div className="px-3 py-6 text-center">
               <p className="text-sm text-muted-foreground">{t('noResourcesMatchFilters')}</p>
               {hasFilters ? (
-                <button type="button" onClick={clearFilters} className="ui-button-ghost mt-2 h-8 px-2 text-xs">
+                <Button type="button" onClick={clearFilters} variant={"ghost"} size={"sm"} className="mt-2">
                   {t('clearFilters')}
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : (
@@ -280,46 +257,7 @@ export function AgentResourceSelect({
                 </p>
               ) : null}
               <div className="max-h-64 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {renderedOptions.map((option) => {
-                  const isSelected = activeSelected.has(option.id);
-                  return (
-                    <label
-                      key={option.id}
-                      className={`flex min-h-10 cursor-pointer items-start gap-2.5 border-b border-border/60 px-3 py-2 text-sm transition-colors last:border-b-0 hover:bg-background ${isSelected ? 'bg-background' : ''}`}
-                    >
-                      <input
-                        type={selectionMode === 'single-required' ? 'radio' : 'checkbox'}
-                        checked={isSelected}
-                        onChange={(event) => {
-                          stopFormChange(event);
-                          toggleOption(option.id, event.target.checked);
-                        }}
-                        aria-label={t('selectResource', { name: option.label })}
-                        className="mt-0.5 size-4 shrink-0"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-foreground">{option.label}</span>
-                        {option.description ? (
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">{option.description}</span>
-                        ) : null}
-                      </span>
-                      {option.source || option.status ? (
-                        <span className="flex shrink-0 flex-wrap justify-end gap-1">
-                          {option.source ? (
-                            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                              {sourceLabel(option.source, t)}
-                            </span>
-                          ) : null}
-                          {option.status ? (
-                            <span className="rounded-md border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                              {statusLabel(option.status, t)}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </label>
-                  );
-                })}
+                {selectionMode === 'single-required' ? <RadioGroup value={[...activeSelected][0] ?? ''} onValueChange={(id) => toggleOption(id, true)}>{resourceRows}</RadioGroup> : resourceRows}
               </div>
             </>
           )}

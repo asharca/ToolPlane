@@ -1,3 +1,5 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+import { FormSelect } from '@/components/ui/FormSelect';
 import { Users } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -76,12 +78,8 @@ export default async function AdminUsersPage({
         clearLabel={t('clear')}
         clearHref="/admin/users"
       >
-        <select name="role" aria-label={t('roleColumn')} defaultValue={role} className="ui-input h-11 w-auto sm:h-9">
-          <option value="">{ops('allRoles')}</option><option value="user">{t('user')}</option><option value="admin">{t('administrator')}</option>
-        </select>
-        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
-          <option value="">{ops('allStatuses')}</option><option value="active">{t('active')}</option><option value="suspended">{t('suspended')}</option>
-        </select>
+        <FormSelect name="role" defaultValue={role} className="w-auto" label={t('roleColumn')} options={[{ value: "", label: ops('allRoles') }, { value: "user", label: t('user') }, { value: "admin", label: t('administrator') }]} />
+        <FormSelect name="status" defaultValue={status} className="w-auto" label={t('statusColumn')} options={[{ value: "", label: ops('allStatuses') }, { value: "active", label: t('active') }, { value: "suspended", label: t('suspended') }]} />
       </AdminSearchForm>
 
       {items.length === 0 ? (
@@ -91,11 +89,10 @@ export default async function AdminUsersPage({
           description={q ? t('noUsersDescription') : t('emptyUsersDescription')}
         />
       ) : (
-        <DashboardTable
-          ariaLabel={t('usersTableLabel')}
-          minWidth="69rem"
-          headers={[
-            { label: t('userColumn'), className: 'w-full' },
+        <DashboardTable ariaLabel={t('usersTableLabel')}
+minWidth="69rem"
+headers={[
+            { label: t('userColumn'), width: "35%" },
             { label: t('roleColumn') },
             { label: t('ownedWorkspacesColumn'), align: 'right' },
             { label: t('membershipsColumn'), align: 'right' },
@@ -104,11 +101,8 @@ export default async function AdminUsersPage({
             { label: t('joinedColumn') },
             { label: <span className="sr-only">{t('viewDetails')}</span> },
           ]}
-        >
-          {items.map((user) => (
-            <tr key={user.id}>
-              <td className="px-4 py-3">
-                <AdminEntity
+rows={items.map((user) => (
+            ({ id: user.id, cells: [<> <AdminEntity
                   title={
                     <Link
                       href={adminHref(`/admin/users/${user.id}`, { returnTo: hrefForPage(currentPage) })}
@@ -119,46 +113,29 @@ export default async function AdminUsersPage({
                   }
                   description={user.name ? user.email : undefined}
                   initials={user.name ?? user.email}
-                />
-              </td>
-              <td className="whitespace-nowrap px-4 py-3">
-                <AdminBadge tone={user.role === 'admin' ? 'brand' : 'neutral'}>
+                /> </>,
+<AdminBadge tone={user.role === 'admin' ? 'info' : 'neutral'}>
                   {user.role === 'admin' ? t('administrator') : t('user')}
-                </AdminBadge>
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {user._count.ownedWorkspaces}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {user._count.memberships}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {user._count.apiTokens}
-              </td>
-              <td className="whitespace-nowrap px-4 py-3">
-                <AdminBadge
+                </AdminBadge>,
+user._count.ownedWorkspaces,
+user._count.memberships,
+user._count.apiTokens,
+<AdminBadge
                   tone={user.status === 'active' ? 'success' : 'warning'}
                   dot
                 >
                   {user.status === 'active' ? t('active') : t('suspended')}
-                </AdminBadge>
-              </td>
-              <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
-                {formatInTimeZone(user.createdAt, timeZone, {
+                </AdminBadge>,
+formatInTimeZone(user.createdAt, timeZone, {
                   year: 'numeric',
                   month: 'short',
                   day: 'numeric',
-                }, locale)}
-              </td>
-              <td className="px-2 py-3">
-                <AdminTableLink
+                }, locale),
+<> <AdminTableLink
                   href={adminHref(`/admin/users/${user.id}`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('viewDetails')}: ${user.name ?? user.email}`}
-                />
-              </td>
-            </tr>
-          ))}
-        </DashboardTable>
+                /> </>] })
+          ))} />
       )}
 
       <AdminPagination

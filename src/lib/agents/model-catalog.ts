@@ -1,3 +1,18 @@
+import type { ModelCost } from '@earendil-works/pi-ai';
+
+export type PiModelReference = {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  name: string;
+  api: string;
+  reasoning: boolean;
+  input: Array<'text' | 'image'>;
+  contextWindow: number;
+  maxOutputTokens: number;
+  cost: ModelCost;
+};
+
 export const MODEL_PRIMARY_TYPES = ['text', 'image', 'embedding', 'rerank'] as const;
 export const MODEL_CAPABILITIES = ['reasoning', 'function_calling'] as const;
 export const MODEL_INPUT_MODALITIES = ['image', 'audio', 'video'] as const;
@@ -16,6 +31,7 @@ export type ProviderModelValues = {
   contextWindow: number | null;
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
+  cost?: ModelCost | null;
 };
 
 export function inferModelGroup(modelId: string): string {
@@ -45,5 +61,28 @@ export function defaultProviderModel(modelId: string): ProviderModelValues {
     contextWindow: null,
     maxInputTokens: null,
     maxOutputTokens: null,
+    cost: null,
+  };
+}
+
+export function fillProviderModelMetadata(
+  model: ProviderModelValues,
+  reference: PiModelReference | null,
+): ProviderModelValues {
+  if (!reference) return model;
+  return {
+    ...model,
+    name: model.name || reference.name,
+    group: model.group || inferModelGroup(reference.modelId),
+    primaryType: model.primaryType || 'text',
+    capabilities: model.capabilities.length
+      ? model.capabilities
+      : reference.reasoning ? ['reasoning'] : model.capabilities,
+    inputModalities: model.inputModalities.length
+      ? model.inputModalities
+      : reference.input.includes('image') ? ['image'] : model.inputModalities,
+    contextWindow: model.contextWindow ?? reference.contextWindow,
+    maxOutputTokens: model.maxOutputTokens ?? reference.maxOutputTokens,
+    cost: model.cost ?? reference.cost,
   };
 }

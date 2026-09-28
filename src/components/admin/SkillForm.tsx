@@ -1,4 +1,7 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -14,8 +17,6 @@ type Initial = {
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
-const TEXTAREA_CLASS = 'ui-input h-auto min-h-28 resize-y py-2.5';
-const CHECKBOX_CLASS = 'size-4 shrink-0 accent-brand';
 
 export function SkillForm({
   action, initial, categories, submitLabel,
@@ -37,7 +38,7 @@ export function SkillForm({
       <div className="grid gap-5 sm:grid-cols-2">
         <label className={LABEL_CLASS}>
           <span>{t('name')}</span>
-          <input name="name" defaultValue={initial.name ?? ''} required className="ui-input h-11" />
+          <Input name="name" defaultValue={initial.name ?? ''} required />
         </label>
         {initial.id ? (
           <div className={LABEL_CLASS}>
@@ -50,54 +51,28 @@ export function SkillForm({
         ) : (
           <label className={LABEL_CLASS}>
             <span>{t('slug2')}</span>
-            <input
-              name="slug"
-              required
-              placeholder="my-skill"
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="slug" required placeholder="my-skill" autoCapitalize="none" spellCheck={false} />
           </label>
         )}
         <label className={LABEL_CLASS}>
           <span>{t('author')}</span>
-          <input name="author" defaultValue={initial.author ?? ''} className="ui-input h-11" />
+          <Input name="author" defaultValue={initial.author ?? ''} />
         </label>
         <label className={LABEL_CLASS}>
           <span>{t('score')}</span>
-          <input name="score" type="number" defaultValue={initial.score ?? 0} className="ui-input h-11" />
+          <Input name="score" type="number" defaultValue={String(initial.score ?? 0)} />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('description')}</span>
-          <textarea
-            name="description"
-            defaultValue={initial.description ?? ''}
-            rows={4}
-            className={TEXTAREA_CLASS}
-          />
+          <textarea name="description" defaultValue={initial.description ?? ''} rows={4} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('iconUrl')}</span>
-          <input
-            name="iconUrl"
-            defaultValue={initial.iconUrl ?? ''}
-            className="ui-input h-11"
-            inputMode="url"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
+          <Input name="iconUrl" defaultValue={initial.iconUrl ?? ''} inputMode="url" autoCapitalize="none" spellCheck={false} />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('githubSource')}</span>
-          <input
-            name="githubSource"
-            defaultValue={initial.githubSource ?? ''}
-            placeholder="owner/repo or owner/repo/path/to/skill"
-            className="ui-input h-11 font-mono"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
+          <Input name="githubSource" defaultValue={initial.githubSource ?? ''} placeholder="owner/repo or owner/repo/path/to/skill" autoCapitalize="none" spellCheck={false} />
           <span className="block text-xs font-normal leading-5 text-muted-foreground">
             {t('usedToGenerate')} <code className="font-mono text-foreground">npx skillfish add</code> {t('installCommand')}
           </span>
@@ -109,19 +84,13 @@ export function SkillForm({
         {categories.length > 0 ? (
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
             {categories.map((c) => (
-              <label
+              <div
                 key={c.id}
                 className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
               >
-                <input
-                  type="checkbox"
-                  name="categoryIds"
-                  value={c.id}
-                  defaultChecked={sel.has(c.id)}
-                  className={CHECKBOX_CLASS}
-                />
-                {c.name}
-              </label>
+                <FormCheckbox name="categoryIds" value={c.id} defaultChecked={sel.has(c.id)} label={c.name} />
+                
+              </div>
             ))}
           </div>
         ) : (
@@ -134,13 +103,13 @@ export function SkillForm({
           error={state.error}
           pendingLabel={t('saving')}
           savedLabel={t('saved')}
-          className="ui-button-primary h-11 w-full sm:w-auto"
+          variant="primary" size="md" className="w-full sm:w-auto"
         >
           <SubmitIcon className="size-4" />
           {submitLabel}
         </SubmitButton>
         {state.error ? (
-          <p className="text-sm text-destructive-text" role="alert">
+          <p className="text-sm text-destructive" role="alert">
             {state.error}
           </p>
         ) : null}

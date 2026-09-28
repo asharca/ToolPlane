@@ -2,32 +2,30 @@
 
 > [中文](A2A_CONSOLE.zh-CN.md)
 
-For day-to-day goals and context follow-ups, open the [native A2A workbench](A2A_WORKBENCH.md) rather than using the settings playground. Existing Work/chat records are not migrated automatically.
+Use the existing Agent Work/chat interface for daily work with Pi. A2A remains an integration API for other Agents; settings no longer contain a persistent execution-records/approvals section or task playground. Existing task progress, history and root-tool approvals remain reachable via `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}`. Opening a task link does not submit work or grant access. Authorized internal child tasks use parent-delegated tool permission, not an additional human approval.
 
 For workspace users. Open **Agent settings → A2A integration**, or navigate to
-`/app/{workspace}/agents/{agentId}?settings=a2a`. The page uses the native A2A 1.0
-core; never paste an account token into the browser.
+`/app/{workspace}/agents/{agentId}?settings=a2a`. The page uses the native A2A 1.0 core; never paste an account token into the browser.
+
+The **Let external services call this Agent** section contains an embedded setup guide, the account-token settings link (or Hermes service-key instructions), copyable Card/SendMessage/GetTask/SubscribeToTask/CancelTask examples, response handling, and troubleshooting. The guide remains readable when connection URLs are unavailable. Viewing or copying documentation never submits a task.
 
 ## Internal collaboration
 
 Configure Pi, Claude Code, DSH or Hermes RPC with a model and an exclusive,
-networked Docker sandbox. A workspace owner or administrator can explicitly enable
-internal A2A after confirming the resource boundary. Members can inspect connection
-information and invoke enabled local Agents, but cannot manage access. Configure
-allowed delegates and enable each target separately; no workspace-wide opt-in occurs.
-Managed Hermes is not an internal execution target.
+networked Docker sandbox. Select allowed sub-agents in the caller's delegate
+settings. Internal delegation from authenticated chat, Work and control needs no
+additional A2A switch on the caller or selected targets. Selection authorizes only
+those directed edges, not the whole workspace. Managed Hermes is not an internal
+execution target.
 
 A separate Context is not a separate filesystem: tasks can use the target sandbox's
-files, memory and configured tools. Disabling internal A2A invalidates accepted work
-when the native core rechecks authority. Completed external side effects do not roll back.
+files, memory and configured tools. Removing an allowed edge invalidates affected
+grants when authority is rechecked; completed side effects do not roll back.
+The separate **External A2A & channel access** switch still requires an owner or
+administrator's confirmation. It governs external calls, account-token A2A root
+invocation and channel execution authorization, not selected internal delegates.
 
-The local playground runs as the signed-in member, using the same native Handler:
-submit a task, list your latest 20 tasks, get a task by ID, supply input to an
-INPUT_REQUIRED task, or request cancellation. The bounded list is not an all-user
-workspace list and omits artifacts. Selecting an owned root starts a bounded parent/child
-monitor. Current actor, target configuration and every delegation edge are rechecked;
-knowing another user's or unrelated delegated task ID does not confer access. Removed
-or inaccessible subtrees are withheld. Select a visible child to inspect its result.
+Open an owned root task link to inspect the bounded parent/child monitor and, for a root tool requiring a human decision, its approval controls. Settings no longer offer task submission, task-list or continuation controls; use the existing chat/Work surfaces or the documented A2A API. Current actor, target configuration and every delegation edge are rechecked. Knowing another user's task ID does not confer access; inaccessible subtrees are withheld.
 
 Submitting can consume model credits and use tools. Opening the page never starts a
 task. Accepted is not completed. Read-only monitoring normally refreshes every 2.5 seconds,
@@ -75,6 +73,16 @@ local integration and `TOOLPLANE_A2A_TOKEN` for published services. They are not
 the Card requires authentication too. Replace messageId for every new task. Retry the same
 request only with the exact original ID and content. Replace Task ID in query examples.
 
+The in-platform guide shows copyable token `export` setup and `uuidgen`, followed by
+always-visible Card and SendMessage curl examples. Run them individually in macOS
+Terminal, a Linux terminal or Windows WSL Bash, on a computer that can reach the
+displayed URL—not in ToolPlane chat, browser developer tools or an Agent sandbox.
+Replace the token placeholder locally and keep subsequent commands in the same
+terminal. Shell history may retain the token; do not share history or screenshots.
+Fetching the Card starts no task; SendMessage runs the Agent and can consume resources.
+Production applications send these HTTP requests from their own backend. Internal
+Agent delegation only needs selected sub-agents, not these terminal commands.
+
 ## Browser versus protocol boundary
 
 The console uses a separate same-origin BFF:
@@ -93,15 +101,14 @@ administrator authority inside the transaction.
 
 The public and server-side local A2A wire endpoints remain Bearer-only; they do not gain
 cookie or cross-origin browser support. The BFF does not fabricate an account token or call
-legacy Responses/collaboration workers. Playground tasks are not Work approval sessions;
+legacy Responses/collaboration workers. Native-task approvals remain separate from Work approval sessions;
 supported classic entry adapters now use [unified ingress](A2A_INGRESS_APPROVALS.md); channels require explicit operators and old records are not replayed.
 
 The public connection section also includes the [native MCP bridge](A2A_MCP_BRIDGE.md),
 using the same explicitly granted A2A service credential. Its connection object is an
 example, not a universal client configuration format.
 
-Remote-Agent registration, large file uploads, OAuth discovery, token streaming and
-arbitrary URL network probing are not provided. See [Public A2A](A2A_NATIVE.md) and
+Large file uploads, OAuth discovery, token streaming and arbitrary URL network probing are not provided. See [Public A2A](A2A_NATIVE.md) and
 [Internal collaboration](A2A_LOCAL_COLLABORATION.md) for the protocol contract.
 
 Native local tasks can now use [registered remote A2A Agents](A2A_REMOTE_AGENTS.md), with separate deployment origin approval, workspace registration and per-caller authorization. Private resources are not automatically exposed.

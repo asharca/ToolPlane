@@ -32,6 +32,28 @@ describe('read-only A2A task monitoring', () => {
     await flush(2500); expect(fetcher).toHaveBeenCalledTimes(2);
     for (const [, init] of fetcher.mock.calls) { expect(init.method).toBeUndefined(); expect(init.cache).toBe('no-store'); expect(init.credentials).toBe('same-origin'); }
   });
+  it('shows native resumable work as recovering without claiming cancellation on disconnect', async () => {
+    const value = tree();
+    value.nodes[0].executionBackend = 'pi-harness';
+    value.nodes[0].phase = 'resumable';
+    fetcher.mockImplementation(async () => Response.json(value));
+    show(); await flush();
+    expect(screen.getByText('Recovering')).toBeInTheDocument();
+    expect(screen.queryByText('Ready to resume')).toBeNull();
+    fetcher.mockRejectedValue(new Error('offline'));
+    await flush(2500);
+    expect(screen.getByText('Recovering')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Updates could not be fetched');
+    expect(notify).not.toHaveBeenCalledWith('TASK_STATE_CANCELED');
+    expect(screen.queryByText('TASK_STATE_CANCELED')).toBeNull();
+  });
+  it('keeps legacy resumable work distinct from native recovery', async () => {
+    const value = tree(); value.nodes[0].phase = 'resumable';
+    fetcher.mockImplementation(async () => Response.json(value));
+    show(); await flush();
+    expect(screen.getByText('Ready to resume')).toBeInTheDocument();
+    expect(screen.queryByText('Recovering')).toBeNull();
+  });
   it('stops automatic reads when every node is terminal', async () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify(tree('TASK_STATE_COMPLETED'))));
     show(); await flush(); await flush(30_000); expect(fetcher).toHaveBeenCalledTimes(1);
@@ -66,7 +88,7 @@ describe('read-only A2A task monitoring', () => {
 });
 
 
-describe('workbench history and revoked access', () => {
+describe('task history and revoked access', () => {
   it('loads bounded history explicitly and renders messages without interpreting markup', async () => {
     const value = tree('TASK_STATE_COMPLETED');
     value.selectedTask.history = [{ messageId: 'm1', role: 'ROLE_USER', parts: [{ text: '<img src=x onerror=alert(1)>' }] }];

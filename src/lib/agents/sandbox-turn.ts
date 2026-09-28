@@ -11,6 +11,9 @@ import {
 } from './runtime-access';
 import {
   runSandboxAgentTurn,
+  compactPiHarnessSession,
+  type PiHarnessOperationResult,
+  type RunSandboxAgentTurnOptions,
   type SandboxAgentRuntimeKind,
   type SandboxRuntimeActivity,
   type SandboxRuntimeMessage,
@@ -42,6 +45,7 @@ export async function runDedicatedSandboxTurn(input: {
   workingDirectory?: string | null;
   runtimeSessionId?: string;
   command?: string;
+  nativeCompaction?: { contextId: string; customInstructions: string; onResult: (result: PiHarnessOperationResult) => void };
   signal?: AbortSignal;
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
@@ -99,7 +103,7 @@ export async function runDedicatedSandboxTurn(input: {
     exp: now + 55 * 60,
   });
 
-  return runSandboxAgentTurn({
+  const options: RunSandboxAgentTurnOptions = {
     runtimeKind: runtimeKind as SandboxAgentRuntimeKind,
     workspaceId: input.agent.workspaceId,
     agentId: input.agent.id,
@@ -133,7 +137,13 @@ export async function runDedicatedSandboxTurn(input: {
     onContextUsage: input.onContextUsage,
     onCommands: input.onCommands,
     onUsage: input.onUsage,
-  });
+  };
+  if (input.nativeCompaction) {
+    const result = await compactPiHarnessSession(options, input.nativeCompaction.contextId, input.nativeCompaction.customInstructions);
+    input.nativeCompaction.onResult(result);
+    return result.text;
+  }
+  return runSandboxAgentTurn(options);
 
   });
 }

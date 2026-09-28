@@ -1,4 +1,6 @@
 'use client';
+import { Input } from '@/components/motion/input';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -38,13 +40,7 @@ function CategoryRow({ category }: { category: Row }) {
         <input type="hidden" name="categoryId" value={category.id} />
         <label className="min-w-0 flex-1">
           <span className="sr-only">{t('categoryNameLabel', { slug: category.slug })}</span>
-          <input
-            name="name"
-            defaultValue={category.name}
-            maxLength={120}
-            className="ui-input h-9 font-semibold"
-            required
-          />
+          <Input name="name" defaultValue={category.name} maxLength={120} required />
         </label>
         <code className="shrink-0 font-mono text-xs text-muted-foreground">/{category.slug}</code>
         <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
@@ -60,7 +56,7 @@ function CategoryRow({ category }: { category: Row }) {
             error={state.error}
             pendingLabel={t('saving')}
             savedLabel={t('saved')}
-            className="ui-button-secondary h-9"
+            variant="secondary" size="md"
           >
             <Save className="size-4" />
             {t('saveChanges')}
@@ -77,7 +73,7 @@ function CategoryRow({ category }: { category: Row }) {
             tone="danger"
           />
       </div>
-      {state.error ? <p className="mt-2 text-sm text-destructive-text" role="alert">{state.error}</p> : null}
+      {state.error ? <p className="mt-2 text-sm text-destructive" role="alert">{state.error}</p> : null}
     </li>
   );
 }
@@ -92,30 +88,23 @@ export function CategoriesPanel({ categories }: { categories: Row[] }) {
         <form action={action} className="space-y-4">
           <label className="block space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('name')}</span>
-            <input name="name" placeholder={t('name')} className="ui-input h-11" required />
+            <Input name="name" placeholder={t('name')} required />
           </label>
           <label className="block space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('slug3')}</span>
-            <input
-              name="slug"
-              placeholder={t('slug3')}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-              required
-            />
+            <Input name="slug" placeholder={t('slug3')} autoCapitalize="none" spellCheck={false} required />
           </label>
           <SubmitButton
             error={state.error}
             pendingLabel={t('adding')}
             savedLabel={t('added')}
-            className="ui-button-primary h-11 w-full sm:w-auto"
+            variant="primary" size="md" className="w-full sm:w-auto"
           >
             <Plus className="size-4" />
             {t('add')}
           </SubmitButton>
           {state.error ? (
-            <p className="text-sm text-destructive-text" role="alert">
+            <p className="text-sm text-destructive" role="alert">
               {state.error}
             </p>
           ) : null}

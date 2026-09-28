@@ -27,7 +27,7 @@ export function AgentMarketInstallForm({
         pendingLabel={labels.pending}
         savedLabel={labels.submit}
         flash={false}
-        className="ui-button-primary h-10 w-full gap-2 px-4"
+        variant="primary" size="md" className="w-full"
       >
         {labels.submit}
         <ArrowRight className="size-4" />

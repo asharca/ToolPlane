@@ -73,7 +73,6 @@ vi.mock('@/lib/workspace/actions', () => ({
   rebuildDeploymentAction: vi.fn(), removeDeploymentAction: vi.fn(), renameDeploymentAction: vi.fn(),
   cloneDeploymentAction: vi.fn(),
 }));
-vi.mock('@/components/dashboard/DashboardHeader', () => ({ DashboardHeader: () => null }));
 vi.mock('@/components/dashboard/StatusBadge', () => ({ StatusBadge: ({ status }: { status: string }) => <span>{status}</span> }));
 vi.mock('@/components/dashboard/CopyButton', () => ({ CopyButton: () => null }));
 vi.mock('@/components/dashboard/ReadyToConnectBanner', () => ({ ReadyToConnectBanner: () => null }));

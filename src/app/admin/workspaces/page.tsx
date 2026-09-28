@@ -1,3 +1,6 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import { Building2 } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -76,10 +79,8 @@ export default async function AdminWorkspacesPage({
         clearLabel={t('clear')}
         clearHref="/admin/workspaces"
       >
-        <input name="owner" defaultValue={owner} aria-label={ops('ownerFilter')} placeholder={ops('ownerFilter')} maxLength={200} className="ui-input h-11 w-full sm:h-9 sm:w-56" />
-        <select name="status" aria-label={t('statusColumn')} defaultValue={status} className="ui-input h-11 w-auto sm:h-9">
-          <option value="">{ops('allStatuses')}</option>{(['active', 'deleting', 'delete_failed'] as const).map((value) => <option key={value} value={value}>{ops(value)}</option>)}
-        </select>
+        <Input name="owner" defaultValue={owner} aria-label={ops('ownerFilter')} placeholder={ops('ownerFilter')} maxLength={200} className="w-full sm:w-56" />
+        <FormSelect name="status" defaultValue={status} className="w-auto" label={t('statusColumn')} options={[{ value: "", label: ops('allStatuses') }, ...((['active', 'deleting', 'delete_failed'] as const).map((value) => ({ value: value, label: ops(value) })))]} />
       </AdminSearchForm>
 
       {items.length === 0 ? (
@@ -89,11 +90,10 @@ export default async function AdminWorkspacesPage({
           description={q ? t('noWorkspacesDescription') : t('emptyWorkspacesDescription')}
         />
       ) : (
-        <DashboardTable
-          ariaLabel={t('workspacesTableLabel')}
-          minWidth="70rem"
-          headers={[
-            { label: t('workspaceColumn'), className: 'w-full' },
+        <DashboardTable ariaLabel={t('workspacesTableLabel')}
+minWidth="70rem"
+headers={[
+            { label: t('workspaceColumn'), width: "35%" },
             { label: t('ownerColumn') },
             { label: t('statusColumn') },
             { label: t('membersColumn'), align: 'right' },
@@ -102,11 +102,8 @@ export default async function AdminWorkspacesPage({
             { label: t('createdColumn') },
             { label: <span className="sr-only">{t('viewDetails')}</span> },
           ]}
-        >
-          {items.map((workspace) => (
-            <tr key={workspace.id}>
-              <td className="px-4 py-3">
-                <AdminEntity
+rows={items.map((workspace) => (
+            ({ id: workspace.id, cells: [<> <AdminEntity
                   title={
                     <Link
                       href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: hrefForPage(currentPage) })}
@@ -117,42 +114,27 @@ export default async function AdminWorkspacesPage({
                   }
                   description={`/${workspace.slug}`}
                   initials={workspace.name}
-                />
-              </td>
-              <td className="whitespace-nowrap px-4 py-3">
-                <Link
+                /> </>,
+<Link
                   href={adminHref(`/admin/users/${workspace.owner.id}`, { returnTo: hrefForPage(currentPage) })}
                   className="text-sm font-medium text-foreground hover:underline"
                 >
                   {workspace.owner.email}
-                </Link>
-              </td>
-              <td className="whitespace-nowrap px-4 py-3"><AdminBadge tone={workspace.status === 'active' ? 'success' : workspace.status === 'deleting' ? 'warning' : 'danger'}>{ops.has(workspace.status) ? ops(workspace.status) : workspace.status}</AdminBadge></td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {workspace._count.members}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {workspace._count.agents}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {workspace._count.deployments}
-              </td>
-              <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
-                {formatInTimeZone(workspace.createdAt, timeZone, {
+                </Link>,
+<AdminBadge tone={workspace.status === 'active' ? 'success' : workspace.status === 'deleting' ? 'warning' : 'danger'}>{ops.has(workspace.status) ? ops(workspace.status) : workspace.status}</AdminBadge>,
+workspace._count.members,
+workspace._count.agents,
+workspace._count.deployments,
+formatInTimeZone(workspace.createdAt, timeZone, {
                   year: 'numeric',
                   month: 'short',
                   day: 'numeric',
-                }, locale)}
-              </td>
-              <td className="px-2 py-3">
-                <AdminTableLink
+                }, locale),
+<> <AdminTableLink
                   href={adminHref(`/admin/workspaces/${workspace.id}`, { returnTo: hrefForPage(currentPage) })}
                   label={`${t('viewDetails')}: ${workspace.name}`}
-                />
-              </td>
-            </tr>
-          ))}
-        </DashboardTable>
+                /> </>] })
+          ))} />
       )}
 
       <AdminPagination

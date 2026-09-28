@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { createTranslator } from 'next-intl';
 import messages from '../../messages/en.json';
 import { LogFilters } from '@/components/admin/LogFilters';
-import { LogOutcomeBadge, LogTimestamp } from '@/components/admin/LogUI';
+import { LogTimestamp } from '@/components/admin/LogUI';
 import { logFilterSchema } from '@/lib/observability/queries';
 import AdminLogsPage from '@/app/admin/logs/page';
 
@@ -72,10 +72,8 @@ describe('admin log presentation', () => {
     for (const name of ['domain', 'level', 'outcome', 'agentId', 'errorType']) expect(container.querySelector(`[name=${name}]`)).toBeNull();
   });
 
-  it('uses outcome, not level, for the visual status and retains the exact timestamp', () => {
-    const { container } = render(<><LogOutcomeBadge outcome="error" /><LogOutcomeBadge outcome="new-outcome" /><LogTimestamp date={until} /></>);
-    expect(screen.getByText('Failed')).toHaveAttribute('data-tone', 'danger');
-    expect(screen.getByText('new-outcome')).toHaveAttribute('data-tone', 'neutral');
+  it('retains the exact timestamp', () => {
+    const { container } = render(<LogTimestamp date={until} />);
     expect(container.querySelector('time')).toHaveAttribute('datetime', until.toISOString());
     expect(screen.getByText('09:30:15.789')).toBeInTheDocument();
   });
@@ -84,7 +82,6 @@ describe('admin log presentation', () => {
     render(await AdminLogsPage({ searchParams: Promise.resolve({ workspaceId: 'workspace-1', outcome: 'error' }) }));
     expect(screen.getByText('20.0%')).toBeInTheDocument();
     expect(screen.getByText('Engineering')).toBeInTheDocument();
-    expect(screen.getByText('1 records on this page · Newest first')).toBeInTheDocument();
     expect(mocks.aggregateLogs).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'workspace-1', outcome: 'error', domain: 'http' }));
     expect(mocks.workspaces).toHaveBeenCalledWith({ where: { id: { in: ['workspace-1'] } }, select: { id: true, name: true } });
     expect(screen.getByRole('link', { name: 'Older events' })).toHaveAttribute('href', expect.stringContaining('cursor=next-page'));

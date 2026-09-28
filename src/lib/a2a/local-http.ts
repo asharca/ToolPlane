@@ -15,6 +15,7 @@ import { A2AHttpError, type LocalA2AGrant } from './principal';
 import { A2A_PROTOCOL_VERSION } from './model';
 import { handleA2ARpc } from './http';
 import { WindowLimiter } from './transport-limits';
+import { a2aDeploymentOrigin } from './connection-info';
 const requests = new WindowLimiter(120, 4096);
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store' } });
@@ -30,9 +31,7 @@ async function account(req: Request, slug: string) {
 export async function localAgentCard(grant: LocalA2AGrant) {
   const target = await localTarget(db, grant.workspaceId, grant.agentId);
   const workspace = await db.workspace.findUniqueOrThrow({ where: { id: grant.workspaceId }, select: { slug: true } });
-  const origin = new URL(runtimeEnv('NEXT_PUBLIC_APP_URL') || 'http://localhost:3000');
-  if (origin.username || origin.password || !['https:', 'http:'].includes(origin.protocol)
-    || (origin.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))) throw new Error('Invalid A2A origin');
+  const origin = a2aDeploymentOrigin(runtimeEnv('NEXT_PUBLIC_APP_URL') || 'http://localhost:3000');
   const url = new URL(`/api/v1/workspaces/${encodeURIComponent(workspace.slug)}/agents/${encodeURIComponent(grant.agentId)}/a2a/local`, origin).href;
   return AgentCard.fromJSON({ name: target.name, description: 'Explicitly enabled workspace-local Agent.', version: target.binding,
     supportedInterfaces: [{ url, protocolBinding: 'JSONRPC', protocolVersion: A2A_PROTOCOL_VERSION }],

@@ -14,32 +14,23 @@ import { ServerForm } from '@/components/admin/ServerForm';
 
 describe('ServerForm source metadata', () => {
   it('can fetch package metadata and keeps the canonical source URL for saving', () => {
-    render(<ServerForm
+    const { container } = render(<ServerForm
       action={vi.fn().mockResolvedValue({})}
       initial={{ sourceUrl: 'https://github.com/acme/catalog-mcp' }}
       categories={[]}
       submitLabel="Create"
     />);
 
-    expect(screen.getByRole('combobox', { name: 'Metadata source' })).toHaveAttribute(
-      'name',
-      'sourceMetadataSource',
-    );
-    expect(screen.getByRole('textbox', { name: 'Package or GitHub repository' })).toHaveAttribute(
-      'name',
-      'sourceMetadataRef',
-    );
     expect(screen.getByRole('button', { name: 'Fetch metadata' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Source URL' })).toHaveValue(
       'https://github.com/acme/catalog-mcp',
     );
-    expect(document.querySelector('input[name="sourceMetadataCanonicalUrl"]')).toHaveValue(
-      'https://github.com/acme/catalog-mcp',
-    );
+    const data = new FormData(container.querySelector('form')!);
+    expect(data.get('sourceMetadataCanonicalUrl')).toBe('https://github.com/acme/catalog-mcp');
   });
 
   it('does not submit package source metadata while editing a connector', () => {
-    render(<ServerForm
+    const { container } = render(<ServerForm
       action={vi.fn().mockResolvedValue({})}
       initial={{ sourceRef: 'https://mcp.example.com/mcp', sourceUrl: 'https://github.com/acme/mcp' }}
       categories={[]}
@@ -48,7 +39,8 @@ describe('ServerForm source metadata', () => {
     />);
 
     expect(screen.queryByRole('button', { name: 'Fetch metadata' })).not.toBeInTheDocument();
-    expect(document.querySelector('input[name="sourceMetadataCanonicalUrl"]')).not.toBeInTheDocument();
+    const data = new FormData(container.querySelector('form')!);
+    for (const name of ['sourceMetadataSource', 'sourceMetadataRef', 'sourceMetadataCanonicalUrl']) expect(data.has(name)).toBe(false);
   });
 
 });

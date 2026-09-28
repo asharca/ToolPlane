@@ -16,6 +16,8 @@ import {
 } from '@/lib/process/mcp-tool-catalog';
 import { SITE } from '@/lib/site';
 import { siteMetadata } from '../../../_lib/metadata';
+import { ButtonLink } from '@/components/motion/button';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 
 const MARKET_PATHS = {
   mcp: 'mcp',
@@ -101,7 +103,7 @@ export default async function PublicMarketDetailPage({
             </span>
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-brand">{kindLabel} · {t('versionLabel', { version: result.latestRelease.version })}</p>
+            <p className="text-xs font-semibold text-primary">{kindLabel} · {t('versionLabel', { version: result.latestRelease.version })}</p>
             <h1 className="mt-2 text-3xl font-semibold text-foreground sm:text-4xl">{result.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{t('publishedBy', { name: result.namespace })}</p>
             <p className="mt-5 max-w-3xl text-base leading-7 text-muted-foreground">{result.summary ?? t('noDescription')}</p>
@@ -109,9 +111,9 @@ export default async function PublicMarketDetailPage({
         </div>
         <div className="mt-5 flex flex-wrap gap-2">
           {result.categories.map((category) => (
-            <Link key={category.slug} href={`/categories/${encodeURIComponent(category.slug)}`} className="ui-chip">
+            <ButtonLink key={category.slug} href={`/categories/${encodeURIComponent(category.slug)}`} variant="secondary" size="sm">
               {category.name}
-            </Link>
+            </ButtonLink>
           ))}
         </div>
       </header>
@@ -127,9 +129,9 @@ export default async function PublicMarketDetailPage({
           <div className="sticky top-20 bg-muted/35 p-5">
             <h2 className="font-semibold text-foreground">{t(connector ? 'readyToConnect' : 'installToWorkspace')}</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(connector ? 'connectorRedirectHint' : 'privateByDefault')}</p>
-            <Link href={workspaceHref} className="ui-button-primary mt-5 h-10 w-full">
+            <ButtonLink href={workspaceHref} className="mt-5 w-full">
               {t(connector ? 'connectToWorkspace' : 'addToWorkspace')}
-            </Link>
+            </ButtonLink>
           </div>
         </aside> : null}
       </div>
@@ -215,7 +217,7 @@ function McpDetail({ mcp, tools, t, mcpT }: {
             </>
           )}
         </dl>
-        {!connector && mcp.recipe.env.length ? <div className="mt-5 flex flex-wrap gap-2">{mcp.recipe.env.map((name) => <code key={name} className="ui-chip">{name}</code>)}</div> : null}
+        {!connector && mcp.recipe.env.length ? <div className="mt-5 flex flex-wrap gap-2">{mcp.recipe.env.map((name) => <AnimatedBadge key={name} size="sm" showIcon={false}><code>{name}</code></AnimatedBadge>)}</div> : null}
       </section>
       {!connector && tools.length ? (
         <McpToolCatalog

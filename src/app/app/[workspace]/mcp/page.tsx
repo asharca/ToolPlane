@@ -1,4 +1,6 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
+
 import { redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { Plug, Store } from 'lucide-react';
@@ -9,11 +11,7 @@ import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DeployCustomMcpDialog } from '@/components/dashboard/DeployCustomMcpDialog';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { ProvisioningRefresher } from '@/components/dashboard/ProvisioningRefresher';
-import {
-  DashboardEmptyState,
-  DashboardPage,
-  DashboardToolbar,
-} from '@/components/dashboard/DashboardUI';
+import { DashboardEmptyState, DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
 import { McpDeploymentsBrowser } from '@/components/dashboard/McpDeploymentsBrowser';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
@@ -68,20 +66,15 @@ export default async function McpServersPage({
         <DashboardToolbar
           actions={
             <>
-              <Link href={marketHref} className="ui-button-secondary">
+              <ButtonLink href={marketHref} variant="secondary" size="md">
                 <Store className="size-4" />
                 {t('browseToolplane')}
-              </Link>
+              </ButtonLink>
               <DeployCustomMcpDialog slug={slug} defaultOpen={query.create === '1'} />
             </>
           }
         >
-          <div>
-            <p className="text-sm text-muted-foreground">{t('serversDeployedToYourOrg')}</p>
-            <p className="mt-1 text-xs text-muted-foreground/80">
-              {t('deploymentCountSummary', { count: deployments.length })}
-            </p>
-          </div>
+          <p className="text-sm text-muted-foreground">{t('serversDeployedToYourOrg')}</p>
         </DashboardToolbar>
 
         {deployments.length === 0 ? (
@@ -89,18 +82,6 @@ export default async function McpServersPage({
             icon={Plug}
             title={t('noServersDeployedYet')}
             description={t('serversDeployedToYourOrg')}
-            actions={
-              <>
-                <Link
-                  href={marketHref}
-                  className="ui-button-secondary"
-                >
-                  <Store className="size-4" />
-                  {t('browseToolplane')}
-                </Link>
-                <DeployCustomMcpDialog slug={slug} />
-              </>
-            }
           />
         ) : (
           <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />

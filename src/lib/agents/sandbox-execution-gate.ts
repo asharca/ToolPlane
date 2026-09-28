@@ -9,6 +9,8 @@ const state: State = root.__sandboxExecutionGate ??= { owners: new Map(), contex
 export class SandboxExecutionBusyError extends Error {
   constructor() { super('The Agent sandbox is already executing another turn.'); }
 }
+/** A new task must reserve an idle sandbox; only its own host calls may reenter. */
+export function sandboxExecutionBusy(sandboxId: string): boolean { return state.owners.has(sandboxId); }
 export function withSandboxExecutionLease<T>(sandboxId: string, operation: () => Promise<T>): Promise<T> {
   const inherited = state.context.getStore();
   if (inherited?.sandboxId === sandboxId && state.owners.get(sandboxId) === inherited.token) return operation();

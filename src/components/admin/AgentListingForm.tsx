@@ -1,11 +1,16 @@
 'use client';
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { Input } from '@/components/motion/input';
+
 
 import { Bot, MessageSquare, Plus, Save } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import type { AdminActionState } from '@/lib/admin/user-actions';
 
@@ -33,7 +38,6 @@ export type AgentListingFormInitial = {
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
-const CHECKBOX_CLASS = 'size-4 shrink-0 accent-brand';
 
 function ResourceChecklist({
   name,
@@ -52,22 +56,15 @@ function ResourceChecklist({
   return (
     <div className="grid max-h-72 gap-1 overflow-y-auto sm:grid-cols-2">
       {resources.map((resource) => (
-        <label
+        <div
           key={resource.id}
           className="flex min-h-11 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
         >
-          <input
-            type="checkbox"
-            name={name}
-            value={resource.id}
-            defaultChecked={selected.has(resource.id)}
-            className={CHECKBOX_CLASS}
-          />
+          <FormCheckbox name={name} value={resource.id} defaultChecked={selected.has(resource.id)} label={resource.name} />
           <span className="min-w-0">
-            <span className="block truncate font-medium">{resource.name}</span>
-            <code className="block truncate font-mono text-[11px] text-muted-foreground">/{resource.slug}</code>
+                        <code className="block truncate font-mono text-[11px] text-muted-foreground">/{resource.slug}</code>
           </span>
-        </label>
+        </div>
       ))}
     </div>
   );
@@ -113,13 +110,7 @@ export function AgentListingForm({
         <div className="grid gap-5 sm:grid-cols-2">
           <label className={LABEL_CLASS}>
             <span>{t('name')}</span>
-            <input
-              name="name"
-              defaultValue={initial.name ?? ''}
-              maxLength={240}
-              required
-              className="ui-input h-11"
-            />
+            <Input name="name" defaultValue={initial.name ?? ''} maxLength={240} required />
           </label>
           {initial.id ? (
             <div className={LABEL_CLASS}>
@@ -133,64 +124,28 @@ export function AgentListingForm({
           ) : (
             <label className={LABEL_CLASS}>
               <span>{t(assistantMode ? 'assistantTemplateSlug' : 'agentDirectorySlug')}</span>
-              <input
-                name="directorySlug"
-                required
-                maxLength={120}
-                placeholder="research-assistant"
-                className="ui-input h-11 font-mono"
-                autoCapitalize="none"
-                spellCheck={false}
-              />
+              <Input name="directorySlug" required maxLength={120} placeholder="research-assistant" autoCapitalize="none" spellCheck={false} />
             </label>
           )}
           <label className={LABEL_CLASS}>
             <span>{t('author')}</span>
-            <input
-              name="author"
-              defaultValue={initial.author ?? ''}
-              maxLength={240}
-              className="ui-input h-11"
-            />
+            <Input name="author" defaultValue={initial.author ?? ''} maxLength={240} />
           </label>
-          <label className={LABEL_CLASS}>
+          <div className={LABEL_CLASS}>
             <span>{t('statusColumn')}</span>
-            <NativeSelect name="status" defaultValue={initial.status ?? 'published'} className="ui-input h-11">
-              <option value="draft">{t('agentListingStatusDraft')}</option>
-              <option value="published">{t('agentListingStatusPublished')}</option>
-              <option value="disabled">{t('agentListingStatusDisabled')}</option>
-            </NativeSelect>
-          </label>
+            <FormSelect name="status" defaultValue={initial.status ?? 'published'} label={t('statusColumn')} options={[{ value: "draft", label: t('agentListingStatusDraft') }, { value: "published", label: t('agentListingStatusPublished') }, { value: "disabled", label: t('agentListingStatusDisabled') }]} />
+          </div>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('description')}</span>
-            <textarea
-              name="summary"
-              defaultValue={initial.summary ?? ''}
-              maxLength={4000}
-              rows={4}
-              className="ui-input h-auto min-h-28 resize-y py-2.5"
-            />
+            <textarea name="summary" defaultValue={initial.summary ?? ''} maxLength={4000} rows={4} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           </label>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('iconUrl')}</span>
-            <input
-              name="iconUrl"
-              defaultValue={initial.iconUrl ?? ''}
-              maxLength={2000}
-              className="ui-input h-11"
-              inputMode="url"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="iconUrl" defaultValue={initial.iconUrl ?? ''} maxLength={2000} inputMode="url" autoCapitalize="none" spellCheck={false} />
           </label>
           <label className={`${LABEL_CLASS} sm:col-span-2`}>
             <span>{t('agentListingTags')}</span>
-            <input
-              name="tags"
-              defaultValue={(initial.tags ?? []).join(', ')}
-              placeholder="research, writing, productivity"
-              className="ui-input h-11"
-            />
+            <Input name="tags" defaultValue={(initial.tags ?? []).join(', ')} placeholder="research, writing, productivity" />
             <span className="block text-xs font-normal leading-5 text-muted-foreground">
               {t('agentListingTagsDescription')}
             </span>
@@ -199,32 +154,22 @@ export function AgentListingForm({
 
         <div className="mt-5 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:gap-5">
           {initial.id ? (
-            <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-              <input
-                type="checkbox"
-                name="curated"
-                defaultChecked={initial.curated ?? true}
-                className={CHECKBOX_CLASS}
-              />
-              {t('curated')}
-            </label>
+            <div className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+              <FormCheckbox name="curated" defaultChecked={initial.curated ?? true} label={t('curated')} />
+              
+            </div>
           ) : (
             <div className="flex min-h-11 items-center gap-2 px-2 text-sm font-medium text-foreground">
-              <AdminBadge tone="brand">{t('curated')}</AdminBadge>
+              <AdminBadge tone="info">{t('curated')}</AdminBadge>
               <span className="text-xs font-normal text-muted-foreground">
                 {t(assistantMode ? 'assistantAdminTemplatesAreCurated' : 'agentAdminTemplatesAreCurated')}
               </span>
             </div>
           )}
-          <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input
-              type="checkbox"
-              name="isFeatured"
-              defaultChecked={initial.isFeatured}
-              className={CHECKBOX_CLASS}
-            />
-            {t('featured')}
-          </label>
+          <div className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+            <FormCheckbox name="isFeatured" defaultChecked={initial.isFeatured} label={t('featured')} />
+            
+          </div>
         </div>
 
         <fieldset className="mt-5 border-t border-border pt-5">
@@ -232,19 +177,13 @@ export function AgentListingForm({
           {categories.length > 0 ? (
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
               {categories.map((category) => (
-                <label
+                <div
                   key={category.id}
                   className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
                 >
-                  <input
-                    type="checkbox"
-                    name="categoryIds"
-                    value={category.id}
-                    defaultChecked={selectedCategories.has(category.id)}
-                    className={CHECKBOX_CLASS}
-                  />
-                  {category.name}
-                </label>
+                  <FormCheckbox name="categoryIds" value={category.id} defaultChecked={selectedCategories.has(category.id)} label={category.name} />
+                  
+                </div>
               ))}
             </div>
           ) : (
@@ -264,48 +203,21 @@ export function AgentListingForm({
           <div className="space-y-6">
             <label className={LABEL_CLASS}>
               <span>{t(assistantMode ? 'assistantSystemPrompt' : 'agentSystemPrompt')}</span>
-              <textarea
-                name="systemPrompt"
-                defaultValue={initial.systemPrompt ?? ''}
-                rows={10}
-                className="ui-input h-auto min-h-52 resize-y py-2.5 font-mono text-xs leading-6"
-              />
+              <textarea name="systemPrompt" defaultValue={initial.systemPrompt ?? ''} rows={10} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
             </label>
 
             <div className="grid gap-5 sm:grid-cols-3">
               <label className={LABEL_CLASS}>
                 <span>{t('agentMaxSteps')}</span>
-                <input
-                  name="maxSteps"
-                  type="number"
-                  min={AGENT_STEP_BOUNDS.min}
-                  max={AGENT_STEP_BOUNDS.max}
-                  defaultValue={initial.maxSteps ?? AGENT_STEP_BOUNDS.default}
-                  required
-                  className="ui-input h-11"
-                />
+                <Input name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} defaultValue={String(initial.maxSteps ?? AGENT_STEP_BOUNDS.default)} required />
               </label>
-              <label className={LABEL_CLASS}>
+              <div className={LABEL_CLASS}>
                 <span>{t('agentModelFormat')}</span>
-                <NativeSelect name="modelFormat" defaultValue={initial.modelFormat ?? ''} className="ui-input h-11">
-                  <option value="">{t('agentNoModelRequirement')}</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="openai-responses">OpenAI Responses</option>
-                  {assistantMode ? <option value="openai-compatible">OpenAI Compatible</option> : null}
-                  <option value="anthropic">Anthropic</option>
-                </NativeSelect>
-              </label>
+                <FormSelect name="modelFormat" defaultValue={initial.modelFormat ?? ''} label={t('agentModelFormat')} options={[{ value: "", label: t('agentNoModelRequirement') }, { value: "openai", label: "OpenAI" }, { value: "openai-responses", label: "OpenAI Responses" }, ...(assistantMode ? [{ value: "openai-compatible", label: "OpenAI Compatible" }] : []), { value: "anthropic", label: "Anthropic" }]} />
+              </div>
               <label className={LABEL_CLASS}>
                 <span>{t('agentModelId')}</span>
-                <input
-                  name="model"
-                  defaultValue={initial.model ?? ''}
-                  maxLength={240}
-                  placeholder="gpt-5"
-                  className="ui-input h-11 font-mono"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                />
+                <Input name="model" defaultValue={initial.model ?? ''} maxLength={240} placeholder="gpt-5" autoCapitalize="none" spellCheck={false} />
               </label>
             </div>
 
@@ -345,13 +257,13 @@ export function AgentListingForm({
           error={state.error}
           pendingLabel={t('saving')}
           savedLabel={t('saved')}
-          className="ui-button-primary h-11 w-full sm:w-auto"
+          variant="primary" size="md" className="w-full sm:w-auto"
         >
           <SubmitIcon className="size-4" />
           {submitLabel}
         </SubmitButton>
         {state.error ? (
-          <p className="text-sm text-destructive-text" role="alert">{state.error}</p>
+          <p className="text-sm text-destructive" role="alert">{state.error}</p>
         ) : null}
       </div>
     </form>

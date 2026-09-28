@@ -65,22 +65,21 @@ beforeAll(async () => {
   for (let i = 0; i < 2; i++) {
     const dep = await db.deployment.create({ data: { workspaceId: ws, name: 'Sandbox', source: 'config' } });
     const sandbox = await db.sandbox.create({ data: { workspaceId: ws, deploymentId: dep.id, name: 'Sandbox', slug: `sandbox-${i}`, kind: 'docker', network: 'isolated' } });
-    ids.push((await db.agent.create({ data: { workspaceId: ws, name: `Local ${i}`, slug: `local-${i}`, runtimeKind: 'pi', model: 'fixture', providerId: provider.id,
+    ids.push((await db.agent.create({ data: { workspaceId: ws, name: `Local ${i}`, slug: `local-${i}`, runtimeKind: 'claude-code', model: 'fixture', providerId: provider.id,
       a2aInternalEnabled: true, sandboxes: { create: { sandboxId: sandbox.id, isDefault: true } } } })).id);
   }
   [agent, otherAgent] = ids; ctx = { workspaceId: ws, actorId: user, agentId: agent, slug: 'fixture' };
 });
 beforeEach(async () => {
   vi.clearAllMocks(); peerState = 'TASK_STATE_WORKING'; peerDetail = undefined;
-  network.discover.mockResolvedValue(Response.json(remoteCard()));
+  network.discover.mockReset().mockImplementation(async () => Response.json(remoteCard()));
   network.rpc.mockImplementation(async (rpc: { id: unknown; method: string }) => ({ jsonrpc: '2.0', id: rpc.id,
     result: rpc.method === 'SendMessage' ? { task: remoteTask(peerState, peerDetail) } : remoteTask(peerState, peerDetail) }));
   await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
   await db.remoteA2AAgent.deleteMany({ where: { workspaceId: ws } });
   await db.agent.updateMany({ where: { workspaceId: ws }, data: { a2aInternalEnabled: true, systemPrompt: null } });
   grant = await createLocalRootGrant(ws, agent, user);
-  remote = (await mutateRemoteRegistry(ctx, { action: 'register', name: 'Remote reviewer', cardUrl: REMOTE_CARD, rpcUrl: REMOTE_RPC, token: 'fixture-peer-key' })).id;
-  await mutateRemoteRegistry(ctx, { action: 'configure', id: remote, revision: 1, enabled: true, allowCurrentAgent: true });
+  remote = (await mutateRemoteRegistry(ctx, { action: 'register', cardUrl: REMOTE_CARD, token: 'fixture-peer-key' })).id;
 });
 afterAll(async () => {
   stopA2AWorker(); vi.unstubAllEnvs();
@@ -89,15 +88,49 @@ afterAll(async () => {
 });
 
 describe('registered remote Agents in the native task core', () => {
-  it('registers disabled, encrypts credentials with row binding and exposes no secret', async () => {
-    network.discover.mockResolvedValueOnce(Response.json(remoteCard()));
-    const id = (await mutateRemoteRegistry(ctx, { action: 'register', name: 'Another', cardUrl: REMOTE_CARD, rpcUrl: REMOTE_RPC, token: 'another-secret' })).id;
+  it('registers enabled for only the current Agent, encrypts credentials and exposes no secret', async () => {
+    await db.agent.update({ where: { id: agent }, data: { a2aInternalEnabled: false } });
+    const id = (await mutateRemoteRegistry(ctx, { action: 'register', cardUrl: REMOTE_CARD, token: 'another-secret' })).id;
     const row = await db.remoteA2AAgent.findUniqueOrThrow({ where: { id } });
-    expect(row).toMatchObject({ enabled: false, allowedAgentIds: [], revision: 1 });
+    expect(row).toMatchObject({ name: 'Remote reviewer', rpcUrl: REMOTE_RPC, enabled: true, allowedAgentIds: [agent], revision: 1 });
+    expect((await db.agent.findUniqueOrThrow({ where: { id: agent } })).a2aInternalEnabled).toBe(false);
     expect(JSON.stringify(row.credential)).not.toContain('another-secret'); expect(remoteCredential(row)).toBe('another-secret');
     expect(() => remoteCredential({ ...row, workspaceId: 'different' })).toThrow();
     const view = await remoteRegistryView(ctx); expect(JSON.stringify(view)).not.toMatch(/another-secret|fixture-peer-key|credential/);
     const audit = await db.auditEvent.findMany({ where: { workspaceId: ws } }); expect(JSON.stringify(audit)).not.toContain('another-secret');
+  });
+  it('honors advanced name and declared RPC overrides and supports cards without auth', async () => {
+    const card = { ...remoteCard(), securityRequirements: [] };
+    const rpcUrl = 'https://agent.example/advanced';
+    card.supportedInterfaces.push({ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' });
+    network.discover.mockResolvedValueOnce(Response.json(card));
+    const { id } = await mutateRemoteRegistry(ctx, { action: 'register', cardUrl: REMOTE_CARD, name: 'Custom reviewer', rpcUrl });
+    expect(await db.remoteA2AAgent.findUniqueOrThrow({ where: { id } })).toMatchObject({ name: 'Custom reviewer', rpcUrl, enabled: true, allowedAgentIds: [agent], credential: null });
+  });
+  it.each(['ambiguous', 'cross-origin', 'unsupported', 'disallowed', 'noauth'])('creates nothing for a rejected %s card', async (reason) => {
+    const card = remoteCard();
+    if (reason === 'ambiguous') card.supportedInterfaces.push({ url: 'https://agent.example/second', protocolBinding: 'JSONRPC', protocolVersion: '1.0' });
+    if (reason === 'cross-origin') card.supportedInterfaces[0].url = 'https://other.example/rpc';
+    if (reason === 'unsupported') card.supportedInterfaces[0].protocolVersion = '0.3';
+    network.discover.mockResolvedValueOnce(Response.json(card));
+    const before = await db.remoteA2AAgent.count({ where: { workspaceId: ws } });
+    await expect(mutateRemoteRegistry(ctx, { action: 'register', cardUrl: reason === 'disallowed' ? 'https://other.example/card' : REMOTE_CARD,
+      ...(reason === 'noauth' ? {} : { token: 'peer-key' }) })).rejects.toThrow();
+    expect(await db.remoteA2AAgent.count({ where: { workspaceId: ws } })).toBe(before);
+  });
+  it('rechecks administrator authority after discovery before committing registration', async () => {
+    await db.membership.updateMany({ where: { workspaceId: ws, userId: member }, data: { role: 'admin' } });
+    network.discover.mockImplementationOnce(async () => {
+      await db.membership.updateMany({ where: { workspaceId: ws, userId: member }, data: { role: 'member' } });
+      return Response.json(remoteCard());
+    });
+    const before = await db.remoteA2AAgent.count({ where: { workspaceId: ws } });
+    try {
+      await expect(mutateRemoteRegistry({ ...ctx, actorId: member }, { action: 'register', cardUrl: REMOTE_CARD, token: 'peer-key' })).rejects.toThrow(/administrator/);
+      expect(await db.remoteA2AAgent.count({ where: { workspaceId: ws } })).toBe(before);
+    } finally {
+      await db.membership.updateMany({ where: { workspaceId: ws, userId: member }, data: { role: 'member' } });
+    }
   });
   it('requires current admin authority before any remote discovery and per-Agent grants', async () => {
     await expect(mutateRemoteRegistry({ ...ctx, actorId: member }, { action: 'register', name: 'Denied', cardUrl: REMOTE_CARD, rpcUrl: REMOTE_RPC })).rejects.toThrow();
@@ -187,17 +220,17 @@ describe('registered remote Agents in the native task core', () => {
   });
   it('invalidates outstanding tasks on key rotation or access revocation', async () => {
     const parent = await root(), delegated = await sendChild(parent);
-    await mutateRemoteRegistry(ctx, { action: 'replace-key', id: remote, revision: 2, token: 'new-key' });
+    await mutateRemoteRegistry(ctx, { action: 'replace-key', id: remote, revision: 1, token: 'new-key' });
     await expect(assertRemoteGrant(delegated.grant)).rejects.toThrow();
     await due(delegated.row.id); expect((await getTask(delegated.grant, delegated.row.id)).status?.state).toBe(4);
     expect(network.rpc).toHaveBeenCalledTimes(1);
     await expect(getConsoleTaskTree(ctx, parent.id, delegated.row.id)).rejects.toThrow();
-    await expect(mutateRemoteRegistry(ctx, { action: 'configure', id: remote, revision: 2, enabled: true })).rejects.toThrow();
+    await expect(mutateRemoteRegistry(ctx, { action: 'configure', id: remote, revision: 1, enabled: true })).rejects.toThrow();
   });
   it('withholds completed remote output from automatic continuation after authorization changes', async () => {
     const parent = await root(); peerState = 'TASK_STATE_COMPLETED';
     const delegated = await sendChild(parent); await waiting(parent, delegated.row.id);
-    await mutateRemoteRegistry(ctx, { action: 'configure', id: remote, revision: 2, allowCurrentAgent: false });
+    await mutateRemoteRegistry(ctx, { action: 'configure', id: remote, revision: 1, allowCurrentAgent: false });
     await reconcileLocalWaits(); const resumed = (await claimTask(parent.id))!;
     const history = JSON.stringify(Task.fromJSON(resumed.snapshot).history);
     expect(history).not.toContain('Remote review result'); expect(history).toContain('withheld');
@@ -207,7 +240,7 @@ describe('registered remote Agents in the native task core', () => {
     await expect(submitTask(delegated.grant, message(), { parentLeaseToken: 'wrong' })).rejects.toThrow();
     await expect(assertRemoteGrant({ ...delegated.grant, actorId: member })).rejects.toThrow();
     await expect(assertRemoteGrant({ ...delegated.grant, ancestorTaskIds: [randomUUID()] })).rejects.toThrow();
-    await expect(mutateRemoteRegistry({ ...ctx, workspaceId: randomUUID() }, { action: 'configure', id: remote, revision: 2, enabled: false })).rejects.toThrow();
+    await expect(mutateRemoteRegistry({ ...ctx, workspaceId: randomUUID() }, { action: 'configure', id: remote, revision: 1, enabled: false })).rejects.toThrow();
   });
   it('ignores stale observation errors after a newer phase/generation', async () => {
     const parent = await root(), delegated = await sendChild(parent);

@@ -1,13 +1,17 @@
 'use client';
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { ButtonLink } from '@/components/motion/button';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 
 import { useActionState } from 'react';
 import { ClipboardCheck, History, Save } from 'lucide-react';
 import { adminHref } from '@/lib/admin/navigation';
 import { useTranslations } from 'next-intl';
-import Link from 'next/link';
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import {
   updateMarketListingAdminAction,
   updatePublicToolkitAdminAction,
@@ -76,8 +80,8 @@ function CatalogPagination({
     <nav aria-label={t('page')} className="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground">
       <span>{t('page')} {page} / {lastPage} · {total} {t('items')}</span>
       <div className="flex gap-2">
-        {page > 1 ? <Link href={href(page - 1)} className="ui-button-ghost h-8">{t('prev')}</Link> : null}
-        {page < lastPage ? <Link href={href(page + 1)} className="ui-button-ghost h-8">{t('next')}</Link> : null}
+        {page > 1 ? <ButtonLink href={href(page - 1)} variant="ghost" size="sm">{t('prev')}</ButtonLink> : null}
+        {page < lastPage ? <ButtonLink href={href(page + 1)} variant="ghost" size="sm">{t('next')}</ButtonLink> : null}
       </div>
     </nav>
   );
@@ -142,16 +146,10 @@ function CategoryChecklist({
       <legend className="text-xs font-semibold text-muted-foreground">{t('categories')}</legend>
       <div className="mt-2 grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
         {categories.map((category) => (
-          <label key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
-            <input
-              type="checkbox"
-              name="categoryIds"
-              value={category.id}
-              defaultChecked={selected.has(category.id)}
-              className="size-4 accent-brand"
-            />
-            <span className="truncate">{category.name}</span>
-          </label>
+          <div key={category.id} className="flex min-h-9 items-center gap-2 rounded px-2 text-sm text-foreground hover:bg-muted/60">
+            <FormCheckbox name="categoryIds" value={category.id} defaultChecked={selected.has(category.id)} label={category.name} />
+            
+          </div>
         ))}
       </div>
     </fieldset>
@@ -177,22 +175,18 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
       <form action={action} className="space-y-5 border-t border-border bg-muted/20 px-5 py-5">
         <input type="hidden" name="listingId" value={listing.id} />
         <div className="grid gap-4 sm:grid-cols-3">
-          <label className="space-y-1.5 text-sm font-medium text-foreground">
+          <div className="space-y-1.5 text-sm font-medium text-foreground">
             <span>{t('statusColumn')}</span>
-            <NativeSelect name="status" defaultValue={listing.status} className="h-10">
-              <option value="draft">{t('agentListingStatusDraft')}</option>
-              <option value="published">{t('agentListingStatusPublished')}</option>
-              <option value="disabled">{t('agentListingStatusDisabled')}</option>
-            </NativeSelect>
-          </label>
-          <label className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="curated" defaultChecked={listing.curated} className="size-4 accent-brand" />
-            {t('curated')}
-          </label>
-          <label className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="isFeatured" defaultChecked={listing.isFeatured} className="size-4 accent-brand" />
-            {t('featured')}
-          </label>
+            <FormSelect name="status" defaultValue={listing.status} label={t('statusColumn')} options={[{ value: "draft", label: t('agentListingStatusDraft') }, { value: "published", label: t('agentListingStatusPublished') }, { value: "disabled", label: t('agentListingStatusDisabled') }]} />
+          </div>
+          <div className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+            <FormCheckbox name="curated" defaultChecked={listing.curated} label={t('curated')} />
+            
+          </div>
+          <div className="flex min-h-10 items-center gap-2 self-end rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+            <FormCheckbox name="isFeatured" defaultChecked={listing.isFeatured} label={t('featured')} />
+            
+          </div>
         </div>
         <CategoryChecklist categories={categories} selectedIds={listing.categories.map(({ id }) => id)} />
         <div className="flex flex-wrap items-center gap-3">
@@ -200,29 +194,29 @@ function ListingForm({ listing, categories }: { listing: ListingRow; categories:
             error={state.error}
             pendingLabel={t('saving')}
             savedLabel={t('saved')}
-            className="ui-button-primary h-10"
+            variant="primary" size="md"
           >
             <Save className="size-4" />
             {t('saveChanges')}
           </SubmitButton>
           {listing.kind === 'assistant' && listing.publisherKind === 'platform' ? (
-            <Link href={`/admin/assistants/${encodeURIComponent(listing.id)}/edit`} className="ui-button-secondary h-10">
+            <ButtonLink href={`/admin/assistants/${encodeURIComponent(listing.id)}/edit`} variant="secondary" size="md">
               {t('edit')}
-            </Link>
+            </ButtonLink>
           ) : null}
           {listing.pendingRelease ? (
-            <Link href={adminHref(`/admin/reviews/market/${listing.id}`, { returnTo: '/admin/market' })} className="ui-button-secondary text-xs">
+            <ButtonLink href={adminHref(`/admin/reviews/market/${listing.id}`, { returnTo: '/admin/market' })} variant="secondary" size="md">
               <ClipboardCheck className="size-4" />
               {t('marketCatalogPendingRelease', { version: listing.pendingRelease.version })}
-            </Link>
+            </ButtonLink>
           ) : null}
           {listing.latestRelease ? (
             <span className="text-xs text-muted-foreground">
               {t('marketCatalogLatestReleaseStatus', { status: listing.latestRelease.reviewStatus })}
             </span>
           ) : null}
-          <Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'marketListing', targetId: listing.id, returnTo: '/admin/market' })} className="ui-button-ghost text-xs"><History className="size-4" />{ops('audit')}</Link>
-          {state.error ? <p role="alert" className="text-sm text-destructive-text">{state.error}</p> : null}
+          <ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'marketListing', targetId: listing.id, returnTo: '/admin/market' })} variant="ghost" size="md"><History className="size-4" />{ops('audit')}</ButtonLink>
+          {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
         </div>
       </form>
     </details>
@@ -251,10 +245,10 @@ function ToolkitForm({ toolkit, categories }: { toolkit: ToolkitRow; categories:
             <p className="text-sm font-medium text-foreground">{toolkit.workspace.name}</p>
             <p className="text-xs text-muted-foreground">{t('marketToolkitLegacyNotice')}</p>
           </div>
-          <label className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-            <input type="checkbox" name="enabled" defaultChecked={toolkit.enabled} className="size-4 accent-brand" />
-            {t('enabled')}
-          </label>
+          <div className="flex min-h-10 items-center gap-2 rounded px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+            <FormCheckbox name="enabled" defaultChecked={toolkit.enabled} label={t('enabled')} />
+            
+          </div>
         </div>
         <CategoryChecklist categories={categories} selectedIds={toolkit.categories.map(({ id }) => id)} />
         <div className="flex flex-wrap items-center gap-3">
@@ -262,12 +256,12 @@ function ToolkitForm({ toolkit, categories }: { toolkit: ToolkitRow; categories:
             error={state.error}
             pendingLabel={t('saving')}
             savedLabel={t('saved')}
-            className="ui-button-primary h-10"
+            variant="primary" size="md"
           >
             <Save className="size-4" />
             {t('saveChanges')}
           </SubmitButton>
-          {state.error ? <p role="alert" className="text-sm text-destructive-text">{state.error}</p> : null}
+          {state.error ? <p role="alert" className="text-sm text-destructive">{state.error}</p> : null}
         </div>
       </form>
     </details>

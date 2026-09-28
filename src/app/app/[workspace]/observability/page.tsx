@@ -1,3 +1,8 @@
+
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { Input } from '@/components/motion/input';
+import { Button, ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
@@ -10,14 +15,7 @@ import { getPluginTelemetry } from '@/lib/observability/plugin-telemetry';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { ObservabilityLogs } from '@/components/dashboard/ObservabilityLogs';
-import {
-  DashboardEmptyState,
-  DashboardPage,
-  DashboardPanel,
-  DashboardTable,
-  DashboardToolbar,
-} from '@/components/dashboard/DashboardUI';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+import { DashboardEmptyState, DashboardPage, DashboardPanel, DashboardTable, DashboardToolbar } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -39,7 +37,7 @@ function Stat({
   sub: string;
 }) {
   return (
-    <div className="ui-panel p-5">
+    <div className="rounded-xl border border-border bg-card p-5">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
@@ -106,27 +104,12 @@ export default async function ObservabilityPage({
             actions={(
               <form action={base} method="get" className="flex flex-wrap items-center gap-2">
                 {current !== 'usage' ? <input type="hidden" name="tab" value={current} /> : null}
-                <input name="q" defaultValue={q} aria-label={t('searchLogs')} placeholder={t('searchLogs')} className="ui-input h-9 w-48" />
+                <Input name="q" defaultValue={q} aria-label={t('searchLogs')} placeholder={t('searchLogs')} className="w-48" />
                 <label htmlFor="observability-deployment" className="sr-only">
                   {t('filterByServer')}
                 </label>
-                <NativeSelect
-                  id="observability-deployment"
-                  name="deploymentId"
-                  defaultValue={selectedDeploymentId ?? ''}
-                  className="ui-input h-9 w-full text-sm"
-                  wrapperClassName="min-w-52"
-                >
-                  <option value="">{t('allServers')}</option>
-                  {o.deployments.map((deployment) => (
-                    <option key={deployment.id} value={deployment.id}>
-                      {deployment.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <button type="submit" className="ui-button-secondary h-9 text-sm">
-                  {t('applyFilter')}
-                </button>
+                <FormSelect id="observability-deployment" name="deploymentId" defaultValue={selectedDeploymentId ?? ''} label={t('filterByServer')} options={[{ value: '', label: t('allServers') }, ...o.deployments.map((deployment) => ({ value: deployment.id, label: deployment.name }))]} />
+                <Button type="submit" variant="secondary" size="sm">{t('applyFilter')}</Button>
                 {selectedDeploymentId ? (
                   <Link href={current === 'usage' ? base : `${base}?tab=${current}`} className="text-sm text-muted-foreground hover:text-foreground">
                     {t('clearFilter')}
@@ -185,11 +168,11 @@ export default async function ObservabilityPage({
                 <div />
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-sm bg-sky-500" />
+                    <span className="size-2.5 rounded-sm bg-primary" />
                     {t('requests')}
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-sm bg-red-400" />
+                    <span className="size-2.5 rounded-sm bg-destructive" />
                     {t('errors')}
                   </span>
                 </div>
@@ -217,13 +200,13 @@ export default async function ObservabilityPage({
                           style={{ height: `${barHeight}%` }}
                         >
                           <div
-                            className="w-full rounded-t-sm bg-sky-500"
+                            className="w-full rounded-t-sm bg-primary"
                             style={{
                               height: `${(ok / Math.max(1, s.total)) * 100}%`,
                             }}
                           />
                           <div
-                            className="w-full bg-red-400"
+                            className="w-full bg-destructive"
                             style={{
                               height: `${(s.errors / Math.max(1, s.total)) * 100}%`,
                             }}
@@ -250,25 +233,18 @@ export default async function ObservabilityPage({
                   className="min-h-32 rounded-none border-0"
                 />
               ) : (
-                <DashboardTable
-                  panel={false}
-                  minWidth="42rem"
-                  headers={[
+                <DashboardTable minWidth="42rem" headers={[
                     { label: t('server') },
                     { label: t('requests'), align: 'right' },
                     { label: t('errors'), align: 'right' },
                     { label: t('errorRate'), align: 'right' },
                     { label: t('avgLatency'), align: 'right' },
-                  ]}
-                >
-                  {o.deploymentUsage.map((row) => {
+                  ]} rows={o.deploymentUsage.map((row) => {
                     const rowErrorRate = row.total
                       ? `${Math.round((row.errors / row.total) * 1000) / 10}%`
                       : '—';
                     return (
-                      <tr key={row.id ?? 'workspace-api'} className="hover:bg-muted/40">
-                        <td className="px-4 py-3">
-                          {row.id ? (
+                      {id: row.id ?? 'workspace-api', cells: [<>{row.id ? (
                             <Link
                               href={`/app/${slug}/mcp/${row.id}`}
                               className="font-medium text-foreground hover:underline"
@@ -277,16 +253,13 @@ export default async function ObservabilityPage({
                             </Link>
                           ) : (
                             <span className="font-medium text-foreground">{row.name}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-foreground">{row.total}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{row.errors}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{rowErrorRate}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{row.avgMs}{t('ms')}</td>
-                      </tr>
+                          )}</>,
+<>{row.total}</>,
+<>{row.errors}</>,
+<>{rowErrorRate}</>,
+<>{row.avgMs}{t('ms')}</>]}
                     );
-                  })}
-                </DashboardTable>
+                  })} />
               )}
             </DashboardPanel>
           </>
@@ -318,7 +291,7 @@ export default async function ObservabilityPage({
                 }))}
               />
             )}
-            {o.nextCursor ? <Link className="ui-button-secondary mt-4" href={`${base}?${new URLSearchParams({ tab: 'audit', cursor: o.nextCursor, until: o.until, ...(q ? { q } : {}), ...(selectedDeploymentId ? { deploymentId: selectedDeploymentId } : {}) })}`}>{t('olderLogs')}<ChevronRight className="size-4" /></Link> : null}
+            {o.nextCursor ? <ButtonLink href={`${base}?${new URLSearchParams({ tab: 'audit', cursor: o.nextCursor, until: o.until, ...(q ? { q } : {}), ...(selectedDeploymentId ? { deploymentId: selectedDeploymentId } : {}) })}`} variant="secondary" size="md" className="mt-4">{t('olderLogs')}<ChevronRight className="size-4" /></ButtonLink> : null}
           </DashboardPanel>
         ) : pt ? (
           <div className="space-y-6">
@@ -352,46 +325,31 @@ export default async function ObservabilityPage({
                   className="min-h-48 rounded-none border-0"
                 />
               ) : (
-                <DashboardTable
-                  panel={false}
-                  headers={[
+                <DashboardTable headers={[
                     { label: t('skill') },
                     { label: t('source') },
                     { label: t('outcome') },
                     { label: t('time') },
-                  ]}
-                >
-                  {pt.skill.recent.map((s) => (
-                    <tr key={s.id}>
-                      <td className="px-4 py-2.5 font-mono text-xs text-foreground">
-                        {s.skillSlug}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.source === 'user' ? t('user') : t('agent')}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
+                  ]} rows={pt.skill.recent.map((s) => (
+                    {id: s.id, cells: [<>{s.skillSlug}</>,
+<>{s.source === 'user' ? t('user') : t('agent')}</>,
+<><span
                           className={
                             s.outcome === 'error'
-                              ? 'text-red-600 dark:text-red-400'
-                              : 'text-emerald-600 dark:text-emerald-400'
+                              ? 'text-destructive dark:text-destructive'
+                              : 'text-(--color-success) dark:text-(--color-success)'
                           }
                         >
                           {s.outcome === 'error' ? t('error') : t('success')}
                           {s.errorClass ? ` · ${s.errorClass}` : ''}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {formatInTimeZone(s.createdAt, timeZone, {
+                        </span></>,
+<>{formatInTimeZone(s.createdAt, timeZone, {
                           month: 'short',
                           day: 'numeric',
                           hour: 'numeric',
                           minute: '2-digit',
-                        }, dateLocale)}
-                      </td>
-                    </tr>
-                  ))}
-                </DashboardTable>
+                        }, dateLocale)}</>]}
+                  ))} />
               )}
             </DashboardPanel>
 
@@ -402,51 +360,34 @@ export default async function ObservabilityPage({
                   className="min-h-48 rounded-none border-0"
                 />
               ) : (
-                <DashboardTable
-                  panel={false}
-                  headers={[
+                <DashboardTable headers={[
                     { label: t('outcome') },
                     { label: t('added') },
                     { label: t('updated') },
                     { label: t('removed') },
                     { label: t('time') },
-                  ]}
-                >
-                  {pt.sync.recent.map((s) => (
-                    <tr key={s.id}>
-                      <td className="px-4 py-2.5">
-                        <span
+                  ]} rows={pt.sync.recent.map((s) => (
+                    {id: s.id, cells: [<><span
                           className={
                             s.outcome === 'failure'
-                              ? 'text-red-600 dark:text-red-400'
-                              : 'text-emerald-600 dark:text-emerald-400'
+                              ? 'text-destructive dark:text-destructive'
+                              : 'text-(--color-success) dark:text-(--color-success)'
                           }
                         >
                           {s.outcome === 'failure'
                             ? `${t('failure')}${s.reason ? ` · ${s.reason}` : ''}`
                             : t('applied')}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.added}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.updated}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {s.removed}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {formatInTimeZone(s.createdAt, timeZone, {
+                        </span></>,
+<>{s.added}</>,
+<>{s.updated}</>,
+<>{s.removed}</>,
+<>{formatInTimeZone(s.createdAt, timeZone, {
                           month: 'short',
                           day: 'numeric',
                           hour: 'numeric',
                           minute: '2-digit',
-                        }, dateLocale)}
-                      </td>
-                    </tr>
-                  ))}
-                </DashboardTable>
+                        }, dateLocale)}</>]}
+                  ))} />
               )}
             </DashboardPanel>
           </div>

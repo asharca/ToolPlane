@@ -1,3 +1,6 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { ButtonLink } from '@/components/motion/button';
 import { Bot, Plus } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -87,10 +90,10 @@ export default async function AdminAgentsPage({
         description={t('agentsDirectoryDescription')}
         meta={t('agentListingCount', { count: result.total.toLocaleString() })}
         actions={(
-          <Link href="/admin/agents/new" className="ui-button-primary">
+          <ButtonLink href="/admin/agents/new" variant="primary" size="md">
             <Plus className="size-4" aria-hidden="true" />
             {t('addAgentTemplate')}
-          </Link>
+          </ButtonLink>
         )}
       />
 
@@ -105,22 +108,13 @@ export default async function AdminAgentsPage({
           clearHref={status ? `/admin/agents?status=${status}` : '/admin/agents'}
         />
         <nav className="flex flex-wrap gap-1" aria-label={t('agentListingStatusFilter')}>
-          <Link
-            href={filterHref()}
-            aria-current={!status ? 'page' : undefined}
-            className={!status ? 'ui-button-primary ui-button-sm' : 'ui-button-ghost ui-button-sm'}
-          >
+          <ButtonLink href={filterHref()} aria-current={!status ? 'page' : undefined} variant={!status ? 'primary' : 'ghost'} size="sm">
             {t('all')}
-          </Link>
+          </ButtonLink>
           {ADMIN_AGENT_LISTING_STATUSES.map((value) => (
-            <Link
-              key={value}
-              href={filterHref(value)}
-              aria-current={status === value ? 'page' : undefined}
-              className={status === value ? 'ui-button-primary ui-button-sm' : 'ui-button-ghost ui-button-sm'}
-            >
+            <ButtonLink key={value} href={filterHref(value)} aria-current={status === value ? 'page' : undefined} variant={status === value ? 'primary' : 'ghost'} size="sm">
               {statusLabel(value)}
-            </Link>
+            </ButtonLink>
           ))}
         </nav>
       </div>
@@ -131,18 +125,17 @@ export default async function AdminAgentsPage({
           title={t('noAgentListings')}
           description={q || status ? t('noAgentListingsDescription') : t('emptyAgentListingsDescription')}
           actions={q || status ? null : (
-            <Link href="/admin/agents/new" className="ui-button-primary">
+            <ButtonLink href="/admin/agents/new" variant="primary" size="md">
               <Plus className="size-4" aria-hidden="true" />
               {t('addAgentTemplate')}
-            </Link>
+            </ButtonLink>
           )}
         />
       ) : (
-        <DashboardTable
-          ariaLabel={t('agentListingsTableLabel')}
-          minWidth="76rem"
-          headers={[
-            { label: t('agentColumn'), className: 'w-full' },
+        <DashboardTable ariaLabel={t('agentListingsTableLabel')}
+minWidth="76rem"
+headers={[
+            { label: t('agentColumn'), width: "35%" },
             { label: t('publisherColumn') },
             { label: t('statusColumn') },
             { label: t('agentVersionColumn'), align: 'right' },
@@ -150,13 +143,10 @@ export default async function AdminAgentsPage({
             { label: t('flagsColumn') },
             { label: <span className="sr-only">{t('edit')}</span> },
           ]}
-        >
-          {result.items.map((listing) => {
+rows={result.items.map((listing) => {
             const orphanedPublisher = listing.publisherKind === 'workspace' && !listing.publisherWorkspaceId;
             return (
-            <tr key={listing.id}>
-              <td className="px-4 py-3">
-                <AdminEntity
+            ({ id: listing.id, cells: [<> <AdminEntity
                   title={(
                     <Link href={adminHref(`/admin/agents/${listing.id}/edit`, { returnTo: hrefForPage(result.page) })} className="hover:underline">
                       {listing.name}
@@ -164,52 +154,36 @@ export default async function AdminAgentsPage({
                   )}
                   description={`/${listing.directorySlug}`}
                   initials={listing.name}
-                />
-              </td>
-              <td className="max-w-56 px-4 py-3">
-                <p className="truncate text-sm text-foreground">
+                /> </>,
+<div className="min-w-0 max-w-56"><> <p className="truncate text-sm text-foreground">
                   {orphanedPublisher
                     ? t('agentPublisherWorkspaceRemoved')
                     : listing.author ?? listing.publisherWorkspace?.name ?? t('administrator')}
-                </p>
-                {listing.publisherWorkspace ? (
+                </p>{listing.publisherWorkspace ? (
                   <code className="block truncate font-mono text-[11px] text-muted-foreground">
                     /{listing.publisherWorkspace.slug}
                   </code>
-                ) : null}
-              </td>
-              <td className="whitespace-nowrap px-4 py-3">
-                <div className="flex flex-col items-start gap-1">
+                ) : null} </></div>,
+<div className="flex flex-col items-start gap-1">
                   <AdminBadge tone={statusTone(listing.status)} dot>{statusLabel(listing.status)}</AdminBadge>
                   {listing.pendingRelease ? (
                     <AdminBadge tone="warning">{t('agentPendingVersion', { version: listing.pendingRelease.version })}</AdminBadge>
                   ) : null}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {listing.latestVersion || '—'}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                {listing.installCount.toLocaleString()}
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex min-w-36 flex-wrap gap-1.5">
-                  {listing.isFeatured ? <AdminBadge tone="brand">{t('featured')}</AdminBadge> : null}
+                </div>,
+listing.latestVersion || '—',
+listing.installCount.toLocaleString(),
+<div className="flex min-w-36 flex-wrap gap-1.5">
+                  {listing.isFeatured ? <AdminBadge tone="info">{t('featured')}</AdminBadge> : null}
                   {listing.curated ? <AdminBadge tone="neutral">{t('curated')}</AdminBadge> : null}
                   {orphanedPublisher ? <AdminBadge tone="danger">{t('agentPublisherMissing')}</AdminBadge> : null}
                   {!listing.isFeatured && !listing.curated && !orphanedPublisher ? <span className="text-sm text-muted-foreground">{t('none')}</span> : null}
-                </div>
-              </td>
-              <td className="px-2 py-3">
-                <AdminTableLink
+                </div>,
+<> <AdminTableLink
                   href={adminHref(`/admin/agents/${listing.id}/edit`, { returnTo: hrefForPage(result.page) })}
                   label={`${t('edit')}: ${listing.name}`}
-                />
-              </td>
-            </tr>
+                /> </>] })
             );
-          })}
-        </DashboardTable>
+          })} />
       )}
 
       <AdminPagination

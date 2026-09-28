@@ -1,4 +1,8 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Button } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 
 import { useLocale, useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -49,7 +53,7 @@ import {
   type ModelProviderOption,
 } from '@/components/dashboard/models/ModelPicker';
 import { useUserTimeZone } from '@/components/timezone/UserTimeZoneContext';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import { AgentBuiltInTools } from '@/components/dashboard/agents/AgentBuiltInTools';
 import { AgentSystemPromptEditor } from '@/components/dashboard/agents/AgentSystemPromptEditor';
 
@@ -354,23 +358,15 @@ export function AgentSettingsForm({
                   {group.items.map(({ id, label, count, icon: Icon }) => {
                     const active = activeSection === id;
                     return (
-                      <button
-                        key={id}
-                        type="button"
-                        aria-current={active ? 'page' : undefined}
-                        onClick={() => selectSection(id)}
-                        className={`inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm transition-colors lg:flex lg:w-full ${active
-                          ? 'bg-background font-medium text-foreground shadow-sm ring-1 ring-border'
-                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      >
+                      <Button key={id} type="button" aria-current={active ? 'page' : undefined} onClick={() => selectSection(id)} variant={active ? 'secondary' : 'ghost'} size="sm">
                         <Icon className="size-4 shrink-0" />
                         <span className="whitespace-nowrap">{label}</span>
                         {typeof count === 'number' ? (
-                          <span className={`ml-auto rounded-md px-1.5 py-0.5 text-[11px] tabular-nums ${active ? 'bg-muted text-foreground' : 'bg-background/80 text-muted-foreground'}`}>
+                          <AnimatedBadge status="neutral">
                             {count}
-                          </span>
+                          </AnimatedBadge>
                         ) : null}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -380,23 +376,24 @@ export function AgentSettingsForm({
         ) : null}
 
         <div className={`min-w-0 space-y-5 ${showNavigation ? 'p-4 sm:p-5' : ''}`}>
+          <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+            <div>
+              <h3 className="text-base font-semibold">{navigationGroups.flatMap((group) => group.items).find((item) => item.id === activeSection)?.label}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{t(activeSection === 'general' ? 'generalSettingsDescription' : activeSection === 'instructions' ? 'instructionsSettingsDescription' : activeSection === 'advanced' ? 'advanced' : 'resourceSettingsDescription')}</p>
+            </div>
+            <p role="status" aria-live="polite" className="text-xs text-muted-foreground">{t(isPending ? 'saving' : saveStatus === 'dirty' ? 'unsavedChanges' : state.savedAt && !state.error ? 'saved' : 'autoSaveOn')}</p>
+          </header>
           {state.error ? (
-            <p role="alert" className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+            <p role="alert" className="text-sm text-destructive">
               {state.error}
             </p>
           ) : null}
       <section hidden={activeSection !== 'general'} aria-label={t('basic')}>
         <div className="space-y-5">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
-            <input
-              name="name"
-              value={nameValue}
-              onChange={(event) => setNameValue(event.target.value)}
-              required
-              className="ui-input h-10 w-full"
-            />
-          </label>
+          <div className="block">
+            
+            <Input label={t('name')} name="name" required value={String(nameValue)} onChange={(value) => setNameValue(value)} className="w-full" />
+          </div>
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
             <textarea
@@ -406,12 +403,12 @@ export function AgentSettingsForm({
               maxLength={500}
               rows={3}
               placeholder={t('agentDescriptionPlaceholder')}
-              className="ui-input min-h-24 w-full resize-y py-2.5"
+              className="min-h-24 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
           <div>
             <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('runtime')}</span>
-            <div className="ui-input flex h-10 items-center justify-between gap-3 px-3 text-sm" aria-label={t('runtime')}>
+            <div className="rounded-lg border border-border bg-background px-3 py-2 flex h-10 items-center justify-between gap-3 px-3 text-sm" aria-label={t('runtime')}>
               <span className="truncate font-medium text-foreground">{runtimeLabel}</span>
               {isHermes && runtime?.status ? (
                 <span className="shrink-0 text-xs text-muted-foreground">{runtime.status}</span>
@@ -444,18 +441,10 @@ export function AgentSettingsForm({
 
       <section hidden={activeSection !== 'advanced'} aria-label={t('advanced')}>
         <div className="space-y-6">
-          <label className="block max-w-xs">
-            <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('maxToolSteps')}</span>
-            <input
-              name="maxSteps"
-              type="number"
-              min={AGENT_STEP_BOUNDS.min}
-              max={AGENT_STEP_BOUNDS.max}
-              value={maxStepsValue}
-              onChange={(event) => setMaxStepsValue(event.target.value)}
-              className="ui-input h-10 w-full"
-            />
-          </label>
+          <div className="block max-w-xs">
+            
+            <Input label={t('maxToolSteps')} name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} value={String(maxStepsValue)} onChange={(value) => setMaxStepsValue(value)} className="w-full" />
+          </div>
           {environmentSandboxId ? (
             <div className="space-y-3 border-t border-border pt-5">
               <div>
@@ -471,29 +460,21 @@ export function AgentSettingsForm({
                 rows={6}
                 spellCheck={false}
                 placeholder={t('environmentPlaceholder')}
-                className="ui-input min-h-32 w-full resize-y font-mono text-xs leading-5"
+                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={t('environmentVariables')}
               />
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p
                   role={envState.error ? 'alert' : 'status'}
                   aria-live="polite"
-                  className={envState.error ? 'text-xs text-red-600' : 'text-xs text-muted-foreground'}
+                  className={envState.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
                 >
                   {envMessage}
                 </p>
-                <button
-                  type="submit"
-                  formAction={envFormAction}
-                  formNoValidate
-                  disabled={runtimeControlsDisabled}
-                  aria-busy={isEnvPending}
-                  onClick={clearAutoSaveTimer}
-                  className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
-                >
+                <Button type="submit" formAction={envFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isEnvPending} onClick={clearAutoSaveTimer} variant={"secondary"} size={"sm"}>
                   {isEnvPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                   {isEnvPending ? t('savingEnvironment') : t('saveEnvironment')}
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
@@ -506,47 +487,31 @@ export function AgentSettingsForm({
             <div className="flex min-w-0 items-center gap-2.5">
               <Container className="size-[18px] shrink-0 text-muted-foreground" />
               <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
-              <span className="inline-flex h-6 items-center rounded-md bg-muted px-2 text-xs font-medium text-muted-foreground">
+              <AnimatedBadge status="neutral">
                 {runtime.status}
-              </span>
+              </AnimatedBadge>
             </div>
             <div className="flex gap-2">
-              <button
-                type="submit"
-                formAction={syncFormAction}
-                formNoValidate
-                disabled={runtimeControlsDisabled}
-                aria-busy={isSyncPending}
-                onClick={() => setLastRuntimeAction('sync')}
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
-              >
+              <Button type="submit" formAction={syncFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isSyncPending} onClick={() => setLastRuntimeAction('sync')} variant={"secondary"} size={"sm"}>
                 {isSyncPending ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : lastRuntimeAction === 'sync' && syncState.savedAt ? (
-                  <Check className="size-4 text-emerald-600" />
+                  <Check className="size-4 text-muted-foreground" />
                 ) : (
                   <RefreshCw className="size-4" />
                 )}
                 {isSyncPending ? t('syncingRuntime') : lastRuntimeAction === 'sync' && syncState.savedAt ? t('runtimeSynced') : t('syncRuntime')}
-              </button>
-              <button
-                type="submit"
-                formAction={stopFormAction}
-                formNoValidate
-                disabled={runtimeControlsDisabled}
-                aria-busy={isStopPending}
-                onClick={() => setLastRuntimeAction('stop')}
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
-              >
+              </Button>
+              <Button type="submit" formAction={stopFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isStopPending} onClick={() => setLastRuntimeAction('stop')} variant={"secondary"} size={"sm"}>
                 {isStopPending ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : lastRuntimeAction === 'stop' && stopState.savedAt ? (
-                  <Check className="size-4 text-emerald-600" />
+                  <Check className="size-4 text-muted-foreground" />
                 ) : (
                   <Square className="size-3.5" />
                 )}
                 {isStopPending ? t('stoppingRuntime') : lastRuntimeAction === 'stop' && stopState.savedAt ? t('runtimeStopped') : t('stopRuntime')}
-              </button>
+              </Button>
             </div>
           </div>
           <div className="space-y-2 px-4 py-4 text-sm">
@@ -572,7 +537,7 @@ export function AgentSettingsForm({
               </div>
             ) : null}
             {runtime.lastError ? (
-              <p className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+              <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive">
                 {runtime.lastError}
               </p>
             ) : null}
@@ -581,7 +546,7 @@ export function AgentSettingsForm({
                 role={activeRuntimeState.error ? 'alert' : 'status'}
                 aria-live="polite"
                 className={activeRuntimeState.error
-                  ? 'rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300'
+                  ? 'rounded-md border border-border bg-muted px-3 py-2 text-xs text-destructive text-destructive'
                   : 'text-xs text-muted-foreground'}
               >
                 {runtimeActionMessage}
@@ -601,22 +566,14 @@ export function AgentSettingsForm({
               disabled={runtimeControlsDisabled}
             />
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <button
-                type="submit"
-                formAction={upgradeFormAction}
-                formNoValidate
-                disabled={runtimeControlsDisabled}
-                aria-busy={isUpgradePending}
-                onClick={() => {
+              <Button type="submit" formAction={upgradeFormAction} formNoValidate disabled={runtimeControlsDisabled} aria-busy={isUpgradePending} onClick={() => {
                   clearAutoSaveTimer();
                   setLastRuntimeAction('upgrade');
-                }}
-                className="ui-button-secondary h-9 gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-70"
-              >
+                }} variant={"secondary"} size={"sm"}>
                 {isUpgradePending ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : lastRuntimeAction === 'upgrade' && upgradeState.savedAt ? (
-                  <Check className="size-4 text-emerald-600" />
+                  <Check className="size-4 text-muted-foreground" />
                 ) : (
                   <RefreshCw className="size-4" />
                 )}
@@ -625,7 +582,7 @@ export function AgentSettingsForm({
                   : lastRuntimeAction === 'upgrade' && upgradeState.savedAt
                     ? t('hermesRuntimeUpgraded')
                     : t('upgradeHermesRuntime')}
-              </button>
+              </Button>
             </div>
           </div>
         </section>
@@ -699,12 +656,10 @@ export function AgentSettingsForm({
           selectionMode={singleSandboxRuntime ? 'single-required' : 'multiple'}
         />
         {!singleSandboxRuntime && selectedSandboxIds.size ? (
-          <label className="mt-3 block text-xs text-muted-foreground">
+          <div className="mt-3 block text-xs text-muted-foreground">
             <span className="mb-1 block">Default Work sandbox</span>
-            <NativeSelect name="defaultSandboxId" value={selectedDefaultSandboxId} onChange={(event) => { setSelectedDefaultSandboxId(event.target.value); scheduleAutoSave(); }} className="ui-input h-9 w-full">
-              {[...selectedSandboxIds].map((id) => <option key={id} value={id}>{sandboxOptions.find((item) => item.id === id)?.label ?? id}</option>)}
-            </NativeSelect>
-          </label>
+            <FormSelect name="defaultSandboxId" value={selectedDefaultSandboxId} label={"Default Work sandbox"} options={[[...selectedSandboxIds].map((id) => ({ value: id, label: sandboxOptions.find((item) => item.id === id)?.label ?? id }))].flat().filter((option) => option != null)} onValueChange={(value) => { setSelectedDefaultSandboxId(value); scheduleAutoSave(); }} className="w-full" />
+          </div>
         ) : null}
         {!isHermes ? <p className="mt-3 text-xs leading-5 text-muted-foreground">{t('nativeHarnessSandboxHelp')}</p> : null}
       </section>
@@ -759,20 +714,18 @@ export function AgentSettingsForm({
                   window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                 }}
                 trigger={(
-                  <button type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                      {selectedProviderOption?.name.charAt(0).toUpperCase() || 'M'}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{selectedModel || t('selectModel')}</span>
-                    <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProviderOption?.name}</span>
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  </button>
+                  <Button variant="secondary" type="button" aria-label={`${t('model')}: ${selectedModel || t('selectModel')}`} className="w-full text-left"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                    {selectedProviderOption?.name.charAt(0).toUpperCase() || 'M'}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{selectedModel || t('selectModel')}</span>
+                  <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProviderOption?.name}</span>
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" /></Button>
                 )}
               />
             </div>
           )}
           {!isHermes && selectedProvider && models.length === 0 ? (
-            <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">
+            <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground text-muted-foreground sm:col-span-2">
               {t('thisProviderHasNoCachedModelsRefreshItsModelsOnTheModelProvidersTab')}
             </p>
           ) : null}

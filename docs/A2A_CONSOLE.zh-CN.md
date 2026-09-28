@@ -2,28 +2,27 @@
 
 > [English](A2A_CONSOLE.md)
 
-日常任务和 Context 续写可从此页进入[原生 A2A 工作台](A2A_WORKBENCH.zh-CN.md)，不再只依赖设置页调试区。旧 Work/聊天记录不会自动迁移。
+日常使用通过现有智能体 Work/聊天界面对接 Pi；A2A 作为供其他 Agent 调用的集成接口保留。设置页不再常驻“执行记录／待审批”或任务调试区；历史、任务进度和根任务审批仍可通过 `/app/{workspace}/agents/{agentId}?settings=a2a&task={taskId}` 查看。打开链接不会提交任务或授予权限。内部子任务由父智能体发起委派即授权使用已配置工具，不再逐项等待人工审批。
 
 面向工作区使用者。打开 **Agent 设置 → A2A 接入**，也可进入
 `/app/{workspace}/agents/{agentId}?settings=a2a`。
+
+“让外部服务调用此 Agent”区域直接提供接入步骤、账户 Token 管理入口（或 Hermes 服务密钥说明）、可复制的 Card / SendMessage / GetTask / SubscribeToTask / CancelTask 示例、响应解析和常见错误排查。未配置有效连接地址时仍可阅读指南；阅读或复制示例不会自动提交任务。
 页面使用原生 A2A 1.0 核心，不需要在浏览器粘贴账户 Token。
 
 ## 内部协作
 
-先配置 Pi、Claude Code、DSH 或 Hermes RPC 的模型与独占联网 Docker 沙箱。
-工作区所有者或管理员点击“启用内部 A2A”，确认开放范围；普通成员只能查看信息、
-调用已启用的 Agent。在“配置允许委派的 Agent”中选择目标，并分别启用这些目标。
-不会自动启用整个工作区。托管 Hermes 不支持该内部执行模式。
+先配置 Pi、Claude Code、DSH 或 Hermes RPC 的模型与独占联网 Docker 沙箱，
+再在调用方“配置允许委派的 Agent”中选择子智能体。经已认证聊天、Work 或 control
+入口发起内部委派时，调用方与所选目标均无需额外开启 A2A 开关。
+勾选只授权这些有向关联，不自动开放整个工作区。托管 Hermes 不支持该内部执行模式。
 
 独立 Context 不是独立文件系统：任务可使用目标沙箱中的文件、记忆和已配置工具。
-关闭内部 A2A 后，已有执行及后代会在原生任务核心重新校验授权时停止；
-已经发生的外部副作用不会回滚。
+取消勾选后，相关授权在重新校验时失效；已经发生的副作用不会回滚。
+独立的“外部 A2A 与渠道访问”开关仍须所有者或管理员确认，控制外部调用、
+账户令牌认证的 A2A 根任务入口及渠道执行授权，不控制已勾选子智能体的内部委派。
 
-“本地任务调试”使用当前登录成员的身份向同一 A2A Handler 发起请求：
-提交新任务、查看自己最近 20 个任务、按 Task ID 查询、为 INPUT_REQUIRED 任务补充信息，
-以及请求取消。列表是有界预览，不是工作区所有人的任务列表；列表结果不附交付物。
-选择自己拥有的根任务后显示父子任务树，每次检查当前用户、目标配置和委派关系；
-失效或无权访问的子树不返回。点击可见子任务查看结果，知道其他人的任务 ID 不代表有权限。
+通过自己拥有的根任务链接查看有界父子任务树，并处理根工具调用所需的人工审批。设置页不再提供提交、列表或追问的任务调试控件，请使用现有聊天／Work 界面或文档中的 A2A API。每次检查当前用户、目标配置和委派关系；失效或无权访问的子树不返回，知道其他人的任务 ID 不代表有权限。
 
 提交会消耗模型与工具资源，不会在打开页面时自动执行。显示“已接受”不代表“已完成”；
 任务树正常每 2.5 秒只读刷新，页面隐藏时暂停，全部可见任务终结后停止。可手动暂停、
@@ -38,7 +37,7 @@
 ## 对外服务和凭据
 
 先在托管 Hermes 的 **API 发布配置** 中发布有效的隔离 Endpoint，再启用“对外 A2A”。
-内部启用与公开发布是两个独立授权，公开调用不会获得私人 Agent 的权限。
+账户令牌入口与公开发布是两个独立授权，公开调用不会获得私人 Agent 的权限。
 
 在“外部客户端凭据”输入集成名称，创建专用客户端与密钥。客户端、密钥哈希和审计在同一
 事务中保存，权限固定为 `a2a:send`、`a2a:read`、`a2a:cancel`，不会提升旧 Responses 客户端。
@@ -58,10 +57,24 @@
 页面分别展示本地和对外的 RPC / Agent Card 地址，以及获取 Card、SendMessage、GetTask、
 SubscribeToTask、CancelTask 的 curl 示例。地址来自部署配置 `NEXT_PUBLIC_APP_URL`，
 不从不可信 Host / X-Forwarded-Host 生成。生产地址需要 HTTPS，回环地址允许 HTTP。
+仅当 `NODE_ENV=development` 时，额外允许 RFC1918 私有 IPv4 地址使用 HTTP：
+`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`；不放行公网 HTTP 或任意域名。
+例如在 `.env` 设置 `NEXT_PUBLIC_APP_URL="http://10.0.10.2:3002"`，
+运行 `pnpm dev --hostname 0.0.0.0 --port 3002`，浏览器也通过同一地址访问。
+此规则同时用于控制台、连接示例及本地/对外 Agent Card；登录、工作区权限和严格
+Origin 校验仍然生效。生产部署继续使用 HTTPS；内网 HTTP 不加密凭据，仅用于可信开发网络。
 
 示例只引用环境变量，不填充真实密钥。服务端本地集成使用 `TOOLPLANE_ACCOUNT_TOKEN`，
 对外集成使用 `TOOLPLANE_A2A_TOKEN`。两种 Token 不能混用；Card 也需要鉴权。
 每个新任务替换 messageId；只在重试同一请求时复用完全相同的 ID 和内容。查询时替换 Task ID。
+
+平台内说明提供可复制的 Token `export` 设置命令和 `uuidgen`，并直接展开 Card 与
+SendMessage 的完整 curl 示例。请在能访问所示地址的电脑上，使用 Mac“终端”、Linux
+终端或 Windows WSL Bash 逐条执行，不是在 ToolPlane 聊天框、浏览器控制台或 Agent
+沙箱执行。在本机替换 Token 占位符，后续命令保持在同一终端窗口；命令历史可能保存
+Token，不要分享历史或截图。获取 Card 不启动任务；SendMessage 会运行 Agent 并可能
+消耗资源。正式接入由自己的后端程序发送相同 HTTP 请求。仅需内部 Agent 协作时，
+勾选允许的子 Agent 即可，不需要运行这些终端命令。
 
 ## 浏览器和协议的边界
 
@@ -79,7 +92,7 @@ GET /api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/tasks?rootTaskId=...
 管理操作在事务中重新检查当前管理员资格。
 
 公开 A2A 和服务端本地协议入口保持原有 Bearer 验证，不因此接受 Cookie 或浏览器跨域请求。
-控制台不伪造账户 Token，也不绕回旧 Responses/协作 Worker。调试任务不属于 Work 审批流程；
+控制台不伪造账户 Token，也不绕回旧 Responses/协作 Worker。原生任务审批与 Work 审批记录独立；
 受支持经典入口通过[统一适配](A2A_INGRESS_APPROVALS.zh-CN.md)进入原生核心；渠道需要显式绑定真实操作人，旧记录不自动重放。
 
 对外连接区还提供[原生 MCP 适配](A2A_MCP_BRIDGE.zh-CN.md)，复用显式授予 A2A 权限的服务凭据。

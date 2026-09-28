@@ -1,11 +1,17 @@
 'use client';
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
 import { Download, Plus, Save } from 'lucide-react';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { AdminBadge } from '@/components/admin/AdminUI';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import {
   fetchServerSourceMetadataAction,
   type ServerSourceMetadataActionState,
@@ -20,8 +26,6 @@ type Initial = {
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
-const TEXTAREA_CLASS = 'ui-input h-auto min-h-28 resize-y py-2.5';
-const CHECKBOX_CLASS = 'size-4 shrink-0 accent-brand';
 
 export function ServerForm({
   action, initial, categories, submitLabel, showSourceMetadata = true,
@@ -57,51 +61,32 @@ export function ServerForm({
       {showSourceMetadata ? <fieldset className="rounded-md bg-muted/35 p-4">
         <legend className="px-1 text-sm font-semibold text-foreground">{t('fetchSourceMetadata')}</legend>
         <div className="mt-2 grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]">
-          <label className={LABEL_CLASS}>
+          <div className={LABEL_CLASS}>
             <span>{t('metadataSource')}</span>
-            <NativeSelect name="sourceMetadataSource" defaultValue={source} className="ui-input h-11">
-              <option value="npm">{t('npm')}</option>
-              <option value="pypi">{t('pypi')}</option>
-              <option value="github">{t('github')}</option>
-            </NativeSelect>
-          </label>
+            <FormSelect name="sourceMetadataSource" defaultValue={source} label={t('metadataSource')} options={[{ value: "npm", label: t('npm') }, { value: "pypi", label: t('pypi') }, { value: "github", label: t('github') }]} />
+          </div>
           <label className={LABEL_CLASS}>
             <span>{t('packageOrGithubRepository')}</span>
-            <input
-              name="sourceMetadataRef"
-              defaultValue={sourceRef}
-              placeholder="@modelcontextprotocol/server-memory"
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="sourceMetadataRef" defaultValue={sourceRef} placeholder="@modelcontextprotocol/server-memory" autoCapitalize="none" spellCheck={false} />
           </label>
         </div>
         <div className="mt-4 flex flex-col items-start gap-3 sm:flex-row sm:items-end">
           <label className={`${LABEL_CLASS} min-w-0 flex-1`}>
             <span>{t('sourceUrl')}</span>
-            <input value={sourceUrl} readOnly className="ui-input h-11 truncate font-mono text-xs" />
+            <Input value={sourceUrl} readOnly className="truncate" />
           </label>
           <input type="hidden" name="sourceMetadataCanonicalUrl" value={sourceUrl} />
-          <button
-            type="submit"
-            formAction={sourceAction}
-            formNoValidate
-            disabled={sourcePending}
-            className="ui-button-secondary h-11 shrink-0 disabled:cursor-wait disabled:opacity-70"
-          >
-            <Download className="size-4" />
-            {sourcePending ? t('fetchingMetadata') : t('fetchMetadata')}
-          </button>
+          <Button type="submit" formAction={sourceAction} formNoValidate disabled={sourcePending} variant="secondary" size="md" className="shrink-0"><Download className="size-4" />
+          {sourcePending ? t('fetchingMetadata') : t('fetchMetadata')}</Button>
         </div>
-        {sourceState.error ? <p className="mt-3 text-sm text-destructive-text" role="alert">{sourceState.error}</p> : null}
+        {sourceState.error ? <p className="mt-3 text-sm text-destructive" role="alert">{sourceState.error}</p> : null}
         {metadata ? <p className="mt-3 text-sm text-muted-foreground" role="status">{t('metadataFetched')}</p> : null}
       </fieldset> : null}
 
       <div className="grid gap-5 sm:grid-cols-2">
         <label className={LABEL_CLASS}>
           <span>{t('name')}</span>
-          <input key={`name-${metadataKey}`} name="name" defaultValue={metadata?.name ?? initial.name ?? ''} required className="ui-input h-11" />
+          <Input key={`name-${metadataKey}`} name="name" defaultValue={metadata?.name ?? initial.name ?? ''} required />
         </label>
         {initial.id ? (
           <div className={LABEL_CLASS}>
@@ -114,78 +99,40 @@ export function ServerForm({
         ) : (
           <label className={LABEL_CLASS}>
             <span>{t('slug1')}</span>
-            <input
-              name="slug"
-              required
-              key={`slug-${metadataKey}`}
-              defaultValue={initial.slug ?? suggestedSlug}
-              placeholder="my-server"
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="slug" required key={`slug-${metadataKey}`} defaultValue={initial.slug ?? suggestedSlug} placeholder="my-server" autoCapitalize="none" spellCheck={false} />
           </label>
         )}
         <label className={LABEL_CLASS}>
           <span>{t('author')}</span>
-          <input key={`author-${metadataKey}`} name="author" defaultValue={metadata?.author ?? initial.author ?? ''} className="ui-input h-11" />
+          <Input key={`author-${metadataKey}`} name="author" defaultValue={metadata?.author ?? initial.author ?? ''} />
         </label>
         <label className={LABEL_CLASS}>
           <span>{t('stars')}</span>
-          <input key={`stars-${metadataKey}`} name="stars" type="number" defaultValue={metadata?.stars ?? initial.stars ?? 0} className="ui-input h-11" />
+          <Input key={`stars-${metadataKey}`} name="stars" type="number" defaultValue={String(metadata?.stars ?? initial.stars ?? 0)} />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('description')}</span>
-          <textarea
-            name="description"
-            key={`description-${metadataKey}`}
-            defaultValue={metadata?.description ?? initial.description ?? ''}
-            rows={4}
-            className={TEXTAREA_CLASS}
-          />
+          <textarea name="description" key={`description-${metadataKey}`} defaultValue={metadata?.description ?? initial.description ?? ''} rows={4} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('readme')}</span>
-          <textarea
-            name="readme"
-            key={`readme-${metadataKey}`}
-            defaultValue={metadata?.readme ?? initial.readme ?? ''}
-            rows={12}
-            className={`${TEXTAREA_CLASS} min-h-64 font-mono text-xs leading-5`}
-          />
+          <textarea name="readme" key={`readme-${metadataKey}`} defaultValue={metadata?.readme ?? initial.readme ?? ''} rows={12} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         </label>
         <label className={`${LABEL_CLASS} sm:col-span-2`}>
           <span>{t('iconUrl')}</span>
-          <input
-            name="iconUrl"
-            defaultValue={initial.iconUrl ?? ''}
-            className="ui-input h-11"
-            inputMode="url"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
+          <Input name="iconUrl" defaultValue={initial.iconUrl ?? ''} inputMode="url" autoCapitalize="none" spellCheck={false} />
         </label>
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:gap-5">
-        <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-          <input
-            type="checkbox"
-            name="isOfficial"
-            defaultChecked={initial.isOfficial}
-            className={CHECKBOX_CLASS}
-          />
-          {t('official')}
-        </label>
-        <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
-          <input
-            type="checkbox"
-            name="isFeatured"
-            defaultChecked={initial.isFeatured}
-            className={CHECKBOX_CLASS}
-          />
-          {t('featured')}
-        </label>
+        <div className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+          <FormCheckbox name="isOfficial" defaultChecked={initial.isOfficial} label={t('official')} />
+          
+        </div>
+        <div className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted/60">
+          <FormCheckbox name="isFeatured" defaultChecked={initial.isFeatured} label={t('featured')} />
+          
+        </div>
       </div>
 
       <fieldset className="border-t border-border pt-5">
@@ -193,19 +140,13 @@ export function ServerForm({
         {categories.length > 0 ? (
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
             {categories.map((c) => (
-              <label
+              <div
                 key={c.id}
                 className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60"
               >
-                <input
-                  type="checkbox"
-                  name="categoryIds"
-                  value={c.id}
-                  defaultChecked={sel.has(c.id)}
-                  className={CHECKBOX_CLASS}
-                />
-                {c.name}
-              </label>
+                <FormCheckbox name="categoryIds" value={c.id} defaultChecked={sel.has(c.id)} label={c.name} />
+                
+              </div>
             ))}
           </div>
         ) : (
@@ -218,13 +159,13 @@ export function ServerForm({
           error={state.error}
           pendingLabel={t('saving')}
           savedLabel={t('saved')}
-          className="ui-button-primary h-11 w-full sm:w-auto"
+          variant="primary" size="md" className="w-full sm:w-auto"
         >
           <SubmitIcon className="size-4" />
           {submitLabel}
         </SubmitButton>
         {state.error ? (
-          <p className="text-sm text-destructive-text" role="alert">
+          <p className="text-sm text-destructive" role="alert">
             {state.error}
           </p>
         ) : null}

@@ -1,4 +1,6 @@
 'use client';
+import { Input } from '@/components/motion/input';
+
 
 import { useActionState } from 'react';
 import { Save, Upload } from 'lucide-react';
@@ -25,19 +27,7 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
 
         <div className="max-w-sm space-y-1.5 text-sm font-medium text-foreground">
           <label htmlFor="skill-import-max-skills">{t('skillImportMaxSkills')}</label>
-          <input
-            id="skill-import-max-skills"
-            name="skillImportMaxSkills"
-            type="number"
-            min={MIN_SKILL_IMPORT_SKILLS}
-            max={MAX_SKILL_IMPORT_SKILLS}
-            step="1"
-            inputMode="numeric"
-            required
-            defaultValue={maxSkills}
-            aria-describedby="skill-import-max-skills-hint"
-            className="ui-input h-11 w-full"
-          />
+          <Input id="skill-import-max-skills" name="skillImportMaxSkills" type="number" min={MIN_SKILL_IMPORT_SKILLS} max={MAX_SKILL_IMPORT_SKILLS} step="1" inputMode="numeric" required defaultValue={String(maxSkills)} aria-describedby="skill-import-max-skills-hint" className="w-full" />
           <p id="skill-import-max-skills-hint" className="text-xs font-normal leading-5 text-muted-foreground">
             {t('skillImportMaxSkillsHint', {
               min: MIN_SKILL_IMPORT_SKILLS,
@@ -51,12 +41,12 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
             error={state.error}
             pendingLabel={t('saving')}
             savedLabel={t('saved')}
-            className="ui-button-primary h-11 w-full sm:w-auto"
+            variant="primary" size="md" className="w-full sm:w-auto"
           >
             <Save className="size-4" aria-hidden="true" />
             {t('saveChanges')}
           </SubmitButton>
-          {state.error ? <p className="text-sm text-destructive-text" role="alert">{state.error}</p> : null}
+          {state.error ? <p className="text-sm text-destructive" role="alert">{state.error}</p> : null}
         </div>
       </form>
     </AdminPanel>

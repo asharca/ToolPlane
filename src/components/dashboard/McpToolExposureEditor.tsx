@@ -1,12 +1,17 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { RadioGroup } from '@/components/motion/radio';
+import { RadioGroupItem } from '@/components/motion/radio';
+
+import { Button } from '@/components/motion/button';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 
 import { useActionState, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Bot, CheckSquare2, Save, ShieldCheck } from 'lucide-react';
-import {
-  updateMcpToolExposureAction,
-  type McpToolExposureActionState,
-} from '@/lib/workspace/actions';
+import { updateMcpToolExposureAction, type McpToolExposureActionState } from '@/lib/workspace/actions';
 
 type ToolSummary = {
   name: string;
@@ -114,47 +119,16 @@ export function McpToolExposureEditor({
             </p>
           </div>
         </div>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="ui-button-primary ui-button-sm disabled:cursor-wait disabled:opacity-70"
-        >
-          <Save className="size-3.5" />
-          {isPending ? t('savingToolExposure') : t('saveToolExposure')}
-        </button>
+        <Button type="submit" disabled={isPending} variant="primary" size="sm"><Save className="size-3.5" />
+        {isPending ? t('savingToolExposure') : t('saveToolExposure')}</Button>
       </div>
 
       <fieldset disabled={isPending} className="mt-4">
         <legend className="sr-only">{t('aiToolExposure')}</legend>
-        <div className="grid max-w-xl grid-cols-1 gap-1 rounded-md border border-border bg-muted/20 p-1 sm:grid-cols-2">
-          {([
-            ['all', t('allTools'), t('allCurrentAndFutureTools')],
-            ['allowlist', t('selectedTools'), t('onlyCheckedTools')],
-          ] as const).map(([value, label, description]) => {
-            const active = mode === value;
-            return (
-              <label
-                key={value}
-                className={`cursor-pointer rounded px-3 py-2 transition-colors ${
-                  active
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="mode"
-                  value={value}
-                  checked={active}
-                  onChange={() => selectMode(value)}
-                  className="sr-only"
-                />
-                <span className="block text-sm font-medium">{label}</span>
-                <span className="block text-xs leading-4 text-muted-foreground">{description}</span>
-              </label>
-            );
-          })}
-        </div>
+        <input type="hidden" name="mode" value={mode} disabled={isPending} />
+        <RadioGroup value={mode} onValueChange={(next) => selectMode(next as 'all' | 'allowlist')} orientation="horizontal">
+          {([['all', t('allTools'), t('allCurrentAndFutureTools')], ['allowlist', t('selectedTools'), t('onlyCheckedTools')]] as const).map(([value, label, description]) => (<div key={value} className="space-y-2"><RadioGroupItem value={value} label={label} disabled={isPending} /><p className="text-xs text-muted-foreground">{description}</p></div>))}
+        </RadioGroup>
 
         {mode === 'allowlist' ? (
           <div className="mt-4 max-w-4xl overflow-hidden rounded-md border border-border">
@@ -164,30 +138,18 @@ export function McpToolExposureEditor({
               </span>
               <div className="flex items-center gap-3">
                 {entries.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(new Set(
-                        entries.filter((tool) => tool.available).map((tool) => tool.name),
-                      ));
-                      setRevision((current) => current + 1);
-                    }}
-                    className="ui-button-ghost ui-button-sm"
-                  >
-                    {t('selectAllTools')}
-                  </button>
+                  <Button type="button" onClick={() => {
+                    setSelected(new Set(
+                      entries.filter((tool) => tool.available).map((tool) => tool.name),
+                    ));
+                    setRevision((current) => current + 1);
+                  }} variant="ghost" size="sm">{t('selectAllTools')}</Button>
                 ) : null}
                 {selected.size > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(new Set());
-                      setRevision((current) => current + 1);
-                    }}
-                    className="ui-button-ghost ui-button-sm"
-                  >
-                    {t('clearToolSelection')}
-                  </button>
+                  <Button type="button" onClick={() => {
+                    setSelected(new Set());
+                    setRevision((current) => current + 1);
+                  }} variant="ghost" size="sm">{t('clearToolSelection')}</Button>
                 ) : null}
               </div>
             </div>
@@ -196,22 +158,15 @@ export function McpToolExposureEditor({
               <ul className="max-h-80 divide-y divide-border overflow-y-auto">
                 {entries.map((tool) => (
                   <li key={tool.name}>
-                    <label className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/30">
-                      <input
-                        type="checkbox"
-                        name="toolName"
-                        value={tool.name}
-                        checked={selected.has(tool.name)}
-                        onChange={() => toggleTool(tool.name)}
-                        className="mt-0.5 size-4 accent-foreground"
-                      />
+                    <div className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-muted/30">
+                      <FormCheckbox name="toolName" value={tool.name} checked={selected.has(tool.name)} onCheckedChange={() => toggleTool(tool.name)} label={tool.name} />
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-2">
-                          <code className="break-all font-mono text-xs text-foreground">{tool.name}</code>
+                          
                           {!tool.available ? (
-                            <span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                               {t('currentlyUnavailable')}
-                            </span>
+                            </AnimatedBadge>
                           ) : null}
                         </span>
                         {tool.description ? (
@@ -220,7 +175,7 @@ export function McpToolExposureEditor({
                           </span>
                         ) : null}
                       </span>
-                    </label>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -238,30 +193,24 @@ export function McpToolExposureEditor({
         )}
       </fieldset>
 
-      <label className="mt-4 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-        <input
-          type="checkbox"
-          name="publicInvocable"
-          defaultChecked={initialPublicInvocable}
-          disabled={isPending || mode !== 'allowlist' || selected.size === 0}
-          className="mt-0.5 size-4 rounded border-border"
-        />
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+      <div className="mt-4 flex items-start gap-3 rounded-md border border-border bg-muted p-3">
+        <FormCheckbox name="publicInvocable" defaultChecked={initialPublicInvocable} disabled={isPending || mode !== 'allowlist' || selected.size === 0} label={t('publicAgentInvocable')} />
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-(--color-warning) dark:text-(--color-warning)" />
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">{t('publicAgentInvocable')}</span>
+          
           <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
             {t('publicAgentInvocableHelp')}
           </span>
         </span>
-      </label>
+      </div>
 
       <div className="mt-3 min-h-5">
         {error ? (
-          <p className="text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>
+          <p className="text-sm text-destructive dark:text-destructive" role="alert">{error}</p>
         ) : state.savedAt && state.revision === revision ? (
-          <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+          <p role="status"><AnimatedBadge status="success">
             {t('toolExposureSaved')}
-          </p>
+          </AnimatedBadge></p>
         ) : null}
       </div>
     </form>

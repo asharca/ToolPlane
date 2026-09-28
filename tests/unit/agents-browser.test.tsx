@@ -36,6 +36,10 @@ async function advanceToCreate(user: ReturnType<typeof userEvent.setup>) {
   }
   throw new Error('Create step was not reached.');
 }
+async function chooseBeUiOption(user: ReturnType<typeof userEvent.setup>, label: RegExp | string, option: string) {
+  await user.click(screen.getByRole('button', { name: typeof label === 'string' ? new RegExp(label) : label }));
+  await user.click(screen.getByRole('option', { name: option }));
+}
 
 describe('AgentsBrowser', () => {
   beforeEach(() => {
@@ -64,6 +68,26 @@ describe('AgentsBrowser', () => {
     expect(document.querySelector('#agent-create-source')).not.toBeInTheDocument();
     expect(document.querySelector<HTMLInputElement>('input[name="returnTo"]')).toHaveValue('/app/acme/work');
     expect(screen.getByText('Add a model provider before expecting replies')).toBeInTheDocument();
+  });
+
+  it('defaults to the first compatible model so naming alone enables the next step', async () => {
+    const user = userEvent.setup();
+    navigation.search = 'create=1';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [{ id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] }],
+          deployments: [], skills: [], toolkits: [],
+        }}
+      />,
+    );
+
+    await user.type(screen.getByLabelText('Name'), 'Research assistant');
+
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Model: gpt-4.1/ })).toBeInTheDocument();
   });
 
   it('shows and installs agent market data inside the creator', async () => {
@@ -358,16 +382,17 @@ describe('AgentsBrowser', () => {
 
     await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
-    const version = screen.getByLabelText('Hermes version');
-    expect(version).toHaveValue('nousresearch/hermes-agent:latest');
-    expect(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' })).toBeInTheDocument();
-
-    await user.selectOptions(version, 'nousresearch/hermes-agent:v2026.7.20');
+    const version = screen.getByRole('button', { name: /Hermes version/ });
+    expect(version).toHaveTextContent('nousresearch/hermes-agent:latest');
+    await user.click(version);
+    expect(screen.getByRole('option', { name: /nousresearch\/hermes-agent:v2026\.7\.20/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: /nousresearch\/hermes-agent:v2026\.7\.20/ }));
     expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
       'nousresearch/hermes-agent:v2026.7.20',
     );
 
-    await user.selectOptions(version, '__custom__');
+    await user.click(screen.getByRole('button', { name: /Hermes version/ }));
+    await user.click(screen.getByRole('option', { name: /custom image/i }));
     const customImage = screen.getByLabelText('Custom image / version');
     await user.type(customImage, 'registry.example/hermes:v2026.8.1');
     expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
@@ -412,7 +437,7 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /Hermes RPC/ }));
     await user.type(screen.getByLabelText('Name'), 'Native Hermes');
-    await user.selectOptions(screen.getByRole('combobox', { name: /Runtime sandbox/ }), 'sandbox-available');
+    await chooseBeUiOption(user, /Runtime sandbox/, 'Selected Linux sandbox');
     await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
     await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
@@ -465,10 +490,7 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
     await user.type(screen.getByLabelText('Name'), 'Pinned Hermes');
-    await user.selectOptions(
-      screen.getByLabelText('Hermes version'),
-      'nousresearch/hermes-agent:v2026.7.20',
-    );
+    await chooseBeUiOption(user, /Hermes version/, 'nousresearch/hermes-agent:v2026.7.20');
     await advanceToCreate(user);
     await user.click(screen.getByRole('button', { name: 'Create agent' }));
 

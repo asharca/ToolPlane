@@ -54,14 +54,15 @@ describe('ToolkitResourcePicker', () => {
       />,
     );
 
-    await user.selectOptions(screen.getByLabelText('Filter by source'), 'github');
+    await user.click(screen.getByRole('button', { name: /^Filter by source:/ }));
+    await user.click(screen.getByRole('option', { name: 'GitHub' }));
     expect(screen.getByText('RouterOS Firewall')).toBeInTheDocument();
     expect(screen.getByText('RouterOS Scripts')).toBeInTheDocument();
     expect(screen.queryByText('PDF Reader')).not.toBeInTheDocument();
 
     const selectVisible = screen.getByRole('checkbox', { name: 'Select all matching (2)' });
     await user.click(screen.getByLabelText('Select RouterOS Firewall'));
-    expect(selectVisible).toHaveProperty('indeterminate', true);
+    expect(selectVisible).toBePartiallyChecked();
     await user.click(selectVisible);
     expect(screen.getByRole('button', { name: 'Add selected (2)' })).toBeEnabled();
 
@@ -91,8 +92,10 @@ describe('ToolkitResourcePicker', () => {
       />,
     );
 
-    await user.selectOptions(screen.getByLabelText('Filter by source'), 'custom');
-    await user.selectOptions(screen.getByLabelText('Filter by status'), 'running');
+    await user.click(screen.getByRole('button', { name: /^Filter by source:/ }));
+    await user.click(screen.getByRole('option', { name: 'Custom' }));
+    await user.click(screen.getByRole('button', { name: /^Filter by status:/ }));
+    await user.click(screen.getByRole('option', { name: 'Running' }));
 
     expect(screen.getByText('Custom Running')).toBeInTheDocument();
     expect(screen.queryByText('Catalog Running')).not.toBeInTheDocument();

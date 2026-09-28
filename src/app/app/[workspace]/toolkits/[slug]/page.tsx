@@ -1,26 +1,18 @@
+
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { Button } from '@/components/motion/button';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { Input } from '@/components/motion/input';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { headers } from 'next/headers';
-import {
-  Brain,
-  CopyPlus,
-  Globe,
-  Pencil,
-  Server as ServerIcon,
-  Settings,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Brain, CopyPlus, Globe, Pencil, Server as ServerIcon, Settings, Trash2, X } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { db } from '@/lib/db';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import {
-  getToolkitBySlug,
-  getOrCreateDefaultToolkit,
-  getToolkitMcpCandidates,
-  getToolkitSkillCandidates,
-} from '@/lib/toolkits/queries';
+import { getToolkitBySlug, getOrCreateDefaultToolkit, getToolkitMcpCandidates, getToolkitSkillCandidates } from '@/lib/toolkits/queries';
 import { getOrCreateToolkitInstallLink } from '@/lib/toolkits/install-link';
 import { installBaseFromHeaders } from '@/lib/plugin/service-base';
 import { installationName } from '@/lib/plugin/installation-identity';
@@ -28,24 +20,12 @@ import { effectiveStatus, liveStatus } from '@/lib/process/supervisor';
 import { deploymentLabel } from '@/lib/workspace/deployment-label';
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { listMcpTools } from '@/lib/process/mcp-client';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ToolkitInstall } from '@/components/dashboard/ToolkitInstall';
-import {
-  ToolkitResourcePicker,
-  type ToolkitPickerItem,
-} from '@/components/dashboard/toolkits/ToolkitResourcePicker';
+import { ToolkitResourcePicker, type ToolkitPickerItem } from '@/components/dashboard/toolkits/ToolkitResourcePicker';
 import { TabBar } from '@/components/dashboard/TabBar';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
-import { NativeSelect } from '@/components/ui/NativeSelect';
-import {
-  cloneToolkitAction,
-  deleteToolkitAction,
-  renameToolkitAction,
-  removeServerFromToolkitAction,
-  removeSkillFromToolkitAction,
-  updateToolkitAvailabilityAction,
-} from '@/lib/toolkits/actions';
+import { cloneToolkitAction, deleteToolkitAction, renameToolkitAction, removeServerFromToolkitAction, removeSkillFromToolkitAction, updateToolkitAvailabilityAction } from '@/lib/toolkits/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -133,13 +113,7 @@ export default async function ToolkitDetailPage({
   const defaultCloneName = t('copyNameDefault', { name: toolkit.name.slice(0, 55).trimEnd() });
   return (
     <>
-      <DashboardHeader
-        breadcrumb={[
-          { label: t('title'), href: `/app/${wsSlug}/toolkits` },
-          { label: toolkitSlug },
-        ]}
-      />
-      <div className="ui-page space-y-5">
+      <div className="p-4 sm:p-6 space-y-5">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
@@ -148,7 +122,7 @@ export default async function ToolkitDetailPage({
             <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
               <span
                 className={`size-2 rounded-full ${
-                  toolkit.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/60'
+                  toolkit.enabled ? 'bg-(--color-success)' : 'bg-muted-foreground/60'
                 }`}
               />
               {toolkit.enabled ? t('enabled') : t('disabled')}
@@ -173,7 +147,7 @@ export default async function ToolkitDetailPage({
               skillCount={toolkit.skills.length}
             />
 
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-foreground">
                   {t('connectedMcp')}
@@ -213,7 +187,7 @@ export default async function ToolkitDetailPage({
               )}
             </section>
 
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-foreground">
                   {t('skills')}
@@ -252,7 +226,7 @@ export default async function ToolkitDetailPage({
 
         {current === 'mcps' ? (
           <div className="space-y-5">
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-foreground">
                   {t('inThisToolkit')}
@@ -282,10 +256,8 @@ export default async function ToolkitDetailPage({
                         <input type="hidden" name="workspace" value={wsSlug} />
                         <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                         <input type="hidden" name="deploymentId" value={s.deployment.id} />
-                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
-                          <X className="size-3.5" />
-                          {t('remove')}
-                        </button>
+                        <Button variant="ghost" size="sm" type="submit"><X className="size-3.5" />
+                        {t('remove')}</Button>
                       </form>
                     </li>
                   ))}
@@ -305,7 +277,7 @@ export default async function ToolkitDetailPage({
 
         {current === 'skills' ? (
           <div className="space-y-5">
-            <section className="ui-panel overflow-hidden">
+            <section className="rounded-xl border border-border bg-card overflow-hidden">
               <header className={cardHeader}>
                 <h2 className="text-sm font-semibold text-foreground">
                   {t('inThisToolkit')}
@@ -339,10 +311,8 @@ export default async function ToolkitDetailPage({
                           name="installedSkillId"
                           value={s.installedSkill.id}
                         />
-                        <button className="ui-button-ghost ui-button-sm px-2 hover:text-red-600">
-                          <X className="size-3.5" />
-                          {t('remove')}
-                        </button>
+                        <Button variant="ghost" size="sm" type="submit"><X className="size-3.5" />
+                        {t('remove')}</Button>
                       </form>
                     </li>
                   ))}
@@ -378,34 +348,18 @@ export default async function ToolkitDetailPage({
                   <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                   <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                     {t('visibility')}
-                    <NativeSelect
-                      name="visibility"
-                      defaultValue={toolkit.visibility}
-                      className="ui-input h-9 w-full text-sm"
-                    >
-                      <option value="private">{t('private')}</option>
-                      <option value="public">{t('public')}</option>
-                    </NativeSelect>
+                    <FormSelect name="visibility" defaultValue={toolkit.visibility} label={t('visibility')} options={[{ value: 'private', label: t('private') }, { value: 'public', label: t('public') }]} />
                   </label>
-                  <label className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
-                    <input
-                      type="checkbox"
-                      name="enabled"
-                      defaultChecked={toolkit.enabled}
-                      className="mt-0.5 size-3.5 accent-brand"
-                    />
+                  <div className="inline-flex items-start gap-2.5 rounded-md border border-border px-3 py-2.5 text-sm text-foreground">
+                    <FormCheckbox name="enabled" defaultChecked={toolkit.enabled} label={t('enabled')} />
                     <span>
-                      <span className="block font-medium">{t('enabled')}</span>
+                      
                       <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
                         {t('enabledDescription')}
                       </span>
                     </span>
-                  </label>
-                  <SubmitButton
-                    pendingLabel={t('savingAvailability')}
-                    savedLabel={t('availabilitySaved')}
-                    className="ui-button-secondary h-9 w-full text-xs sm:w-fit"
-                  >
+                  </div>
+                  <SubmitButton pendingLabel={t('savingAvailability')} savedLabel={t('availabilitySaved')} variant="secondary" size="sm" className="w-full sm:w-fit">
                     {t('saveAvailability')}
                   </SubmitButton>
                 </form>
@@ -434,21 +388,9 @@ export default async function ToolkitDetailPage({
                 <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('toolkitName')}
-                  <input
-                    name="name"
-                    defaultValue={toolkit.name}
-                    required
-                    maxLength={60}
-                    pattern=".*\S.*"
-                    title={t('nameCannotBeBlank')}
-                    className="ui-input h-9 min-w-0 text-sm"
-                  />
+                  <Input name="name" defaultValue={toolkit.name} required maxLength={60} pattern=".*\S.*" title={t('nameCannotBeBlank')} className="min-w-0" />
                 </label>
-                <SubmitButton
-                  pendingLabel={t('renaming')}
-                  savedLabel={t('renamed')}
-                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
-                >
+                <SubmitButton pendingLabel={t('renaming')} savedLabel={t('renamed')} variant="secondary" size="sm" className="w-full sm:w-auto">
                   <Pencil className="size-3.5" />
                   {t('rename')}
                 </SubmitButton>
@@ -473,21 +415,9 @@ export default async function ToolkitDetailPage({
                 <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('copyName')}
-                  <input
-                    name="name"
-                    defaultValue={defaultCloneName}
-                    required
-                    maxLength={60}
-                    pattern=".*\S.*"
-                    title={t('nameCannotBeBlank')}
-                    className="ui-input h-9 min-w-0 text-sm"
-                  />
+                  <Input name="name" defaultValue={defaultCloneName} required maxLength={60} pattern=".*\S.*" title={t('nameCannotBeBlank')} className="min-w-0" />
                 </label>
-                <SubmitButton
-                  flash={false}
-                  pendingLabel={t('cloning')}
-                  className="ui-button-secondary h-9 w-full text-xs sm:w-auto"
-                >
+                <SubmitButton flash={false} pendingLabel={t('cloning')} variant="secondary" size="sm" className="w-full sm:w-auto">
                   <CopyPlus className="size-3.5" />
                   {t('clone')}
                 </SubmitButton>
@@ -497,8 +427,8 @@ export default async function ToolkitDetailPage({
             {toolkitSlug !== 'me' ? (
               <section className="pt-6">
                 <div className="flex items-center gap-2">
-                  <Trash2 className="size-4 text-red-600 dark:text-red-400" />
-                  <h2 className="text-sm font-semibold text-red-700 dark:text-red-400">
+                  <Trash2 className="size-4 text-destructive dark:text-destructive" />
+                  <h2 className="text-sm font-semibold text-destructive dark:text-destructive">
                     {t('dangerZone')}
                   </h2>
                 </div>
@@ -512,23 +442,12 @@ export default async function ToolkitDetailPage({
                   <form action={deleteToolkitAction}>
                     <input type="hidden" name="workspace" value={wsSlug} />
                     <input type="hidden" name="toolkitSlug" value={toolkitSlug} />
-                    <ConfirmSubmitButton
-                      triggerLabel={
+                    <ConfirmSubmitButton triggerLabel={
                         <>
                           <Trash2 className="size-3.5" />
                           {t('deleteToolkit')}
                         </>
-                      }
-                      confirmLabel={common('confirm')}
-                      cancelLabel={common('cancel')}
-                      prompt={t('deleteToolkitPrompt', { name: toolkit.name })}
-                      pendingLabel={t('deleting')}
-                      className="max-w-xl items-center justify-end"
-                      triggerClassName="ui-button-secondary ui-button-danger-secondary h-9"
-                      confirmClassName="ui-button-primary ui-button-danger h-9"
-                      cancelClassName="ui-button-secondary h-9"
-                      promptClassName="text-xs text-muted-foreground"
-                    />
+                      } confirmLabel={common('confirm')} cancelLabel={common('cancel')} prompt={t('deleteToolkitPrompt', { name: toolkit.name })} pendingLabel={t('deleting')} promptClassName="text-xs text-muted-foreground" className="max-w-xl items-center justify-end" triggerVariant="secondary" triggerSize="sm" confirmVariant="primary" confirmSize="sm" cancelVariant="secondary" cancelSize="sm" />
                   </form>
                 </div>
               </section>

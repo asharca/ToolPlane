@@ -1,4 +1,6 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
+
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { ArrowUpRight, Bot, Brain, EyeOff, MessageSquare, Plug, Undo2, Upload, Wrench } from 'lucide-react';
@@ -70,9 +72,9 @@ function PublisherControls({
             confirmLabel={labels.withdraw}
             pendingLabel={labels.withdrawing}
             cancelLabel={labels.cancel}
-            triggerClassName="ui-button-ghost h-8 px-2 text-xs"
-            confirmClassName="ui-button-primary h-8 px-2.5 text-xs"
-            cancelClassName="ui-button-ghost h-8 px-2 text-xs"
+            
+            
+            
             promptClassName="max-w-72 text-xs text-muted-foreground"
           />
         </form>
@@ -87,9 +89,9 @@ function PublisherControls({
             confirmLabel={labels.unpublish}
             pendingLabel={labels.unpublishing}
             cancelLabel={labels.cancel}
-            triggerClassName="ui-button-ghost h-8 px-2 text-xs text-red-600 dark:text-red-400"
-            confirmClassName="ui-button-primary ui-button-danger h-8 px-2.5 text-xs"
-            cancelClassName="ui-button-ghost h-8 px-2 text-xs"
+            
+            
+            
             promptClassName="max-w-72 text-xs text-muted-foreground"
           />
         </form>
@@ -99,10 +101,10 @@ function PublisherControls({
 }
 
 function publicationTone(listing: ListingStatus | undefined) {
-  if (listing?.pendingRelease?.reviewStatus === 'pending') return 'bg-amber-500';
-  if (listing?.status === 'published' && listing.latestRelease) return 'bg-emerald-500';
-  if (listing?.status === 'disabled') return 'bg-red-500';
-  return 'bg-zinc-400';
+  if (listing?.pendingRelease?.reviewStatus === 'pending') return 'bg-muted/35';
+  if (listing?.status === 'published' && listing.latestRelease) return 'bg-muted/35';
+  if (listing?.status === 'disabled') return 'bg-destructive';
+  return 'bg-muted';
 }
 
 function resourceSlug(value: string) {
@@ -188,7 +190,7 @@ export default async function MarketPublishPage({
           {t('publishDescription')}
         </p>
         {!canPublish ? (
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{t('publishRequiresManager')}</p>
+          <p className="mt-2 text-xs text-(--color-warning) dark:text-(--color-warning)">{t('publishRequiresManager')}</p>
         ) : null}
       </div>
 
@@ -197,7 +199,7 @@ export default async function MarketPublishPage({
           icon={Upload}
           title={t('publishEmptyTitle')}
           description={t('publishEmptyDescription')}
-          actions={<Link href={`${base}/market/mcp`} className="ui-button-primary">{t('browseMcp')}</Link>}
+          actions={<ButtonLink href={`${base}/market/mcp`} variant="primary" size="md">{t('browseMcp')}</ButtonLink>}
         />
       ) : (
         <section aria-label={t('publishManagement')} className="space-y-1">
@@ -212,7 +214,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('mcp')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <Link href={`${base}/mcp/${deployment.id}`} className="ui-button-ghost h-8 px-2 text-xs sm:justify-self-end">{t('manage')} <ArrowUpRight className="size-3.5" /></Link>
+                <ButtonLink href={`${base}/mcp/${deployment.id}`} variant="ghost" size="sm">{t('manage')} <ArrowUpRight className="size-3.5" /></ButtonLink>
                 {deployment.serverId && !listing ? (
                   <span className="text-xs text-muted-foreground sm:col-span-4 sm:text-right">{t('catalogAlreadyListed')}</span>
                 ) : ['npm', 'pypi', 'github', 'docker'].includes(deployment.source ?? '') ? (
@@ -253,7 +255,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('skills')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <Link href={`${base}/skills/${skill.id}`} className="ui-button-ghost h-8 px-2 text-xs sm:justify-self-end">{t('manage')} <ArrowUpRight className="size-3.5" /></Link>
+                <ButtonLink href={`${base}/skills/${skill.id}`} variant="ghost" size="sm">{t('manage')} <ArrowUpRight className="size-3.5" /></ButtonLink>
                 <SkillPublishForm
                   workspace={workspace.slug}
                   skill={{
@@ -287,7 +289,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('agents')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <Link href={`${base}/agents/${agent.id}/publish`} className="ui-button-secondary h-8 px-2.5 text-xs sm:justify-self-end">{listing ? t('manageListing') : t('publishToMarket')} <ArrowUpRight className="size-3.5" /></Link>
+                <ButtonLink href={`${base}/agents/${agent.id}/publish`} variant="secondary" size="sm">{listing ? t('manageListing') : t('publishToMarket')} <ArrowUpRight className="size-3.5" /></ButtonLink>
               </article>
             );
           })}
@@ -302,7 +304,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('assistants')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <Link href={`${base}/chat?assistant=${assistant.id}`} className="ui-button-ghost h-8 px-2 text-xs sm:justify-self-end">{t('manage')} <ArrowUpRight className="size-3.5" /></Link>
+                <ButtonLink href={`${base}/chat?assistant=${assistant.id}`} variant="ghost" size="sm">{t('manage')} <ArrowUpRight className="size-3.5" /></ButtonLink>
                 <AssistantPublishForm
                   workspace={workspace.slug}
                   assistant={{
@@ -336,7 +338,7 @@ export default async function MarketPublishPage({
                 </div>
                 <span className="text-xs text-muted-foreground">{t('toolkits')}</span>
                 <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${publicationTone(listing)}`} />{publicationLabel(listing)}</span>
-                <Link href={`${base}/toolkits/${toolkit.slug}`} className="ui-button-ghost h-8 px-2 text-xs sm:justify-self-end">{t('manage')} <ArrowUpRight className="size-3.5" /></Link>
+                <ButtonLink href={`${base}/toolkits/${toolkit.slug}`} variant="ghost" size="sm">{t('manage')} <ArrowUpRight className="size-3.5" /></ButtonLink>
                 <ToolkitPublishForm
                   workspace={workspace.slug}
                   toolkit={{ id: toolkit.id, name: toolkit.name, slug: toolkit.slug, description: null }}

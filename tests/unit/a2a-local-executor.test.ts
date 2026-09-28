@@ -11,23 +11,24 @@ vi.mock('@/lib/agents/resolve', () => ({ resolveAgentTools: () => ({ deploymentI
 vi.mock('@/lib/process/supervisor', () => ({ liveStatus: (id: string) => id === 'live-mcp' ? 'running' : 'stopped' }));
 vi.mock('@/lib/agents/model', () => ({ resolveModelContext: () => ({ maxTokens: 128000, estimated: false }) }));
 vi.mock('@/lib/agents/sandbox-runtime', () => ({ runSandboxAgentTurn: mocks.run }));
+vi.mock('@/lib/agents/pi-harness', () => ({ executePiHarnessTask: vi.fn() }));
 vi.mock('@/lib/agents/runtime-access', () => ({ createAgentRuntimeToken: mocks.token,
   runtimeMcpProxyUrl: (id: string) => `https://proxy.test/mcp/${id}`, runtimeModelProxyBase: () => 'https://proxy.test/model', sandboxRuntimeOrigin: () => 'https://proxy.test' }));
 import { executeLocalTask, LOCAL_COLLABORATION_INSTRUCTIONS } from '@/lib/a2a/local-executor';
 const grant = { kind: 'local', workspaceId: 'ws', agentId: 'agent', ownerKey: 'owner', targetBinding: 'binding', expiresAt: Date.now() + 60_000,
   ancestorTaskIds: [], ancestorAgentIds: [] };
-const row = () => ({ id: 'task', contextId: 'a2a-context', leaseToken: 'lease', grant, deadlineAt: new Date(Date.now() + 50_000),
+const row = () => ({ id: 'task', contextId: 'a2a-context', executionBackend: 'legacy', leaseToken: 'lease', grant, deadlineAt: new Date(Date.now() + 50_000),
   snapshot: { id: 'task', contextId: 'a2a-context', status: { state: 'TASK_STATE_WORKING' }, history: [
     { messageId: 'input', role: 'ROLE_USER', parts: [{ text: 'Review the patch' }] },
     { messageId: 'output', role: 'ROLE_AGENT', parts: [{ text: 'Progress' }] },
   ] } } as unknown as A2ATask);
 const agent = { id: 'agent', runtimeKind: 'pi', provider: { id: 'provider', apiKey: 'fixture-secret' }, model: 'model', maxSteps: 10,
-  disabledBuiltinTools: ['dangerous-tool'], systemPrompt: 'Follow task policy', publicRuntimeAllocation: null, a2aInternalEnabled: true };
+  disabledBuiltinTools: ['dangerous-tool'], systemPrompt: 'Follow task policy', publicRuntimeAllocation: null, a2aInternalEnabled: true, subAgents: [] };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.live.mockResolvedValue(undefined); mocks.target.mockResolvedValue({ binding: 'binding', sandboxId: 'sandbox' });
   mocks.context.mockResolvedValue({ id: 'a2a-context' }); mocks.agent.mockResolvedValue(agent); mocks.token.mockResolvedValue('scoped-runtime-token'); mocks.run.mockResolvedValue('review result');
 });
-describe('native local TaskExecutor runtime port', () => {
+describe('historical local TaskExecutor runtime port', () => {
   it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'])('projects a task-scoped %s turn without a private Conversation', async (runtimeKind) => {
     mocks.agent.mockResolvedValue({ ...agent, runtimeKind });
     const result = await executeLocalTask(row(), new AbortController().signal);
@@ -41,14 +42,18 @@ describe('native local TaskExecutor runtime port', () => {
     expect(projection.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant']);
     expect(JSON.stringify(projection.mcpServers)).not.toContain('fixture-secret'); expect(mocks.live).toHaveBeenCalledTimes(2);
   });
-  it('runs ordinary chat without exposing collaboration tools when A2A is disabled', async () => {
-    mocks.agent.mockResolvedValue({ ...agent, a2aInternalEnabled: false });
+  it.each([false, true])('exposes ordinary chat collaboration tools only when a child is selected: %s', async (selected) => {
+    mocks.agent.mockResolvedValue({ ...agent, a2aInternalEnabled: false, subAgents: selected ? [{ child: { id: 'child', name: 'Reviewer' } }] : [] });
     const entryPolicy = { kind: 'chat', sourceId: 'conversation', sourceAgentId: 'agent', binding: 'source-binding' };
     const task = { ...row(), grant: { ...grant, ancestorTaskIds: [], entryPolicy } };
     await executeLocalTask(task, new AbortController().signal);
-    expect(mocks.target).toHaveBeenCalledWith(expect.anything(), 'ws', 'agent', entryPolicy);
-    expect(mocks.run.mock.calls[0][0].mcpServers).toEqual([{ deploymentId: 'live-mcp', url: 'https://proxy.test/mcp/live-mcp' }]);
-    expect(mocks.run.mock.calls[0][0].systemPrompt).toBe('Follow task policy');
+    const projection = mocks.run.mock.calls[0][0];
+    expect(projection.mcpServers).toEqual([
+      { deploymentId: 'live-mcp', url: 'https://proxy.test/mcp/live-mcp' },
+      ...(selected ? [{ deploymentId: 'toolplane-a2a', url: 'https://proxy.test/api/v1/agent-runtime/a2a/task/mcp' }] : []),
+    ]);
+    if (selected) expect(projection.systemPrompt).toContain(LOCAL_COLLABORATION_INSTRUCTIONS);
+    else expect(projection.systemPrompt).toBe('Follow task policy');
   });
   it('will not dispatch a public task or unclaimed local task', async () => {
     await expect(executeLocalTask({ ...row(), grant: {} }, new AbortController().signal)).rejects.toThrow();
@@ -72,5 +77,9 @@ describe('native local TaskExecutor runtime port', () => {
     await expect(executeLocalTask(row(), new AbortController().signal)).rejects.toThrow('output limit');
     mocks.run.mockRejectedValue(new Error('executor stopped'));
     await expect(executeLocalTask(row(), new AbortController().signal)).rejects.toThrow('executor stopped');
+  });
+  it('rejects an unknown backend instead of falling back to the old executor', async () => {
+    await expect(executeLocalTask({ ...row(), executionBackend: 'unknown' }, new AbortController().signal)).rejects.toThrow('Unknown A2A execution backend');
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 });

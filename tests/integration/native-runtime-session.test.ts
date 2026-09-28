@@ -45,7 +45,8 @@ it.runIf(Boolean(container))(`executes ${kind} commands in its real persistent C
   try {
     const inspect = JSON.parse(await docker('inspect', container!))[0];
     const gateway = (Object.values(inspect.NetworkSettings.Networks)[0] as { Gateway: string }).Gateway;
-    const base = `http://${gateway}:${(server.address() as { port: number }).port}`;
+    const host = process.platform === 'linux' ? gateway : 'host.docker.internal';
+    const base = `http://${host}:${(server.address() as { port: number }).port}`;
     const root = SANDBOX_RUNTIME_PACKAGES[kind].directory;
     const model = kind === 'pi' ? 'test' : 'claude-sonnet-4-6';
     await docker('exec', container!, 'mkdir', '-p', `${dir}/state/sessions`);
@@ -83,7 +84,7 @@ it.runIf(Boolean(container))(`executes ${kind} commands in its real persistent C
     };
     const first = await run();
     if (kind === 'dsh') expect(first).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', delta: expect.stringContaining('Native reply') })]));
-    expect(requests.join('\n')).toContain('Keep plan.md');
+    expect(requests.join('\n'), JSON.stringify(first)).toContain('Keep plan.md');
     const turns = requests.length;
     if (kind === 'claude-code') {
       const usage = await run('/usage');

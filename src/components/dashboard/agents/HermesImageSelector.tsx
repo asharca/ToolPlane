@@ -1,4 +1,6 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -6,7 +8,6 @@ import {
   DEFAULT_HERMES_IMAGE,
   HERMES_IMAGE_OPTIONS,
 } from '@/lib/agents/hermes/constants';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
 const CUSTOM_IMAGE_OPTION = '__custom__';
 
@@ -47,50 +48,28 @@ export function HermesImageSelector({
   const selectedImage = selectedOption === CUSTOM_IMAGE_OPTION ? customImage : selectedOption;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" onChange={(event) => event.stopPropagation()}>
       <input type="hidden" name={name} value={selectedImage} />
-      <label className="block">
+      <div className="block">
         <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesVersion')}</span>
-        <NativeSelect
-          id={id}
-          value={selectedOption}
-          disabled={disabled}
-          onChange={(event) => {
-            event.stopPropagation();
-            const next = event.target.value;
+        <FormSelect id={id} value={selectedOption} disabled={disabled} label={t('hermesVersion')} options={[availableImages.map((image) => (
+            ({ value: image, label: image === DEFAULT_HERMES_IMAGE ? `${t('hermesLatestStable')} — ${image}` : image })
+          )), ({ value: CUSTOM_IMAGE_OPTION, label: t('hermesCustomImage') })].flat().filter((option) => option != null)} onValueChange={(value) => {
+            const next = value;
             setSelectedOption(next);
             if (next !== CUSTOM_IMAGE_OPTION) onValueChange?.(next);
-          }}
-          className="ui-input h-10 w-full font-mono text-sm disabled:opacity-60"
-        >
-          {availableImages.map((image) => (
-            <option key={image} value={image}>
-              {image === DEFAULT_HERMES_IMAGE ? `${t('hermesLatestStable')} — ${image}` : image}
-            </option>
-          ))}
-          <option value={CUSTOM_IMAGE_OPTION}>{t('hermesCustomImage')}</option>
-        </NativeSelect>
-      </label>
+          }} className="w-full" />
+      </div>
 
       {selectedOption === CUSTOM_IMAGE_OPTION ? (
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesCustomImage')}</span>
-          <input
-            id={`${id}-custom`}
-            value={customImage}
-            onChange={(event) => {
-              event.stopPropagation();
-              const next = event.target.value;
+        <div className="block">
+          
+          <Input label={t('hermesCustomImage')} id={`${id}-custom`} disabled={disabled} required pattern="[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}" placeholder={t('hermesCustomImagePlaceholder')} value={String(customImage)} className="w-full" onChange={(value) => {
+              const next = value;
               setCustomImage(next);
               onValueChange?.(next);
-            }}
-            disabled={disabled}
-            required
-            pattern="[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}"
-            placeholder={t('hermesCustomImagePlaceholder')}
-            className="ui-input h-10 w-full font-mono text-sm disabled:opacity-60"
-          />
-        </label>
+            }} />
+        </div>
       ) : null}
 
       <p className="text-xs leading-5 text-muted-foreground">{t('hermesImageHelp')}</p>

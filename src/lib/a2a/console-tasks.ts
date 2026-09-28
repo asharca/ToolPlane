@@ -14,7 +14,8 @@ export type ConsoleTaskTree = {
   rootTaskId: string;
   restricted: boolean;
   nodes: Array<{ id: string; parentTaskId: string | null; agentId: string; name: string;
-    state: string; phase: string; pendingApprovals?: number; cancelRequested: boolean; resumeCount: number; updatedAt: string }>;
+    state: string; phase: string; pendingApprovals?: number; cancelRequested: boolean; resumeCount: number; updatedAt: string;
+    executionBackend?: 'pi-harness'; nativeOperationId?: string | null; contextId?: string }>;
   selectedTask: Record<string, unknown>;
 };
 
@@ -74,7 +75,7 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
     let target = targets.get(grant.agentId);
     if (!target) {
       try { target = await localTarget(db, ctx.workspaceId, grant.agentId,
-        row.id === root.id && grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined); targets.set(grant.agentId, target); }
+        row.id === root.id && grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : 'delegation'); targets.set(grant.agentId, target); }
       catch { continue; }
     }
     // Historical execution expiry is not a read credential. Current actor/edge/config still governs access.
@@ -85,6 +86,7 @@ export async function getConsoleTaskTree(ctx: ConsoleActor, rootId: string, sele
     const pendingApprovals = row.leaseToken ? await db.a2AToolApproval.count({ where: { taskId: row.id, leaseToken: row.leaseToken, status: 'pending', expiresAt: { gt: new Date() } } }) : 0;
     nodes.push({ id: row.id, parentTaskId: row.parentTaskId, agentId: grant.agentId, name: target.name,
       state: status?.state ?? 'TASK_STATE_UNSPECIFIED', phase: row.phase, pendingApprovals,
+      ...(row.executionBackend === 'pi-harness' ? { executionBackend: 'pi-harness' as const, nativeOperationId: row.nativeOperationId, contextId: row.contextId } : {}),
       cancelRequested: Boolean(row.cancelRequestedAt), resumeCount: row.resumeCount, updatedAt: row.statusAt.toISOString() });
   }
   if (!visible.has(root.id) || !visible.has(selectedId)) throw new TaskNotFoundError();

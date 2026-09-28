@@ -1,5 +1,8 @@
 'use client';
 
+import { Input } from '@/components/motion/input';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
 import { Camera, Copy, RotateCcw, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import {
@@ -21,11 +24,6 @@ export type SandboxSnapshotItem = {
 
 function SnapshotStatus({ status }: { status: string }) {
   const t = useTranslations('console.sandboxes');
-  const styles = status === 'ready'
-    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-    : status === 'error'
-      ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-      : 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
   const label = status === 'ready'
     ? t('snapshotReady')
     : status === 'error'
@@ -34,7 +32,7 @@ function SnapshotStatus({ status }: { status: string }) {
         ? t('snapshotDeleting')
         : t('snapshotCreating');
 
-  return <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${styles}`}>{label}</span>;
+  return <AnimatedBadge status={status === 'ready' ? 'success' : status === 'error' ? 'danger' : 'loading'} size="sm">{label}</AnimatedBadge>;
 }
 
 export function SandboxDataManagement({
@@ -74,13 +72,13 @@ export function SandboxDataManagement({
           </p>
         </div>
         {disabled ? (
-          <span className="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
+          <AnimatedBadge status="warning" size="sm">
             {disabledLabel ?? t('waitForProvisioning')}
-          </span>
+          </AnimatedBadge>
         ) : creationDisabled ? (
-          <span className="rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-300">
+          <AnimatedBadge status="danger" size="sm">
             {t('restoreRequired')}
-          </span>
+          </AnimatedBadge>
         ) : null}
       </div>
 
@@ -96,14 +94,14 @@ export function SandboxDataManagement({
                   {t('cloneName')}
                 </label>
                 <div className="flex gap-2">
-                  <input
+                  <Input
                     id="sandbox-clone-name"
                     name="name"
                     defaultValue={t('cloneNameDefault', { name: sandboxName })}
                     maxLength={80}
-                    className="ui-input h-9 min-w-0 flex-1 text-sm"
+                    className="min-w-0 flex-1"
                   />
-                  <SubmitButton flash={false} pendingLabel={t('cloning')} className="ui-button-secondary h-9 shrink-0 text-xs">
+                  <SubmitButton flash={false} pendingLabel={t('cloning')} variant="secondary" size="sm" className="shrink-0">
                     <Copy className="size-3.5" />
                     {t('cloneSandbox')}
                   </SubmitButton>
@@ -119,14 +117,14 @@ export function SandboxDataManagement({
                 {t('snapshotName')}
               </label>
               <div className="flex gap-2">
-                <input
+                <Input
                   id="sandbox-snapshot-name"
                   name="name"
                   placeholder={t('snapshotNamePlaceholder')}
                   maxLength={80}
-                  className="ui-input h-9 min-w-0 flex-1 text-sm"
+                  className="min-w-0 flex-1"
                 />
-                <SubmitButton flash={false} pendingLabel={t('creatingSnapshot')} className="ui-button-secondary h-9 shrink-0 text-xs">
+                <SubmitButton flash={false} pendingLabel={t('creatingSnapshot')} variant="secondary" size="sm" className="shrink-0">
                   <Camera className="size-3.5" />
                   {t('createSnapshot')}
                 </SubmitButton>
@@ -156,7 +154,7 @@ export function SandboxDataManagement({
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{snapshot.createdAt}</p>
                       {snapshot.error ? (
-                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{t('snapshotOperationFailed')}</p>
+                        <p className="mt-1 text-xs text-destructive dark:text-destructive">{t('snapshotOperationFailed')}</p>
                       ) : null}
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -179,9 +177,9 @@ export function SandboxDataManagement({
                               { name: snapshot.name },
                             )}
                             pendingLabel={t('restoringSnapshot')}
-                            triggerClassName="ui-button-ghost h-8 text-xs"
-                            confirmClassName="ui-button-primary h-8 text-xs"
-                            cancelClassName="ui-button-ghost h-8 text-xs"
+                            
+                            
+                            
                             promptClassName="max-w-56 text-xs text-muted-foreground"
                           />
                         </form>
@@ -196,9 +194,9 @@ export function SandboxDataManagement({
                           cancelLabel={common('cancel')}
                           prompt={t('deleteSnapshotPrompt', { name: snapshot.name })}
                           pendingLabel={t('deletingSnapshot')}
-                          triggerClassName="ui-button-ghost h-8 text-xs text-red-700 dark:text-red-400"
-                          confirmClassName="ui-button-primary h-8 bg-red-600 text-xs text-white hover:bg-red-700"
-                          cancelClassName="ui-button-ghost h-8 text-xs"
+                          
+                          
+                          
                           promptClassName="max-w-56 text-xs text-muted-foreground"
                         />
                       </form>

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowUpRight, Gauge, Star, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 
 export interface EntityCardProps {
   href: string;
@@ -70,14 +71,11 @@ export function EntityCard({
 }: EntityCardProps) {
   return (
     <Link href={href} className="group block h-full">
-      <div className="ui-panel relative flex h-full flex-col overflow-hidden transition-[border-color,background-color] duration-200 group-hover:border-brand/30 group-hover:bg-card">
-        <div aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand/0 to-transparent transition-colors group-hover:via-brand/45" />
+      <div className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-card">
         <div className="flex h-full flex-col p-4">
           {typeof rank === 'number' ? (
             <div className="mb-2.5">
-              <span className="inline-flex items-center rounded-md bg-brand-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-brand">
-                #{rank}
-              </span>
+              <AnimatedBadge status="info" size="sm" showIcon={false}>#{rank}</AnimatedBadge>
             </div>
           ) : null}
 
@@ -97,11 +95,11 @@ export function EntityCard({
               ) : (
                 <div
                   aria-hidden="true"
-                  className="size-8 shrink-0 rounded-lg border border-brand/10 bg-brand-soft"
+                  className="size-8 shrink-0 rounded-lg border border-border bg-muted"
                 />
               )}
               <div className="min-w-0">
-                <h3 className="line-clamp-1 text-[15px] font-semibold text-foreground transition-colors group-hover:text-brand">
+                <h3 className="line-clamp-1 text-[15px] font-semibold text-foreground">
                   {name}
                 </h3>
                 {author ? (
@@ -109,7 +107,7 @@ export function EntityCard({
                 ) : null}
               </div>
             </div>
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/50 transition-colors group-hover:bg-brand-soft group-hover:text-brand">
+            <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
               <ArrowUpRight aria-hidden="true" className="size-3.5" />
             </span>
           </div>
@@ -126,9 +124,7 @@ export function EntityCard({
             <div className="mt-4 flex items-center justify-between gap-2 border-t border-border/70 pt-3">
               <div className="flex min-w-0 items-center gap-2">
                 {category ? (
-                  <span className="inline-flex max-w-full items-center truncate rounded-md bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground">
-                    {category}
-                  </span>
+                  <AnimatedBadge size="sm" showIcon={false}>{category}</AnimatedBadge>
                 ) : null}
               </div>
               {stat ? <div className="shrink-0">{stat}</div> : null}

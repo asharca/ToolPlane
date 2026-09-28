@@ -1,4 +1,6 @@
 'use client';
+import { Button } from '@/components/motion/button';
+
 
 import { RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -221,27 +223,20 @@ export function ContainerLogs({
             ) : null}
           </dl>
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={refreshing}
-          className="ui-button-secondary h-8 text-xs"
-        >
-          <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshLabel}
-        </button>
+        <Button type="button" onClick={refresh} disabled={refreshing} variant="secondary" size="sm"><RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+        {refreshLabel}</Button>
       </div>
 
       {hasLogs ? (
         <pre
           tabIndex={0}
           aria-label={title}
-          className="max-h-[32rem] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-zinc-200 dark:border-zinc-800"
+          className="max-h-[32rem] overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg border border-border bg-background p-4 font-mono text-xs leading-relaxed text-foreground dark:border-border"
         >
           {logView.text}
         </pre>
       ) : (
-        <div className="rounded-lg border border-dashed border-zinc-200 px-4 py-10 text-center dark:border-zinc-700">
+        <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center dark:border-border">
           <p className="text-sm text-muted-foreground">
             {snapshot ? emptyLabel : unavailableLabel}
           </p>
@@ -249,7 +244,7 @@ export function ContainerLogs({
       )}
 
       {logView.truncated ? <p className="text-xs text-muted-foreground">{truncatedLabel}</p> : null}
-      {syncError ? <p className="text-xs text-red-600 dark:text-red-400">{syncErrorLabel}</p> : null}
+      {syncError ? <p className="text-xs text-destructive dark:text-destructive">{syncErrorLabel}</p> : null}
     </section>
   );
 }

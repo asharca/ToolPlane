@@ -29,7 +29,9 @@ MCP、Skill、Toolkit 和已配置沙箱。`Context.id` 是独立的原生会话
 先配置调用方与目标的模型、联网 Docker 沙箱及工具，在调用方已有的“子 Agent”设置
 中选择允许的目标。这些有向关联只表示委派范围，不自动开放整个工作区。
 
-调用方和每个目标都默认关闭内部 A2A。由工作区所有者或管理员分别启用：
+经已认证聊天、Work 或 control 入口发起内部委派时，只需勾选子 Agent，调用方和目标
+均无需开启 A2A 开关。下面的账户令牌根任务入口仍为独立授权，由工作区所有者或
+管理员对需要通过此入口调用的 Agent 显式启用：
 
 ```bash
 curl -X PUT "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
@@ -64,7 +66,7 @@ curl "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
 
 | 工具 | 作用 |
 | --- | --- |
-| `a2a_list_agents` | 仅返回当前被关联且已开启、配置有效的目标 ID 与名称 |
+| `a2a_list_agents` | 仅返回当前被关联且配置有效的目标 ID 与名称，无需内部开关 |
 | `a2a_send_message` | `agentId` 加标准 A2A `SendMessageRequest`，交给同一任务核心，立即返回 Task |
 | `a2a_get_task` | 查询当前任务直接委派的子任务，含追问与交付物 |
 | `a2a_cancel_task` | 请求取消直接子任务及其后代 |

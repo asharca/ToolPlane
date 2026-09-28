@@ -41,6 +41,7 @@ export const GET = withRequestLogging("/api/v1/agents/[agentId]/hermes/models", 
         primaryType: model.primaryType,
         capabilities: model.capabilities,
         inputModalities: model.inputModalities,
+        cost: model.cost,
       })),
     }] : []);
     const currentProvider = current.provider?.replace(/^custom:/, '') ?? null;

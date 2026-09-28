@@ -18,6 +18,7 @@ import { HERMES_IMAGE_OPTIONS, resolveHermesImage } from '@/lib/agents/hermes/co
 import { SettingsModal } from '@/components/dashboard/SettingsModal';
 import { originFromHeaders } from '@/lib/http/origin';
 import { listAgentMarketListings } from '@/lib/agents/market';
+import { PiRuntimeManagement } from '@/components/dashboard/agents/PiRuntimeManagement';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,12 +32,20 @@ export default async function AgentsPage({
   const { workspace: slug } = await params;
   const { tab, create } = await searchParams;
   if (tab === 'providers') redirect(`/app/${encodeURIComponent(slug)}/providers`);
+  if (create !== '1' && tab !== 'management') redirect(`/app/${encodeURIComponent(slug)}/work`);
   const t = await getTranslations('console.agents');
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect('/app');
+  if (tab === 'management') {
+    return (
+      <SettingsModal title={t('agentManagement')} fallbackHref={`/app/${slug}/work`}>
+        <div className="h-full overflow-y-auto"><PiRuntimeManagement slug={slug} /></div>
+      </SettingsModal>
+    );
+  }
   const hermesImages = [resolveHermesImage(undefined), ...HERMES_IMAGE_OPTIONS];
   const agentControlEndpoint = `${originFromHeaders(await headers())}/api/v1/workspaces/${encodeURIComponent(slug)}/agents/mcp`;
 
@@ -115,6 +124,7 @@ export default async function AgentsPage({
               primaryType: model.primaryType,
               capabilities: model.capabilities,
               inputModalities: model.inputModalities,
+              cost: model.cost,
             })),
           })),
           defaultModel,

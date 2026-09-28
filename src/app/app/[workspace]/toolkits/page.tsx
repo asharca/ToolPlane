@@ -3,10 +3,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { db } from '@/lib/db';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import {
-  listToolkits,
-  getOrCreateDefaultToolkit,
-} from '@/lib/toolkits/queries';
+import { listToolkits, getOrCreateDefaultToolkit } from '@/lib/toolkits/queries';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { ToolkitsBrowser } from '@/components/dashboard/ToolkitsBrowser';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';

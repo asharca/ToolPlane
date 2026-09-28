@@ -1,4 +1,9 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Button, ButtonLink } from '@/components/motion/button/base';
+import { RadioGroup, RadioGroupItem } from '@/components/motion/radio';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -19,7 +24,6 @@ import {
   PackageCheck,
   Plus,
   Server,
-  Sparkles,
   Settings2,
   Store,
   Zap,
@@ -152,13 +156,19 @@ export function AgentsBrowser({
   const returnTo = `${pathname}${query ? `?${query}` : ''}`;
   const requestedReturnTo = searchParams.get('returnTo') ?? '';
   const createOnly = searchParams.get('create') === '1';
-  const defaultNativeModel = createOptions.defaultModel && createOptions.providers.some((provider) => (
+  const configuredDefaultNativeModel = createOptions.defaultModel && createOptions.providers.some((provider) => (
     provider.id === createOptions.defaultModel?.providerId
     && provider.models.includes(createOptions.defaultModel.model)
-    && agentRuntimeSupportsProviderFormat('claude-code', provider.format)
+    && agentRuntimeSupportsProviderFormat('pi', provider.format)
   ))
     ? createOptions.defaultModel
     : null;
+  const defaultNativeModel = configuredDefaultNativeModel ?? (() => {
+    const provider = createOptions.providers.find((option) => (
+      agentRuntimeSupportsProviderFormat('pi', option.format) && option.models.length > 0
+    ));
+    return provider ? { providerId: provider.id, model: provider.models[0]! } : null;
+  })();
   const [creating, setCreating] = useState(createOnly);
   const [createSource, setCreateSource] = useState<CreateSource>(
     createOnly && searchParams.get('source') === 'market' ? 'market' : 'blank',
@@ -167,7 +177,7 @@ export function AgentsBrowser({
   const [agentName, setAgentName] = useState('');
   const [agentDescription, setAgentDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [runtime, setRuntime] = useState<AgentRuntimeKind>('claude-code');
+  const [runtime, setRuntime] = useState<AgentRuntimeKind>('pi');
   const [providerId, setProviderId] = useState(defaultNativeModel?.providerId ?? '');
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? '');
   const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(() => (
@@ -237,7 +247,7 @@ export function AgentsBrowser({
     setAgentName('');
     setAgentDescription('');
     setSystemPrompt('');
-    setRuntime('claude-code');
+    setRuntime('pi');
     setProviderId(defaultNativeModel?.providerId ?? '');
     setModelId(defaultNativeModel?.model ?? '');
     setSelectedProviderIds(new Set(createOptions.defaultModel?.providerId ? [createOptions.defaultModel.providerId] : []));
@@ -266,44 +276,38 @@ export function AgentsBrowser({
             />
           ) : null}
           {!createOnly ? (
-            <Link href={`/app/${encodeURIComponent(slug)}/market/agents`} className="ui-button-secondary h-10 gap-2 px-4">
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/market/agents`} variant="secondary">
               <Store className="size-[18px] shrink-0" />
               {t('browseAgentMarket')}
-            </Link>
+            </ButtonLink>
           ) : null}
-          <button
-            type="button"
-            onClick={() => {
+          <Button type="button" onClick={() => {
               if (creating) closeCreateForm();
               else {
                 setCreateSource('blank');
                 setCreating(true);
               }
-            }}
-            aria-controls={createSource === 'market' ? 'agent-market-source' : 'agent-create-form'}
-            aria-expanded={creating}
-            className={creating ? 'ui-button-secondary h-10 gap-2 px-4' : 'ui-button-primary h-10 gap-2 px-4'}
-          >
+            }} aria-controls={createSource === 'market' ? 'agent-market-source' : 'agent-create-form'} aria-expanded={creating} variant={"primary"}>
             {creating ? <X className="size-[18px] shrink-0" /> : <Plus className="size-[18px] shrink-0" />}
             {creating ? t('cancel') : t('newAgent')}
-          </button>
+          </Button>
         </div>
       </div>
       ) : null}
 
       {!hasProviders && !creating ? (
-        <div className="flex flex-col gap-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-md border border-border bg-muted px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-start gap-3">
-            <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+            <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
             <div>
               <p className="text-sm font-semibold text-foreground">{t('modelProviderRequired')}</p>
               <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('modelProviderRequiredDescription')}</p>
             </div>
           </div>
-          <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-secondary shrink-0">
+          <ButtonLink href={`/app/${encodeURIComponent(slug)}/providers`} variant="secondary" className="shrink-0">
             <Cpu className="size-4" />
             {t('addModelProvider')}
-          </Link>
+          </ButtonLink>
         </div>
       ) : null}
 
@@ -312,18 +316,13 @@ export function AgentsBrowser({
           id="agent-market-source"
           className={cx(
             'flex min-h-0 flex-col overflow-hidden bg-background',
-            createOnly ? 'h-full' : 'ui-panel min-h-[38rem] max-h-[calc(100dvh-10rem)]',
+            createOnly ? 'h-full' : 'rounded-2xl border border-border bg-card min-h-[38rem] max-h-[calc(100dvh-10rem)]',
           )}
         >
           <header className="flex shrink-0 items-start gap-3 px-5 py-4 sm:px-6">
-            <button
-              type="button"
-              onClick={() => setCreateSource('blank')}
-              aria-label={t('back')}
-              className="ui-button-ghost ui-icon-button shrink-0"
-            >
+            <Button type="button" onClick={() => setCreateSource('blank')} aria-label={t('back')} variant={"ghost"} size={"icon"} className="shrink-0">
               <ChevronLeft className="size-4" />
-            </button>
+            </Button>
             <div className="min-w-0 flex-1">
               <h3 className="text-lg font-semibold text-foreground">{t('chooseFromAgentMarket')}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{t('chooseFromAgentMarketDescription')}</p>
@@ -332,7 +331,7 @@ export function AgentsBrowser({
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
             {cloneError ? (
-              <p role="alert" className="mb-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+              <p role="alert" className="text-sm text-destructive">
                 {cloneError === 'release_not_found' || cloneError === 'listing_unavailable'
                   ? marketT('releaseUnavailable')
                   : marketT('invalidInstall')}
@@ -347,7 +346,7 @@ export function AgentsBrowser({
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={agent.iconUrl} alt="" width={40} height={40} className="size-10 rounded-lg object-cover" />
                       ) : (
-                        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-semibold text-accent-foreground">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted font-semibold text-accent-foreground">
                           {Array.from(agent.name.trim())[0]?.toUpperCase() ?? 'A'}
                         </span>
                       )}
@@ -363,12 +362,12 @@ export function AgentsBrowser({
                     </p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {agent.runtimes.map((runtimeKind) => (
-                        <span key={runtimeKind} className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                        <AnimatedBadge key={runtimeKind} status="neutral">
                           {agentRuntimeDisplayName(runtimeKind)}
-                        </span>
+                        </AnimatedBadge>
                       ))}
                       {agent.tags.slice(0, 2).map((tag) => (
-                        <span key={tag} className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">{tag}</span>
+                        <AnimatedBadge key={tag} status="neutral">{tag}</AnimatedBadge>
                       ))}
                     </div>
                     <dl className="mt-4 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
@@ -398,10 +397,10 @@ export function AgentsBrowser({
           </div>
 
           <footer className="flex shrink-0 justify-end border-t border-border/60 px-4 py-3 sm:px-6">
-            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+            <Button type="button" onClick={closeCreateForm} variant={"secondary"}>
               <X className="size-4 shrink-0" />
               {t('cancel')}
-            </button>
+            </Button>
           </footer>
         </section>
       ) : creating ? (
@@ -410,7 +409,7 @@ export function AgentsBrowser({
           action={createAgentAction}
           className={cx(
             'flex min-h-0 flex-col overflow-hidden bg-background',
-            createOnly ? 'h-full' : 'ui-panel min-h-[38rem] max-h-[calc(100dvh-10rem)]',
+            createOnly ? 'h-full' : 'rounded-2xl border border-border bg-card min-h-[38rem] max-h-[calc(100dvh-10rem)]',
           )}
         >
           <input type="hidden" name="workspace" value={slug} />
@@ -426,19 +425,9 @@ export function AgentsBrowser({
                   const done = index < createStepIndex;
                   return (
                     <li key={step.id} className="shrink-0 sm:w-full">
-                      <button
-                        type="button"
-                        aria-current={active ? 'step' : undefined}
-                        disabled={index > createStepIndex}
-                        onClick={() => {
+                      <Button type="button" aria-current={active ? 'step' : undefined} disabled={index > createStepIndex} onClick={() => {
                           if (done) setCreateStep(step.id);
-                        }}
-                        className={cx(
-                          'flex h-10 min-w-max items-center gap-2 rounded-md px-3 text-sm transition-colors sm:w-full',
-                          active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-                          'disabled:cursor-default disabled:opacity-55',
-                        )}
-                      >
+                        }} variant={active ? 'secondary' : 'ghost'}>
                         <span className={cx(
                           'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium',
                           active ? 'bg-foreground text-background' : 'border border-border text-muted-foreground',
@@ -446,7 +435,7 @@ export function AgentsBrowser({
                           {index + 1}
                         </span>
                         <span>{step.label}</span>
-                      </button>
+                      </Button>
                     </li>
                   );
                 })}
@@ -465,53 +454,34 @@ export function AgentsBrowser({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/35 p-2">
-                  <button
-                    type="button"
-                    aria-pressed={createSource === 'blank'}
-                    onClick={() => setCreateSource('blank')}
-                    className={cx('ui-button-secondary h-8 px-3 text-xs', createSource === 'blank' && 'bg-background text-foreground')}
-                  >
+                  <Button type="button" aria-pressed={createSource === 'blank'} onClick={() => setCreateSource('blank')} variant={"secondary"} size={"sm"}>
                     <Plus className="size-3.5" />
                     {t('createBlankAgent')}
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={createSource === 'market'}
-                    onClick={() => setCreateSource('market')}
-                    className={cx('ui-button-secondary h-8 px-3 text-xs', createSource === 'market' && 'bg-background text-foreground')}
-                  >
+                  </Button>
+                  <Button type="button" aria-pressed={createSource === 'market'} onClick={() => setCreateSource('market')} variant={"secondary"} size={"sm"}>
                     <Store className="size-3.5" />
                     {t('chooseFromAgentMarket')}
-                  </button>
+                  </Button>
                 </div>
 
                 {!hasProviders ? (
-                  <div className="flex items-start gap-3 rounded-md bg-amber-500/10 px-4 py-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-300" />
+                  <div className="flex items-start gap-3 rounded-md bg-muted px-4 py-3">
+                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-foreground">{t('modelProviderRequired')}</p>
                       <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t('modelProviderRequiredDescription')}</p>
                     </div>
-                    <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-secondary shrink-0">
+                    <ButtonLink href={`/app/${encodeURIComponent(slug)}/providers`} variant="secondary" className="shrink-0">
                       <Cpu className="size-4" />
                       {t('addModelProvider')}
-                    </Link>
+                    </ButtonLink>
                   </div>
                 ) : null}
 
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('name')}</span>
-                  <input
-                    name="name"
-                    value={agentName}
-                    onChange={(event) => setAgentName(event.target.value)}
-                    autoFocus
-                    required
-                    maxLength={60}
-                    placeholder={t('egResearchAssistant')}
-                    className="ui-input h-10 w-full"
-                  />
-                </label>
+                <div className="block">
+                  
+                  <Input label={t('name')} name="name" autoFocus required maxLength={60} placeholder={t('egResearchAssistant')} value={String(agentName)} onChange={(value) => setAgentName(value)} className="w-full" />
+                </div>
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('description')}</span>
                   <textarea
@@ -521,74 +491,37 @@ export function AgentsBrowser({
                     maxLength={500}
                     rows={3}
                     placeholder={t('agentDescriptionPlaceholder')}
-                    className="ui-input min-h-24 w-full resize-y py-2.5"
+                    className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </label>
 
                 <fieldset>
                   <legend className="mb-1.5 text-xs font-semibold text-foreground">{t('runtime')}</legend>
-                  <div className="space-y-2">
-                    {([
-                      {
-                        value: 'claude-code' as const,
-                        label: t('claudeCodeRuntime'),
-                        description: t('claudeCodeRuntimeDescription'),
-                        icon: Sparkles,
-                      },
-                      {
-                        value: 'pi' as const,
-                        label: t('piRuntime'),
-                        description: t('piRuntimeDescription'),
-                        icon: Zap,
-                      },
-                      {
-                        value: 'dsh' as const,
-                        label: t('deepSeekHarnessRuntime'),
-                        description: t('deepSeekHarnessRuntimeDescription'),
-                        icon: Cpu,
-                      },
-                      {
-                        value: 'hermes-rpc' as const,
-                        label: t('hermesRpcRuntime'),
-                        description: t('hermesRpcRuntimeDescription'),
-                        icon: Cpu,
-                      },
-                      {
-                        value: 'hermes' as const,
-                        label: t('hermesManagedRuntime'),
-                        description: t('hermesManagedRuntimeDescription'),
-                        icon: Container,
-                      },
-                    ]).map((option) => {
+                  <RadioGroup value={runtime} onValueChange={(next) => selectRuntime(next as AgentRuntimeKind)}>
+                    {[{
+                      value: 'pi' as const,
+                      label: t('piRuntime'),
+                      description: t('piRuntimeDescription'),
+                      icon: Zap,
+                    }].map((option) => {
                       const Icon = option.icon;
                       const selected = runtime === option.value;
                       return (
-                        <label
-                          key={option.value}
-                          className={cx(
+                        <div key={option.value} className={cx(
                             'relative flex min-h-16 cursor-pointer items-start gap-3 rounded-md border px-3.5 py-3 text-left transition-colors hover:bg-muted/40',
                             selected ? 'border-foreground/20 bg-muted/60' : 'border-border',
-                          )}
-                        >
-                          <input
-                            type="radio"
-                            name="runtime"
-                            value={option.value}
-                            checked={selected}
-                            onChange={() => selectRuntime(option.value)}
-                            required
-                            className="sr-only"
-                          />
+                          )}>
+                          <input type="radio" name="runtime" value={option.value} checked={selected} required onChange={() => selectRuntime(option.value)} className="sr-only" tabIndex={-1} aria-hidden="true" aria-label={option.label} />
+                          <RadioGroupItem value={option.value} label={option.label} />
                           <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                           <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-semibold text-foreground">{option.label}</span>
-                            <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
+                              <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
                           </span>
                           <CheckCircle2 className={cx('mt-0.5 size-4 shrink-0', selected ? 'text-foreground' : 'invisible')} />
-                        </label>
+                        </div>
                       );
                     })}
-                  </div>
+                  </RadioGroup>
                 </fieldset>
 
                 {runtime === 'hermes' ? (
@@ -625,28 +558,23 @@ export function AgentsBrowser({
                         window.location.assign(`/app/${encodeURIComponent(slug)}/providers`);
                       }}
                       trigger={(
-                        <button type="button" aria-label={`${t('model')}: ${modelId || t('selectModel')}`} className="ui-input flex h-10 w-full items-center gap-2 px-3 text-left text-sm text-foreground">
-                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                            {selectedProvider?.name.charAt(0).toUpperCase() || 'M'}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">{modelId || t('selectModel')}</span>
-                          <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span>
-                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        </button>
+                        <Button variant="secondary" type="button" aria-label={`${t('model')}: ${modelId || t('selectModel')}`} className="w-full text-left"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                          {selectedProvider?.name.charAt(0).toUpperCase() || 'M'}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{modelId || t('selectModel')}</span>
+                        <span className="hidden max-w-44 truncate text-xs text-muted-foreground sm:block">{selectedProvider?.name}</span>
+                        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" /></Button>
                       )}
                     />
                   </div>
                 ) : null}
 
                 {runtime === 'hermes-rpc' ? (
-                  <label className="block">
+                  <div className="block">
                     <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('hermesRpcSandbox')}</span>
-                    <select name={sandboxId ? 'sandboxId' : undefined} value={sandboxId} onChange={(event) => setSandboxId(event.target.value)} className="ui-input h-10 w-full">
-                      <option value="">{t('hermesRpcNewSandbox')}</option>
-                      {(createOptions.sandboxes ?? []).map((sandbox) => <option key={sandbox.id} value={sandbox.id}>{sandbox.label}</option>)}
-                    </select>
+                    <FormSelect name={sandboxId ? 'sandboxId' : undefined} value={sandboxId} label={t('hermesRpcSandbox')} options={[({ value: "", label: t('hermesRpcNewSandbox') }), (createOptions.sandboxes ?? []).map((sandbox) => ({ value: sandbox.id, label: sandbox.label }))].flat().filter((option) => option != null)} onValueChange={(value) => setSandboxId(value)} className="w-full" />
                     <span className="mt-1.5 block text-xs text-muted-foreground">{t('hermesRpcSandboxHelp')}</span>
-                  </label>
+                  </div>
                 ) : null}
                 {runtime && runtime !== 'hermes' && runtime !== 'hermes-rpc' ? (
                   <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
@@ -654,17 +582,10 @@ export function AgentsBrowser({
                     <p>{t('automaticSandboxHelp')}</p>
                   </div>
                 ) : null}
-                <label className="block max-w-48 text-xs font-medium text-muted-foreground">
-                  {t('maxToolSteps')}
-                  <input
-                    name="maxSteps"
-                    type="number"
-                    min={AGENT_STEP_BOUNDS.min}
-                    max={AGENT_STEP_BOUNDS.max}
-                    defaultValue={AGENT_STEP_BOUNDS.default}
-                    className="ui-input mt-1.5 h-9 w-full"
-                  />
-                </label>
+                <div className="block max-w-48 text-xs font-medium text-muted-foreground">
+                  
+                  <Input label={t('maxToolSteps')} name="maxSteps" type="number" min={AGENT_STEP_BOUNDS.min} max={AGENT_STEP_BOUNDS.max} defaultValue={String(AGENT_STEP_BOUNDS.default)} className="mt-1.5 w-full" />
+                </div>
               </section>
 
               <section
@@ -765,44 +686,35 @@ export function AgentsBrowser({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border/60 px-4 py-3 sm:px-6">
-            <button type="button" onClick={closeCreateForm} className="ui-button-secondary h-10 gap-2 px-4">
+            <Button type="button" onClick={closeCreateForm} variant={"secondary"}>
               <X className="size-4 shrink-0" />
               {t('cancel')}
-            </button>
+            </Button>
             {createStepIndex > 0 ? (
-              <button
-                type="button"
-                onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)}
-                className="ui-button-secondary h-10 gap-2 px-4"
-              >
+              <Button type="button" onClick={() => setCreateStep(createSteps[createStepIndex - 1]!.id)} variant={"secondary"}>
                 <ChevronLeft className="size-4 shrink-0" />
                 {t('back')}
-              </button>
+              </Button>
             ) : null}
             {lastCreateStep ? (
               <SubmitButton
                 pendingLabel={t('creatingAgent')}
                 savedLabel={t('agentCreated')}
                 disabled={!createReady}
-                className="ui-button-primary h-10 gap-2 px-4"
+                variant="primary"
               >
                 <Plus className="size-[18px] shrink-0" />
                 {t('createAgent')}
               </SubmitButton>
             ) : (
-              <button
-                type="button"
-                disabled={activeCreateStep === 'basic' && !createReady}
-                onClick={() => {
+              <Button type="button" disabled={activeCreateStep === 'basic' && !createReady} onClick={() => {
                   const form = document.getElementById('agent-create-form') as HTMLFormElement | null;
                   if (activeCreateStep === 'basic' && form && !form.reportValidity()) return;
                   setCreateStep(createSteps[createStepIndex + 1]!.id);
-                }}
-                className="ui-button-primary h-10 gap-2 px-4 disabled:cursor-not-allowed disabled:opacity-50"
-              >
+                }} variant={"primary"}>
                 {t('next')}
                 <ChevronRight className="size-4 shrink-0" />
-              </button>
+              </Button>
             )}
           </div>
         </form>
@@ -816,10 +728,10 @@ export function AgentsBrowser({
             ? t('createAnAgentThenConnectItToToolsAndExternalMessagingAdapters')
             : t('addAModelProviderCreateAnAgentThenConnectItToToolsAndExternalMessagingAdapters')}
           actions={!hasProviders ? (
-            <Link href={`/app/${encodeURIComponent(slug)}/providers`} className="ui-button-primary">
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/providers`} variant="secondary">
               <Cpu className="size-4" />
               {t('addModelProvider')}
-            </Link>
+            </ButtonLink>
           ) : undefined}
         />
       ) : (
@@ -860,7 +772,7 @@ export function AgentsBrowser({
                           'flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted',
                           ready
                             ? 'text-muted-foreground'
-                            : 'text-amber-700 dark:text-amber-300',
+                            : 'text-muted-foreground text-muted-foreground',
                         )}
                       >
                         {ready ? <Bot className="size-[18px]" /> : <CircleAlert className="size-[18px]" />}
@@ -873,14 +785,7 @@ export function AgentsBrowser({
                           >
                             {agent.name}
                           </Link>
-                          <span
-                            className={cx(
-                              'inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium',
-                              ready
-                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                : 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-                            )}
-                          >
+                          <AnimatedBadge status={ready ? 'success' : 'warning'}>
                             {ready ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
                             {ready
                               ? t('ready')
@@ -889,12 +794,12 @@ export function AgentsBrowser({
                                 : agent.runtimeKind === 'hermes' || !agent.providerName
                                 ? t('needsProvider')
                                 : t('needsModel')}
-                          </span>
-                          <span className="inline-flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-[11px] font-medium text-muted-foreground">
+                          </AnimatedBadge>
+                          <AnimatedBadge status="neutral">
                             {agent.runtimeKind === 'hermes' ? <Container className="size-3.5" /> : <Bot className="size-3.5" />}
                             {agentRuntimeDisplayName(agent.runtimeKind)}
                             {agent.runtimeStatus ? ` · ${agent.runtimeStatus}` : ''}
-                          </span>
+                          </AnimatedBadge>
                         </div>
                         <p className="mt-1 truncate text-sm text-muted-foreground">
                           {agent.runtimeKind === 'hermes' ? t('modelProviders') : t('model')}: {model}
@@ -908,23 +813,13 @@ export function AgentsBrowser({
 
                     <div className="flex flex-wrap gap-2.5 lg:justify-end">
                       {ready ? (
-                        <Link
-                          href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`}
-                          aria-label={t('chat')}
-                          title={t('chat')}
-                          className="ui-button-primary size-10 shrink-0 px-0"
-                        >
+                        <ButtonLink href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`} aria-label={t('chat')} title={t('chat')} variant="primary" size="icon" className="shrink-0">
                           <MessageSquare className="size-[18px] shrink-0" />
-                        </Link>
+                        </ButtonLink>
                       ) : null}
-                      <Link
-                        href={detailsHref}
-                        aria-label={t('settings')}
-                        title={t('settings')}
-                        className="ui-button-secondary size-10 shrink-0 px-0"
-                      >
+                      <ButtonLink href={detailsHref} aria-label={t('settings')} title={t('settings')} variant="secondary" size="icon" className="shrink-0">
                         <Settings2 className="size-[18px] shrink-0" />
-                      </Link>
+                      </ButtonLink>
                       <CloneAgentButton
                         slug={slug}
                         agentId={agent.id}

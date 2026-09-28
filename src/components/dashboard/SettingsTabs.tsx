@@ -1,11 +1,9 @@
 'use client';
+import { ButtonLink } from '@/components/motion/button';
 
-import {
-  Radio,
-  Settings,
-  type LucideIcon,
-} from 'lucide-react';
-import Link from 'next/link';
+
+import { Radio, Settings, type LucideIcon } from 'lucide-react';
+
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
@@ -23,24 +21,15 @@ export function SettingsTabs({ slug }: { slug: string }) {
   ];
 
   return (
-    <aside className="shrink-0 bg-shell/70 md:w-52">
+    <aside className="shrink-0 md:w-52">
       <nav aria-label={t('title')} className="flex gap-1 overflow-x-auto p-3 md:flex-col md:overflow-visible md:p-4">
         {tabs.map(({ label, href, icon: Icon }) => {
           const active = pathname === href.split('?')[0];
           return (
-            <Link
-              key={label}
-              href={href}
-              aria-current={active ? 'page' : undefined}
-              className={`flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
-                active
-                  ? 'bg-brand-soft font-medium text-foreground ring-1 ring-brand/10'
-                  : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
-              }`}
-            >
+            <ButtonLink key={label} href={href} aria-current={active ? 'page' : undefined} variant={active ? 'secondary' : 'ghost'} className="shrink-0 justify-start">
               <Icon className="size-4" />
               {label}
-            </Link>
+            </ButtonLink>
           );
         })}
       </nav>

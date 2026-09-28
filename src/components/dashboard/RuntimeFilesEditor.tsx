@@ -1,30 +1,14 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 
-import {
-  useRef,
-  useState,
-  useTransition,
-  type ChangeEvent,
-  type FormEvent,
-} from 'react';
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+
+
+import { useRef, useState, useTransition, type ChangeEvent, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import {
-  Eye,
-  FileText,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Trash2,
-  Upload,
-  X,
-} from 'lucide-react';
-import {
-  deleteDeploymentRuntimeFileAction,
-  revealDeploymentRuntimeFileAction,
-  upsertDeploymentRuntimeFileAction,
-  type RuntimeFileMetadata,
-  type RuntimeFilesActionState,
-} from '@/lib/workspace/runtime-files-actions';
+import { Eye, FileText, Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { deleteDeploymentRuntimeFileAction, revealDeploymentRuntimeFileAction, upsertDeploymentRuntimeFileAction, type RuntimeFileMetadata, type RuntimeFilesActionState } from '@/lib/workspace/runtime-files-actions';
 
 type Draft = {
   /** A present id means the user explicitly revealed an existing file. */
@@ -286,9 +270,9 @@ export function RuntimeFilesEditor({
             <h2 id="runtime-files-heading" className="text-sm font-semibold text-foreground">
               {t('runtimeFiles')}
             </h2>
-            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
               {files.length}
-            </span>
+            </AnimatedBadge>
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {t('runtimeFilesDescription')}
@@ -303,24 +287,10 @@ export function RuntimeFilesEditor({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={pickUpload}
-            disabled={isSaving || isRevealing || isDeleting}
-            className="ui-button-secondary ui-button-sm disabled:cursor-wait disabled:opacity-70"
-          >
-            <Upload className="size-3.5" />
-            {t('uploadTextFile')}
-          </button>
-          <button
-            type="button"
-            onClick={startNewFile}
-            disabled={isSaving || isRevealing || isDeleting}
-            className="ui-button-primary ui-button-sm disabled:cursor-wait disabled:opacity-70"
-          >
-            <Plus className="size-3.5" />
-            {t('addFile')}
-          </button>
+          <Button type="button" onClick={pickUpload} disabled={isSaving || isRevealing || isDeleting} variant="secondary" size="sm"><Upload className="size-3.5" />
+          {t('uploadTextFile')}</Button>
+          <Button type="button" onClick={startNewFile} disabled={isSaving || isRevealing || isDeleting} variant="primary" size="sm"><Plus className="size-3.5" />
+          {t('addFile')}</Button>
           <input
             ref={uploadInputRef}
             type="file"
@@ -350,27 +320,12 @@ export function RuntimeFilesEditor({
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => revealFile(file)}
-                  disabled={isRevealing || isSaving || isDeleting}
-                  aria-busy={isRevealing}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-wait disabled:opacity-70"
-                >
-                  {isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
-                  {isRevealing ? t('revealing') : t('revealAndEdit')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeFile(file)}
-                  disabled={isSaving || isRevealing || isDeleting}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:cursor-wait disabled:opacity-70 dark:hover:text-red-400"
-                >
-                  {isDeleting && deletingFileId === file.id
-                    ? <Loader2 className="size-3.5 animate-spin" />
-                    : <Trash2 className="size-3.5" />}
-                  {isDeleting && deletingFileId === file.id ? t('removing') : t('remove')}
-                </button>
+                <Button type="button" onClick={() => revealFile(file)} disabled={isRevealing || isSaving || isDeleting} aria-busy={isRevealing} variant="ghost" size="sm" className="inline-flex items-center">{isRevealing ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
+                {isRevealing ? t('revealing') : t('revealAndEdit')}</Button>
+                <Button type="button" onClick={() => removeFile(file)} disabled={isSaving || isRevealing || isDeleting} variant="ghost" size="sm" className="inline-flex items-center">{isDeleting && deletingFileId === file.id
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : <Trash2 className="size-3.5" />}
+                {isDeleting && deletingFileId === file.id ? t('removing') : t('remove')}</Button>
               </div>
             </div>
           ))
@@ -392,20 +347,12 @@ export function RuntimeFilesEditor({
                   : t('newRuntimeFileHelp')}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(null);
-                setUploadError(null);
-                setRevealError(null);
-                clearMutationFeedback();
-              }}
-              disabled={isSaving || isDeleting}
-              aria-label={t('closeRuntimeFileEditor')}
-              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-70"
-            >
-              <X className="size-4" />
-            </button>
+            <Button type="button" onClick={() => {
+              setDraft(null);
+              setUploadError(null);
+              setRevealError(null);
+              clearMutationFeedback();
+            }} disabled={isSaving || isDeleting} aria-label={t('closeRuntimeFileEditor')} variant="ghost" size="md"><X className="size-4" /></Button>
           </div>
 
           <div className="mt-4 space-y-3">
@@ -422,78 +369,54 @@ export function RuntimeFilesEditor({
             ) : (
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 {t('filePath')}
-                <input
-                  name="path"
-                  value={draft.path}
-                  onChange={(event) => setDraft((current) => current && {
+                <Input name="path" value={draft.path} onChange={(value) => setDraft((current) => current && {
                     ...current,
-                    path: event.target.value,
-                  })}
-                  required
-                  disabled={isSaving || isDeleting}
-                  placeholder="ssh-config.json"
-                  spellCheck={false}
-                  className="ui-input h-9 w-full font-mono text-xs"
-                />
+                    path: value,
+                  })} required disabled={isSaving || isDeleting} placeholder="ssh-config.json" spellCheck={false} className="w-full" />
               </label>
             )}
 
             {currentPathAlreadyExists ? (
-              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground text-foreground">
                 {t('runtimeFileReplaceWarning', { path: draft.path.trim() })}
               </p>
             ) : null}
 
             <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
               {t('textContent')}
-              <textarea
-                name="content"
-                value={draft.content}
-                onChange={(event) => setDraft((current) => current && {
+              <textarea name="content" value={draft.content} onChange={(event) => setDraft((current) => current && {
                   ...current,
                   content: event.target.value,
-                })}
-                disabled={isSaving || isDeleting}
-                spellCheck={false}
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? 'runtime-file-error' : undefined}
-                className="h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh] w-full resize-y overflow-auto overscroll-contain rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-foreground outline-none focus:ring-2 focus:ring-ring disabled:cursor-wait disabled:opacity-70"
-              />
+                })} disabled={isSaving || isDeleting} spellCheck={false} aria-invalid={Boolean(error)} aria-describedby={error ? 'runtime-file-error' : undefined} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh]" />
             </label>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="min-h-5" aria-live="polite">
               {error ? (
-                <p id="runtime-file-error" className="text-sm text-red-600 dark:text-red-400" role="alert">
+                <p id="runtime-file-error" className="text-sm text-destructive dark:text-destructive" role="alert">
                   {error}
                 </p>
               ) : notice ? (
-                <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+                <p role="status"><AnimatedBadge status="success">
                   {notice === 'saved' ? t('runtimeFileSaved') : t('runtimeFileRemoved')}
-                </p>
+                </AnimatedBadge></p>
               ) : null}
             </div>
-            <button
-              type="submit"
-              disabled={isSaving || isDeleting || !draft.path.trim()}
-              className="ui-button-primary h-9 disabled:cursor-wait disabled:opacity-70"
-            >
-              {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              {isSaving ? t('savingAndRestarting') : t('saveAndRestart')}
-            </button>
+            <Button type="submit" disabled={isSaving || isDeleting || !draft.path.trim()} variant="primary" size="sm">{isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            {isSaving ? t('savingAndRestarting') : t('saveAndRestart')}</Button>
           </div>
         </form>
       ) : (
         <div className="min-h-5 px-4 py-3" aria-live="polite">
           {error ? (
-            <p id="runtime-file-error" className="text-sm text-red-600 dark:text-red-400" role="alert">
+            <p id="runtime-file-error" className="text-sm text-destructive dark:text-destructive" role="alert">
               {error}
             </p>
           ) : notice ? (
-            <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">
+            <p role="status"><AnimatedBadge status="success">
               {notice === 'saved' ? t('runtimeFileSaved') : t('runtimeFileRemoved')}
-            </p>
+            </AnimatedBadge></p>
           ) : null}
         </div>
       )}

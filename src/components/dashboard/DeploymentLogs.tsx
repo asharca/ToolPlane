@@ -1,7 +1,4 @@
-import {
-  McpRequestLogs,
-  type McpRequestLogView,
-} from '@/components/dashboard/McpRequestLogs';
+import { McpRequestLogs, type McpRequestLogView } from '@/components/dashboard/McpRequestLogs';
 
 export type LogEntry = McpRequestLogView;
 

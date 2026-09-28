@@ -1,7 +1,9 @@
 'use client';
+import { ButtonLink, Button } from '@/components/motion/button';
+
 
 import { useState } from 'react';
-import Link from 'next/link';
+
 import { X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -14,12 +16,12 @@ export function WorkspaceWelcome({ slug, name, isOwner }: { slug: string; name: 
       <h2 className="break-words text-sm font-semibold">{t('welcome', { name })}</h2>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">{t(isOwner ? 'welcomeHint' : 'sharedHint')}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        {isOwner ? <Link href={`/app/${slug}/providers`} className="ui-button-secondary ui-button-sm">{t('configureModels')}</Link> : null}
-        <Link href={`/app/${slug}/chat`} className="ui-button-secondary ui-button-sm">{t('startChat')}</Link>
-        <Link href={`/app/${slug}/market/agents`} className="ui-button-secondary ui-button-sm">{t('findAgent')}</Link>
-        <Link href={`/app/${slug}/market/mcp`} className="ui-button-ghost ui-button-sm">{t('connectTools')}</Link>
+        {isOwner ? <ButtonLink href={`/app/${slug}/providers`} variant="secondary" size="sm">{t('configureModels')}</ButtonLink> : null}
+        <ButtonLink href={`/app/${slug}/chat`} variant="secondary" size="sm">{t('startChat')}</ButtonLink>
+        <ButtonLink href={`/app/${slug}/market/agents`} variant="secondary" size="sm">{t('findAgent')}</ButtonLink>
+        <ButtonLink href={`/app/${slug}/market/mcp`} variant="ghost" size="sm">{t('connectTools')}</ButtonLink>
       </div>
-      <button type="button" onClick={() => setDismissed(true)} aria-label={t('dismiss')} className="ui-button-ghost ui-icon-button absolute right-2 top-2"><X className="size-4" /></button>
+      <Button type="button" onClick={() => setDismissed(true)} aria-label={t('dismiss')} variant="ghost" size="icon" className="absolute right-2 top-2"><X className="size-4" /></Button>
     </section>
   );
 }
