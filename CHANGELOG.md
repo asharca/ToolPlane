@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [0.32.0](https://github.com/asharca/ToolPlane/compare/v0.31.2...v0.32.0) (2026-09-28)
 
 ### Features
+* rebuild console chat and adopt persistent Pi agent harness ([#160](https://github.com/asharca/ToolPlane/issues/160)) ([138e20b](https://github.com/asharca/ToolPlane/commit/138e20b4c51c5f2c4e82f060ba30ac3e9bfc65d1))
+* restore streaming sandbox runner for dedicated Work runtimes ([#159](https://github.com/asharca/ToolPlane/issues/159)) ([40d8869](https://github.com/asharca/ToolPlane/commit/40d88697058f6410efdb9d2a9b91ae7cb336fd67))
 * rebuild agent and assistant chats with the full beUI Chat App resource tree and conversation components
 * streamline assistant and agent beUI sidebars and responsive headers; separate the assistant editor from the chat page
 * move assistant creation into the list header, add per-assistant session creation, and remove the Work sidebar search and top actions
