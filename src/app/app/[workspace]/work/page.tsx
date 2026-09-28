@@ -10,11 +10,6 @@ import {
   listWorkSessions,
   workSessionWorkingDirectory,
 } from '@/lib/work/sessions';
-import { A2AWorkbench } from '@/components/dashboard/work/A2AWorkbench';
-import { AgentA2ATaskMonitor } from '@/components/dashboard/agents/AgentA2ATaskMonitor';
-import { listWorkbenchAgents } from '@/lib/a2a/workbench';
-import { parseWorkbenchSelection } from '@/lib/a2a/workbench-client';
-import { getConsoleTaskTree } from '@/lib/a2a/console-tasks';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { WorkspaceWork } from '@/components/dashboard/work/WorkspaceWork';
 import { WorkspaceWelcome } from '@/components/dashboard/WorkspaceWelcome';
@@ -104,38 +99,13 @@ export default async function WorkspaceWorkPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string }>;
-  searchParams: Promise<{ w?: string; agent?: string; c?: string; welcome?: string; mode?: string; task?: string; view?: string }>;
+  searchParams: Promise<{ w?: string; agent?: string; c?: string; welcome?: string; mode?: string }>;
 }) {
-  const [{ workspace: slug }, { w, c, agent: requestedAgentId, welcome, mode, task, view }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
+  const [{ workspace: slug }, { w, c, agent: requestedAgentId, welcome, mode }, user, t] = await Promise.all([params, searchParams, getCurrentUser(), getTranslations('console.work')]);
   if (!user) redirect('/app/login');
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect('/app');
-  // Explicit native entry: never turn a saved Work/chat link into a different execution mode.
-  if (mode === 'a2a') {
-    const selection = parseWorkbenchSelection({ agent: requestedAgentId, task });
-    if (!selection.success || w || c || workspace.status !== 'active') return notFound();
-    if (view === 'entry' && selection.data.agent && selection.data.task) {
-      const ctx = { workspaceId: workspace.id, actorId: user.id, agentId: selection.data.agent, slug };
-      let tree: Awaited<ReturnType<typeof getConsoleTaskTree>>;
-      try {
-        tree = await getConsoleTaskTree(ctx, selection.data.task);
-      } catch { return notFound(); }
-      const root = tree.nodes.find((node) => node.id === selection.data.task);
-      if (!root) return notFound();
-      return <><DashboardHeader title={root.name} />
-        <div className="mx-auto max-w-5xl p-4 sm:p-6"><AgentA2ATaskMonitor
-          base={`/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(ctx.agentId)}/a2a/console`}
-          rootTaskId={selection.data.task} showHistory onRootState={() => {}} /></div></>;
-    }
-    if (view) return notFound();
-    const candidates = await listWorkbenchAgents(workspace.id, user.id);
-    const selected = selection.data.agent
-      ? candidates.find((agent) => agent.id === selection.data.agent)
-      : candidates.find((agent) => agent.enabled && agent.configured) ?? candidates[0];
-    if (selection.data.agent && !selected) return notFound();
-    return <A2AWorkbench key={`${workspace.id}:${user.id}:${selected?.id ?? ''}:${task ?? ''}`} slug={slug}
-      agents={candidates} agentId={selected?.id ?? ''} initialTaskId={selection.data.task} />;
-  }
+  if (mode === 'a2a') return notFound();
   const titlePending = Boolean(w && !c && isWorkSessionTitlePending(w));
   const [agents, providers, sessions, selectedSession, conversation, cookieStore] = await Promise.all([
     listAgents(workspace.id),
@@ -199,6 +169,7 @@ export default async function WorkspaceWorkPage({
             primaryType: model.primaryType,
             capabilities: model.capabilities,
             inputModalities: model.inputModalities,
+            cost: model.cost,
           })),
         }))}
         agents={agents

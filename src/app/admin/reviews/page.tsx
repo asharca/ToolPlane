@@ -1,3 +1,7 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+import { Button, ButtonLink } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
+import { FormSelect } from '@/components/ui/FormSelect';
 import Link from 'next/link';
 import { ClipboardCheck, Library } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
@@ -22,22 +26,23 @@ export default async function AdminReviewsPage({ searchParams }: { searchParams:
   const detailHref = (row: typeof result.items[number]) => adminHref(row.source === 'agent' ? `/admin/agents/${row.listingId}/edit` : `/admin/reviews/market/${row.listingId}`, { releaseId: row.id, returnTo: listHref });
   return <AdminPage>
     <AdminPageHeader title={ops('reviewQueue')} meta={<AdminBadge tone={result.status === 'pending' ? 'warning' : 'neutral'}>{result.total}</AdminBadge>}
-      actions={<Link href="/admin/market" className="ui-button-secondary"><Library className="size-4" />{ops('catalog')}</Link>} />
+      actions={<ButtonLink href="/admin/market" variant="secondary" size="md"><Library className="size-4" />{ops('catalog')}</ButtonLink>} />
     <AdminSearchForm defaultValue={q} placeholder={t('marketCatalogSearchPlaceholder')} label={t('search')} searchLabel={t('search')} clearLabel={t('clear')} clearHref="/admin/reviews">
-      <select name="status" defaultValue={result.status} aria-label={t('statusColumn')} className="ui-input h-11 w-auto sm:h-9">{REVIEW_STATUSES.map((value) => <option key={value} value={value}>{ops(value)}</option>)}</select>
-      <select name="kind" defaultValue={result.kind} aria-label={ops('allKinds')} className="ui-input h-11 w-auto sm:h-9"><option value="">{ops('allKinds')}</option>{REVIEW_KINDS.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <FormSelect name="status" defaultValue={result.status} className="w-auto" label={t('statusColumn')} options={[...(REVIEW_STATUSES.map((value) => ({ value: value, label: ops(value) })))]} />
+      <FormSelect name="kind" defaultValue={result.kind} className="w-auto" label={ops('allKinds')} options={[{ value: "", label: ops('allKinds') }, ...(REVIEW_KINDS.map((value) => ({ value: value, label: value })))]} />
     </AdminSearchForm>
-    {result.items.length ? <DashboardTable ariaLabel={ops('reviewQueue')} minWidth="64rem" headers={[
-      { label: t('name'), className: 'w-full' }, { label: t('marketReleasePublisher') }, { label: ops('submittedAt') },
+    {result.items.length ? <DashboardTable ariaLabel={ops('reviewQueue')}
+minWidth="64rem"
+headers={[
+      { label: t('name'), width: "35%" }, { label: t('marketReleasePublisher') }, { label: ops('submittedAt') },
       { label: ops('reviewer') }, { label: ops('reviewNote') }, { label: <span className="sr-only">{ops('review')}</span> },
-    ]}>{result.items.map((row) => <tr key={`${row.source}-${row.id}`}>
-      <td className="max-w-80 px-4 py-3"><Link href={detailHref(row)} className="block truncate font-medium hover:underline">{row.name}</Link><span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><AdminBadge>{row.kind}</AdminBadge>v{row.version}</span></td>
-      <td className="max-w-48 truncate px-4 py-3 text-sm" title={row.publisher ?? ''}>{row.publisher ?? '-'}</td>
-      <td className="px-4 py-3"><LogTimestamp date={row.submittedAt} /></td>
-      <td className="max-w-48 px-4 py-3"><span className="block truncate text-sm">{row.reviewer ?? '-'}</span>{row.reviewedAt ? <LogTimestamp date={row.reviewedAt} /> : null}</td>
-      <td className="max-w-64 px-4 py-3 text-xs">{row.reviewNote ? <details><summary className="cursor-pointer truncate">{row.reviewNote}</summary><p className="mt-2 whitespace-pre-wrap break-words">{row.reviewNote}</p></details> : '-'}</td>
-      <td className="px-2 py-3"><AdminTableLink href={detailHref(row)} label={`${ops('review')}: ${row.name}`} /></td>
-    </tr>)}</DashboardTable> : <AdminEmptyState icon={ClipboardCheck} title={t('none')} description={ops('noPendingWork')} />}
+    ]}
+rows={result.items.map((row) => ({ id: `${row.source}-${row.id}`, cells: [<div className="min-w-0 max-w-80"><> <Link href={detailHref(row)} className="block truncate font-medium hover:underline">{row.name}</Link><span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground"><AdminBadge>{row.kind}</AdminBadge>v{row.version}</span> </></div>,
+<div className="min-w-0 max-w-48">{row.publisher ?? '-'}</div>,
+<> <LogTimestamp date={row.submittedAt} /> </>,
+<div className="min-w-0 max-w-48"><> <span className="block truncate text-sm">{row.reviewer ?? '-'}</span>{row.reviewedAt ? <LogTimestamp date={row.reviewedAt} /> : null} </></div>,
+<div className="min-w-0 max-w-64">{row.reviewNote ? <CenterMorphModal><CenterMorphModalTrigger><Button variant="ghost" size="sm" className="max-w-full"><span className="truncate">{row.reviewNote}</span></Button></CenterMorphModalTrigger><CenterMorphModalContent ariaLabel={ops('reviewNote')} closeButtonLabel={t('cancel')} className="max-w-2xl"><div className="space-y-4 p-6"><h2 className="pr-8 text-sm font-semibold">{ops('reviewNote')}</h2><p tabIndex={0} className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-sm">{row.reviewNote}</p></div></CenterMorphModalContent></CenterMorphModal> : '-'}</div>,
+<> <AdminTableLink href={detailHref(row)} label={`${ops('review')}: ${row.name}`} /> </>] }))} /> : <AdminEmptyState icon={ClipboardCheck} title={t('none')} description={ops('noPendingWork')} />}
     <AdminPagination {...result} itemLabel={t('items')} pageLabel={t('page')} previousLabel={t('prev')} nextLabel={t('next')} hrefForPage={hrefForPage} />
   </AdminPage>;
 }

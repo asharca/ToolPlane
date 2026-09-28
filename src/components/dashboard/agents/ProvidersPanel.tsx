@@ -1,40 +1,21 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Button } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { Tooltip } from '@/components/motion/tooltip';
+import { FormSelect } from '@/components/ui/FormSelect';
+import { CenterMorphModal, CenterMorphModalTrigger, CenterMorphModalClose, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
 
-import { useTranslations } from 'next-intl';
-import { useActionState, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import {
-  ArrowUpDown,
-  AudioLines,
-  Boxes,
-  BrainCircuit,
-  Braces,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-  Cpu,
-  Eye,
-  FlaskConical,
-  Image as ImageIcon,
-  KeyRound,
-  Link2,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Save,
-  Search,
-  Trash2,
-  Type,
-  Video,
-  Wrench,
-  X,
-} from 'lucide-react';
+import { useLocale, useTranslations } from 'next-intl';
+import { useRouter } from 'next/navigation';
+import { useActionState, useEffect, useMemo, useRef, useState, ReactElement, ReactNode } from 'react';
+
+import { ArrowUpDown, AudioLines, Boxes, BrainCircuit, ChevronDown, ChevronRight, ChevronUp, Cpu, Eye, FlaskConical, Image as ImageIcon, KeyRound, Link2, Pencil, Plus, RefreshCw, Save, Search, Trash2, Type, Video, Wrench } from 'lucide-react';
 import {
   addProviderModelAction,
   createProviderAction,
   deleteProviderModelAction,
   deleteProviderAction,
-  refreshModelsAction,
   testProviderModelAction,
   updateProviderModelAction,
   updateProviderAction,
@@ -45,7 +26,6 @@ import {
   MODEL_INPUT_MODALITIES,
   MODEL_PRIMARY_TYPES,
   defaultProviderModel,
-  inferModelGroup,
   type ModelCapability,
   type ModelInputModality,
   type ModelPrimaryType,
@@ -53,16 +33,7 @@ import {
 } from '@/lib/agents/model-catalog';
 import { ConfirmSubmitButton } from '@/components/dashboard/ConfirmSubmitButton';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+import { ProviderModelAutofill } from '@/components/dashboard/agents/ProviderModelAutofill';
 
 export type ProviderRow = {
   id: string;
@@ -89,47 +60,19 @@ const customProviderPresets: ProviderPreset[] = [
   { format: 'anthropic', name: 'Anthropic-compatible', baseUrl: '' },
 ];
 
-function Field({
-  icon: Icon,
-  label,
-  children,
-  hint,
-}: {
-  icon: typeof Cpu;
-  label: string;
-  children: ReactNode;
-  hint?: ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        <Icon className="size-4 shrink-0" />
-        {label}
-      </span>
-      {children}
-      {hint ? <span className="mt-1 block text-xs leading-5 text-muted-foreground">{hint}</span> : null}
-    </label>
-  );
-}
-
 function providerEndpoint(provider: ProviderRow, presets: ProviderPreset[], fallback: string) {
   return provider.baseUrl || presets.find((preset) => preset.format === provider.format)?.baseUrl || fallback;
 }
 
 function ActionMessage({ state }: { state: ActionState }) {
   if (state.error) {
-    return <p className="mt-2 text-sm text-red-600" role="alert">{state.error}</p>;
+    return <p className="mt-2 text-sm text-destructive" role="alert">{state.error}</p>;
   }
   if (state.warning) {
-    return <p className="mt-2 text-sm text-amber-600 dark:text-amber-300" role="alert">{state.warning}</p>;
+    return <p className="mt-2 text-sm text-muted-foreground text-muted-foreground" role="alert">{state.warning}</p>;
   }
   return null;
 }
-
-const dialogWidths = {
-  'max-w-xl': '!max-w-xl',
-  'max-w-2xl': '!max-w-2xl',
-} as const;
 
 function ProviderDialog({
   open,
@@ -141,41 +84,28 @@ function ProviderDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  trigger: ReactNode;
+  trigger: ReactElement;
   title: string;
-  maxWidth?: keyof typeof dialogWidths;
+  maxWidth?: 'max-w-xl' | 'max-w-2xl';
   children: ReactNode;
 }) {
   const t = useTranslations('console.agents');
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent
-          aria-describedby={undefined}
-          className={`!block !max-h-[calc(100vh-2rem)] !w-full ${dialogWidths[maxWidth]} !gap-0 !overflow-hidden !p-0 shadow-xl`}
-        >
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <DialogTitle className="!text-sm !leading-normal !tracking-normal text-foreground">{title}</DialogTitle>
-            <DialogClose asChild>
-              <button
-                type="button"
-                aria-label={t('close')}
-                title={t('close')}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </DialogClose>
+    <CenterMorphModal open={open} onOpenChange={onOpenChange}>
+      <Tooltip content={title}><CenterMorphModalTrigger>{trigger}</CenterMorphModalTrigger></Tooltip>
+      <>
+        
+        <CenterMorphModalContent ariaLabel={title} closeButtonLabel={t('close')} className={maxWidth}>
+          <div className="flex items-center border-b border-border pl-5 pr-16 py-4">
+            <h2 className="text-base font-semibold text-foreground">{title}</h2>
           </div>
           <div className="max-h-[calc(100vh-7rem)] overflow-y-auto">
             {children}
           </div>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      </>
+    </CenterMorphModal>
   );
 }
 
@@ -196,16 +126,9 @@ function ModelOptionButton({
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs ${pressed
-        ? 'border-border bg-muted font-medium text-foreground'
-        : 'border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}
-    >
-      {children}
-    </button>
+      <Button type="button" aria-pressed={pressed} onClick={onClick} variant={pressed ? 'secondary' : 'ghost'} size="sm">
+        {children}
+      </Button>
   );
 }
 
@@ -297,27 +220,67 @@ function ModelLimits({
   onChange,
 }: {
   model: ProviderModelValues;
-  onChange: (values: Pick<ProviderModelValues, 'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'>) => void;
+  onChange: (values: Partial<Pick<ProviderModelValues, 'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'>>) => void;
 }) {
   const t = useTranslations('console.agents');
   const setValue = (field: 'contextWindow' | 'maxInputTokens' | 'maxOutputTokens', value: string) => onChange({
-    contextWindow: model.contextWindow,
-    maxInputTokens: model.maxInputTokens,
-    maxOutputTokens: model.maxOutputTokens,
     [field]: value ? Number(value) : null,
   });
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      <Field icon={Cpu} label={t('contextWindow')}>
-        <input name="contextWindow" type="number" min="1" max="100000000" value={model.contextWindow ?? ''} onChange={(event) => setValue('contextWindow', event.target.value)} placeholder="128000" className="ui-input h-9 w-full" />
-      </Field>
-      <Field icon={Cpu} label={t('maxInputTokens')}>
-        <input name="maxInputTokens" type="number" min="1" max="100000000" value={model.maxInputTokens ?? ''} onChange={(event) => setValue('maxInputTokens', event.target.value)} placeholder="128000" className="ui-input h-9 w-full" />
-      </Field>
-      <Field icon={Cpu} label={t('maxOutputTokens')}>
-        <input name="maxOutputTokens" type="number" min="1" max="100000000" value={model.maxOutputTokens ?? ''} onChange={(event) => setValue('maxOutputTokens', event.target.value)} placeholder="65536" className="ui-input h-9 w-full" />
-      </Field>
+      <Input label={t('contextWindow')} leftIcon={<Cpu />} name="contextWindow" type="number" min="1" max="100000000" placeholder="128000" value={String(model.contextWindow ?? '')} onChange={(value) => setValue('contextWindow', value)} className="w-full" />
+      <Input label={t('maxInputTokens')} leftIcon={<Cpu />} name="maxInputTokens" type="number" min="1" max="100000000" placeholder="128000" value={String(model.maxInputTokens ?? '')} onChange={(value) => setValue('maxInputTokens', value)} className="w-full" />
+      <Input label={t('maxOutputTokens')} leftIcon={<Cpu />} name="maxOutputTokens" type="number" min="1" max="100000000" placeholder="65536" value={String(model.maxOutputTokens ?? '')} onChange={(value) => setValue('maxOutputTokens', value)} className="w-full" />
     </div>
+  );
+}
+
+function ModelPrices({ model, onChange }: {
+  model: ProviderModelValues;
+  onChange: (values: Pick<ProviderModelValues, 'cost'>) => void;
+}) {
+  const t = useTranslations('console.agents');
+  const numbers = new Intl.NumberFormat(useLocale());
+  const fields = [
+    ['input', 'catalogInputPrice'], ['output', 'catalogOutputPrice'],
+    ['cacheRead', 'catalogCacheReadPrice'], ['cacheWrite', 'catalogCacheWritePrice'],
+  ] as const;
+  const base: NonNullable<ProviderModelValues['cost']> = model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  return (
+    <fieldset className="space-y-3">
+      <legend className="text-xs text-muted-foreground">{t('catalogPriceUnit')}</legend>
+      <p className="text-xs text-muted-foreground">{t('catalogTierHint')}</p>
+      {[{ rates: model.cost, label: t('catalogBasePrice'), index: -1 }, ...(model.cost?.tiers ?? []).map((rates, index) => ({ rates, label: t('catalogTierAbove', { tokens: numbers.format(rates.inputTokensAbove) }), index }))].map(({ rates, label, index }) => (
+        <fieldset key={index} className="space-y-2">
+          <legend className="text-xs font-medium">{label}</legend>
+          {index >= 0 ? (
+            <div className="flex items-end gap-2">
+              <Input label={t('catalogTierThreshold')} type="number" min="0" step="1" required value={String(base.tiers![index].inputTokensAbove)} onChange={(value) => {
+                onChange({ cost: { ...base, tiers: base.tiers!.map((tier, tierIndex) => tierIndex === index ? { ...tier, inputTokensAbove: Number(value) } : tier) } });
+              }} className="min-w-0 flex-1" />
+              <Button type="button" variant="secondary" size="icon" aria-label={t('catalogRemoveTier')} onClick={() => {
+                const { tiers, ...rates } = base;
+                const remaining = tiers!.filter((_, tierIndex) => tierIndex !== index);
+                onChange({ cost: { ...rates, ...(remaining.length ? { tiers: remaining } : {}) } });
+              }}><Trash2 aria-hidden="true" className="size-4" /></Button>
+            </div>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fields.map(([field, translation]) => (
+              <Input key={field} label={t(translation)} type="number" min="0" step="any" value={String(rates?.[field] ?? '')} onChange={(value) => {
+                const price = value ? Number(value) : 0;
+                onChange({ cost: index < 0 ? { ...base, [field]: price } : { ...base, tiers: base.tiers?.map((tier, tierIndex) => tierIndex === index ? { ...tier, [field]: price } : tier) } });
+              }} className="w-full" />
+            ))}
+          </div>
+        </fieldset>
+      ))}
+      <Button type="button" variant="secondary" size="sm" onClick={() => {
+        const { tiers = [], ...rates } = base;
+        const inputTokensAbove = Math.max(0, ...tiers.map((tier) => tier.inputTokensAbove)) + 1;
+        onChange({ cost: { ...base, tiers: [...tiers, { ...rates, inputTokensAbove }] } });
+      }}><Plus aria-hidden="true" className="size-4" />{t('catalogAddTier')}</Button>
+    </fieldset>
   );
 }
 
@@ -337,135 +300,91 @@ function ModelEditorFields({
   const t = useTranslations('console.agents');
   return (
     <div className="grid gap-3">
-      <Field icon={Cpu} label={t('modelId')} hint={!modelIdReadOnly ? t('modelIdBatchHint') : undefined}>
-        <input
-          name="modelId"
-          required
-          readOnly={modelIdReadOnly}
-          value={model.modelId}
-          onChange={(event) => onModelIdChange?.(event.target.value)}
-          placeholder="gpt-5.5"
-          className={`ui-input h-10 w-full ${modelIdReadOnly ? 'bg-muted/50 text-muted-foreground' : ''}`}
-        />
-      </Field>
-      <Field icon={Pencil} label={t('modelName')}>
-        <input name="name" value={model.name} onChange={(event) => onNameChange(event.target.value)} placeholder="GPT-5.5" className="ui-input h-10 w-full" />
-      </Field>
-      <Field icon={Boxes} label={t('modelGroup')}>
-        <input name="group" value={model.group} onChange={(event) => onGroupChange(event.target.value)} placeholder="ChatGPT" className="ui-input h-10 w-full" />
-      </Field>
+      <div className="space-y-1.5"><Input label={t('modelId')} leftIcon={<Cpu />} name="modelId" required readOnly={modelIdReadOnly} placeholder="gpt-5.5" value={String(model.modelId)} onChange={(value) => onModelIdChange?.(value)} /><p className="text-xs text-muted-foreground">{!modelIdReadOnly ? t('modelIdBatchHint') : undefined}</p></div>
+      <Input label={t('modelName')} leftIcon={<Pencil />} name="name" placeholder="GPT-5.5" value={String(model.name)} onChange={(value) => onNameChange(value)} className="w-full" />
+      <Input label={t('modelGroup')} leftIcon={<Boxes />} name="group" placeholder="ChatGPT" value={String(model.group)} onChange={(value) => onGroupChange(value)} className="w-full" />
     </div>
   );
 }
 
-function ProviderFormatOptions({ piProviderPresets }: { piProviderPresets: ProviderPreset[] }) {
-  return (
-    <>
-      <optgroup label="Pi providers">
-        {piProviderPresets.map((preset) => <option key={preset.format} value={preset.format}>{preset.name}</option>)}
-      </optgroup>
-      <optgroup label="Custom">
-        {customProviderPresets.map((preset) => <option key={preset.format} value={preset.format}>{preset.name}</option>)}
-      </optgroup>
-    </>
-  );
+function providerFormatOptions(piProviderPresets: ProviderPreset[]) {
+  return [...piProviderPresets, ...customProviderPresets].map((preset) => ({ value: preset.format, label: preset.name }));
 }
 
 function AddProviderDialog({
   slug,
   piProviderPresets,
-  iconOnly = false,
+  onCreated,
 }: {
   slug: string;
   piProviderPresets: ProviderPreset[];
-  iconOnly?: boolean;
+  onCreated: (providerId: string) => void;
 }) {
   const initialPreset = piProviderPresets[0] ?? customProviderPresets[0];
   const presets = [...piProviderPresets, ...customProviderPresets];
   const t = useTranslations('console.agents');
   const [open, setOpen] = useState(false);
+  const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<number | undefined>();
+  const processedProviderId = useRef<string | null>(null);
   const [format, setFormat] = useState(initialPreset.format);
   const [name, setName] = useState(initialPreset.name);
   const [baseUrl, setBaseUrl] = useState('');
   const selectedPreset = presets.find((preset) => preset.format === format);
   const isCustomProvider = !format.startsWith('pi:');
   const [state, formAction] = useActionState<ActionState, FormData>(createProviderAction, {});
+  const [apiKey, setApiKey] = useState('');
+  // Secret input is cleared after every action result; it must not survive a failed or successful submission.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setApiKey(''); }, [state]);
+  useEffect(() => {
+    if (!state.providerId || processedProviderId.current === state.providerId) return;
+    processedProviderId.current = state.providerId;
+    onCreated(state.providerId);
+  }, [state.providerId, onCreated]);
 
   return (
     <ProviderDialog
-      open={open}
-      onOpenChange={setOpen}
+      open={open && (!state.savedAt || state.savedAt === savedAtWhenOpened)}
+      onOpenChange={(next) => {
+        if (next) setSavedAtWhenOpened(state.savedAt);
+        else setApiKey('');
+        setOpen(next);
+      }}
       title={t('addModelProvider')}
       trigger={(
-        <button
-          type="button"
-          aria-label={t('addProvider')}
-          title={t('addProvider')}
-          className={iconOnly ? 'ui-button-ghost ui-icon-button' : 'ui-button-primary h-10 gap-2 px-4'}
-        >
-          <Plus className="size-[18px] shrink-0" />
-          {iconOnly ? null : t('addProvider')}
-        </button>
+        <Button variant="secondary" size="icon" type="button" aria-label={t('addProvider')}>
+          <Plus aria-hidden="true" className="size-4" />
+        </Button>
       )}
     >
         <form action={formAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
           <input type="hidden" name="workspace" value={slug} />
-          <Field icon={Cpu} label={t('name')}>
-            <input name="name" required value={name} onChange={(event) => setName(event.target.value)} className="ui-input h-10 w-full" />
-          </Field>
-          <Field icon={Braces} label={t('format')}>
-            <NativeSelect
-              name="format"
-              className="ui-input h-10 w-full"
-              value={format}
-              onChange={(event) => {
-                const preset = presets.find((candidate) => candidate.format === event.target.value);
-                setFormat(event.target.value);
+          <Input label={t('name')} leftIcon={<Cpu />} name="name" required value={String(name)} onChange={(value) => setName(value)} className="w-full" />
+          <div className="space-y-1.5"><p className="text-sm font-medium">{t('format')}</p><FormSelect name="format" value={format} label={t('format')} options={[providerFormatOptions(piProviderPresets)].flat().filter((option) => option != null)} onValueChange={(value) => {
+                const preset = presets.find((candidate) => candidate.format === value);
+                setFormat(value);
                 if (preset) {
                   setName(preset.name);
                   setBaseUrl('');
                 }
-              }}
-            >
-              <ProviderFormatOptions piProviderPresets={piProviderPresets} />
-            </NativeSelect>
-          </Field>
-              <Field
-                icon={Link2}
-                label={t('baseUrl')}
-                hint={!isCustomProvider && selectedPreset?.baseUrl
+              }} className="w-full" /></div>
+              <div className="space-y-1.5"><Input label={t('baseUrl')} leftIcon={<Link2 />} name="baseUrl" required={isCustomProvider} placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined} value={String(baseUrl)} onChange={(value) => setBaseUrl(value)} className="w-full" /><p className="text-xs text-muted-foreground">{!isCustomProvider && selectedPreset?.baseUrl
                   ? t('leaveBlankToUseDefaultEndpoint', { endpoint: selectedPreset.baseUrl })
-                  : undefined}
-              >
-                <input
-                  name="baseUrl"
-                  required={isCustomProvider}
-                  value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.target.value)}
-                  placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined}
-                  className="ui-input h-10 w-full"
-                />
-              </Field>
+                  : undefined}</p></div>
           <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
-            <Field icon={KeyRound} label={t('apiKey')}>
-              <input name="apiKey" type="password" placeholder="API key or token" className="ui-input h-10 w-full" />
-            </Field>
+            <Input label={t('apiKey')} leftIcon={<KeyRound />} name="apiKey" type="password" value={apiKey} onChange={setApiKey} placeholder="API key or token" className="w-full" />
           </div>
           <div className="xl:col-span-2">
             <ActionMessage state={state} />
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4 text-sm">
-                {t('cancel')}
-              </button>
-              <SubmitButton
-                error={state.error}
-                pendingLabel={t('adding')}
-                savedLabel={t('added')}
-                className="ui-button-primary h-10 gap-2 px-4"
-              >
-                <Plus className="size-[18px] shrink-0" />
-                {t('addProvider')}
-              </SubmitButton>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <CenterMorphModalClose>
+                <Button size="sm" type="button" variant="secondary">{t('cancel')}</Button>
+              </CenterMorphModalClose>
+              <Tooltip content={t('addProvider')}>
+                <SubmitButton error={state.error} pendingLabel="" savedLabel="" ariaLabel={t('addProvider')} variant="primary" size="icon">
+                  <Plus aria-hidden="true" className="size-4" />
+                </SubmitButton>
+              </Tooltip>
             </div>
           </div>
         </form>
@@ -479,10 +398,16 @@ function AddModelDialog({ slug, providerId }: { slug: string; providerId: string
   const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<number | undefined>();
   const [showMore, setShowMore] = useState(false);
   const [model, setModel] = useState<ProviderModelValues>(() => defaultProviderModel(''));
+  const manualFields = useRef(new Set<keyof ProviderModelValues>());
+  const updateModel = (values: Partial<ProviderModelValues>) => {
+    for (const field of Object.keys(values) as Array<keyof ProviderModelValues>) manualFields.current.add(field);
+    setModel((current) => ({ ...current, ...values }));
+  };
   const [state, formAction] = useActionState<ActionState, FormData>(addProviderModelAction, {});
 
   function reset() {
     setModel(defaultProviderModel(''));
+    manualFields.current.clear();
     setShowMore(false);
   }
 
@@ -498,45 +423,39 @@ function AddModelDialog({ slug, providerId }: { slug: string; providerId: string
       }}
       title={t('addModel')}
       trigger={(
-        <button type="button" aria-label={t('addModel')} title={t('addModel')} className="ui-button-secondary ui-icon-button h-8 min-h-8 w-8">
-          <Plus className="size-3.5" />
-        </button>
+        <Button size="icon" variant="secondary" type="button" aria-label={t('addModel')}><Plus aria-hidden="true" className="size-4" /></Button>
       )}
     >
       <form action={formAction} className="px-5 py-5">
         <input type="hidden" name="workspace" value={slug} />
         <input type="hidden" name="providerId" value={providerId} />
+        <input type="hidden" name="cost" value={JSON.stringify(model.cost ?? null)} />
         <ModelEditorFields
           model={model}
           onModelIdChange={(modelId) => setModel((current) => ({
-            ...current,
-            modelId,
-            name: modelId,
-            group: inferModelGroup(modelId),
+            ...defaultProviderModel(modelId),
+            ...Object.fromEntries([...manualFields.current].map((field) => [field, current[field]])),
           }))}
-          onNameChange={(name) => setModel((current) => ({ ...current, name }))}
-          onGroupChange={(group) => setModel((current) => ({ ...current, group }))}
+          onNameChange={(name) => updateModel({ name })}
+          onGroupChange={(group) => updateModel({ group })}
         />
-        <button
-          type="button"
-          onClick={() => setShowMore((value) => !value)}
-          aria-expanded={showMore}
-          className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
+        <ProviderModelAutofill slug={slug} providerId={providerId} modelId={model.modelId} name={model.name} open={open && state.savedAt === savedAtWhenOpened} setModel={setModel} manualFields={manualFields} />
+        <Button type="button" onClick={() => setShowMore((value) => !value)} aria-expanded={showMore} variant="ghost" size="sm" className="mt-4">
           {t('moreSettings')}
           {showMore ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-        </button>
+        </Button>
         {showMore ? (
           <div className="mt-3 space-y-3">
             <ModelClassificationControls
               primaryType={model.primaryType}
               capabilities={model.capabilities}
               inputModalities={model.inputModalities}
-              onPrimaryTypeChange={(primaryType) => setModel((current) => ({ ...current, primaryType }))}
-              onCapabilitiesChange={(capabilities) => setModel((current) => ({ ...current, capabilities }))}
-              onInputModalitiesChange={(inputModalities) => setModel((current) => ({ ...current, inputModalities }))}
+              onPrimaryTypeChange={(primaryType) => updateModel({ primaryType })}
+              onCapabilitiesChange={(capabilities) => updateModel({ capabilities })}
+              onInputModalitiesChange={(inputModalities) => updateModel({ inputModalities })}
             />
-            <ModelLimits model={model} onChange={(values) => setModel((current) => ({ ...current, ...values }))} />
+            <ModelLimits model={model} onChange={updateModel} />
+            <ModelPrices model={model} onChange={updateModel} />
           </div>
         ) : (
           <>
@@ -549,12 +468,13 @@ function AddModelDialog({ slug, providerId }: { slug: string; providerId: string
           </>
         )}
         <ActionMessage state={state} />
-        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
-          <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4 text-sm">{t('cancel')}</button>
-          <SubmitButton error={state.error} pendingLabel={t('adding')} savedLabel={t('added')} className="ui-button-primary h-10 gap-2 px-4">
-            <Plus className="size-4" />
-            {t('addModel')}
-          </SubmitButton>
+        <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+          <CenterMorphModalClose><Button size="sm" type="button" variant="secondary">{t('cancel')}</Button></CenterMorphModalClose>
+          <Tooltip content={t('addModel')}>
+            <SubmitButton error={state.error} pendingLabel="" savedLabel="" ariaLabel={t('addModel')} variant="primary" size="icon">
+              <Plus aria-hidden="true" className="size-4" />
+            </SubmitButton>
+          </Tooltip>
         </div>
       </form>
     </ProviderDialog>
@@ -575,6 +495,11 @@ function EditModelDialog({
   const [savedAtWhenOpened, setSavedAtWhenOpened] = useState<number | undefined>();
   const [showMore, setShowMore] = useState(false);
   const [model, setModel] = useState<ProviderModelValues>(initialModel);
+  const manualFields = useRef(new Set<keyof ProviderModelValues>());
+  const updateModel = (values: Partial<ProviderModelValues>) => {
+    for (const field of Object.keys(values) as Array<keyof ProviderModelValues>) manualFields.current.add(field);
+    setModel((current) => ({ ...current, ...values }));
+  };
   const [state, formAction] = useActionState<ActionState, FormData>(updateProviderModelAction, {});
 
   return (
@@ -583,6 +508,7 @@ function EditModelDialog({
       onOpenChange={(nextOpen) => {
         if (nextOpen) {
           setModel(initialModel);
+          manualFields.current.clear();
           setShowMore(false);
           setSavedAtWhenOpened(state.savedAt);
         }
@@ -590,40 +516,36 @@ function EditModelDialog({
       }}
       title={t('editModel')}
       trigger={(
-        <button type="button" aria-label={t('editModel')} title={t('editModel')} className="ui-button-ghost ui-icon-button h-8 min-h-8 w-8">
-          <Pencil className="size-3.5" />
-        </button>
+        <Button size="icon" variant="ghost" type="button" aria-label={t('editModel')}><Pencil aria-hidden="true" className="size-4" /></Button>
       )}
     >
       <form action={formAction} className="px-5 py-5">
         <input type="hidden" name="workspace" value={slug} />
         <input type="hidden" name="providerId" value={providerId} />
+        <input type="hidden" name="cost" value={JSON.stringify(model.cost ?? null)} />
         <ModelEditorFields
           model={model}
           modelIdReadOnly
-          onNameChange={(name) => setModel((current) => ({ ...current, name }))}
-          onGroupChange={(group) => setModel((current) => ({ ...current, group }))}
+          onNameChange={(name) => updateModel({ name })}
+          onGroupChange={(group) => updateModel({ group })}
         />
-        <button
-          type="button"
-          onClick={() => setShowMore((value) => !value)}
-          aria-expanded={showMore}
-          className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
+        <ProviderModelAutofill slug={slug} providerId={providerId} modelId={model.modelId} name={model.name} open={open && state.savedAt === savedAtWhenOpened} setModel={setModel} manualFields={manualFields} />
+        <Button type="button" onClick={() => setShowMore((value) => !value)} aria-expanded={showMore} variant="ghost" size="sm" className="mt-4">
           {t('moreSettings')}
           {showMore ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-        </button>
+        </Button>
         {showMore ? (
           <div className="mt-3 space-y-3">
             <ModelClassificationControls
               primaryType={model.primaryType}
               capabilities={model.capabilities}
               inputModalities={model.inputModalities}
-              onPrimaryTypeChange={(primaryType) => setModel((current) => ({ ...current, primaryType }))}
-              onCapabilitiesChange={(capabilities) => setModel((current) => ({ ...current, capabilities }))}
-              onInputModalitiesChange={(inputModalities) => setModel((current) => ({ ...current, inputModalities }))}
+              onPrimaryTypeChange={(primaryType) => updateModel({ primaryType })}
+              onCapabilitiesChange={(capabilities) => updateModel({ capabilities })}
+              onInputModalitiesChange={(inputModalities) => updateModel({ inputModalities })}
             />
-            <ModelLimits model={model} onChange={(values) => setModel((current) => ({ ...current, ...values }))} />
+            <ModelLimits model={model} onChange={updateModel} />
+            <ModelPrices model={model} onChange={updateModel} />
           </div>
         ) : (
           <>
@@ -636,12 +558,13 @@ function EditModelDialog({
           </>
         )}
         <ActionMessage state={state} />
-        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
-          <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4 text-sm">{t('cancel')}</button>
-          <SubmitButton error={state.error} pendingLabel={t('saving')} savedLabel={t('saved')} className="ui-button-primary h-10 gap-2 px-4">
-            <Save className="size-4" />
-            {t('saveChanges')}
-          </SubmitButton>
+        <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+          <CenterMorphModalClose><Button size="sm" type="button" variant="secondary">{t('cancel')}</Button></CenterMorphModalClose>
+          <Tooltip content={t('saveChanges')}>
+            <SubmitButton error={state.error} pendingLabel="" savedLabel="" ariaLabel={t('saveChanges')} variant="primary" size="icon">
+              <Save aria-hidden="true" className="size-4" />
+            </SubmitButton>
+          </Tooltip>
         </div>
       </form>
     </ProviderDialog>
@@ -660,14 +583,13 @@ function DeleteModelForm({ slug, providerId, modelId }: { slug: string; provider
       <ConfirmSubmitButton
         triggerLabel={<Trash2 className="size-3.5" />}
         triggerAriaLabel={t('removeModel')}
-        triggerTitle={t('removeModel')}
         confirmLabel={common('confirm')}
         cancelLabel={common('cancel')}
         prompt={t('removeModelPrompt', { model: modelId })}
         pendingLabel={t('removingModel')}
-        triggerClassName="ui-button-ghost ui-icon-button h-8 min-h-8 w-8 text-red-600 dark:text-red-300"
-        confirmClassName="inline-flex h-8 items-center rounded-md bg-red-600 px-3 text-xs font-medium text-white hover:bg-red-700"
-        cancelClassName="ui-button-secondary h-8 px-3 text-xs"
+        triggerVariant="ghost" triggerSize="icon"
+        
+        
         promptClassName="max-w-52 text-xs text-muted-foreground"
       />
       {state.error ? <span role="alert" className="text-xs text-destructive">{state.error}</span> : null}
@@ -675,7 +597,7 @@ function DeleteModelForm({ slug, providerId, modelId }: { slug: string; provider
   );
 }
 
-function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: string; model: ProviderModelRow }) {
+function ModelTestRow({ slug, providerId, model, numbers, prices }: { slug: string; providerId: string; model: ProviderModelRow; numbers: Intl.NumberFormat; prices: Intl.NumberFormat }) {
   const t = useTranslations('console.agents');
   const [state, testAction] = useActionState<ActionState, FormData>(testProviderModelAction, {});
   const typeLabel = {
@@ -686,7 +608,7 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
   }[model.primaryType];
 
   return (
-    <div className="rounded-md px-2.5 py-2 transition-colors hover:bg-muted/60">
+    <article aria-label={model.name} className="rounded-md px-2.5 py-2 transition-colors hover:bg-muted/60">
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2.5">
           <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[10px] font-semibold text-muted-foreground">
@@ -694,16 +616,17 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
           </span>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="truncate text-sm text-foreground" title={model.name}>{model.name}</span>
-              <span className="inline-flex h-5 items-center gap-1 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
-                <ModelTypeIcon type={model.primaryType} />
-                {typeLabel}
-              </span>
-              {model.capabilities.includes('reasoning') ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t('capabilityReasoning')}</span> : null}
-              {model.capabilities.includes('function_calling') ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t('capabilityTools')}</span> : null}
-              {model.inputModalities.includes('image') ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t('modalityVision')}</span> : null}
+              <span className="truncate text-sm text-foreground">{model.name}</span>
+              <Tooltip content={typeLabel}>
+                <span tabIndex={0} aria-label={typeLabel} className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <ModelTypeIcon type={model.primaryType} />
+                </span>
+              </Tooltip>
+              {model.capabilities.includes('reasoning') ? <AnimatedBadge status="neutral">{t('capabilityReasoning')}</AnimatedBadge> : null}
+              {model.capabilities.includes('function_calling') ? <AnimatedBadge status="neutral">{t('capabilityTools')}</AnimatedBadge> : null}
+              {model.inputModalities.includes('image') ? <AnimatedBadge status="neutral">{t('modalityVision')}</AnimatedBadge> : null}
             </div>
-            {model.name !== model.modelId ? <p className="truncate text-[11px] text-muted-foreground" title={model.modelId}>{model.modelId}</p> : null}
+            {model.name !== model.modelId ? <p className="truncate text-[11px] text-muted-foreground">{model.modelId}</p> : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -712,28 +635,53 @@ function ModelTestRow({ slug, providerId, model }: { slug: string; providerId: s
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="providerId" value={providerId} />
               <input type="hidden" name="model" value={model.modelId} />
+              <Tooltip content={t('testModel')}>
               <SubmitButton
                 error={state.error}
-                pendingLabel={t('testing')}
-                savedLabel={t('available')}
+                pendingLabel=""
+                savedLabel=""
                 ariaLabel={t('testModel')}
-                title={t('testModel')}
-                className="ui-button-ghost h-8 min-h-8 w-8 px-0 text-muted-foreground"
+                variant="ghost" size="icon"
+                icon={<FlaskConical className="size-3.5" />}
               >
-                <FlaskConical className="size-3.5" />
+                {null}
               </SubmitButton>
+              </Tooltip>
             </form>
           ) : null}
           <EditModelDialog slug={slug} providerId={providerId} initialModel={model} />
           <DeleteModelForm slug={slug} providerId={providerId} modelId={model.modelId} />
         </div>
       </div>
+      {model.contextWindow !== null || model.maxInputTokens !== null || model.maxOutputTokens !== null ? (
+        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          {([
+            ['contextWindow', model.contextWindow],
+            ['maxInputTokens', model.maxInputTokens],
+            ['maxOutputTokens', model.maxOutputTokens],
+          ] as const).map(([label, value]) => value !== null ? <div key={label} className="flex gap-1"><dt>{t(label)}:</dt><dd className="tabular-nums text-foreground">{numbers.format(value)}</dd></div> : null)}
+        </dl>
+      ) : null}
+      {model.cost ? (
+        <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+          <p>{t('catalogPriceUnit')}</p>
+          {[{ label: t('catalogBasePrice'), rates: model.cost }, ...(model.cost.tiers ?? []).map((tier) => ({ label: t('catalogTierAbove', { tokens: numbers.format(tier.inputTokensAbove) }), rates: tier }))].map(({ label, rates }) => (
+            <dl key={label} className="flex flex-wrap gap-x-4 gap-y-1">
+              {model.cost?.tiers?.length ? <div className="font-medium">{label}</div> : null}
+              {([
+                ['catalogInputPrice', rates.input], ['catalogOutputPrice', rates.output],
+                ['catalogCacheReadPrice', rates.cacheRead], ['catalogCacheWritePrice', rates.cacheWrite],
+              ] as const).map(([field, price]) => <div key={field} className="flex gap-1"><dt>{t(field)}:</dt><dd className="tabular-nums text-foreground">{prices.format(price)}</dd></div>)}
+            </dl>
+          ))}
+        </div>
+      ) : null}
       {state.error ? (
         <ActionMessage state={state} />
       ) : state.savedAt ? (
-        <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-300" role="status">{t('modelAvailable')}</p>
+        <p className="mt-2 text-sm text-muted-foreground text-muted-foreground" role="status">{t('modelAvailable')}</p>
       ) : null}
-    </div>
+    </article>
   );
 }
 
@@ -753,82 +701,48 @@ function EditProviderDialog({
   const selectedPreset = piProviderPresets.find((preset) => preset.format === format);
   const isCustomProvider = !format.startsWith('pi:');
   const [updateState, updateAction] = useActionState<ActionState, FormData>(updateProviderAction, {});
+  const [apiKey, setApiKey] = useState('');
+  // Secret input is cleared after every action result; it must not survive a failed or successful submission.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setApiKey(''); }, [updateState]);
 
   return (
     <ProviderDialog
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => { if (!next) setApiKey(''); setOpen(next); }}
       title={t('editProvider')}
       maxWidth="max-w-2xl"
       trigger={(
-        <button
-          type="button"
-          aria-label={t('editProvider')}
-          title={t('editProvider')}
-          className="ui-button-ghost ui-icon-button"
-        >
-          <Pencil className="size-[18px]" />
-        </button>
+        <Button size="icon" variant="ghost" type="button" aria-label={t('editProvider')}>
+          <Pencil aria-hidden="true" className="size-4" />
+        </Button>
       )}
     >
         <form action={updateAction} className="grid gap-3 px-5 py-5 xl:grid-cols-2">
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="providerId" value={provider.id} />
-          <Field icon={Cpu} label={t('name')}>
-            <input name="name" required defaultValue={provider.name} className="ui-input h-10 w-full" />
-          </Field>
-          <Field
-            icon={Braces}
-            label={t('format')}
-          >
-            <NativeSelect name="format" className="ui-input h-10 w-full" value={format} onChange={(event) => {
-              setFormat(event.target.value);
+          <Input label={t('name')} leftIcon={<Cpu />} name="name" required defaultValue={String(provider.name)} className="w-full" />
+          <div className="space-y-1.5"><p className="text-sm font-medium">{t('format')}</p><FormSelect name="format" value={format} label={t('format')} options={[providerFormatOptions(piProviderPresets)].flat().filter((option) => option != null)} onValueChange={(value) => {
+              setFormat(value);
               setBaseUrl('');
-            }}>
-              <ProviderFormatOptions piProviderPresets={piProviderPresets} />
-            </NativeSelect>
-          </Field>
-          <Field
-            icon={Link2}
-            label={t('baseUrl')}
-            hint={!isCustomProvider && selectedPreset?.baseUrl
+            }} className="w-full" /></div>
+          <div className="space-y-1.5"><Input label={t('baseUrl')} leftIcon={<Link2 />} name="baseUrl" required={isCustomProvider} placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined} value={String(baseUrl)} onChange={(value) => setBaseUrl(value)} className="w-full" /><p className="text-xs text-muted-foreground">{!isCustomProvider && selectedPreset?.baseUrl
               ? t('leaveBlankToUseDefaultEndpoint', { endpoint: selectedPreset.baseUrl })
-              : undefined}
-          >
-            <input
-              name="baseUrl"
-              required={isCustomProvider}
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder={!isCustomProvider ? selectedPreset?.baseUrl : undefined}
-              className="ui-input h-10 w-full"
-            />
-          </Field>
+              : undefined}</p></div>
           <div className={isCustomProvider ? undefined : 'xl:col-span-2'}>
-            <Field icon={KeyRound} label={t('apiKey')}>
-              <input
-                name="apiKey"
-                type="password"
-                placeholder={t('leaveBlankToKeepCurrentKey')}
-                className="ui-input h-10 w-full"
-              />
-            </Field>
+            <Input label={t('apiKey')} leftIcon={<KeyRound />} name="apiKey" type="password" value={apiKey} onChange={setApiKey} placeholder={t('leaveBlankToKeepCurrentKey')} className="w-full" />
           </div>
           <div className="xl:col-span-2">
             <ActionMessage state={updateState} />
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="ui-button-secondary h-10 px-4 text-sm">
-                {t('cancel')}
-              </button>
-              <SubmitButton
-                error={updateState.error}
-                pendingLabel={t('saving')}
-                savedLabel={t('saved')}
-                className="ui-button-primary h-10 gap-2 px-4"
-              >
-                <Save className="size-[18px] shrink-0" />
-                {t('saveChanges')}
-              </SubmitButton>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <CenterMorphModalClose>
+                <Button size="sm" type="button" variant="secondary">{t('cancel')}</Button>
+              </CenterMorphModalClose>
+              <Tooltip content={t('saveChanges')}>
+                <SubmitButton error={updateState.error} pendingLabel="" savedLabel="" ariaLabel={t('saveChanges')} variant="primary" size="icon">
+                  <Save aria-hidden="true" className="size-4" />
+                </SubmitButton>
+              </Tooltip>
             </div>
           </div>
         </form>
@@ -840,31 +754,41 @@ function ProviderDetail({
   slug,
   provider,
   piProviderPresets,
+  refreshState,
+  refreshing,
+  onRefresh,
 }: {
   slug: string;
   provider: ProviderRow;
   piProviderPresets: ProviderPreset[];
+  refreshState: ActionState;
+  refreshing: boolean;
+  onRefresh: () => void;
 }) {
   const t = useTranslations('console.agents');
+  const locale = useLocale();
+  const numbers = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const prices = useMemo(() => new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', maximumFractionDigits: 8 }), [locale]);
   const common = useTranslations('common');
   const [modelQuery, setModelQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ModelPrimaryType>('all');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
-  const [refreshState, refreshAction] = useActionState<ActionState, FormData>(refreshModelsAction, {});
   const endpoint = providerEndpoint(provider, piProviderPresets, t('builtInConnection'));
-  const modelRecords = useMemo<ProviderModelRow[]>(() => provider.models.map((modelId) => {
-    const defaults = defaultProviderModel(modelId);
-    const stored = provider.modelRecords?.find((record) => record.modelId === modelId);
-    if (!stored) return { ...defaults, source: 'remote' };
-    return {
-      ...stored,
-      primaryType: MODEL_PRIMARY_TYPES.includes(stored.primaryType as ModelPrimaryType)
-        ? stored.primaryType as ModelPrimaryType
-        : defaults.primaryType,
-      capabilities: stored.capabilities.filter((value): value is ModelCapability => MODEL_CAPABILITIES.includes(value as ModelCapability)),
-      inputModalities: stored.inputModalities.filter((value): value is ModelInputModality => MODEL_INPUT_MODALITIES.includes(value as ModelInputModality)),
-    };
-  }), [provider.modelRecords, provider.models]);
+  const modelRecords = useMemo<ProviderModelRow[]>(() => {
+    return provider.models.map((modelId) => {
+      const defaults = defaultProviderModel(modelId);
+      const stored = provider.modelRecords?.find((record) => record.modelId === modelId);
+      if (!stored) return { ...defaults, source: 'remote' };
+      return {
+        ...stored,
+        primaryType: MODEL_PRIMARY_TYPES.includes(stored.primaryType as ModelPrimaryType)
+          ? stored.primaryType as ModelPrimaryType
+          : defaults.primaryType,
+        capabilities: stored.capabilities.filter((value): value is ModelCapability => MODEL_CAPABILITIES.includes(value as ModelCapability)),
+        inputModalities: stored.inputModalities.filter((value): value is ModelInputModality => MODEL_INPUT_MODALITIES.includes(value as ModelInputModality)),
+      };
+    });
+  }, [provider.modelRecords, provider.models]);
   const searchedModels = useMemo(() => {
     const query = modelQuery.trim().toLocaleLowerCase();
     return query
@@ -896,19 +820,19 @@ function ProviderDetail({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-sm font-semibold text-muted-foreground">
             {provider.name.charAt(0).toUpperCase() || 'P'}
           </span>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="truncate text-[15px] font-semibold text-foreground">{provider.name}</h2>
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+              <AnimatedBadge status="neutral">
                 {provider.format}
-              </span>
+              </AnimatedBadge>
             </div>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={endpoint}>{endpoint}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{endpoint}</p>
             {provider.modelsFetchedAt ? (
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {t('lastRefreshedAt', { date: provider.modelsFetchedAt })}
@@ -924,67 +848,43 @@ function ProviderDetail({
             <ConfirmSubmitButton
               triggerLabel={<Trash2 className="size-[18px]" />}
               triggerAriaLabel={common('remove')}
-              triggerTitle={common('remove')}
               confirmLabel={common('confirm')}
               cancelLabel={common('cancel')}
               prompt={t('removeProviderPrompt', { name: provider.name })}
               pendingLabel={t('removingProvider')}
               className="items-center justify-end"
-              triggerClassName="ui-button-ghost ui-icon-button text-red-600 dark:text-red-300"
-              confirmClassName="inline-flex h-10 items-center rounded-md bg-red-600 px-4 text-sm font-medium text-white transition-colors hover:bg-red-700"
-              cancelClassName="ui-button-secondary h-10 px-4 text-sm"
+              triggerVariant="ghost" triggerSize="icon"
+              
+              
               promptClassName="max-w-sm text-xs text-muted-foreground"
             />
           </form>
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 sm:px-6 sm:pb-6">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 py-2">
+      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4 sm:px-6 sm:pb-6">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <h3 className="text-sm font-semibold text-foreground">{t('models')}</h3>
             <span className="text-xs tabular-nums text-muted-foreground">{provider.modelCount}</span>
           </div>
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
-            <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
-              <span className="sr-only">{t('searchModels')}</span>
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={modelQuery}
-                onChange={(event) => setModelQuery(event.target.value)}
-                placeholder={t('searchModels')}
-                className="ui-input h-8 w-full pl-8 pr-2 text-xs"
-              />
-            </label>
+          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:flex-1 sm:justify-end">
+            <div className="min-w-0 flex-1 sm:max-w-64">
+              <Input leftIcon={<Search />} aria-label={t('searchModels')} placeholder={t('searchModels')} value={modelQuery} onChange={setModelQuery} className="w-full" />
+            </div>
             <AddModelDialog slug={slug} providerId={provider.id} />
-            <form action={refreshAction}>
-              <input type="hidden" name="workspace" value={slug} />
-              <input type="hidden" name="providerId" value={provider.id} />
-              <SubmitButton
-                error={refreshState.error}
-                pendingLabel={t('refreshing')}
-                savedLabel={t('refreshed')}
-                ariaLabel={t('refreshModels')}
-                title={t('refreshModels')}
-                className="ui-button-secondary h-8 shrink-0 gap-1.5 px-2.5 text-xs"
-              >
-                <RefreshCw className="size-3.5" />
-                <span className="hidden sm:inline">{t('refreshModels')}</span>
-              </SubmitButton>
-            </form>
+            <Tooltip content={t('refreshModels')}>
+              <Button type="button" variant="secondary" size="icon" disabled={refreshing} aria-busy={refreshing || undefined} aria-label={t('refreshModels')} onClick={onRefresh}>
+                <RefreshCw aria-hidden="true" className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
+              </Button>
+            </Tooltip>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border pb-2" role="tablist" aria-label={t('filterModels')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={typeFilter === 'all'}
-            onClick={() => setTypeFilter('all')}
-            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs ${typeFilter === 'all' ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}
-          >
+          <Button type="button" role="tab" aria-selected={typeFilter === 'all'} onClick={() => setTypeFilter('all')} variant={typeFilter === 'all' ? 'secondary' : 'ghost'} size={"sm"}>
             {t('allModels')}
             <span className="tabular-nums text-[10px] text-muted-foreground">{searchedModels.length}</span>
-          </button>
+          </Button>
           {(['text', 'image', 'embedding', 'rerank'] as ModelPrimaryType[]).map((type) => {
             const label = type === 'text'
               ? t('modelTypeText')
@@ -994,35 +894,26 @@ function ProviderDetail({
                   ? t('modelTypeEmbedding')
                   : t('modelTypeRerank');
             return (
-              <button
-                key={type}
-                type="button"
-                role="tab"
-                aria-selected={typeFilter === type}
-                onClick={() => setTypeFilter(type)}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs ${typeFilter === type ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}
-              >
+              <Button key={type} type="button" role="tab" aria-selected={typeFilter === type} onClick={() => setTypeFilter(type)} variant={typeFilter === type ? 'secondary' : 'ghost'} size="sm">
                 <ModelTypeIcon type={type} />
                 {label}
                 <span className="tabular-nums text-[10px] text-muted-foreground">{typeCounts[type]}</span>
-              </button>
+              </Button>
             );
           })}
           {modelGroups.length ? (
-            <button
-              type="button"
-              onClick={() => setCollapsedGroups(allGroupsExpanded
+            <Tooltip content={allGroupsExpanded ? t('collapseAllGroups') : t('expandAllGroups')} wrapperClassName="ml-auto shrink-0">
+            <Button type="button" onClick={() => setCollapsedGroups(allGroupsExpanded
                 ? new Set(modelGroups.map(([group]) => group))
-                : new Set())}
-              aria-label={allGroupsExpanded ? t('collapseAllGroups') : t('expandAllGroups')}
-              title={allGroupsExpanded ? t('collapseAllGroups') : t('expandAllGroups')}
-              className="ui-button-ghost ui-icon-button ml-auto h-8 min-h-8 w-8 shrink-0"
-            >
+                : new Set())} aria-label={allGroupsExpanded ? t('collapseAllGroups') : t('expandAllGroups')} variant="ghost" size="icon">
               {allGroupsExpanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-            </button>
+            </Button>
+            </Tooltip>
           ) : null}
         </div>
-        <ActionMessage state={refreshState} />
+        {refreshing ? <p role="status" className="mt-2 text-sm text-muted-foreground">{t('modelsFetching')}</p>
+          : refreshState.savedAt ? <p role="status" className="mt-2 text-sm text-muted-foreground">{t('modelsFetchComplete')}</p> : null}
+        <ActionMessage state={refreshState.error ? { ...refreshState, error: `${t('modelsFetchFailedSaved')} ${refreshState.error}` } : refreshState} />
         <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
           {modelGroups.length > 0 ? (
             <div className="space-y-1 py-1">
@@ -1030,25 +921,20 @@ function ProviderDetail({
                 const expanded = Boolean(modelQuery.trim()) || !collapsedGroups.has(group);
                 return (
                   <section key={group || '__ungrouped'} className="overflow-hidden rounded-md border border-border">
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() => setCollapsedGroups((current) => {
+                    <Button type="button" aria-expanded={expanded} onClick={() => setCollapsedGroups((current) => {
                         const next = new Set(current);
                         if (next.has(group)) next.delete(group);
                         else next.add(group);
                         return next;
-                      })}
-                      className="flex h-9 w-full items-center gap-2 bg-muted/30 px-2.5 text-left text-xs font-medium text-foreground hover:bg-muted/60"
-                    >
+                      })} variant="ghost" size="sm" className="w-full justify-start rounded-none px-3 text-left">
                       <ChevronRight className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
                       <span className="min-w-0 flex-1 truncate">{group || t('ungroupedModels')}</span>
                       <span className="tabular-nums text-[10px] text-muted-foreground">{models.length}</span>
-                    </button>
+                    </Button>
                     {expanded ? (
                       <div className="divide-y divide-border/70">
                         {models.map((model) => (
-                          <ModelTestRow key={model.modelId} slug={slug} providerId={provider.id} model={model} />
+                          <ModelTestRow key={model.modelId} slug={slug} providerId={provider.id} model={model} numbers={numbers} prices={prices} />
                         ))}
                       </div>
                     ) : null}
@@ -1080,8 +966,30 @@ export function ProvidersPanel({
 }) {
   const t = useTranslations('console.agents');
   const common = useTranslations('common');
+  const router = useRouter();
   const [providerQuery, setProviderQuery] = useState('');
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(providers[0]?.id ?? null);
+  const [refreshes, setRefreshes] = useState<Record<string, { pending: boolean; state: ActionState }>>({});
+
+  async function refreshProvider(providerId: string) {
+    setRefreshes((current) => ({ ...current, [providerId]: { pending: true, state: {} } }));
+    let state: ActionState;
+    try {
+      const response = await fetch(`/api/v1/workspaces/${encodeURIComponent(slug)}/providers/${encodeURIComponent(providerId)}/models`, { method: 'POST' });
+      state = await response.json() as ActionState;
+      if (!response.ok && !state.error) state = { error: t('modelsFetchRequestFailed') };
+      if (state.savedAt) router.refresh();
+    } catch {
+      state = { error: t('modelsFetchRequestFailed') };
+    }
+    setRefreshes((current) => ({ ...current, [providerId]: { pending: false, state } }));
+  }
+
+  function handleCreated(providerId: string) {
+    setSelectedProviderId(providerId);
+    setProviderQuery('');
+    void refreshProvider(providerId);
+  }
   const visibleProviders = useMemo(() => {
     const query = providerQuery.trim().toLocaleLowerCase();
     if (!query) return providers;
@@ -1093,43 +1001,33 @@ export function ProvidersPanel({
   return (
     <div className={embedded ? 'flex h-full min-h-0' : 'flex min-h-0 flex-1 p-3 sm:p-4'}>
       <div className={`flex min-h-0 w-full flex-col overflow-hidden bg-background md:flex-row ${embedded ? '' : 'rounded-lg border border-border'}`}>
-        <aside className="flex max-h-56 w-full shrink-0 flex-col border-b border-border md:max-h-none md:h-full md:w-[248px] md:border-b-0 md:border-r">
-          <div className="flex shrink-0 items-center gap-1.5 px-2.5 pt-2.5">
-            <label className="relative min-w-0 flex-1">
-              <span className="sr-only">{common('search')} {t('modelProviders')}</span>
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={providerQuery}
-                onChange={(event) => setProviderQuery(event.target.value)}
-                placeholder={common('search')}
-                className="ui-input h-8 w-full rounded-[10px] pl-8 pr-2 text-xs"
-              />
-            </label>
-            <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} iconOnly />
+        <aside aria-label={t('modelProviders')} className="flex max-h-64 w-full shrink-0 flex-col border-b border-border bg-muted/20 md:max-h-none md:h-full md:w-64 md:border-b-0 md:border-r">
+          <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-3">
+            <h2 className="min-w-0 truncate text-sm font-semibold">{t('modelProviders')}</h2>
+            <AddProviderDialog slug={slug} piProviderPresets={piProviderPresets} onCreated={handleCreated} />
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+          <div className="px-3 pb-2">
+            <Input leftIcon={<Search />} aria-label={`${common('search')} ${t('modelProviders')}`} placeholder={common('search')} value={providerQuery} onChange={setProviderQuery} className="w-full" />
+          </div>
+          <nav aria-label={t('modelProviders')} className="min-h-0 flex-1 overflow-y-auto px-3 py-1">
             {visibleProviders.length > 0 ? (
               <div className="space-y-1">
                 {visibleProviders.map((provider) => {
                   const selected = provider.id === selectedProvider?.id;
                   return (
-                    <button
-                      key={provider.id}
-                      type="button"
-                      aria-label={provider.name}
-                      aria-pressed={selected}
-                      onClick={() => setSelectedProviderId(provider.id)}
-                      className={`group flex h-10 w-full items-center gap-2.5 rounded-[10px] px-2 text-left transition-colors ${selected ? 'bg-muted' : 'hover:bg-muted/70'}`}
-                    >
+                    <Button key={provider.id} type="button" aria-label={provider.name} aria-pressed={selected} aria-busy={refreshes[provider.id]?.pending || undefined} onClick={() => setSelectedProviderId(provider.id)} variant={selected ? 'secondary' : 'ghost'} className="h-auto min-h-14 w-full justify-start gap-3 rounded-lg px-2 py-2 text-left">
                       <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-[10px] font-semibold text-muted-foreground">
                         {provider.name.charAt(0).toUpperCase() || 'P'}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className={`block truncate text-sm text-foreground ${selected ? 'font-medium' : ''}`}>{provider.name}</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">{provider.format}</span>
+                        <span className={`block truncate text-[11px] ${refreshes[provider.id]?.state.error ? 'text-destructive' : 'text-muted-foreground'}`}>
+                          {refreshes[provider.id]?.pending ? t('modelsFetching') : refreshes[provider.id]?.state.error ? t('modelsFetchFailedLabel') : provider.format}
+                        </span>
                       </span>
-                      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{provider.modelCount}</span>
-                    </button>
+                      {refreshes[provider.id]?.pending ? <RefreshCw aria-hidden="true" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                        : <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{provider.modelCount}</span>}
+                    </Button>
                   );
                 })}
               </div>
@@ -1138,8 +1036,8 @@ export function ProvidersPanel({
                 {t('noProvidersYet')}
               </div>
             )}
-          </div>
-          <div className="shrink-0 px-2.5 pb-2.5 text-[11px] text-muted-foreground">
+          </nav>
+          <div className="shrink-0 border-t border-border px-3 py-3 text-[11px] text-muted-foreground">
             {providers.length} {t('providers')}
           </div>
         </aside>
@@ -1150,6 +1048,9 @@ export function ProvidersPanel({
             slug={slug}
             provider={selectedProvider}
             piProviderPresets={piProviderPresets}
+            refreshState={refreshes[selectedProvider.id]?.state ?? {}}
+            refreshing={refreshes[selectedProvider.id]?.pending ?? false}
+            onRefresh={() => { void refreshProvider(selectedProvider.id); }}
           />
         ) : (
           <div className="flex min-h-64 flex-1 flex-col items-center justify-center px-5 text-center">

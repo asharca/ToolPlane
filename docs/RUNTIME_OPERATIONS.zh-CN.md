@@ -24,6 +24,135 @@
 
 生产启动器收到 SIGTERM/SIGINT 后停止接收 HTTP、停止维护任务/coordinator/broker，有界排空或中止已跟踪工作，最后释放独立连接锁。启动器外层退出上限为 50 秒，Compose 提供 60 秒。超时或不确定操作保留 dirty 标记。自定义进程管理器应给予同等宽限并调用受管停机流程。`pnpm dev` 不具备生产启动器的信号编排，异常停止后可能需要显式恢复。
 
+## Pi 版本管理
+
+在**智能体列表 → 列表选项 → 智能体管理**中集中管理当前工作区的全部普通
+Pi 智能体。勾选需要更新的智能体后，点击**升级所选智能体至最新版**，也可
+为所选智能体安装指定版本。默认不勾选，未选择时不能更新；需要全部更新时
+先点击**全选**。服务端在任何更新前校验所有选中 ID 均属于当前工作区授权
+范围内的普通 Pi 智能体，包含不可用 ID 的请求会被拒绝，其他工作区和公共
+Endpoint 运行时不会进入更新范围。每批只解析一次发布版本，未选中的智能体
+保留在列表中且不会被更新，结果汇总仅统计本批。某项失败不影响后续已选
+智能体升级，已是目标版本的智能体跳过。
+绑定的 Docker 沙箱须已启动并可联网，运行时所有者须处于 ready。原有执行
+租约会拒绝忙碌沙箱的更新，不中断正在执行的 Chat、Work 或 A2A 任务。
+
+更新将同版本的 `@earendil-works/pi-coding-agent` 和 `@earendil-works/pi-ai`
+安装到独立的 `/workspace/.toolplane/runtime-packages/pi-<version>` 目录，禁用
+安装生命周期脚本。只有 `pi --version` 成功且匹配指定版本后，才原子替换
+`/workspace/.toolplane/runtimes/pi/agents/<agent-id>/version`。直接 Work 与终端
+CLI/SDK 会话读取此版本；未设置时使用内置默认值。A2A 托管 Pi 任务使用下述
+独立固定 Harness 包。更新不删除工作文件、会话和旧包；旧 CLI 不保证数据向后兼容。
+
+此功能更新沙箱运行时，不修改 ToolPlane 宿主的 `pi-ai` 依赖。无法读取 registry
+时仍显示已成功读取的当前版本。安装或可执行文件验证失败不会切换版本；
+请求中断或结果不确定时应先检查当前选定版本，再重试。可执行文件验证不等于
+对任意上游版本的全部能力完成兼容性认证。
+
+## Pi Harness 托管任务
+
+经原生 A2A 入口准入的新本地 Pi 任务使用官方 Harness 与 SQLite Session 后端。
+聊天、消息渠道和 control 沿用原任务回执；直接 Work 与裸终端不在本次迁移范围。
+模型仅使用 `a2a_peers`、`a2a_call`、`a2a_status`、`a2a_cancel`，目标为
+`agent:<id>` 或 `remote:<id>`。工作区授权、循环/深度限制、根任务人工审批及远端凭据隔离仍生效。内部子任务由有效的父级委派授权工具执行，仍保留单次回执、撤权和租约检查。
+
+受管包固定在 `/workspace/.toolplane/runtime-packages/pi-harness-0.87.1`：
+`pi-agent-core`、`pi-session-backend-sqlite-node`、`pi-coding-agent`、`pi-ai`
+均精确锁定 **0.87.1**，复用 MCP **1.30.0** 与 A2A **1.2.0** SDK。要求
+Node **>=22.19.0**、`node:sqlite`、可用 Docker 和沙箱持久卷。
+**Harness 存储格式 4 尚未稳定**，不能自动升级或假设存在向后兼容/迁移能力。
+安装校验版本并执行真实子进程崩溃恢复自检，失败阻止执行，不降级内存或旧执行器。
+
+维护窗口停止新 Pi 托管任务，旧 legacy 任务自然完成或由操作者明确取消，禁止自动重发。
+备份 PostgreSQL 和沙箱卷，使用部署 migrator 或 `pnpm exec prisma migrate deploy`
+应用 `20260927181819_pi_harness_task_binding`，执行 `pnpm db:generate` 并重启应用。
+迁移仅增加 `executionBackend` 与 `nativeOperationId`，已有行保持 `legacy`，不新增任务表或给历史任务改标签。
+
+实机验证前，确认运行服务实际连接的数据库已有两个绑定字段；源码已部署、provider 已配置，
+不等于迁移已执行。不要仅为运行 smoke 就擅自迁移共享数据库。
+发布地址 `NEXT_PUBLIC_APP_URL` 必须使用 HTTPS，仅回环地址允许 HTTP。
+即使客户端通过回环连接，配置为 HTTP 局域网地址仍会令 Card 发现返回 400，
+RPC 初始化也无法构造 Agent Card。仅经 SSH 验证时可明确配置回环发布地址，
+但沙箱运行时地址仍须能从 Docker 内访问；修改或重启共享服务前须取得授权。
+
+PostgreSQL 保存身份、授权、回执、claim、审批与协议投影；Pi 步骤状态仅保存在
+`/workspace/.toolplane/runtimes/pi/agents/<agent-id>/harness/`。Session ID 是原
+A2A context ID，lane 为 `main`。恢复复用已保存 operation ID，不从平台 snapshot 重放工具。
+首次迁移通过原生事务导入有效 JSONL 历史，不执行历史工具，也不删除原文件。
+`PI_SESSION_MISSING` / `PI_SESSION_CORRUPT` 需要排查或恢复卷；即使同一 context
+开始后续任务，也不能用空库或旧 JSONL 冒充丢失的原生 Session。
+
+owner 停机只停止 driver，不等于用户取消。恢复仍须经过原有 owner/dirty-marker 协议，
+并确认旧受跟踪进程已退出后才能打开 SQLite 新 writer。用户取消、撤权和超时清理请求
+原生 abort，以原生终态提交顺序裁决。危险/未知工具不盲目重放，不确定副作用保持可见。
+远端请求已发出但回执未知时不重发，不承诺远端 exactly-once；不新增 Redis、工作流服务或跨主机 SQLite writer 协调。
+
+在已认证的会话命令界面，或绑定该会话的 Pi 消息渠道发送 `/compact` 或
+`/compact <自定义指令>`。Harness 会话压缩的是原生 Session 的同一个 `main` lane，
+不是旧 JSONL。调用者必须拥有该会话绑定；context 有活跃任务或会话/沙箱锁已占用时
+返回 busy，不另开 writer。须等命令结果及 usage 元数据持久化后才算完成；失败不回退 CLI。
+未绑定的 legacy 会话、直接 Work 和终端仍保留原路径。下述通信 smoke 不验证 `/compact`，
+需在自己拥有且空闲的会话中另行验证。
+
+配置页区分内部授权、连接外部和受认证入站。Agent Card URL 加可选远端 Token 一次
+登记、启用并授权当前 Agent；多候选地址须用高级 RPC 设置明确选择。内部协作只需选择
+允许调用的子智能体，调用方和目标均无需启用 `a2aInternalEnabled`。已认证的聊天、Work
+和 control 仍执行工作区、账户、所选委派关系、循环/深度、租约及审批检查。
+原有 `set-local` / `a2aInternalEnabled` 开关单独展示为「外部 A2A 与渠道访问」，
+仍控制外部调用、个人令牌认证的 A2A 入站和渠道授权；远程目标与渠道执行身份仍需
+各自授权。修改开关仍需管理员权限和确认，选择子智能体不会自动启用此开关。
+个人 Bearer 只用于操作者控制的服务，不能交给第三方 Agent、放进提示词或浏览器代码。
+Hermes 发布服务及独立 key 流程保持原样。
+
+在独立真实 PostgreSQL 测试库串行运行 `pi-harness-recovery`、`pi-harness-host`、
+`pi-harness-binding`、`pi-harness-worker` 和 `pi-agent-communication` 集成测试，
+Vitest 加 `--no-file-parallelism`，不能同时启动另一个共用该库的测试进程，
+也不能用 PGlite 代替锁/进程恢复验证。`node scripts/pi-harness-recovery-check.mjs --self-test`
+使用真实官方后端，不调用付费模型，不能据此认定真实 provider 或 Docker 集成通过。
+
+单独验证保留的直接 Pi CLI：在可丢弃 Docker 容器内安装现有固定默认 CLI 包，运行
+`TOOLPLANE_NATIVE_COMMAND_SANDBOX=<container> TOOLPLANE_NATIVE_COMMAND_KIND=pi pnpm vitest run tests/integration/native-runtime-session.test.ts`。
+此检查使用本机受控模型端点验证 prompt、compact、重连与历史丢失拒绝，不是付费 provider 验收。
+macOS/Windows 使用 Docker Desktop host DNS，Linux 使用容器网络 gateway。
+
+先运行 `node scripts/pi-agent-communication-smoke.mjs --help`，再配置五个必填输入：
+`TOOLPLANE_SMOKE_BASE_URL`、`TOOLPLANE_SMOKE_WORKSPACE_SLUG`、
+`TOOLPLANE_SMOKE_AGENT_A_ID`、`TOOLPLANE_SMOKE_AGENT_B_ID`、
+`TOOLPLANE_SMOKE_PERSONAL_TOKEN`。BASE_URL 必须是 origin，仅 loopback 可用 HTTP，
+其余必须 HTTPS。Token 仅放本地环境，不放命令参数、提示词或第三方服务。脚本仅将它
+发送到选定工作区的公开 Agent MCP 和两个 local A2A 接口，不请求只接受会话认证的
+console BFF，且拒绝重定向。控制台链接由操作者在独立已登录浏览器中打开。
+
+使用隔离测试 app/runtime-owner；两个 Pi Agent 须配置真实模型，名称或 slug 以
+`pi-smoke-disposable-` 开头，各自绑定一个不同且运行中的 Docker 沙箱，明确允许 A → B
+协作。启用所需工具；根任务保留人工审批，B 的内部子调用由父级委派授权。准备真实 provider、Docker、PostgreSQL、交互终端和
+`TOOLPLANE_SMOKE_ALLOW_PROCESS_KILL=1` 后，运行
+`node scripts/pi-agent-communication-smoke.mjs`。在输出的控制台链接实际批准 A 的委派调用、
+独立的取消和重启计数任务；B 的委派计数无需人工审批。**拒绝**单独的 denied-write 任务；实际操作后才输入脚本要求的
+精确确认文字。脚本不会代批。缺前提、审批或未捕获崩溃边界都失败，不能跳过冒充通过。
+未配置真实 provider 时付费模型 smoke 不可执行；本文和后端自检均不是 live smoke 通过证明。
+
+SIGKILL 前必须观察到已提交的工具 settlement、计数 **1** 及未终结的
+`assistant.effect_pending`。脚本校验受跟踪 wrapper 的精确参数、PID 文件归属、
+wrapper/child 启动时间和父子关系、host/config 路径、Agent 目录及 task/context/operation，
+发信号前立即复核，只杀该 child。原生观察用只读 SQLite 事务，不开第二个 SessionRepo writer。
+恢复须以相同子 operation 完成且计数仍为 **1**，父任务须包含已归属子任务的真实结果。
+取消还须原生 `aborted`、无 driver 且计数停止；拒绝须原生拒绝证据/`aborted` 且写入为零。
+
+平台重启使用单独的计数任务。出现 `OPERATOR_STOP_REQUIRED` 时，**只停止自己的隔离
+测试 app/runtime-owner**，保持 Docker 和 smoke 脚本运行，等待脚本观察 API 不可用、
+driver 消失且原 operation 仍未终结；未提示前不要重启。确认 `STOPPED <taskId>` 后，
+在 `OPERATOR_START_REQUIRED` 提示下正常启动同一应用，禁止强制接管 owner 或重发 prompt。
+脚本轮询原 task，要求 task/context/operation 不变、原生完成且计数 **1**，再要求
+`RESTARTED <taskId>` 与实际审批确认。已取消/拒绝任务重启后仍须原生 aborted。
+每轮等待最多五分钟；若模型在观察到停机前已完成，场景失败，不伪称重启验证。
+脚本不会停止共享服务或重启容器。
+
+保留 fixture 和配置供检查；失败清理只请求取消本次创建的回执，无法确认时明确要求操作者处理。
+真实 HTTPS 远端、其他账号授权和 `/compact` 仍须另行验证，不承诺远端 exactly-once。
+`node scripts/a2a-e2e-preflight.mjs` 仅检查前提，不是 E2E 通过证明。
+
+
 ## 普通 Hermes 附件
 
 所有大小配置经过同一解析器。单文件默认仍为 **1,000,000,000 字节**；绝对硬上限为 **2,000,000,000 字节**，与当前 `AgentAttachment.size` 的 Prisma Int 一致。`TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES` 可进一步降低硬上限。数据库设置优先于 `TOOLPLANE_MAX_ATTACHMENT_BYTES`，再到默认值，但所有来源均受硬上限约束。无效值报错，不静默放宽；数据库读取失败时，已有有效缓存的进程可使用最后有效值并显示 cached，冷启动进程拒绝新上传。

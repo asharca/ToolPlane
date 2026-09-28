@@ -23,7 +23,6 @@
 | [Agent Control MCP](./AGENT_CONTROL_MCP.zh-CN.md) · [English](./AGENT_CONTROL_MCP.md) | 从 MCP 客户端创建和调用 Agent |
 | [公共 Agent API](./AGENT_PUBLIC_API.zh-CN.md) · [English](./AGENT_PUBLIC_API.md) | 发布 Endpoint、鉴权与限额 |
 | [A2A 控制台接入](./A2A_CONSOLE.zh-CN.md) · [English](./A2A_CONSOLE.md) | 可视化启用、连接示例、凭据与本地任务调试 |
-| [A2A 工作台](./A2A_WORKBENCH.zh-CN.md) · [English](./A2A_WORKBENCH.md) | 日常原生任务、Context 续写与任务恢复链接 |
 | [A2A MCP 适配](./A2A_MCP_BRIDGE.zh-CN.md) · [English](./A2A_MCP_BRIDGE.md) | 外部 MCP 客户端使用原生任务 |
 | [A2A 资源限额](./A2A_RESOURCE_LIMITS.zh-CN.md) · [English](./A2A_RESOURCE_LIMITS.md) | 载荷存储、输出预留与迁移 |
 | [远程 A2A Agent](./A2A_REMOTE_AGENTS.zh-CN.md) · [English](./A2A_REMOTE_AGENTS.md) | 注册、出站授权、远程委派与恢复 |
@@ -40,7 +39,7 @@
 | [升级与恢复](./RUNTIME_OPERATIONS.zh-CN.md) · [English](./RUNTIME_OPERATIONS.md) | 数据迁移、单所有者恢复与附件配额 |
 | [日志与审计](./OBSERVABILITY.zh-CN.md) · [English](./OBSERVABILITY.md) | 日志模型、诊断抓取与保留策略 |
 | [版本发布](./RELEASES.zh-CN.md) · [English](./RELEASES.md) | release-please 发布流程与 GitHub 配置 |
-| [共享 UI](./UI_LIBRARY.zh-CN.md) · [English](./UI_LIBRARY.md) | `@asharca/ui` 更新与发布 |
+| [共享 UI](./UI_LIBRARY.zh-CN.md) · [English](./UI_LIBRARY.md) | 原版 beUI Registry 源码接入 |
 
 ## 维护约定
 

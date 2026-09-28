@@ -1,8 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState, useEffect } from 'react';
-import { useFormStatus } from 'react-dom';
+import { useActionState, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { AuthState } from '@/lib/auth/actions';
 import {
@@ -11,23 +10,23 @@ import {
   resetPasswordAction,
 } from '@/lib/auth/actions';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/auth/password-policy';
+import { ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
 
-function SubmitButton({ label }: { label: string }) {
-  const { pending } = useFormStatus();
-  const t = useTranslations('auth');
-  return (
-    <button type="submit" disabled={pending} className="ui-button-primary h-10 w-full">
-      {pending ? t('pending') : label}
-    </button>
-  );
-}
 
 function ActionMessage({ state }: { state: AuthState }) {
   if (state.error) {
     return <p role="alert" className="text-sm text-destructive">{state.error}</p>;
   }
   if (state.success) {
-    return <p role="status" className="text-sm text-emerald-700 dark:text-emerald-400">{state.success}</p>;
+    return (
+      <p role="status" className="flex items-start gap-2 text-sm text-foreground">
+        <AnimatedBadge status="success" size="sm" aria-hidden="true" />
+        <span className="min-w-0">{state.success}</span>
+      </p>
+    );
   }
   return null;
 }
@@ -38,27 +37,22 @@ export function ForgotPasswordForm() {
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="ui-panel p-5 sm:p-6">
+      <div className="rounded-2xl border border-border bg-card p-5 sm:p-6">
         <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
           {t('forgotPasswordTitle')}
         </h1>
         <p className="mb-6 text-sm text-muted-foreground">{t('forgotPasswordSubtitle')}</p>
         <form action={action} className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="recovery-email" className="text-sm font-medium text-foreground">
-              {t('email')}
-            </label>
-            <input
-              id="recovery-email"
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              className="ui-input"
-            />
-          </div>
+          <Input
+            label={t('email')}
+            id="recovery-email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+          />
           <ActionMessage state={state} />
-          <SubmitButton label={t('sendResetLink')} />
+          <SubmitButton pendingLabel={t('pending')} flash={false} className="w-full">{t('sendResetLink')}</SubmitButton>
         </form>
       </div>
       <p className="mt-6 text-center text-sm text-muted-foreground">
@@ -80,7 +74,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="ui-panel p-5 sm:p-6">
+      <div className="rounded-2xl border border-border bg-card p-5 sm:p-6">
         <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
           {t('resetPasswordTitle')}
         </h1>
@@ -88,18 +82,16 @@ export function ResetPasswordForm({ token }: { token: string }) {
         {state.success ? (
           <div className="space-y-4">
             <ActionMessage state={state} />
-            <Link href="/app/login" className="ui-button-primary flex h-10 w-full items-center justify-center">
+            <ButtonLink href="/app/login" className="w-full">
               {t('continueToSignIn')}
-            </Link>
+            </ButtonLink>
           </div>
         ) : (
           <form action={action} className="space-y-4">
             <input type="hidden" name="token" value={token} />
             <div className="space-y-1.5">
-              <label htmlFor="new-password" className="text-sm font-medium text-foreground">
-                {t('newPassword')}
-              </label>
-              <input
+              <Input
+                label={t('newPassword')}
                 id="new-password"
                 name="password"
                 type="password"
@@ -107,32 +99,26 @@ export function ResetPasswordForm({ token }: { token: string }) {
                 minLength={PASSWORD_MIN_LENGTH}
                 maxLength={PASSWORD_MAX_LENGTH}
                 autoComplete="new-password"
-                className="ui-input"
               />
               <p className="text-xs text-muted-foreground">
                 {t('passwordHint', { min: PASSWORD_MIN_LENGTH })}
               </p>
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="password-confirmation" className="text-sm font-medium text-foreground">
-                {t('confirmPassword')}
-              </label>
-              <input
-                id="password-confirmation"
-                name="passwordConfirmation"
-                type="password"
-                required
-                minLength={PASSWORD_MIN_LENGTH}
-                maxLength={PASSWORD_MAX_LENGTH}
-                autoComplete="new-password"
-                className="ui-input"
-              />
-            </div>
+            <Input
+              label={t('confirmPassword')}
+              id="password-confirmation"
+              name="passwordConfirmation"
+              type="password"
+              required
+              minLength={PASSWORD_MIN_LENGTH}
+              maxLength={PASSWORD_MAX_LENGTH}
+              autoComplete="new-password"
+            />
             {!token && !state.error ? (
               <p role="alert" className="text-sm text-destructive">{t('resetLinkInvalid')}</p>
             ) : null}
             <ActionMessage state={state} />
-            <SubmitButton label={t('resetPassword')} />
+            <SubmitButton pendingLabel={t('pending')} flash={false} className="w-full">{t('resetPassword')}</SubmitButton>
           </form>
         )}
       </div>
@@ -148,58 +134,59 @@ export function ResetPasswordForm({ token }: { token: string }) {
 export function ChangePasswordForm() {
   const [state, action] = useActionState(changePasswordAction, {});
   const t = useTranslations('auth');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  useEffect(() => {
+    // Password inputs must clear after a successful server action; this state sync is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (state.success) { setCurrentPassword(''); setNewPassword(''); setConfirmation(''); }
+  }, [state]);
 
   return (
     <form action={action} className="max-w-md space-y-4">
+      <Input
+        label={t('currentPassword')}
+        id="current-password"
+        name="currentPassword"
+        type="password"
+        value={currentPassword}
+        onChange={setCurrentPassword}
+        required
+        maxLength={PASSWORD_MAX_LENGTH}
+        autoComplete="current-password"
+      />
       <div className="space-y-1.5">
-        <label htmlFor="current-password" className="text-sm font-medium text-foreground">
-          {t('currentPassword')}
-        </label>
-        <input
-          id="current-password"
-          name="currentPassword"
-          type="password"
-          required
-          maxLength={PASSWORD_MAX_LENGTH}
-          autoComplete="current-password"
-          className="ui-input h-9"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor="settings-new-password" className="text-sm font-medium text-foreground">
-          {t('newPassword')}
-        </label>
-        <input
+        <Input
+          label={t('newPassword')}
           id="settings-new-password"
           name="newPassword"
           type="password"
+          value={newPassword}
+          onChange={setNewPassword}
           required
           minLength={PASSWORD_MIN_LENGTH}
           maxLength={PASSWORD_MAX_LENGTH}
           autoComplete="new-password"
-          className="ui-input h-9"
         />
         <p className="text-xs text-muted-foreground">
           {t('passwordHint', { min: PASSWORD_MIN_LENGTH })}
         </p>
       </div>
-      <div className="space-y-1.5">
-        <label htmlFor="settings-password-confirmation" className="text-sm font-medium text-foreground">
-          {t('confirmPassword')}
-        </label>
-        <input
-          id="settings-password-confirmation"
-          name="passwordConfirmation"
-          type="password"
-          required
-          minLength={PASSWORD_MIN_LENGTH}
-          maxLength={PASSWORD_MAX_LENGTH}
-          autoComplete="new-password"
-          className="ui-input h-9"
-        />
-      </div>
+      <Input
+        label={t('confirmPassword')}
+        id="settings-password-confirmation"
+        name="passwordConfirmation"
+        type="password"
+        value={confirmation}
+        onChange={setConfirmation}
+        required
+        minLength={PASSWORD_MIN_LENGTH}
+        maxLength={PASSWORD_MAX_LENGTH}
+        autoComplete="new-password"
+      />
       <ActionMessage state={state} />
-      <SubmitButton label={t('changePassword')} />
+      <SubmitButton pendingLabel={t('pending')} flash={false} className="w-full">{t('changePassword')}</SubmitButton>
     </form>
   );
 }

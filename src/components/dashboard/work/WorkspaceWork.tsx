@@ -1,28 +1,21 @@
 'use client';
+import { MorphPopover, MorphPopoverContent, MorphPopoverTrigger } from '@/components/motion/popover-morph';
+import { ButtonLink } from '@/components/motion/button';
 
-import Link from 'next/link';
-import { workbenchHref } from '@/lib/a2a/workbench-client';
+import { Button } from '@/components/motion/button';
+
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type UIEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ContextMenu, Popover } from 'radix-ui';
-import { SidebarActionRail } from '@asharca/ui';
+
+
 import {
-  Activity,
-  Archive,
-  ArrowDown,
-  ArrowUp,
   Bot,
   Boxes,
-  Check,
-  CheckCircle2,
   ChevronDown,
-  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Circle,
-  CircleAlert,
-  CirclePause,
   Clock3,
   Minimize2,
   Cpu,
@@ -30,28 +23,26 @@ import {
   FileOutput,
   Folder,
   FolderPlus,
-  GripVertical,
-  Loader2,
   ListFilter,
   MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Play,
+  MessageSquarePlus,
+  PanelLeft,
   Plus,
   Radio,
-  Search,
-  Send,
   Settings2,
-  ShieldCheck,
-  Square,
   TerminalSquare,
-  Trash2,
   UserRound,
-  Wrench,
-  X,
-  type LucideIcon,
 } from 'lucide-react';
+import { AISidebar, type SidebarResource, type SidebarResourceMove } from '@/components/agents/ai-sidebar';
+import { ChatApp, ChatAppSidebarTrigger } from '@/components/dashboard/chat/ChatApp';
+import {
+  AnimatedSidebar,
+  AnimatedSidebarContent,
+  AnimatedSidebarGroup,
+  AnimatedSidebarGroupContent,
+  AnimatedSidebarInset,
+  AnimatedSidebarRail,
+} from '@/components/motion/animated-sidebar';
 import { AgentModelDialog } from '@/components/dashboard/agents/AgentModelDialog';
 import { AgentConversation } from '@/components/dashboard/agents/AgentConversation';
 import type { HermesUIMessage } from '@/lib/agents/hermes/message-segments';
@@ -61,23 +52,22 @@ import { ConversationContextUsage } from '@/components/dashboard/ConversationCom
 import { WorkComposer } from './WorkComposer';
 import type { ComposerReference } from '@/lib/work/composer-types';
 import { CopyButton } from '@/components/dashboard/CopyButton';
-import { SidebarEntityActionsMenu } from '@/components/dashboard/SidebarEntityActionsMenu';
 import { SidebarGroupDialog } from '@/components/dashboard/SidebarGroupDialog';
-import {
-  AssistantMarkdown,
-  AssistantReply,
-  assistantMessageActionClassName,
-} from '@/components/dashboard/ConversationMessage';
-import { callSandboxTool, SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
-import { parseSandboxDirectoryText, type SandboxFileEntry } from '@/lib/sandboxes/file-list';
-import { resolveContextUsage, type ContextUsageSnapshot } from '@/lib/context-usage';
+import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
+import { Message, MessageAvatar, MessageBubble, MessageBubbleContent, MessageContent, MessageFooter, MessageGroup, MessageHeader } from '@/components/agents/message';
+import { StreamingResponse } from '@/components/agents/streaming-response';
+import { MessageScroller } from '@/components/agents/message-scroller';
+import { AgentActivity } from '@/components/agents/agent-activity';
+import { ToolResult, ToolResultOutput } from '@/components/agents/tool-result';
+import { ToolApproval } from '@/components/agents/tool-approval';
+import { SandboxConsole } from '@/components/dashboard/sandboxes/SandboxConsole';
+import { resolveContextUsage } from '@/lib/context-usage';
 import { deleteAgentAction, pinAgentAction } from '@/lib/agents/actions';
 import { normalizeReasoningEffort, type ReasoningEffort } from '@/lib/agents/constants';
 import { displayMessagingUserText, type ParsedMessagingSession } from '@/lib/agents/messaging';
 import { activeConversationMessages, isConversationControl, messageCompaction } from '@/lib/agents/conversation-context';
 import { COMMAND_RESULT_PART, parseRuntimeCommand, sessionRuntimeCommands } from '@/lib/agents/runtime-commands';
 import type { executeRuntimeCommand } from '@/lib/agents/runtime-command-service';
-import { startSandboxAction } from '@/lib/sandboxes/actions';
 import {
   usePersistentBoolean,
   usePersistentBooleanRecord,
@@ -90,24 +80,13 @@ import {
 import {
   createSidebarGroupId,
   EMPTY_SIDEBAR_GROUP_PREFERENCES,
-  getSidebarDropEdge,
-  reorderSidebarItems,
-  sidebarDropIndicatorClassName,
   sortSidebarItems,
-  type SidebarDropEdge,
+  reorderSidebarItems,
   type SidebarGroupPreferences,
 } from '@/lib/sidebar-groups';
 import { usePersistentSidebarGroups } from '@/lib/use-persistent-sidebar-groups';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
+import { CenterMorphModal, CenterMorphModalClose, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
 
 type WorkAgent = {
   id: string;
@@ -185,15 +164,6 @@ type WorkSidebarAgent = {
   sessions: WorkItem[];
   channels: Array<ConversationSummary & { label: string }>;
 };
-
-type WorkSidebarEntry =
-  | { kind: 'group'; id: string; name: string; editable: boolean; count: number }
-  | { kind: 'agent'; groupId: string | null; item: WorkSidebarAgent };
-
-type WorkSidebarDragItem =
-  | { kind: 'agent'; id: string }
-  | { kind: 'session' | 'conversation'; id: string; agentId: string };
-
 type WorkTiming = {
   startedAt: number;
   completedAt?: number;
@@ -211,7 +181,7 @@ type WorkApproval = {
   status: string;
 };
 
-type WorkPanel = 'files' | 'terminal' | 'context';
+type WorkPanel = 'files' | 'terminal';
 
 type WorkItem = {
   id: string;
@@ -240,7 +210,6 @@ type WorkItem = {
 };
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'waiting_approval', 'cancelling']);
-const STOPPABLE_STATUSES = new Set(['queued', 'running', 'waiting_approval']);
 const MESSAGEABLE_STATUSES = new Set(['idle', 'waiting_user', 'completed', 'failed']);
 const ARCHIVABLE_STATUSES = new Set(['idle', 'completed', 'failed', 'cancelled']);
 const EMPTY_WORK_ACTIVITIES: WorkActivity[] = [];
@@ -251,12 +220,21 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-function statusDotClass(status: string) {
-  if (status === 'idle' || status === 'completed') return 'text-emerald-500';
-  if (status === 'failed' || status === 'cancelled') return 'text-red-500';
-  if (status === 'running' || status === 'queued' || status === 'cancelling') return 'text-blue-500';
-  if (status === 'waiting_user' || status === 'waiting_approval') return 'text-amber-500';
-  return 'text-zinc-400';
+
+function sidebarIssueTone(status: string): 'error' | 'warning' | 'running' | null {
+  if (['error', 'failed', 'copy_failed', 'restore_failed', 'restore_cleanup_required'].includes(status)) return 'error';
+  if (['setup_required', 'stopped', 'waiting_user', 'waiting_approval'].includes(status)) return 'warning';
+  if (status === 'running') return 'running';
+  return null;
+}
+
+function agentSidebarIssueTone(agent: WorkAgent | undefined, hasRunningSession: boolean): 'error' | 'warning' | 'running' | null {
+  if (!agent) return null;
+  const sandboxTones = agent.sandboxes.map((sandbox) => sidebarIssueTone(sandbox.status ?? '')).filter((tone) => tone !== 'running');
+  if (sandboxTones.includes('error')) return 'error';
+  if (sandboxTones.includes('warning') || (agent.supportsWork && !agent.ready)) return 'warning';
+  if (hasRunningSession) return 'running';
+  return null;
 }
 
 function runtimeLabel(kind: string | null | undefined): string {
@@ -385,190 +363,7 @@ function formatValue(value: unknown) {
   }
 }
 
-type ControlOption = { value: string; label: string; description?: string; disabled?: boolean };
 
-function TopControlMenu({
-  icon: Icon,
-  label,
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  options: ControlOption[];
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find((option) => option.value === value);
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={label}
-          title={disabled ? selected?.label ?? label : label}
-          className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-100"
-        >
-          <Icon className="size-4 shrink-0" />
-          <span className="hidden max-w-36 truncate sm:block">{selected?.label ?? label}</span>
-          {!disabled ? <ChevronDown className="size-3.5 shrink-0" /> : null}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={5}
-          collisionPadding={10}
-          className="z-50 w-64 max-w-[calc(100vw-1rem)] rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg outline-none"
-        >
-          <div role="listbox" aria-label={label} className="max-h-72 overflow-y-auto">
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={option.value === value}
-                disabled={option.disabled}
-                onClick={() => { onChange(option.value); setOpen(false); }}
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-muted disabled:opacity-45"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{option.label}</span>
-                  {option.description ? <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{option.description}</span> : null}
-                </span>
-                {option.value === value ? <Check className="size-3.5 shrink-0" /> : null}
-              </button>
-            ))}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
-
-function joinWorkPath(base: string, name: string) {
-  return base === '.' ? name : `${base.replace(/\/+$/, '')}/${name}`;
-}
-
-function parentWorkPath(path: string) {
-  const parts = path.split('/').filter(Boolean);
-  parts.pop();
-  return parts.join('/') || '.';
-}
-
-function displayWorkPath(path: string, workspaceRoot = '/workspace') {
-  return path === '.' ? workspaceRoot : `${workspaceRoot}/${path}`;
-}
-
-function WorkDirectoryControl({
-  sandbox,
-  value,
-  locked,
-  workspaceRoot = '/workspace',
-  onChange,
-}: {
-  sandbox: WorkAgent['sandboxes'][number] | null;
-  value: string;
-  locked: boolean;
-  workspaceRoot?: string;
-  onChange: (path: string) => void;
-}) {
-  const t = useTranslations('console.work');
-  const [open, setOpen] = useState(false);
-  const [path, setPath] = useState(value);
-  const [pathInput, setPathInput] = useState(displayWorkPath(value, workspaceRoot));
-  const [entries, setEntries] = useState<SandboxFileEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const load = useCallback(async (nextPath: string) => {
-    if (!sandbox) return;
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const raw = await callSandboxTool(
-        `/api/v1/mcp/${sandbox.deploymentId}/rpc`,
-        'list_dir',
-        { path: nextPath },
-        t('directoryLoadError'),
-      );
-      const listing = parseSandboxDirectoryText(raw, nextPath);
-      if (!listing) throw new Error(t('directoryLoadError'));
-      setPath(listing.path);
-      setPathInput(displayWorkPath(listing.path, workspaceRoot));
-      setEntries(listing.entries.filter((entry) => entry.type === 'dir').sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (cause) {
-      setLoadError(cause instanceof Error ? cause.message : t('directoryLoadError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [sandbox, t, workspaceRoot]);
-
-  function handleOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) void load(value);
-  }
-
-  return (
-    <Popover.Root open={open} onOpenChange={handleOpenChange}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          disabled={locked || (!sandbox?.running && sandbox?.kind !== 'hermes')}
-          aria-label={t('workingDirectory')}
-          title={displayWorkPath(value, workspaceRoot)}
-          className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-100"
-        >
-          <Folder className="size-4 shrink-0" />
-          <span className="hidden max-w-48 truncate sm:block">{displayWorkPath(value, workspaceRoot)}</span>
-          {!locked ? <ChevronDown className="size-3.5 shrink-0" /> : null}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content align="start" sideOffset={5} collisionPadding={10} className="z-50 flex h-96 w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-lg outline-none">
-          <form
-            className="flex items-center gap-1 border-b border-border p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const next = pathInput.replace(/\\/g, '/').replace(
-                workspaceRoot === '/opt/data/workspace' ? /^\/opt\/data\/workspace\/?/ : /^\/workspace\/?/,
-                '',
-              ).replace(/^\/+/, '') || '.';
-              void load(next);
-            }}
-          >
-            <button type="button" disabled={path === '.' || loading} onClick={() => void load(parentWorkPath(path))} aria-label={t('parentDirectory')} className="ui-button-ghost ui-icon-button shrink-0">
-              <ArrowUp className="size-4" />
-            </button>
-            <input value={pathInput} onChange={(event) => setPathInput(event.target.value)} aria-label={t('directoryPath')} className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2.5 text-xs outline-none focus:border-foreground/30" />
-          </form>
-          <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-            {loading ? <div className="flex h-full items-center justify-center"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div> : null}
-            {!loading && loadError ? <p role="alert" className="p-3 text-xs text-destructive">{loadError}</p> : null}
-            {!loading && !loadError && !entries.length ? <p className="p-3 text-center text-xs text-muted-foreground">{t('noSubdirectories')}</p> : null}
-            {!loading && !loadError ? entries.map((entry) => (
-              <button key={entry.name} type="button" onClick={() => void load(joinWorkPath(path, entry.name))} className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs hover:bg-muted">
-                <Folder className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-              </button>
-            )) : null}
-          </div>
-          <div className="border-t border-border p-2">
-            <button type="button" disabled={loading || Boolean(loadError)} onClick={() => { onChange(path); setOpen(false); }} className="ui-button-primary h-8 w-full text-xs">
-              {t('useDirectory', { path: displayWorkPath(path, workspaceRoot) })}
-            </button>
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
 
 function CompactionNote({ message }: { message: WorkMessage }) {
   const t = useTranslations('console.conversationOperations');
@@ -612,7 +407,7 @@ function WorkTranscript({
   const t = useTranslations('console.work');
   const agentsT = useTranslations('console.agents');
   const common = useTranslations('common');
-  const copyButtonClassName = `${assistantMessageActionClassName} opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/message:opacity-100 group-hover/message:opacity-100`;
+  const messageActionClassName = 'size-7 rounded-md border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5';
   const streamPersisted = streamStartedAt !== undefined && messages.some((message) => (
     (message.role === 'assistant' || isConversationControl(message)) && messageWorkTiming(message)?.startedAt === streamStartedAt
   ));
@@ -669,10 +464,13 @@ function WorkTranscript({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[53rem] px-6 py-1.5">
-      {transcript.map((message) => {
+    <MessageGroup spacing="default" className="mx-auto w-full max-w-3xl p-4">
+      {transcript.map((message, messageIndex) => {
         if (messageCompaction(message)) return <CompactionNote key={message.id} message={message} />;
         const isStreamingMessage = message.id === 'work-stream';
+        const actionVisibility = messageIndex === transcript.length - 1
+          ? ''
+          : 'opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none';
         const messageTime = formatWorkMessageTime(message.createdAt);
         const persistedTiming = messageWorkTiming(message);
         const sessionStart = Date.parse(sessionStartedAt ?? '');
@@ -716,227 +514,54 @@ function WorkTranscript({
                 key={`${part.url}-${index}`}
                 href={part.url}
                 download={part.filename ?? agentsT('attachment')}
-                className="inline-flex max-w-56 flex-wrap items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted"
+                className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith('image/') ? 'flex-wrap' : 'flex-nowrap'}`}
               >
                 {part.mediaType?.startsWith('image/') ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={part.url} alt={part.filename ?? agentsT('attachment')} className="max-h-48 w-full object-contain" />
                 ) : <FileText className="size-3.5 shrink-0 text-muted-foreground" />}
-                <span className="truncate">{part.filename ?? agentsT('attachment')}</span>
+                <span className="min-w-0 truncate">{part.filename ?? agentsT('attachment')}</span>
               </a>
             ))}
           </div>
         ) : null;
-        const processTimeline = (live: boolean) => visibleProcessParts.map((part, index) => {
-          if (part.type === 'work-runtime') {
-            return (
-              <div key={`${message.id}-runtime-${index}`} className="flex min-h-7 items-center gap-2 rounded-md px-1 text-muted-foreground">
-                {part.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : part.status === 'failed' ? <CircleAlert className="size-3.5 text-red-600" /> : part.status === 'cancelled' ? <CirclePause className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
-                <TerminalSquare className="size-3.5" />
-                <span>{part.status === 'running' ? t('runtimeWorking', { runtime: runtimeLabel(part.runtimeKind) }) : part.status === 'cancelled' ? t('runtimeCancelled', { runtime: runtimeLabel(part.runtimeKind) }) : runtimeLabel(part.runtimeKind)}</span>
-              </div>
-            );
-          }
-          if (part.type === 'reasoning') {
-            const running = part.status === 'running';
-            return (
-              <details key={`${message.id}-reasoning-${index}`} open={live && running} className="group/reasoning rounded-md">
-                <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-                  {running ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                  <Activity className="size-3.5" />
-                  <span>{running ? t('thinking') : t('thought')}</span>
-                  {part.text ? <ChevronRight className="ml-auto size-3.5 transition-transform group-open/reasoning:rotate-90" /> : null}
-                </summary>
-                {part.text ? <pre className="ml-5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground">{part.text}</pre> : null}
-              </details>
-            );
-          }
-          if (part.type !== 'work-tool') return null;
-          const running = part.status === 'running';
-          const failed = part.isError || part.status === 'failed';
-          const cancelled = part.status === 'cancelled';
-          const toolLabel = workToolLabel(part);
-          const duration = formatWorkDuration(part.durationMs);
-          return (
-            <details key={part.toolCallId ?? `${message.id}-${index}`} open={live ? running || failed : failed} className={cx('group/tool rounded-md', failed && 'bg-red-500/5')}>
-              <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 marker:content-none hover:bg-muted/50">
-                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/tool:rotate-90" />
-                <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{toolLabel}</span>
-                {!running && duration ? <span className="shrink-0 text-[10px] text-muted-foreground" title={`${part.durationMs} ms`}>{duration}</span> : null}
-                <span className={cx('inline-flex shrink-0 items-center gap-1 px-1.5 text-[10px] font-medium', failed ? 'text-red-700 dark:text-red-300' : 'text-muted-foreground')}>
-                  {running ? <Loader2 className="size-3 animate-spin" /> : failed ? <CircleAlert className="size-3" /> : cancelled ? <CirclePause className="size-3" /> : <CheckCircle2 className="size-3" />}
-                  {running ? t('toolRunning') : failed ? t('toolFailed') : cancelled ? t('toolCancelled') : t('toolCompleted')}
-                </span>
-              </summary>
-              <div className="ml-5 space-y-3 px-2 py-2">
-                <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolInput')}</p>
-                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 text-[11px] leading-relaxed text-foreground">{formatValue(part.input)}</pre>
-                </div>
-                {!running && part.output !== undefined ? (
-                  <div>
-                    <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{agentsT('toolOutput')}</p>
-                    <pre className={cx('max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md p-2 text-[11px] leading-relaxed', failed ? 'bg-red-500/5 text-red-800 dark:text-red-200' : 'bg-muted/30 text-foreground')}>{formatValue(part.output)}</pre>
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          );
-        });
-
-        if (message.role === 'user') {
-          return (
-            <article key={message.id} data-message-id={message.id} className="group/message flex flex-col items-end rounded-[10px] pt-2.5">
-              <div className="flex max-w-full items-start justify-end gap-2.5">
-                <div className="min-w-0 max-w-[calc(100%_-_2.5rem)] break-words rounded-[10px] bg-muted px-4 py-2.5 text-sm leading-[1.65] text-foreground">
-                  {attachmentLinks}
-                  {message.parts.filter((part) => part.reference).map((part, index) => <details key={index} className="my-1 max-w-full text-xs">
-                    <summary className="cursor-pointer break-words text-muted-foreground">@{part.reference!.label}</summary>
-                    <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{part.text}</pre>
-                  </details>)}
-                  {text ? <span className="block whitespace-pre-wrap">{text}</span> : null}
-                </div>
-                <div aria-label={agentsT('user')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                  <UserRound className="size-4" />
-                </div>
-              </div>
-              {text ? (
-                <div className="mr-10 flex min-h-[26px] items-center justify-end gap-2">
-                  {messageTime ? (
-                    <time
-                      data-ui="work-message-time"
-                      dateTime={message.createdAt}
-                      title={messageTime.title}
-                      className="text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
-                    >
-                      {messageTime.label}
-                    </time>
-                  ) : null}
-                  <CopyButton text={text} label={common('copy')} iconOnly className={copyButtonClassName} />
-                </div>
-              ) : null}
-            </article>
-          );
-        }
-
-        return (
-          <AssistantReply
-            key={message.id}
-            data-message-id={message.id}
-            agentName={agentName}
-            headerMeta={(
-              <>
-                {messageModelName ? <span data-ui="assistant-reply-model" title={messageModelName} className="min-w-0 truncate text-xs font-normal text-muted-foreground">{messageModelName}</span> : null}
-                {messageTime ? (
-                  <time
-                    data-ui="work-message-time"
-                    dateTime={message.createdAt}
-                    title={messageTime.title}
-                    className="shrink-0 text-[10px] font-normal text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
-                  >
-                    {messageTime.label}
-                  </time>
-                ) : null}
-                <WorkElapsed
-                  timing={messageTiming}
-                  live={isStreamingMessage}
-                  dataUi="work-message-duration"
-                  className="shrink-0 text-[10px] font-normal text-muted-foreground opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
-                />
-              </>
-            )}
-            streaming={isStreamingMessage}
-            actions={!isStreamingMessage && text ? (
-              <CopyButton text={text} label={common('copy')} iconOnly className={copyButtonClassName} />
-            ) : undefined}
-          >
-            <div className="min-w-0">
+        const messageBody = <>
               {attachmentLinks}
-              {isStreamingMessage || visibleProcessParts.length ? (
-                isStreamingMessage ? (
-                  <div data-ui="work-process" className="my-1.5 space-y-1 text-xs">
-                    <div className="flex min-h-7 items-center gap-1.5 px-1 text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      <span className="font-medium text-foreground">{t('processing')}</span>
-                      <WorkElapsed timing={messageTiming} live separator dataUi="work-process-duration" className="text-[10px] text-muted-foreground" />
-                    </div>
-                    {visibleProcessParts.length ? <div className="space-y-1">{processTimeline(true)}</div> : null}
-                  </div>
-                ) : (
-                  <details data-ui="work-process" open={processFailed || processCancelled} className="group/process my-1.5 text-xs">
-                    <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-1 text-muted-foreground marker:content-none hover:bg-muted/50">
-                      <ChevronRight className="size-3.5 shrink-0 transition-transform group-open/process:rotate-90" />
-                      {processFailed ? <CircleAlert className="size-3.5 shrink-0 text-red-600" /> : processCancelled ? <CirclePause className="size-3.5 shrink-0" /> : <CheckCircle2 className="size-3.5 shrink-0" />}
-                      <span className="shrink-0 font-medium text-foreground">{processFailed ? t('processFailed') : processCancelled ? t('processCancelled') : t('processed')}</span>
-                      <WorkElapsed timing={messageTiming} separator dataUi="work-process-duration" className="shrink-0 text-[10px] text-muted-foreground" />
-                    </summary>
-                    <div className="ml-5 py-1">
-                      {processTimeline(false)}
-                    </div>
-                  </details>
-                )
-              ) : null}
-              {text ? (
-                <AssistantMarkdown text={text} streaming={isStreamingMessage} />
-              ) : null}
-            </div>
-          </AssistantReply>
-        );
+              {message.parts.filter((part) => part.reference).map((part, index) => <details key={index} className="my-1 text-xs"><summary className="cursor-pointer break-words">@{part.reference!.label}</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{part.text}</pre></details>)}
+              {message.role !== 'user' && (isStreamingMessage || visibleProcessParts.length) ? <div data-ui="work-process" className="w-full">
+                <AgentActivity status={isStreamingMessage ? 'working' : 'complete'} defaultOpen={processFailed || processCancelled} collapseOnComplete={!processFailed && !processCancelled} activeLabel={<>{t('processing')} <WorkElapsed timing={messageTiming} live dataUi="work-process-duration" /></>} summary={<>{processFailed ? t('processFailed') : processCancelled ? t('processCancelled') : t('processed')} <WorkElapsed timing={messageTiming} dataUi="work-process-duration" /></>} items={visibleProcessParts.map((part, index) => ({
+                  id: part.toolCallId ?? message.id + ':' + index,
+                  type: 'text' as const,
+                  content: part.type === 'reasoning' ? <div><p className="text-xs text-muted-foreground">{part.status === 'running' ? t('thinking') : t('thought')}</p><pre className="whitespace-pre-wrap break-words text-xs">{part.text}</pre></div> : part.type === 'work-runtime' ? <p className="text-xs text-muted-foreground">{part.status === 'cancelled' ? t('runtimeCancelled', { runtime: runtimeLabel(part.runtimeKind) }) : runtimeLabel(part.runtimeKind)}</p> : <ToolResult tool={workToolLabel(part)} title={part.status === 'running' ? t('toolRunning') : part.isError || part.status === 'failed' ? t('toolFailed') : part.status === 'cancelled' ? t('toolCancelled') : t('toolCompleted')} status={part.isError || part.status === 'failed' ? 'error' : part.status === 'cancelled' ? 'cancelled' : part.status === 'running' ? 'running' : 'success'} meta={formatWorkDuration(part.durationMs)} defaultOpen={part.status === 'running' || part.isError || part.status === 'failed'} copyText={part.output === undefined ? undefined : formatValue(part.output)}>
+                    <p className="text-xs text-muted-foreground">{agentsT('toolInput')}</p><ToolResultOutput language="json">{formatValue(part.input)}</ToolResultOutput>
+                    {part.output !== undefined ? <><p className="text-xs text-muted-foreground">{agentsT('toolOutput')}</p><ToolResultOutput language={typeof part.output === 'string' ? 'text' : 'json'}>{formatValue(part.output)}</ToolResultOutput></> : null}
+                  </ToolResult>,
+                }))} />
+              </div> : null}
+              {text ? message.role === 'user' ? <span className="whitespace-pre-wrap">{text}</span> : <AssistantMarkdown text={text} streaming={isStreamingMessage} /> : null}
+        </>;
+        return <Message key={message.id} from={message.role === 'user' ? 'user' : 'assistant'} data-message-id={message.id} aria-busy={isStreamingMessage || undefined}>
+          <MessageAvatar>{message.role === 'user' ? <UserRound /> : <Bot />}</MessageAvatar>
+          <MessageContent>
+            <MessageHeader>
+              <span>{message.role === 'user' ? agentsT('user') : agentName}</span>
+              {messageModelName && message.role !== 'user' ? <span data-ui="assistant-reply-model" title={messageModelName} className="truncate">{messageModelName}</span> : null}
+              {messageTime ? <time data-ui="work-message-time" dateTime={message.createdAt} title={messageTime.title}>{messageTime.label}</time> : null}
+              <WorkElapsed timing={messageTiming} live={isStreamingMessage} dataUi="work-message-duration" />
+            </MessageHeader>
+            {message.role === 'user' ? <MessageBubble variant="soft"><MessageBubbleContent>{messageBody}</MessageBubbleContent></MessageBubble> : (
+              <StreamingResponse status={isStreamingMessage ? 'streaming' : processFailed ? 'error' : 'complete'} copyText={text} announce={false} actionsClassName={actionVisibility}>
+                {messageBody}
+              </StreamingResponse>
+            )}
+            {message.role === 'user' && text ? <MessageFooter className={`gap-0.5 ${actionVisibility}`}><CopyButton text={text} label={common('copy')} iconOnly className={messageActionClassName} /></MessageFooter> : null}
+          </MessageContent>
+        </Message>;
       })}
-    </div>
+    </MessageGroup>
   );
 }
 
-function WorkContextUsagePanel({
-  busy,
-  usage,
-}: {
-  busy: boolean;
-  usage: ContextUsageSnapshot | null;
-}) {
-  const t = useTranslations('console.agents');
-  const percentage = usage
-    ? Math.round(Math.min(100, Math.max(0, usage.usedTokens / usage.maxTokens * 100)))
-    : null;
-
-  return (
-    <div className="h-full overflow-y-auto p-4">
-      <section aria-busy={busy || undefined} className="space-y-3 rounded-xl bg-muted/35 p-4 text-xs">
-        <h2 className="flex items-center gap-2 font-medium text-foreground">
-          <Activity className="size-4 text-muted-foreground" />
-          {t('contextUsage')}
-        </h2>
-        {usage && percentage !== null ? (
-          <>
-            <div
-              role="progressbar"
-              aria-label={`${t('contextUsage')} ${percentage}%`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={percentage}
-              className="h-1.5 overflow-hidden rounded-full bg-muted"
-            >
-              <div
-                className={cx('h-full rounded-full bg-brand transition-[width]', busy && 'animate-pulse')}
-                style={{ width: `${percentage}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 text-muted-foreground">
-              <span className="shrink-0 tabular-nums">
-                {usage.estimated ? '≈ ' : ''}{usage.usedTokens.toLocaleString()} / {usage.maxTokens.toLocaleString()} ({percentage}%)
-              </span>
-              <span className="min-w-0 truncate">{usage.modelName}</span>
-            </div>
-            {usage.estimated ? <p className="text-[11px] text-muted-foreground">{t('contextUsageEstimated')}</p> : null}
-          </>
-        ) : (
-          <p className="text-muted-foreground">—</p>
-        )}
-      </section>
-    </div>
-  );
-}
 
 export function WorkspaceWork({
   slug,
@@ -986,13 +611,13 @@ export function WorkspaceWork({
   const creatingMode = !selectionKey || draftSelectionKey === selectionKey;
   const conversation = creatingMode ? null : selectedConversation;
   const [conversationBusy, setConversationBusy] = useState(false);
+  const [listOptionsOpen, setListOptionsOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<'sessions' | 'work'>('work');
   const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
     `toolplane:work-sidebar:${workspaceId}`,
     initialSidebarOpen,
     workSidebarCookieName(workspaceId),
   );
-  const [sessionQuery, setSessionQuery] = useState('');
   const [expandedAgents, setExpandedAgents] = usePersistentBooleanRecord(
     `toolplane:work-agent-groups:${workspaceId}`,
     initialExpandedAgents,
@@ -1034,10 +659,6 @@ export function WorkspaceWork({
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(null);
   const [groupEditor, setGroupEditor] = useState<{ id: string | null; name: string } | null>(null);
-  const [draggingSidebarItem, setDraggingSidebarItem] = useState<WorkSidebarDragItem | null>(null);
-  const draggingSidebarItemRef = useRef<WorkSidebarDragItem | null>(null);
-  const [dropGroupId, setDropGroupId] = useState<string | null>(null);
-  const [dropRow, setDropRow] = useState<{ kind: WorkSidebarDragItem['kind']; id: string; edge: SidebarDropEdge } | null>(null);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{ scope: string; items: ComposerReference[] }>({ scope: '', items: [] });
@@ -1047,9 +668,6 @@ export function WorkspaceWork({
   const [busy, setBusy] = useState<string | null>(null);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
-  const transcriptViewportRef = useRef<HTMLDivElement>(null);
-  const followingTranscriptRef = useRef(true);
-  const [followingTranscript, setFollowingTranscript] = useState(true);
   const [streamOutput, setStreamOutput] = useState<{
     workSessionId: string;
     text: string;
@@ -1130,68 +748,20 @@ export function WorkspaceWork({
     context: streamText,
     estimated: controlAgent?.contextWindowEstimated,
   }), [controlAgent?.contextWindow, controlAgent?.contextWindowEstimated, controlAgent?.model, selected?.messages, conversation?.messages, streamText]);
-  const workspacePanelOpen = Boolean(desktopPanel && (desktopPanel === 'context' ? selected || conversation : controlSandbox));
+  const workspacePanelOpen = Boolean(desktopPanel && controlSandbox);
 
-  const scrollTranscriptToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const viewport = transcriptViewportRef.current;
-    if (!viewport) return;
-    followingTranscriptRef.current = true;
-    setFollowingTranscript(true);
-    if (behavior === 'smooth' && typeof viewport.scrollTo === 'function') {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
-      return;
-    }
-    viewport.scrollTop = viewport.scrollHeight;
-  }, []);
-
-  const handleTranscriptScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    const viewport = event.currentTarget;
-    const following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
-    if (followingTranscriptRef.current === following) return;
-    followingTranscriptRef.current = following;
-    setFollowingTranscript(following);
-  }, []);
-
-  const statusLabels: Record<string, string> = {
-    idle: t('statusIdle'),
-    queued: t('statusQueued'),
-    running: t('statusRunning'),
-    waiting_user: t('statusWaitingUser'),
-    waiting_approval: t('statusWaitingApproval'),
-    cancelling: t('statusCancelling'),
-    completed: t('statusCompleted'),
-    failed: t('statusFailed'),
-    cancelled: t('statusCancelled'),
-    archived: t('statusArchived'),
-  };
-  const visibleAgents = useMemo<WorkSidebarAgent[]>(() => {
-    const query = sessionQuery.trim().toLocaleLowerCase();
-    return sortSidebarItems(agents, groupPreferences.entityOrder).flatMap((item) => {
-      const order = groupPreferences.conversationOrder?.[item.id];
-      const agentSessions = sortSidebarItems(items.filter((session) => session.agentId === item.id), order);
-      const agentChannels = sortSidebarItems(conversations.filter((conversation) => conversation.agentId === item.id), order).map((conversation) => {
-        if (!conversation.source) return { ...conversation, label: conversation.title || tAgents('newChat') };
-        const { platform, chatId } = conversation.source;
-        const platformLabel = tChannels.has(`platforms.${platform}`) ? tChannels(`platforms.${platform}`) : platform;
-        return { ...conversation, label: `${platformLabel} · ${chatId}` };
-      });
-      if (!query) return [{ agent: item, sessions: agentSessions, channels: agentChannels }];
-      const agentMatches = item.name.toLocaleLowerCase().includes(query);
-      const matchingSessions = agentSessions.filter((session) => [
-        session.title,
-        session.task,
-        session.sandbox?.name,
-      ].filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
-      const matchingChannels = agentChannels.filter((conversation) => [
-        conversation.label, conversation.source?.platform, conversation.source?.contextId,
-      ].filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
-      return agentMatches || matchingSessions.length || matchingChannels.length
-        ? [{ agent: item, sessions: agentMatches ? agentSessions : matchingSessions, channels: agentMatches ? agentChannels : matchingChannels }]
-        : [];
-    });
-  }, [agents, items, conversations, groupPreferences.entityOrder, groupPreferences.conversationOrder, sessionQuery, tChannels, tAgents]);
   const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
+  const visibleAgents = useMemo<WorkSidebarAgent[]>(() => sortSidebarItems(agents, groupPreferences.entityOrder).map((item) => {
+    const order = groupPreferences.conversationOrder?.[item.id];
+    const agentSessions = sortSidebarItems(items.filter((session) => session.agentId === item.id), order);
+    const agentChannels = sortSidebarItems(conversations.filter((entry) => entry.agentId === item.id), order).map((entry) => {
+      if (!entry.source) return { ...entry, label: entry.title || tAgents('newChat') };
+      const { platform, chatId } = entry.source;
+      const platformLabel = tChannels.has(`platforms.${platform}`) ? tChannels(`platforms.${platform}`) : platform;
+      return { ...entry, label: `${platformLabel} · ${chatId}` };
+    });
+    return { agent: item, sessions: agentSessions, channels: agentChannels };
+  }), [agents, items, conversations, groupPreferences.entityOrder, groupPreferences.conversationOrder, tChannels, tAgents]);
   const groupedAgents = useMemo(() => {
     const agentsByGroup = new Map<string, WorkSidebarAgent[]>(
       groupPreferences.groups.map((group) => [group.id, []]),
@@ -1203,36 +773,65 @@ export function WorkspaceWork({
       else ungrouped.push(item);
     }
     return {
-      groups: groupPreferences.groups.map((group) => ({
-        group,
-        agents: agentsByGroup.get(group.id) ?? [],
-      })),
+      groups: groupPreferences.groups.map((group) => ({ group, agents: agentsByGroup.get(group.id) ?? [] })),
       ungrouped,
     };
   }, [groupPreferences.assignments, groupPreferences.groups, visibleAgents]);
-  const sidebarAgentEntries = useMemo<WorkSidebarEntry[]>(() => {
-    if (!groupPreferences.groups.length) {
-      return visibleAgents.map((item) => ({ kind: 'agent', groupId: null, item }));
-    }
-    const entries: WorkSidebarEntry[] = [];
-    for (const { group, agents: groupAgents } of groupedAgents.groups) {
-      if (!sessionQuery.trim() || groupAgents.length) {
-        entries.push({ kind: 'group', id: group.id, name: group.name, editable: true, count: groupAgents.length });
-        entries.push(...groupAgents.map((item) => ({ kind: 'agent' as const, groupId: group.id, item })));
-      }
-    }
-    if (!sessionQuery || groupedAgents.ungrouped.length) {
-      entries.push({
-        kind: 'group',
-        id: UNGROUPED_SIDEBAR_GROUP_ID,
-        name: t('ungrouped'),
-        editable: false,
-        count: groupedAgents.ungrouped.length,
+  const sidebarResources = useMemo<SidebarResource[]>(() => {
+    const agentResources = (entries: WorkSidebarAgent[]): SidebarResource[] => entries.map(({ agent: itemAgent, sessions: agentSessions, channels }) => ({
+      id: `agent:${itemAgent.id}`,
+      label: itemAgent.name,
+      kind: 'project',
+      children: [...agentSessions.map((item) => ({ id: `session:${item.id}`, label: item.title || item.task || t('untitled'), kind: 'file' as const })), ...channels.map((item) => ({ id: `conversation:${item.id}`, label: item.label, kind: 'bookmark' as const }))],
+    }));
+    if (!groupPreferences.groups.length) return agentResources(visibleAgents);
+    return [
+      ...groupedAgents.groups.map(({ group, agents: groupAgents }) => ({
+        id: `group:${group.id}`, label: group.name, kind: 'folder' as const, children: agentResources(groupAgents),
+      })),
+      { id: 'group:ungrouped', label: t('ungrouped'), kind: 'folder' as const, children: agentResources(groupedAgents.ungrouped) },
+    ];
+  }, [groupPreferences.groups.length, groupedAgents, t, visibleAgents]);
+  const activeResourceId = conversation ? `conversation:${conversation.id}` : selected ? `session:${selected.id}` : null;
+
+  async function moveSidebarResource(move: SidebarResourceMove) {
+    const [sourceKind, sourceId] = move.itemId.split(':', 2);
+    const [targetKind, targetId] = move.targetId?.split(':', 2) ?? [];
+    if (sourceKind === 'agent') {
+      const targetAgent = targetKind === 'agent' ? agents.find((item) => item.id === targetId) : null;
+      const targetGroupId = targetKind === 'group' && move.position === 'inside'
+        ? targetId === 'ungrouped' ? null : targetId
+        : targetAgent && (move.position === 'before' || move.position === 'after')
+          ? groupPreferences.assignments[targetAgent.id] ?? null
+          : undefined;
+      if (targetGroupId === undefined || !agents.some((item) => item.id === sourceId)) throw new Error('Unsupported agent move');
+      setGroupPreferences((current) => {
+        const assignments = { ...current.assignments };
+        if (targetGroupId) assignments[sourceId] = targetGroupId;
+        else delete assignments[sourceId];
+        const next = { ...current, assignments, collapsed: { ...current.collapsed, [targetGroupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false } };
+        return targetAgent && (move.position === 'before' || move.position === 'after')
+          ? { ...next, entityOrder: reorderSidebarItems(sortSidebarItems(agents, current.entityOrder), sourceId, targetId, move.position) }
+          : next;
       });
-      entries.push(...groupedAgents.ungrouped.map((item) => ({ kind: 'agent' as const, groupId: UNGROUPED_SIDEBAR_GROUP_ID, item })));
+      return;
     }
-    return entries;
-  }, [groupPreferences.groups.length, groupedAgents, sessionQuery, t, visibleAgents]);
+    const edge = move.position === 'before' ? 'before' : move.position === 'after' ? 'after' : null;
+    if ((sourceKind !== 'session' && sourceKind !== 'conversation') || targetKind !== sourceKind || !targetId || !edge) {
+      throw new Error('Unsupported resource move');
+    }
+    const source = (sourceKind === 'session' ? items : conversations).find((item) => item.id === sourceId);
+    const target = (sourceKind === 'session' ? items : conversations).find((item) => item.id === targetId);
+    if (!source || !target || source.agentId !== target.agentId) throw new Error('Resources must stay with their agent');
+    const agentItems = [...items, ...conversations].filter((item) => item.agentId === source.agentId);
+    setGroupPreferences((current) => ({
+      ...current,
+      conversationOrder: {
+        ...current.conversationOrder,
+        [source.agentId]: reorderSidebarItems(sortSidebarItems(agentItems, current.conversationOrder?.[source.agentId]), sourceId, targetId, edge),
+      },
+    }));
+  }
 
   const refreshSelected = useCallback(async () => {
     if (!selectedWorkSessionId || creatingMode) return false;
@@ -1249,7 +848,7 @@ export function WorkspaceWork({
     } catch {
       return false;
     }
-  }, [creatingMode, selectedWorkSessionId]);
+  }, [creatingMode, selectedWorkSessionId, setItems, setLiveSelected]);
 
   const selectedActive = Boolean(selectedStatus && ACTIVE_STATUSES.has(selectedStatus));
 
@@ -1260,16 +859,6 @@ export function WorkspaceWork({
     }, 2_000);
     return () => window.clearInterval(interval);
   }, [refreshSelected, selected?.titlePending]);
-
-  useEffect(() => {
-    if (!selected?.id && !conversation?.id) return;
-    scrollTranscriptToBottom();
-  }, [scrollTranscriptToBottom, selected?.id, conversation?.id]);
-
-  useEffect(() => {
-    if ((!selected?.id && !conversation?.id) || !followingTranscriptRef.current) return;
-    scrollTranscriptToBottom();
-  }, [scrollTranscriptToBottom, selected?.artifacts, selected?.id, selected?.messages, conversation?.id, conversation?.messages, selectedActive, streamActivities, streamText]);
 
   useEffect(() => {
     if (!selectedWorkSessionId || creatingMode || !selectedActive || typeof EventSource === 'undefined') return undefined;
@@ -1489,7 +1078,6 @@ export function WorkspaceWork({
       if (input.length > 2000) { setError(commandsT('invalidCommand')); return; }
       {
         if (!selected) {
-          if (canSend) return createWork();
           setError(commandsT('needsConversation')); return;
         }
         setBusy('command'); setError(null);
@@ -1604,204 +1192,6 @@ export function WorkspaceWork({
     });
   }
 
-  function assignAgentToGroup(agentId: string, groupId: string | null) {
-    if (!agents.some((item) => item.id === agentId)) return;
-    setGroupPreferences((current) => {
-      const assignments = { ...current.assignments };
-      if (groupId) assignments[agentId] = groupId;
-      else delete assignments[agentId];
-      return {
-        ...current,
-        assignments,
-        collapsed: { ...current.collapsed, [groupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
-      };
-    });
-  }
-
-  function clearSidebarDrag() {
-    draggingSidebarItemRef.current = null;
-    setDraggingSidebarItem(null);
-    setDropGroupId(null);
-    setDropRow(null);
-  }
-
-  function startSidebarDrag(event: DragEvent<HTMLElement>, source: WorkSidebarDragItem) {
-    event.stopPropagation();
-    clearSidebarDrag();
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(`application/x-toolplane-${source.kind}`, source.id);
-    draggingSidebarItemRef.current = source;
-    setDraggingSidebarItem(source);
-  }
-
-  function canReorderSidebarItem(source: WorkSidebarDragItem, target: WorkSidebarDragItem, preferences = groupPreferences) {
-    if (source.kind !== target.kind || source.id === target.id) return false;
-    if (source.kind === 'agent' && target.kind === 'agent') {
-      const sourceAgent = agents.find((item) => item.id === source.id);
-      const targetAgent = agents.find((item) => item.id === target.id);
-      return Boolean(sourceAgent && targetAgent && (
-        (preferences.assignments[source.id] ?? null) !== (preferences.assignments[target.id] ?? null)
-        || sourceAgent.pinned === targetAgent.pinned
-      ));
-    }
-    if (source.kind === 'agent' || target.kind === 'agent' || source.agentId !== target.agentId) return false;
-    const section = source.kind === 'session' ? items : conversations;
-    return section.some((item) => item.id === source.id && item.agentId === source.agentId)
-      && section.some((item) => item.id === target.id && item.agentId === target.agentId);
-  }
-
-  function moveSidebarItem(source: WorkSidebarDragItem, target: WorkSidebarDragItem, edge: SidebarDropEdge) {
-    setGroupPreferences((current) => {
-      if (!canReorderSidebarItem(source, target, current)) return current;
-      if (source.kind === 'agent' && target.kind === 'agent') {
-        const targetGroupId = current.assignments[target.id];
-        const assignments = { ...current.assignments };
-        if (targetGroupId) assignments[source.id] = targetGroupId;
-        else delete assignments[source.id];
-        return {
-          ...current,
-          assignments,
-          collapsed: { ...current.collapsed, [targetGroupId ?? UNGROUPED_SIDEBAR_GROUP_ID]: false },
-          entityOrder: reorderSidebarItems(sortSidebarItems(agents, current.entityOrder), source.id, target.id, edge),
-        };
-      }
-      if (source.kind === 'agent') return current;
-      // Keep both complete sections in the saved order, including search-hidden rows.
-      const agentItems = [...items, ...conversations].filter((item) => item.agentId === source.agentId);
-      return {
-        ...current,
-        conversationOrder: {
-          ...current.conversationOrder,
-          [source.agentId]: reorderSidebarItems(
-            sortSidebarItems(agentItems, current.conversationOrder?.[source.agentId]), source.id, target.id, edge,
-          ),
-        },
-      };
-    });
-  }
-
-  function sidebarRowDropProps(target: WorkSidebarDragItem) {
-    return {
-      onDragOver: (event: DragEvent<HTMLElement>) => {
-        event.stopPropagation();
-        setDropGroupId(null);
-        const source = draggingSidebarItemRef.current;
-        if (!source || !canReorderSidebarItem(source, target)) {
-          setDropRow(null);
-          return;
-        }
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        setDropRow({ kind: target.kind, id: target.id, edge: getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()) });
-      },
-      onDragLeave: (event: DragEvent<HTMLElement>) => {
-        event.stopPropagation();
-        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropRow(null);
-      },
-      onDrop: (event: DragEvent<HTMLElement>) => {
-        event.stopPropagation();
-        const source = draggingSidebarItemRef.current;
-        if (source && canReorderSidebarItem(source, target)) {
-          event.preventDefault();
-          moveSidebarItem(source, target, getSidebarDropEdge(event.clientY, event.currentTarget.getBoundingClientRect()));
-        }
-        clearSidebarDrag();
-      },
-    };
-  }
-
-  function reorderSidebarWithKeyboard(event: KeyboardEvent<HTMLElement>, source: WorkSidebarDragItem) {
-    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    let rows: WorkSidebarDragItem[];
-    if (source.kind === 'agent') {
-      rows = sidebarAgentEntries.flatMap((entry) => entry.kind === 'agent'
-        && (groupPreferences.assignments[entry.item.agent.id] ?? null) === (groupPreferences.assignments[source.id] ?? null)
-        && (!entry.groupId || sessionQuery.trim() || !groupPreferences.collapsed[entry.groupId])
-        ? [{ kind: 'agent' as const, id: entry.item.agent.id }] : []);
-    } else {
-      const agent = visibleAgents.find((item) => item.agent.id === source.agentId);
-      rows = (source.kind === 'session' ? agent?.sessions ?? [] : agent?.channels ?? [])
-        .map((item) => ({ kind: source.kind, id: item.id, agentId: source.agentId }));
-    }
-    const index = rows.findIndex((item) => item.id === source.id);
-    const target = rows[index + (event.key === 'ArrowUp' ? -1 : 1)];
-    if (target && canReorderSidebarItem(source, target)) {
-      moveSidebarItem(source, target, event.key === 'ArrowUp' ? 'before' : 'after');
-    }
-    clearSidebarDrag();
-  }
-
-  function renderAgentGroup(entry: Extract<WorkSidebarEntry, { kind: 'group' }>) {
-    const expanded = Boolean(sessionQuery.trim()) || !groupPreferences.collapsed[entry.id];
-    const targetGroupId = entry.editable ? entry.id : null;
-    const label = expanded ? t('hideGroup', { name: entry.name }) : t('showGroup', { name: entry.name });
-    return (
-      <li key={entry.id} data-sidebar-group-id={entry.id} className="py-1">
-        <div
-          onDragOver={(event) => {
-            event.stopPropagation();
-            setDropRow(null);
-            const source = draggingSidebarItemRef.current;
-            const agentId = source?.kind === 'agent' ? source.id : null;
-            const assignedGroupId = agentId ? groupPreferences.assignments[agentId] ?? null : null;
-            if (!agentId || !agents.some((item) => item.id === agentId) || assignedGroupId === targetGroupId) {
-              setDropGroupId(null);
-              return;
-            }
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-            setDropGroupId(entry.id);
-          }}
-          onDragLeave={(event) => {
-            event.stopPropagation();
-            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropGroupId(null);
-          }}
-          onDrop={(event) => {
-            event.stopPropagation();
-            const source = draggingSidebarItemRef.current;
-            if (source?.kind === 'agent') {
-              event.preventDefault();
-              assignAgentToGroup(source.id, targetGroupId);
-            }
-            clearSidebarDrag();
-          }}
-          className={cx(
-            'group/sidebar-group flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground',
-            dropGroupId === entry.id && 'bg-muted ring-1 ring-inset ring-brand/50',
-          )}
-        >
-          <button
-            type="button"
-            aria-label={label}
-            aria-expanded={expanded}
-            title={label}
-            onClick={() => setGroupPreferences((current) => ({
-              ...current,
-              collapsed: { ...current.collapsed, [entry.id]: !current.collapsed[entry.id] },
-            }))}
-            className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium"
-          >
-            <Folder className="size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-            <span className="text-[10px] text-muted-foreground">{entry.count}</span>
-            <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-          </button>
-          {entry.editable ? (
-            <>
-              <button type="button" aria-label={t('renameGroup')} title={t('renameGroup')} onClick={() => setGroupEditor({ id: entry.id, name: entry.name })} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-foreground">
-                <Pencil className="size-3.5" />
-              </button>
-              <button type="button" aria-label={t('deleteGroup')} title={t('deleteGroup')} onClick={() => deleteAgentGroup(entry.id)} className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-background hover:text-destructive">
-                <Trash2 className="size-3.5" />
-              </button>
-            </>
-          ) : null}
-        </div>
-      </li>
-    );
-  }
 
   const running = Boolean(selected && ACTIVE_STATUSES.has(selected.status));
   const draftHermesModelReady = agent?.runtimeKind === 'hermes'
@@ -1824,335 +1214,13 @@ export function WorkspaceWork({
     setMobilePanel(panel);
   }
 
-  return (
-    <div className={cx(
-      'grid h-full min-h-0 grid-cols-1 overflow-hidden bg-background',
-      sidebarOpen && 'lg:grid-cols-[15rem_minmax(0,1fr)]',
-      workspacePanelOpen && (sidebarOpen
-        ? 'xl:grid-cols-[15rem_minmax(32rem,1fr)_24rem]'
-        : 'xl:grid-cols-[minmax(32rem,1fr)_24rem]'),
-    )}>
-      <aside className={cx(
-        mobilePane === 'work'
-          ? (sidebarOpen ? 'hidden lg:flex' : 'hidden')
-          : (sidebarOpen ? 'flex' : 'flex lg:hidden'),
-        'min-h-0 flex-col overflow-hidden bg-background p-1.5',
-      )}>
-        <div className="relative shrink-0 px-0.5">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={sessionQuery}
-            onChange={(event) => setSessionQuery(event.target.value)}
-            placeholder={t('search')}
-            aria-label={t('search')}
-            className="h-7 w-full rounded-full border-0 bg-muted/70 pl-7 pr-7 text-[11px] outline-none focus:ring-1 focus:ring-brand/35"
-          />
-          {sessionQuery ? (
-            <button type="button" onClick={() => setSessionQuery('')} aria-label={t('clearSearch')} title={t('clearSearch')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-background">
-              <X className="size-3" />
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-          <div className="flex h-8 items-center gap-1 px-1">
-            <Link href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`} aria-label={tAgents('addAgent')} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-[13px] text-foreground hover:bg-muted">
-              <Plus className="size-3.5 shrink-0" />
-              <span className="truncate">{tAgents('addAgent')}</span>
-            </Link>
-            <Popover.Root>
-              <Popover.Trigger asChild>
-                <button type="button" aria-label={t('listOptions')} title={t('listOptions')} className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
-                  <ListFilter className="size-3.5" />
-                </button>
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content side="bottom" align="end" sideOffset={4} aria-label={t('listOptions')} className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl">
-                  <p className="px-2.5 py-1 text-xs text-muted-foreground">{t('listOptions')}</p>
-                  {agents.length ? (
-                    <>
-                      <Popover.Close asChild>
-                        <button type="button" onClick={() => setAllAgentSections(false)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
-                          <ChevronsUpDown className="size-4" />
-                          {t('expandAll')}
-                        </button>
-                      </Popover.Close>
-                      <Popover.Close asChild>
-                        <button type="button" onClick={() => setAllAgentSections(true)} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
-                          <ChevronsDownUp className="size-4" />
-                          {t('collapseAll')}
-                        </button>
-                      </Popover.Close>
-                    </>
-                  ) : null}
-                  <div className="my-1 h-px bg-border" />
-                  <Popover.Close asChild>
-                    <button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
-                      <FolderPlus className="size-4" />
-                      {t('newGroup')}
-                    </button>
-                  </Popover.Close>
-                  <Popover.Close asChild>
-                    <Link href={`/app/${encodeURIComponent(slug)}/agents?returnTo=${encodeURIComponent(workReturnTo)}`} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-accent">
-                      <Settings2 className="size-4" />
-                      {tAgents('manageAgents')}
-                    </Link>
-                  </Popover.Close>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-          </div>
-          <ul>
-            {sidebarAgentEntries.map((entry) => {
-              if (entry.kind === 'group') return renderAgentGroup(entry);
-              const { agent: itemAgent, sessions: agentSessions, channels: agentChannels } = entry.item;
-              if (entry.groupId && !sessionQuery.trim() && groupPreferences.collapsed[entry.groupId]) return null;
-              const expanded = Boolean(sessionQuery)
-                || (expandedAgents[itemAgent.id] ?? (itemAgent.id === activeAgentId || agentChannels.length > 0));
-              const row = (
-                <div data-sidebar-entity-id={itemAgent.id} {...sidebarRowDropProps({ kind: 'agent', id: itemAgent.id })} className={cx(
-                  'group relative flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors',
-                  itemAgent.id === activeAgentId ? 'bg-muted text-foreground' : 'text-foreground/80 hover:bg-muted/60',
-                  draggingSidebarItem?.kind === 'agent' && draggingSidebarItem.id === itemAgent.id && 'opacity-50',
-                  sidebarDropIndicatorClassName(dropRow?.kind === 'agent' && dropRow.id === itemAgent.id ? dropRow.edge : undefined),
-                )}>
-                  <button
-                    type="button"
-                    draggable
-                    aria-label={t('moveToGroup')}
-                    title={t('moveToGroup')}
-                    onDragStart={(event) => startSidebarDrag(event, { kind: 'agent', id: itemAgent.id })}
-                    onDragEnd={clearSidebarDrag}
-                    onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'agent', id: itemAgent.id })}
-                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                  >
-                    <GripVertical className="size-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-expanded={expanded}
-                    aria-controls={`agent-work-sessions-${itemAgent.id}`}
-                    title={expanded ? tAgents('hideConversations') : tAgents('showConversations')}
-                    onClick={() => setExpandedAgents((current) => ({ ...current, [itemAgent.id]: !expanded }))}
-                    className="flex h-8 min-w-0 flex-1 items-center gap-1.5 text-left text-[13px] outline-none"
-                  >
-                    <span className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground">
-                      <Bot className="size-3.5" />
-                      <span
-                        className={cx(
-                          'absolute right-0 top-0 size-1.5 rounded-full ring-1 ring-background',
-                          itemAgent.supportsWork ? (itemAgent.ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-red-500',
-                        )}
-                        title={itemAgent.supportsWork ? (itemAgent.ready ? tAgents('ready1') : tAgents('needsModel')) : tAgents('runtimeUnavailable')}
-                      />
-                    </span>
-                    <span className={cx('min-w-0 flex-1 truncate', itemAgent.id === activeAgentId && 'font-medium')}>{itemAgent.name}</span>
-                    <span aria-hidden="true" className="-ml-1.5 hidden size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:flex group-has-[:focus-visible]:flex group-has-data-[state=open]:flex">
-                      <ChevronRight className={cx('size-3.5 transition-transform', expanded && 'rotate-90')} />
-                    </span>
-                  </button>
-                  <SidebarActionRail hasLeadingSlot revealOnCellFocus>
-                    <SidebarEntityActionsMenu
-                      actionsLabel={tAgents('agentActions', { name: itemAgent.name })}
-                      deleteLabel={common('delete')}
-                      editLabel={common('edit')}
-                      onDelete={() => setDeleteAgentTarget(itemAgent)}
-                      onEdit={() => router.push(agentSettingsHref(slug, itemAgent.id, workReturnTo))}
-                      onTogglePin={() => void toggleAgentPin(itemAgent)}
-                      pinned={itemAgent.pinned}
-                      pinLabel={tAgents('pinAgent')}
-                      unpinLabel={tAgents('unpinAgent')}
-                    />
-                    {itemAgent.supportsWork ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedAgents((current) => ({ ...current, [itemAgent.id]: true }));
-                          startNewWork(itemAgent.id);
-                        }}
-                        aria-label={`${t('newWork')} · ${itemAgent.name}`}
-                        title={t('newWork')}
-                        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
-                      >
-                        <Plus className="size-3.5" />
-                      </button>
-                    ) : null}
-                  </SidebarActionRail>
-                </div>
-              );
-              return (
-                <li key={`agent-${itemAgent.id}`} className={cx('py-0.5', entry.groupId && 'ml-2 border-l border-border/60 pl-1')}>
-                  <ContextMenu.Root modal={false}>
-                    <ContextMenu.Trigger asChild>{row}</ContextMenu.Trigger>
-                    <ContextMenu.Portal>
-                      <ContextMenu.Content className="z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
-                        {itemAgent.supportsWork ? (
-                          <ContextMenu.Item
-                            onSelect={() => {
-                              setExpandedAgents((current) => ({ ...current, [itemAgent.id]: true }));
-                              startNewWork(itemAgent.id);
-                            }}
-                            className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                          >
-                            <Plus className="size-3.5 shrink-0 text-muted-foreground" />
-                            {t('newWork')}
-                          </ContextMenu.Item>
-                        ) : null}
-                        <ContextMenu.Item asChild className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground">
-                          <Link href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`} onClick={() => startNewWork(itemAgent.id)}>
-                            <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
-                            {tAgents('chat')}
-                          </Link>
-                        </ContextMenu.Item>
-                        <ContextMenu.Item asChild className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground">
-                          <Link href={agentSettingsHref(slug, itemAgent.id, workReturnTo)}>
-                            <Settings2 className="size-3.5 shrink-0 text-muted-foreground" />
-                            {tAgents('configureAgent')}
-                          </Link>
-                        </ContextMenu.Item>
-                        <ContextMenu.Separator className="my-1 h-px bg-border" />
-                        <ContextMenu.Item
-                          onSelect={() => setDeleteAgentTarget(itemAgent)}
-                          className="flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-sm text-destructive outline-none data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
-                        >
-                          <Trash2 className="size-3.5 shrink-0" />
-                          {tAgents('deleteAgent')}
-                        </ContextMenu.Item>
-                      </ContextMenu.Content>
-                    </ContextMenu.Portal>
-                  </ContextMenu.Root>
-                  {expanded ? (
-                    <ul id={`agent-work-sessions-${itemAgent.id}`} className="ml-4 py-0.5 pl-1">
-                      {agentSessions.length > 0 ? agentSessions.map((item) => (
-                        <li
-                          key={item.id}
-                          data-sidebar-conversation-id={item.id}
-                          draggable
-                          onDragStart={(event) => startSidebarDrag(event, { kind: 'session', id: item.id, agentId: itemAgent.id })}
-                          onDragEnd={clearSidebarDrag}
-                          {...sidebarRowDropProps({ kind: 'session', id: item.id, agentId: itemAgent.id })}
-                          className={cx(
-                            'group/session relative py-0.5',
-                            draggingSidebarItem?.kind === 'session' && draggingSidebarItem.id === item.id && 'opacity-50',
-                            sidebarDropIndicatorClassName(dropRow?.kind === 'session' && dropRow.id === item.id ? dropRow.edge : undefined),
-                          )}
-                        >
-                          <Link
-                            href={workHref(slug, item.id)}
-                            draggable={false}
-                            onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'session', id: item.id, agentId: itemAgent.id })}
-                            onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
-                            aria-current={item.id === selected?.id ? 'page' : undefined}
-                            title={`${statusLabels[item.status] ?? item.status} · ${item.sandbox?.name ?? t('sandboxUnavailable')}`}
-                            className={cx(
-                              'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 pr-7 text-[13px]',
-                              item.id === selected?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60',
-                            )}
-                          >
-                            <Circle className={cx('size-2 shrink-0 fill-current', statusDotClass(item.status))} />
-                            <span className="min-w-0 flex-1 truncate">{item.title || item.task || t('untitled')}</span>
-                          </Link>
-                          {ARCHIVABLE_STATUSES.has(item.status) ? (
-                            <button type="button" onClick={() => void archiveWork(item.id)} aria-label={t('archive')} title={t('archive')} className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/session:opacity-100 focus:opacity-100">
-                              <Archive className="size-3.5" />
-                            </button>
-                          ) : null}
-                        </li>
-                      )) : !agentChannels.length ? (
-                        <li className="flex h-8 items-center px-2 text-xs text-muted-foreground">{t('noSessions')}</li>
-                      ) : null}
-                      {agentChannels.length > 0 && <li className="px-2 pb-1 pt-2 text-[11px] text-muted-foreground">{tAgents(agentChannels.every((item) => item.source) ? 'channels' : 'chat')}</li>}
-                      {agentChannels.map((item) => (
-                        <li
-                          key={item.id}
-                          data-sidebar-conversation-id={item.id}
-                          draggable
-                          onDragStart={(event) => startSidebarDrag(event, { kind: 'conversation', id: item.id, agentId: itemAgent.id })}
-                          onDragEnd={clearSidebarDrag}
-                          {...sidebarRowDropProps({ kind: 'conversation', id: item.id, agentId: itemAgent.id })}
-                          className={cx(
-                            'relative py-0.5',
-                            draggingSidebarItem?.kind === 'conversation' && draggingSidebarItem.id === item.id && 'opacity-50',
-                            sidebarDropIndicatorClassName(dropRow?.kind === 'conversation' && dropRow.id === item.id ? dropRow.edge : undefined),
-                          )}
-                        >
-                          <Link
-                            href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(item.agentId)}&c=${encodeURIComponent(item.id)}`}
-                            draggable={false}
-                            onKeyDown={(event) => reorderSidebarWithKeyboard(event, { kind: 'conversation', id: item.id, agentId: itemAgent.id })}
-                            onClick={() => { setDraftSelectionKey(null); setMobilePane('work'); }}
-                            scroll={false}
-                            aria-current={item.id === conversation?.id ? 'page' : undefined}
-                            title={item.label}
-                            className={cx('flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[13px]', item.id === conversation?.id ? 'bg-muted font-medium text-foreground' : 'text-foreground/75 hover:bg-muted/60')}
-                          >
-                            {item.source ? <Radio className="size-3.5 shrink-0 text-muted-foreground" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />}
-                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-          {!visibleAgents.length ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{t('noSearchResults')}</p> : null}
-        </div>
-      </aside>
-
-      <main className={cx(
-        mobilePane === 'sessions' ? 'hidden lg:flex' : 'flex',
-        'relative min-h-0 min-w-0 flex-col bg-background',
-      )}>
-        <header className="flex h-11 shrink-0 items-center justify-between gap-2 px-2.5">
-          <div className="flex min-w-0 items-center gap-0.5 overflow-hidden">
-            <button type="button" onClick={() => setMobilePane('sessions')} aria-label={t('showSidebar')} title={t('showSidebar')} className="ui-button-ghost ui-icon-button lg:!hidden">
-              <PanelLeftOpen className="size-[18px]" />
-            </button>
-            <button type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? t('hideSidebar') : t('showSidebar')} title={sidebarOpen ? t('hideSidebar') : t('showSidebar')} className="ui-button-ghost ui-icon-button hidden lg:!flex">
-              {sidebarOpen ? <PanelLeftClose className="size-[18px]" /> : <PanelLeftOpen className="size-[18px]" />}
-            </button>
-            {(selected || conversation) && controlAgent ? (
-              <Link
-                href={agentSettingsHref(slug, controlAgent.id, workReturnTo)}
-                aria-label={`${tAgents('configureAgent')}: ${controlAgent.name}`}
-                title={tAgents('configureAgent')}
-                className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted"><Bot className="size-3" /></span>
-                <span className="hidden max-w-36 truncate sm:block">{controlAgent.name}</span>
-              </Link>
-            ) : (
-              <TopControlMenu
-                icon={Bot}
-                label={t('agent')}
-                value={controlAgent?.id ?? ''}
-                options={workAgents.map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                  description: item.model || item.providerLabel || t('modelNotConfigured'),
-                }))}
-                onChange={(value) => {
-                  setAgentId(value);
-                  setSandboxId('');
-                  setWorkingDirectory('.');
-                  setHermesDraftSelection(null);
-                }}
-              />
-            )}
-            {controlAgent ? (
-              <AgentModelDialog
+  const modelPicker = controlAgent ? (
+    <AgentModelDialog
                 key={`${controlAgent.id}:${controlAgent.model ?? ''}`}
                 open={modelDialogOpen}
                 onOpenChange={setModelDialogOpen}
                 slug={slug}
-                agent={{
-                  ...controlAgent,
-                  providerId: controlAgent.providerId ?? null,
-                  providerIds: controlAgent.providerIds ?? [],
-                  model: controlAgent.model ?? null,
-                }}
+                agent={{ ...controlAgent, providerId: controlAgent.providerId ?? null, providerIds: controlAgent.providerIds ?? [], model: controlAgent.model ?? null }}
                 providers={providers}
                 confirmationMessage={(conversation?.messages.length || selected?.messages.length) ? t('modelSwitchConfirm') : undefined}
                 hermesConversation={controlAgent.runtimeKind === 'hermes' ? {
@@ -2164,95 +1232,172 @@ export function WorkspaceWork({
                   editable: conversation ? !conversation.readOnly : !selected || MESSAGEABLE_STATUSES.has(selected.status),
                   forkOnProfileChange: false,
                 } : undefined}
-                onHermesDraftChange={!selected && !conversation ? (selection) => {
-                  setHermesDraftSelection({ agentId: controlAgent.id, ...selection });
-                } : undefined}
+                onHermesDraftChange={!selected && !conversation ? (selection) => setHermesDraftSelection({ agentId: controlAgent.id, ...selection }) : undefined}
                 onHermesSelectionSaved={conversation ? async () => router.refresh() : selected ? refreshSelected : undefined}
-                trigger={(
-                  <button type="button" aria-label={t('model')} title={t('model')} className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
-                    {controlModelLabel !== t('selectModel') ? (
-                      <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[9px] font-semibold">{controlModelLabel.charAt(0).toUpperCase()}</span>
-                    ) : <Cpu className="size-4 shrink-0" />}
-                    <span className="hidden max-w-44 truncate sm:block">{controlModelLabel}</span>
-                    <ChevronDown className="size-3.5 shrink-0" />
-                  </button>
-                )}
-              />
-            ) : null}
-            <TopControlMenu
-              icon={Boxes}
-              label={t('sandbox')}
-              value={controlSandbox?.id ?? ''}
-              disabled={Boolean(selected || conversation)}
-              options={(selected || conversation ? selectedAgent?.sandboxes ?? [] : sandboxOptions).map((item) => ({
-                value: item.id,
-                label: item.name,
-                description: item.running ? (item.isDefault ? t('default') : undefined) : t('stopped'),
-                disabled: !item.running && item.kind !== 'hermes',
-              }))}
-              onChange={(value) => {
-                setSandboxId(value);
-                setWorkingDirectory('.');
-              }}
-            />
-            <WorkDirectoryControl
-              key={controlSandbox?.id ?? 'none'}
-              sandbox={controlSandbox}
-              value={activeWorkingDirectory}
-              locked={Boolean(selected || conversation)}
-              workspaceRoot={controlWorkspaceRoot}
-              onChange={setWorkingDirectory}
-            />
+      trigger={<Button type="button" aria-label={`${t('model')}: ${controlModelLabel}`} title={controlModelLabel} variant="ghost" size="sm" className="h-8 min-w-0 max-w-52 gap-1.5 rounded-xl px-2 text-xs text-muted-foreground"><Cpu className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{controlModelLabel}</span><ChevronDown className="size-3 shrink-0" /></Button>}
+    />
+  ) : null;
+
+  return (
+    <ChatApp
+      open={sidebarOpen}
+      onOpenChange={setSidebarOpen}
+      openMobile={mobilePane === 'sessions'}
+      onOpenMobileChange={(open) => setMobilePane(open ? 'sessions' : 'work')}
+      className="relative flex h-full min-w-0"
+    >
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <AnimatedSidebar ariaLabel={tAgents('agents')} collapsible="offcanvas" className="h-full shrink-0" panelClassName="h-full min-h-0">
+        <AnimatedSidebarContent className="gap-3 overflow-hidden px-2 py-3">
+
+        <AnimatedSidebarGroup className="min-h-0 flex-1 p-0">
+          <div className="flex h-9 shrink-0 items-center justify-between px-1">
+            <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`} aria-label={tAgents('addAgent')} title={tAgents('addAgent')} variant="ghost" size="icon" className="shrink-0">
+              <Plus className="size-4" />
+            </ButtonLink>
+            <MorphPopover open={listOptionsOpen} onOpenChange={setListOptionsOpen}>
+              <MorphPopoverTrigger>
+                <Button type="button" aria-label={t('listOptions')} variant={"ghost"} size={"icon"} className="flex shrink-0 items-center justify-center"><ListFilter className="size-3.5" /></Button>
+              </MorphPopoverTrigger>
+              <>
+                <MorphPopoverContent side="bottom" align="end" sideOffset={4} className="z-50 w-52 p-1.5">
+                  <ButtonLink href={`/app/${encodeURIComponent(slug)}/agents?tab=management&returnTo=${encodeURIComponent(workReturnTo)}`} onClick={() => setListOptionsOpen(false)} variant="ghost" size="sm" className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2">
+                    <Settings2 className="size-4 shrink-0" />
+                    <span>{tAgents('agentManagement')}</span>
+                  </ButtonLink>
+                  <div className="my-1 h-px bg-border" />
+                  {agents.length ? (
+                    <>
+                      <Button type="button" onClick={() => setAllAgentSections(false)} variant="ghost" size="sm" className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2">
+                        <ChevronsUpDown className="size-4 shrink-0" />
+                        <span>{t('expandAll')}</span>
+                      </Button>
+                      <Button type="button" onClick={() => setAllAgentSections(true)} variant="ghost" size="sm" className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2">
+                        <ChevronsDownUp className="size-4 shrink-0" />
+                        <span>{t('collapseAll')}</span>
+                      </Button>
+                    </>
+                  ) : null}
+                  <div className="my-1 h-px bg-border" />
+                  <Button type="button" onClick={() => setGroupEditor({ id: null, name: '' })} variant="ghost" size="sm" className="w-full justify-start rounded-md px-2.5 text-left text-sm gap-2">
+                    <FolderPlus className="size-4 shrink-0" />
+                    <span>{t('newGroup')}</span>
+                  </Button>
+                </MorphPopoverContent>
+              </>
+            </MorphPopover>
+          </div>
+          <AnimatedSidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
+          {sidebarResources.length ? <AISidebar
+            key={JSON.stringify([groupPreferences.collapsed, expandedAgents])}
+            items={sidebarResources}
+            activeId={activeResourceId}
+            ariaLabel={tAgents('agents')}
+            className="px-1"
+            defaultExpandedIds={[
+              ...groupPreferences.groups.filter((group) => !groupPreferences.collapsed[group.id]).map((group) => `group:${group.id}`),
+              ...(groupPreferences.collapsed[UNGROUPED_SIDEBAR_GROUP_ID] ? [] : ['group:ungrouped']),
+              ...visibleAgents.filter(({ agent: itemAgent, channels }) => expandedAgents[itemAgent.id] ?? (itemAgent.id === activeAgentId || channels.length > 0)).map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
+            ]}
+            onActiveChange={(id) => {
+              setDraftSelectionKey(null);
+              setMobilePane('work');
+              const [kind, resourceId] = id.split(':', 2);
+              if (kind === 'session') router.push(workHref(slug, resourceId));
+              if (kind === 'conversation') router.push(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversations.find((item) => item.id === resourceId)?.agentId ?? activeAgentId)}&c=${encodeURIComponent(resourceId)}`);
+            }}
+            onMove={moveSidebarResource}
+            onRename={(resource, label) => {
+              if (!resource.id.startsWith('group:') || resource.id === 'group:ungrouped') return;
+              const id = resource.id.slice('group:'.length);
+              setGroupPreferences((current) => ({ ...current, groups: current.groups.map((group) => group.id === id ? { ...group, name: label } : group) }));
+            }}
+            renderActions={(resource) => {
+              const [kind, id] = resource.id.split(':', 2);
+              const itemAgent = kind === 'agent' ? agents.find((item) => item.id === id) : null;
+              if (!itemAgent?.supportsWork) return null;
+              return (
+                <button
+                  type="button"
+                  draggable={false}
+                  aria-label={`${t('newWork')} ${itemAgent.name}`}
+                  title={t('newWork')}
+                  onClick={(event) => { event.stopPropagation(); startNewWork(itemAgent.id); }}
+                  className="grid size-7 shrink-0 place-items-center rounded-lg outline-none opacity-0 transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100"
+                >
+                  <MessageSquarePlus aria-hidden="true" className="size-3.5" />
+                </button>
+              );
+            }}
+            renderIcon={(resource) => {
+              const [kind, id] = resource.id.split(':', 2);
+              if (kind === 'agent') {
+                const itemAgent = agents.find((item) => item.id === id);
+                const hasRunningSession = items.some((session) => session.agentId === id && session.status === 'running');
+                const tone = agentSidebarIssueTone(itemAgent, hasRunningSession);
+                return <span className="relative grid size-5 place-items-center"><Bot className="size-4" />{tone ? <span className={cx('absolute right-0 top-0 size-2 rounded-full ring-1 ring-background', tone === 'error' ? 'bg-destructive' : tone === 'warning' ? 'bg-amber-500' : 'bg-green-500')} /> : null}</span>;
+              }
+              if (kind === 'session') {
+                const item = items.find((session) => session.id === id);
+                const tone = sidebarIssueTone(item?.status ?? '');
+                return tone ? <Circle className={cx('size-2 fill-current', tone === 'error' ? 'text-destructive' : tone === 'warning' ? 'text-amber-500' : 'text-green-500')} /> : null;
+              }
+              if (kind === 'conversation') return conversations.find((item) => item.id === id)?.source ? <Radio className="size-4" /> : <MessageSquare className="size-4" />;
+              return <Folder className="size-4" />;
+            }}
+            renderMenu={(resource, controls) => {
+              const [kind, id] = resource.id.split(':', 2);
+              const action = (label: string, run: () => void) => <button type="button" onClick={() => { controls.close(); run(); }} className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs text-foreground hover:bg-muted">{label}</button>;
+              const moveActions = <>
+                {controls.moves.up ? action('Move up', controls.moves.up) : null}
+                {controls.moves.down ? action('Move down', controls.moves.down) : null}
+              </>;
+              if (kind === 'group' && id !== 'ungrouped') return <>{action(t('renameGroup'), controls.rename)}{action(t('deleteGroup'), () => deleteAgentGroup(id))}</>;
+              if (kind === 'agent') {
+                const itemAgent = agents.find((item) => item.id === id);
+                if (!itemAgent) return null;
+                return <>
+                  {itemAgent.supportsWork ? action(t('newWork'), () => startNewWork(itemAgent.id)) : null}
+                  {action(tAgents('chat'), () => router.push(`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`))}
+                  {action(tAgents('configureAgent'), () => router.push(agentSettingsHref(slug, itemAgent.id, workReturnTo)))}
+                  {action(itemAgent.pinned ? tAgents('unpinAgent') : tAgents('pinAgent'), () => void toggleAgentPin(itemAgent))}
+                  {action(tAgents('deleteAgent'), () => setDeleteAgentTarget(itemAgent))}
+                  {moveActions}
+                </>;
+              }
+              if (kind === 'session') {
+                const item = items.find((session) => session.id === id);
+                return item && ARCHIVABLE_STATUSES.has(item.status) ? <>{moveActions}{action(t('archive'), () => void archiveWork(id))}</> : moveActions;
+              }
+              if (kind === 'conversation') return moveActions;
+              return null;
+            }}
+          /> : <p className="px-3 py-8 text-center text-xs text-muted-foreground">{tAgents('noAgentsYet')}</p>}
+          </AnimatedSidebarGroupContent>
+        </AnimatedSidebarGroup>
+        </AnimatedSidebarContent>
+        <AnimatedSidebarRail />
+      </AnimatedSidebar>
+
+      <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+      <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
+        <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 sm:px-4">
+          <div className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
+            <ChatAppSidebarTrigger openLabel={t('showSidebar')} closeLabel={t('hideSidebar')}><PanelLeft className="size-4" /></ChatAppSidebarTrigger>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">{selected?.title || selected?.task || controlAgent?.name || t('title')}</p>
+              <p className="truncate text-[11px] text-muted-foreground">{controlAgent ? `${controlAgent.name} · ${runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}` : t('emptyDescription')}</p>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <Link href={workbenchHref(slug, controlAgent?.runtimeKind === 'hermes' ? undefined : controlAgent?.id)}
-              prefetch={false} title={t('nativeA2A')} aria-label={t('nativeA2A')} className="ui-button-ghost h-8 px-2 text-xs">
-              <Activity className="size-4" /><span className="hidden sm:inline">{t('nativeA2A')}</span>
-            </Link>
-            {selected && selected.status !== 'idle' ? (
-              <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
-                <Circle className={cx('size-2 fill-current', statusDotClass(selected.status))} />
-                {statusLabels[selected.status] ?? selected.status}
-              </span>
-            ) : null}
-            {selected && STOPPABLE_STATUSES.has(selected.status) ? (
-              <button type="button" disabled={busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="ui-button-ghost ui-icon-button text-muted-foreground hover:text-destructive">
-                {busy === 'cancel' ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-3.5 fill-current" />}
-              </button>
-            ) : null}
-            {controlSandbox && !controlSandbox.running && controlSandbox.status === 'provisioning' ? (
-              <span className="hidden items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground md:flex">
-                <Loader2 className="size-3 animate-spin" />
-                {tSandboxes('starting')}
-              </span>
-            ) : controlSandbox && !controlSandbox.running ? (
-              <form action={startSandboxAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="sandboxId" value={controlSandbox.id} />
-                <SubmitButton pendingLabel={tSandboxes('starting')} flash={false} className="ui-button-secondary h-8 px-2 text-xs">
-                  <Play className="size-3.5" />
-                  {tSandboxes('start')}
-                </SubmitButton>
-              </form>
-            ) : null}
-            {selected || conversation ? (
-                <button type="button" onClick={() => togglePanel('context')} aria-label={tAgents('contextUsage')} title={tAgents('contextUsage')} aria-pressed={desktopPanel === 'context'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'context' && 'bg-muted text-foreground')}>
-                  <Activity className="size-4" />
-                </button>
-            ) : null}
-            {controlSandbox ? (
-              <>
-                <button type="button" onClick={() => togglePanel('files')} aria-label={tSandboxes('files')} title={tSandboxes('files')} aria-pressed={desktopPanel === 'files'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'files' && 'bg-muted text-foreground')}>
-                  <Folder className="size-4" />
-                </button>
-                <button type="button" onClick={() => togglePanel('terminal')} aria-label={tSandboxes('terminal')} title={tSandboxes('terminal')} aria-pressed={desktopPanel === 'terminal'} className={cx('ui-button-ghost ui-icon-button', desktopPanel === 'terminal' && 'bg-muted text-foreground')}>
-                  <TerminalSquare className="size-4" />
-                </button>
-              </>
-            ) : null}
+            {controlSandbox ? <>
+              <Button type="button" onClick={() => togglePanel('files')} aria-label={tSandboxes('files')} title={tSandboxes('files')} aria-pressed={desktopPanel === 'files'} variant="ghost" size="icon"><Folder className="size-4" /></Button>
+              <Button type="button" onClick={() => togglePanel('terminal')} aria-label={tSandboxes('terminal')} title={tSandboxes('terminal')} aria-pressed={desktopPanel === 'terminal'} variant="ghost" size="icon"><TerminalSquare className="size-4" /></Button>
+            </> : null}
           </div>
         </header>
 
+        {conversation?.readOnly ? <div className="mx-auto w-full max-w-3xl px-4 py-2">{modelPicker}</div> : null}
         {visibleError ? <p role="alert" className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{visibleError}</p> : null}
         {conversation && !conversation.readOnly && controlAgent ? (
           <AgentConversation
@@ -2262,6 +1407,8 @@ export function WorkspaceWork({
             agentName={controlAgent.name}
             ready={controlAgent.ready}
             runtimeKind={controlAgent.runtimeKind}
+            modelName={controlHermesSelection?.model ?? controlAgent.model}
+            modelPicker={modelPicker}
             initialMessages={conversation.messages.filter((message) => !messageCompaction(message)) as HermesUIMessage[]}
             initialReasoningEffort={conversation.reasoningEffort ?? 'default'}
             reasoningAvailable={controlAgent.runtimeKind === 'hermes'}
@@ -2273,13 +1420,7 @@ export function WorkspaceWork({
             onBusyChange={setConversationBusy}
             onConversationChanged={() => router.refresh()}
           />
-        ) : <div className="relative min-h-0 flex-1">
-          <div
-            ref={transcriptViewportRef}
-            data-ui="work.transcript"
-            onScroll={handleTranscriptScroll}
-            className="h-full overflow-y-auto [overflow-anchor:none]"
-          >
+        ) : <MessageScroller key={selected?.id ?? conversation?.id ?? 'new'} label={t('title')} data-ui="work.transcript" busy={selectedActive} navigation="rail" className="min-h-0 flex-1">
             {selected || conversation ? (
               <>
                 <WorkTranscript
@@ -2296,7 +1437,7 @@ export function WorkspaceWork({
                   streaming={selectedActive}
                 />
                 {selected?.artifacts.length ? (
-                  <section className="mx-auto w-full max-w-3xl px-4 py-5 sm:px-7">
+                  <section className="mx-auto w-full max-w-3xl px-4 py-5">
                     <p className="flex items-center gap-2 text-xs font-semibold"><FileOutput className="size-4" />{t('artifacts')}</p>
                     <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
                       {selected.artifacts.map((artifact) => <li key={artifact}>{artifact}</li>)}
@@ -2313,46 +1454,12 @@ export function WorkspaceWork({
                 </div>
               </div>
             )}
-          </div>
-          {!followingTranscript && (selected || conversation) ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
-              <button
-                type="button"
-                onClick={() => scrollTranscriptToBottom('smooth')}
-                aria-label={tAgents('scrollToLatestMessage')}
-                title={tAgents('scrollToLatestMessage')}
-                className="pointer-events-auto flex size-9 items-center justify-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <ArrowDown className="size-4" />
-              </button>
-            </div>
-          ) : null}
-        </div>}
+        </MessageScroller>}
 
-        {!conversation && <div className="shrink-0 bg-background px-3 pb-3 sm:px-5 sm:pb-4">
-          <div className="mx-auto max-w-3xl">
-            {pendingApprovals.length ? (
-              <div className="divide-y divide-amber-500/20 rounded-lg border border-amber-500/30 bg-amber-500/5">
-                {pendingApprovals.map((approval) => (
-                  <div key={approval.id} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
-                    <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-2 text-xs font-semibold"><ShieldCheck className="size-4 text-amber-600" />{t('approvalRequired')}</p>
-                      <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{approval.toolName}</p>
-                      <details className="mt-1 text-[11px] text-muted-foreground">
-                        <summary className="cursor-pointer">{t('details')}</summary>
-                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-background p-2">{formatValue(approval.input)}</pre>
-                      </details>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'deny')} className="ui-button-secondary h-8 px-3 text-xs">{t('deny')}</button>
-                      <button type="button" disabled={Boolean(busy)} onClick={() => void decideApproval(approval.id, 'allow')} className="ui-button-primary h-8 px-3 text-xs">{t('allow')}</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <WorkComposer
-                key={composerScope}
+        {!conversation && <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+          <div>
+            {pendingApprovals.length ? <div className="space-y-3">{pendingApprovals.map((approval) => <ToolApproval key={approval.id} tool={approval.toolName} title={t('approvalRequired')} status={busy ? 'approving' : 'pending'} parameters={[{ id: 'input', label: t('details'), value: <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words">{formatValue(approval.input)}</pre> }]} onApprove={() => { if (!busy) void decideApproval(approval.id, 'allow'); }} onDeny={() => { if (!busy) void decideApproval(approval.id, 'deny'); }} />)}</div> : (
+              <WorkComposer key={composerScope}
                 agentId={controlAgent?.id}
                 sandboxId={controlSandbox?.id}
                 workSessionId={selected?.id}
@@ -2364,14 +1471,12 @@ export function WorkspaceWork({
                 onAttachmentsChange={setAttachments}
                 references={references}
                 onReferencesChange={(items) => setReferenceSelection({ scope: composerScope, items })}
-                disabled={Boolean(busy) || running}
                 supportsAttachments={controlSandbox?.kind === 'docker' || controlSandbox?.kind === 'hermes'}
-                onSubmit={(event) => void sendMessage(event)}
-                onNewTask={() => startNewWork(selected?.agentId ?? agentId)}
                 onError={setError}
                 onPendingChange={setComposerPending}
                 waitingQuestion={selected?.waitingQuestion}
                 toolbarStart={<>
+                    {modelPicker}
                     {controlAgent?.runtimeKind === 'hermes' ? (
                       <ReasoningEffortControl
                         value={reasoningEffort}
@@ -2384,32 +1489,24 @@ export function WorkspaceWork({
                       {runtimeLabel(selected?.runtimeKind ?? agent?.runtimeKind)}
                     </span>
                 </>}
-                toolbarEnd={<>
-                    <ConversationContextUsage busy={running} usage={contextUsage} />
-                    {running ? (
-                      <button type="button" disabled={!selected || busy === 'cancel'} onClick={() => void postAction('cancel')} aria-label={t('cancel')} title={t('cancel')} className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-destructive hover:bg-muted disabled:opacity-50">
-                        {busy === 'cancel' ? <Loader2 className="size-[18px] animate-spin" /> : <CirclePause className="size-5" />}
-                      </button>
-                    ) : (
-                      <button type="submit" disabled={!draft.trim() || (!canSend && !localCommand) || Boolean(busy) || composerPending} aria-label={t('sendInput')} title={t('sendInput')} className="mr-0.5 mt-px flex size-[30px] shrink-0 items-center justify-center text-brand transition-all duration-200 disabled:cursor-not-allowed disabled:text-muted-foreground/50">
-                        {busy === 'create' || busy === 'input' ? <Loader2 className="size-[18px] animate-spin" /> : <Send className="size-[22px]" />}
-                      </button>
-                    )}
-                </>}
+                disabled={Boolean(busy) || running || (!canSend && !localCommand) || composerPending}
+                loading={running}
+                onStop={selected && busy !== 'cancel' ? () => void postAction('cancel') : undefined}
+                onSubmit={() => void sendMessage()}
+                toolbarEnd={<ConversationContextUsage busy={running} usage={contextUsage} />}
               />
             )}
-            {!selected && agent && !agent.ready ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('configureAgent')}</p> : null}
-            {!selected && agent?.ready && !sandboxOptions.length ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('attachSandbox')}</p> : null}
-            {!selected && activeSandbox && !activeSandbox.running && activeSandbox.status !== 'provisioning' && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-amber-700 dark:text-amber-300">{t('stopped')}</p> : null}
+            {!selected && agent && !agent.ready ? <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">{t('configureAgent')}</p> : null}
+            {!selected && agent?.ready && !sandboxOptions.length ? <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">{t('attachSandbox')}</p> : null}
+            {!selected && activeSandbox && !activeSandbox.running && activeSandbox.status !== 'provisioning' && agent?.runtimeKind !== 'hermes' ? <p className="px-2 pt-2 text-xs text-muted-foreground text-muted-foreground">{t('stopped')}</p> : null}
           </div>
         </div>}
       </main>
+      </AnimatedSidebarInset>
 
       {workspacePanelOpen ? (
-        <aside className="hidden min-h-0 overflow-hidden bg-background xl:block">
-          {desktopPanel === 'context' ? (
-            <WorkContextUsagePanel busy={running} usage={contextUsage} />
-          ) : controlSandbox ? (
+        <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
+          {controlSandbox ? (
             <SandboxConsole
               compact
               filesOnly={desktopPanel === 'files'}
@@ -2427,42 +1524,38 @@ export function WorkspaceWork({
           ) : <div className="flex h-full items-center justify-center text-sm text-muted-foreground"><Boxes className="mr-2 size-4" />{t('noSandbox')}</div>}
         </aside>
       ) : null}
+      </div>
 
       {mobilePanel ? (
-        <div role="dialog" aria-modal="true" aria-label={mobilePanel === 'context' ? tAgents('contextUsage') : mobilePanel === 'files' ? tSandboxes('files') : tSandboxes('terminal')} className="fixed inset-0 z-50 flex flex-col bg-background xl:hidden">
-          <header className="flex h-12 shrink-0 items-center justify-between px-3">
-            <span className="flex items-center gap-2 text-sm font-medium">
-              {mobilePanel === 'context' ? <Activity className="size-4" /> : mobilePanel === 'files' ? <Folder className="size-4" /> : <TerminalSquare className="size-4" />}
-              {mobilePanel === 'context' ? tAgents('contextUsage') : mobilePanel === 'files' ? tSandboxes('files') : tSandboxes('terminal')}
-            </span>
-            <button type="button" onClick={() => setMobilePanel(null)} aria-label={mobilePanel === 'context' ? tAgents('close') : t('closeWorkspace')} className="ui-button-ghost ui-icon-button"><X className="size-4" /></button>
-          </header>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {mobilePanel === 'context' ? (
-              <WorkContextUsagePanel busy={running} usage={contextUsage} />
-            ) : controlSandbox ? (
-              <SandboxConsole
-                compact
-                filesOnly={mobilePanel === 'files'}
-                terminalOnly={mobilePanel === 'terminal'}
-                deploymentId={controlSandbox.deploymentId}
-                running={controlSandbox.running}
-                initialPath={activeWorkingDirectory}
-                initialEntries={[]}
-                terminalLabel={controlSandbox.name}
-                terminalSubtitle={t('sandboxSubtitle')}
-                workspaceRoot={controlWorkspaceRoot}
-                rpcApiBase={workspaceRpcApiBase}
-                terminalApiBase={workspaceTerminalApiBase}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                <Boxes className="mr-2 size-4" />
-                {t('noSandbox')}
-              </div>
-            )}
-          </div>
-        </div>
+        <CenterMorphModal open={Boolean(mobilePanel)} onOpenChange={(open) => { if (!open) setMobilePanel(null); }}><CenterMorphModalContent ariaLabel={mobilePanel === 'files' ? tSandboxes('files') : tSandboxes('terminal')} closeButtonLabel={t('closeWorkspace')} className="flex h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col"><header className="flex h-16 shrink-0 items-center pl-3 pr-16">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            {mobilePanel === 'files' ? <Folder className="size-4" /> : <TerminalSquare className="size-4" />}
+            {mobilePanel === 'files' ? tSandboxes('files') : tSandboxes('terminal')}
+          </span>
+        </header>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {controlSandbox ? (
+            <SandboxConsole
+              compact
+              filesOnly={mobilePanel === 'files'}
+              terminalOnly={mobilePanel === 'terminal'}
+              deploymentId={controlSandbox.deploymentId}
+              running={controlSandbox.running}
+              initialPath={activeWorkingDirectory}
+              initialEntries={[]}
+              terminalLabel={controlSandbox.name}
+              terminalSubtitle={t('sandboxSubtitle')}
+              workspaceRoot={controlWorkspaceRoot}
+              rpcApiBase={workspaceRpcApiBase}
+              terminalApiBase={workspaceTerminalApiBase}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <Boxes className="mr-2 size-4" />
+              {t('noSandbox')}
+            </div>
+          )}
+        </div></CenterMorphModalContent></CenterMorphModal>
       ) : null}
 
       <SidebarGroupDialog
@@ -2477,26 +1570,27 @@ export function WorkspaceWork({
         onSubmit={saveAgentGroup}
       />
 
-      <Dialog open={Boolean(deleteAgentTarget)} onOpenChange={(open) => { if (!open) setDeleteAgentTarget(null); }}>
-        <DialogPortal>
-          <DialogOverlay className="!bg-black/40" />
-          <DialogContent className="!max-w-md">
-            <DialogTitle>{tAgents('deleteAgent')}</DialogTitle>
-            <DialogDescription>{tAgents('deleteThisAgentAndItsSandboxesAndAllItsConversations')}</DialogDescription>
+      <CenterMorphModal open={Boolean(deleteAgentTarget)} onOpenChange={(open) => { if (!open) setDeleteAgentTarget(null); }}>
+        <>
+          
+          <CenterMorphModalContent ariaLabel={tAgents('deleteAgent')} closeButtonLabel={tAgents('close')} className="max-w-md">
+            <h2 className="pr-16 text-lg font-semibold">{tAgents('deleteAgent')}</h2>
+            <p className="text-sm text-muted-foreground">{tAgents('deleteThisAgentAndItsSandboxesAndAllItsConversations')}</p>
             <form action={deleteAgentAction} className="flex justify-end gap-2">
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={deleteAgentTarget?.id ?? ''} />
               <input type="hidden" name="returnTo" value={`/app/${slug}/work`} />
-              <DialogClose asChild>
-                <button type="button" className="ui-button-secondary h-9 px-3">{tAgents('cancel')}</button>
-              </DialogClose>
-              <SubmitButton pendingLabel={tAgents('deleting')} className="h-9 bg-destructive px-3 text-destructive-foreground hover:bg-destructive/90">
+              <CenterMorphModalClose>
+                <Button type="button" variant={"secondary"} size={"sm"}>{tAgents('cancel')}</Button>
+              </CenterMorphModalClose>
+              <SubmitButton pendingLabel={tAgents('deleting')} >
                 {tAgents('confirmDelete')}
               </SubmitButton>
             </form>
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
-    </div>
+          </CenterMorphModalContent>
+        </>
+      </CenterMorphModal>
+    </ChatApp>
   );
 }
+

@@ -17,7 +17,7 @@ export async function assertLocalRuntimeToken(token: AgentRuntimeTokenPayload, a
   if (!isLocalGrant(grant) || grant.workspaceId !== token.workspaceId || grant.agentId !== token.agentId) throw new TaskNotFoundError();
   await assertLiveGrant(grant, 'send');
   const target = await localTarget(db, grant.workspaceId, grant.agentId,
-    grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined);
+    grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : 'delegation');
   if (target.sandboxId !== token.sandboxId || target.providerId !== token.providerId) throw new TaskNotFoundError();
   return { row, grant, target };
 }

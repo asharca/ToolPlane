@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { InstalledSkillsTable } from '@/components/dashboard/InstalledSkillsTable';
 
 const mocks = vi.hoisted(() => ({ uninstallSkillAction: vi.fn() }));
@@ -15,16 +16,20 @@ const skills = [
 describe('InstalledSkillsTable', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('opens details from the full skill cell and retains an individual delete action', () => {
+  it('renders skill navigation and selection before client layout measurement', () => {
+    const content = document.createElement('div');
+    content.innerHTML = renderToStaticMarkup(<InstalledSkillsTable slug="acme" skills={skills} />);
+
+    expect(within(content).getByRole('link', { name: 'First skill' })).toHaveAttribute('href', '/app/acme/skills/skill-1');
+    expect(within(content).getByRole('checkbox', { name: 'Select Second skill' })).not.toBeChecked();
+  });
+
+  it('opens details from the full skill cell and retains an individual delete action', async () => {
     render(<InstalledSkillsTable slug="acme" skills={skills} />);
 
-    const link = screen.getByRole('link', { name: 'First skill' });
+    const link = await screen.findByRole('link', { name: 'First skill' });
     expect(link).toHaveAttribute('href', '/app/acme/skills/skill-1');
-    expect(link.parentElement).toHaveClass('p-0');
-    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Download SKILL.md' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Uninstall: First skill' }))
-      .toHaveAttribute('title', 'Uninstall');
+    expect(screen.getByRole('button', { name: 'Uninstall: First skill' })).toBeEnabled();
   });
 
   it('only shows the batch action after selection, then clears and submits selected skills after confirmation', async () => {
@@ -35,7 +40,6 @@ describe('InstalledSkillsTable', () => {
     expect(screen.queryByRole('button', { name: 'Uninstall (2)' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Select all matching (2)' }));
     const toolbar = screen.getByRole('toolbar', { name: '2 selected' });
-    expect(toolbar.closest('thead')).toBeInTheDocument();
     expect(within(toolbar).getByRole('button', { name: 'Uninstall (2)' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Clear selection' }));
@@ -59,7 +63,7 @@ describe('InstalledSkillsTable', () => {
     const user = userEvent.setup();
     render(<InstalledSkillsTable slug="acme" skills={skills} />);
 
-    await user.click(screen.getByRole('button', { name: 'Uninstall: First skill' }));
+    await user.click(await screen.findByRole('button', { name: 'Uninstall: First skill' }));
     expect(mocks.uninstallSkillAction).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
@@ -73,7 +77,7 @@ describe('InstalledSkillsTable', () => {
     const user = userEvent.setup();
     const { rerender } = render(<InstalledSkillsTable slug="acme" skills={skills} />);
 
-    await user.click(screen.getByRole('checkbox', { name: 'Select First skill' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'Select First skill' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Second skill' }));
     rerender(<InstalledSkillsTable slug="acme" skills={[skills[0]]} />);
 

@@ -10,14 +10,14 @@ import { writeAudit } from '@/lib/observability/audit';
 import { A2AHttpError } from './principal';
 import { assertLocalActor } from './local-policy';
 import type { ConsoleActor } from './console-service';
-import { discoverRemoteCard } from './remote-client';
+import { discoverRemoteConnection } from './remote-client';
 import { remotePair } from './remote-network';
 
 const Id = z.string().min(1).max(200);
 const Token = z.string().min(1).max(8192).regex(/^[\x21-\x7e]+$/);
 export const RemoteAgentAction = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('register'), name: z.string().trim().min(1).max(100),
-    cardUrl: z.string().url().max(2000), rpcUrl: z.string().url().max(2000), token: Token.optional() }).strict(),
+  z.object({ action: z.literal('register'), name: z.string().trim().min(1).max(100).optional(),
+    cardUrl: z.string().url().max(2000), rpcUrl: z.string().url().max(2000).optional(), token: Token.optional() }).strict(),
   z.object({ action: z.literal('configure'), id: Id, revision: z.number().int().positive(),
     enabled: z.boolean().optional(), allowCurrentAgent: z.boolean().optional() }).strict(),
   z.object({ action: z.literal('replace-key'), id: Id, revision: z.number().int().positive(), token: Token }).strict(),
@@ -62,8 +62,7 @@ export async function mutateRemoteRegistry(ctx: ConsoleActor, raw: unknown, sign
   let registration: { id: string; card: AgentCard; cardUrl: string; rpcUrl: string } | undefined;
   if (input.action === 'register') {
     if (await db.remoteA2AAgent.count({ where: { workspaceId: ctx.workspaceId } }) >= 100) throw new A2AHttpError(409, 'Remote Agent limit reached.');
-    const pair = remotePair(input.cardUrl, input.rpcUrl);
-    registration = { id: randomUUID(), ...pair, card: await discoverRemoteCard(pair.cardUrl, pair.rpcUrl, input.token, signal) };
+    registration = { id: randomUUID(), ...await discoverRemoteConnection(input.cardUrl, input.token, signal, input.rpcUrl) };
   }
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${ctx.workspaceId} FOR UPDATE`;
@@ -72,11 +71,11 @@ export async function mutateRemoteRegistry(ctx: ConsoleActor, raw: unknown, sign
     if (input.action === 'register' && registration) {
       if (await tx.remoteA2AAgent.count({ where: { workspaceId: ctx.workspaceId } }) >= 100) throw new A2AHttpError(409, 'Remote Agent limit reached.');
       id = registration.id;
-      await tx.remoteA2AAgent.create({ data: { id, workspaceId: ctx.workspaceId, name: input.name,
+      await tx.remoteA2AAgent.create({ data: { id, workspaceId: ctx.workspaceId, name: input.name ?? registration.card.name,
         cardUrl: registration.cardUrl, rpcUrl: registration.rpcUrl,
         card: AgentCard.toJSON(registration.card) as Prisma.InputJsonValue,
         credential: input.token ? protect(input.token, ctx.workspaceId, id) : Prisma.DbNull,
-        enabled: false, allowedAgentIds: [] } });
+        enabled: true, allowedAgentIds: [ctx.agentId] } });
     } else if (input.action !== 'register') {
       const row = await tx.remoteA2AAgent.findFirst({ where: { id: input.id, workspaceId: ctx.workspaceId, revision: input.revision } });
       if (!row) throw new A2AHttpError(409, 'Remote configuration changed. Refresh before retrying.');

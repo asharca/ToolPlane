@@ -19,7 +19,7 @@ const labels = {
 
 describe('McpToolCatalog', () => {
   it('shows instructions, parameter details, and the complete input schema', () => {
-    const { container } = render(<McpToolCatalog
+    render(<McpToolCatalog
       labels={labels}
       hrefForTool={(name) => `/tools/${name}`}
       tools={[{
@@ -46,18 +46,13 @@ describe('McpToolCatalog', () => {
     expect(screen.getByText('Search term')).toBeInTheDocument();
     expect(screen.getByText('1-based page')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
-    expect(container.querySelector('details[open] summary')).toHaveTextContent('search_products');
     expect(screen.getByText(/"required": \[/)).toBeInTheDocument();
-    for (const summary of screen.getAllByText('JSON schema', { selector: 'summary' })) {
-      expect(summary.closest('details')).not.toHaveAttribute('open');
-    }
     expect(screen.getByRole('region', { name: 'Input schema' })).toHaveAttribute('tabindex', '0');
     expect(screen.getByText('No arguments.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'search_products' })).toHaveAttribute(
       'href',
       '/tools/search_products',
     );
-    expect(screen.getByRole('link', { name: 'search_products' }).closest('summary')).toBeNull();
   });
 
   it('renders a lightweight linked catalog without eagerly rendering schemas', () => {

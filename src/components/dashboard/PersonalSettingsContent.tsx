@@ -1,5 +1,7 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
-import Link from 'next/link';
+
 import { KeyRound, LockKeyhole, Settings, type LucideIcon } from 'lucide-react';
 import { listApiTokens } from '@/lib/auth/tokens';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
@@ -52,18 +54,13 @@ export async function PersonalSettingsContent({
 
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row">
-      <aside className="shrink-0 bg-shell/70 md:w-52">
+      <aside className="shrink-0 bg-background/70 md:w-52">
         <nav aria-label={t('title')} className="flex gap-1 overflow-x-auto p-3 md:flex-col md:overflow-visible md:p-4">
           {tabs.map(({ id, label, icon: Icon }) => (
-            <Link
-              key={id}
-              href={hrefFor(id)}
-              aria-current={section === id ? 'page' : undefined}
-              className={`flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${section === id ? 'bg-brand-soft font-medium text-foreground ring-1 ring-brand/10' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'}`}
-            >
+            <ButtonLink key={id} href={hrefFor(id)} aria-current={section === id ? 'page' : undefined} variant={section === id ? 'secondary' : 'ghost'} className="shrink-0 justify-start">
               <Icon className="size-4" />
               {label}
-            </Link>
+            </ButtonLink>
           ))}
         </nav>
       </aside>

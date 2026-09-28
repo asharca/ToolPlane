@@ -1,17 +1,11 @@
 'use client';
+import { CenterMorphModal, CenterMorphModalTrigger, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
+import { Button } from '@/components/motion/button';
+
 
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
-import { ArrowRight, ArrowLeft, X, Copy, Check } from 'lucide-react';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog';
+import { ArrowRight, ArrowLeft, Copy, Check } from 'lucide-react';
 
 type Client = {
   id: string;
@@ -185,49 +179,29 @@ export function ConnectDialog({
     }
   }
 
-  const trigger =
-    variant === 'banner'
-      ? 'ui-button-primary ui-button-sm'
-      : 'ui-button-secondary';
+  
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <button type="button" className={trigger}>
-          {variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
-          {label ?? t('connectWith')}
-        </button>
-      </DialogTrigger>
+    <CenterMorphModal open={open} onOpenChange={handleOpenChange}>
+      <CenterMorphModalTrigger>
+        <Button type="button" variant={variant === "banner" ? "primary" : "secondary"} size="md">{variant === 'banner' ? <ArrowRight className="size-3.5" /> : null}
+        {label ?? t('connectWith')}</Button>
+      </CenterMorphModalTrigger>
 
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent aria-describedby={undefined} className="ui-panel w-full max-w-lg p-5 sm:!p-5">
+      
+        
+        <CenterMorphModalContent ariaLabel={selectedLabel ?? t('installServer')} closeButtonLabel={t('close')} className="w-full max-w-xl p-6">
           <div>
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex items-center pr-10">
               <div className="flex items-center gap-2">
                 {selected ? (
-                  <button
-                    type="button"
-                    onClick={() => setSelected(null)}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <ArrowLeft className="size-3.5" />
-                    {t('changeClient')}
-                  </button>
+                  <Button type="button" onClick={() => setSelected(null)} variant="ghost" size="md" className="inline-flex items-center"><ArrowLeft className="size-3.5" />
+                  {t('changeClient')}</Button>
                 ) : null}
-                <DialogTitle className="text-base font-semibold text-foreground">
+                <h2 className="text-base font-semibold text-foreground">
                   {selectedLabel ?? t('installServer')}
-                </DialogTitle>
+                </h2>
               </div>
-              <DialogClose asChild>
-                <button
-                  type="button"
-                  aria-label={t('close')}
-                  className="ui-button-ghost ui-icon-button !size-8 !min-h-8"
-                >
-                  <X className="size-4" />
-                </button>
-              </DialogClose>
             </div>
 
             {selected ? (
@@ -242,36 +216,22 @@ export function ConnectDialog({
                   <pre className="overflow-x-auto rounded-md border border-border bg-muted/50 p-3 pr-12 font-mono text-xs text-foreground">
 {selected.snippet(key, endpoint)}
                   </pre>
-                  <button
-                    type="button"
-                    onClick={() => copy(selected.snippet(key, endpoint))}
-                    className="ui-button-secondary ui-button-sm absolute right-2 top-2 !size-8 !min-h-8 !p-0"
-                    aria-label={t('copySnippet')}
-                  >
-                    {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-                  </button>
+                  <Button type="button" onClick={() => copy(selected.snippet(key, endpoint))} aria-label={t('copySnippet')} variant="secondary" size="icon" className="absolute right-2 top-2">{copied ? <Check className="size-4" /> : <Copy className="size-4" />}</Button>
                 </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {CLIENTS.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      setSelected(c);
-                      setCopied(false);
-                    }}
-                    className="rounded-lg border border-border px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:border-input hover:bg-muted"
-                  >
-                    {c.labelKey ? t(c.labelKey) : c.label}
-                  </button>
+                  <Button key={c.id} type="button" onClick={() => {
+                    setSelected(c);
+                    setCopied(false);
+                  }} variant="secondary" size="md" className="text-left">{c.labelKey ? t(c.labelKey) : c.label}</Button>
                 ))}
               </div>
             )}
           </div>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      
+    </CenterMorphModal>
   );
 }

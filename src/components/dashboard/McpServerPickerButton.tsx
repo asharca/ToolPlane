@@ -1,15 +1,11 @@
 'use client';
+import { Button } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
+
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Circle, Loader2, Server } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
 
 type McpServerOption = {
   id: string;
@@ -88,23 +84,14 @@ export function McpServerPickerButton({
   return (
     <>
       {!hideTrigger ? (
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={t('openMcp')}
-          title={t('openMcp')}
-          onClick={() => setDialogOpen(true)}
-          className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-        >
-          <Server className="size-[17px]" />
-        </button>
+        <Button type="button" disabled={disabled} aria-label={t('openMcp')} title={t('openMcp')} onClick={() => setDialogOpen(true)} variant="ghost" size="icon" className="flex shrink-0 items-center justify-center"><Server className="size-[17px]" /></Button>
       ) : null}
-      <Dialog open={open} onOpenChange={setDialogOpen}>
-        <DialogPortal>
-          <DialogOverlay className="!bg-black/40" />
-          <DialogContent aria-describedby={undefined} className="!z-[51] !flex !max-h-[min(38rem,calc(100vh-2rem))] !w-full !max-w-xl !flex-col !gap-0 !overflow-hidden !rounded-xl !p-0">
+      <CenterMorphModal open={open} onOpenChange={setDialogOpen}>
+        
+          
+          <CenterMorphModalContent ariaLabel={t('mcp')} closeButtonLabel={common('close')} className="flex max-h-[calc(100dvh-6rem)] w-full max-w-xl flex-col">
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
-              <DialogTitle className="!text-sm !tracking-normal">{t('mcp')}</DialogTitle>
+              <h2 className="!text-sm !tracking-normal">{t('mcp')}</h2>
             </header>
             {loading ? (
               <div className="flex min-h-44 flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -119,7 +106,7 @@ export function McpServerPickerButton({
                     <Server className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{server.label}</span>
                     <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                      <Circle className={`size-2 fill-current ${server.status === 'running' ? 'text-emerald-500' : 'text-muted-foreground'}`} />
+                      <Circle className={`size-2 fill-current ${server.status === 'running' ? 'text-(--color-success)' : 'text-muted-foreground'}`} />
                       {server.status === 'running' ? t('mcpRunning') : t('mcpUnavailable')}
                     </span>
                   </div>
@@ -128,9 +115,9 @@ export function McpServerPickerButton({
                 )}
               </div>
             )}
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
+          </CenterMorphModalContent>
+        
+      </CenterMorphModal>
     </>
   );
 }

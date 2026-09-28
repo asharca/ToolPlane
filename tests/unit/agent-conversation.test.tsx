@@ -32,6 +32,7 @@ vi.mock('@assistant-ui/react-streamdown', async () => {
 });
 
 vi.mock('streamdown', () => ({
+  defaultRehypePlugins: {},
   defaultRemarkPlugins: {},
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
 }));
@@ -99,28 +100,28 @@ describe('AgentConversation', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses the Cherry composer geometry and expand control', async () => {
-    renderConversation();
-
-    const input = screen.getByPlaceholderText('Message this agent');
-    expect(input).toHaveAttribute('rows', '2');
-    expect(input).toHaveClass('min-h-[46px]', 'max-h-[max(220px,40vh)]', 'pl-[15px]', 'pr-11', 'pb-0');
-    expect(input.closest('form')).toHaveClass('group/composer', 'rounded-[20px]', 'border-[0.5px]', 'border-border', 'transition-all', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
-    expect(screen.getAllByRole('button', { name: 'Open tools' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Open tools' }).querySelector('svg')).toHaveClass('lucide-plus');
-    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('size-[30px]', 'text-brand');
-    const expand = screen.getByRole('button', { name: 'Expand composer' });
-    expect(expand).toHaveClass('group-hover/composer:opacity-100', 'group-focus-within/composer:opacity-100');
-    await userEvent.click(expand);
-    expect(input).toHaveClass('max-h-[max(220px,50vh)]');
-    expect(screen.getByRole('button', { name: 'Restore composer' })).toHaveAttribute('aria-pressed', 'true');
-    await userEvent.click(screen.getByRole('button', { name: 'Restore composer' }));
-    expect(input).toHaveClass('max-h-[max(220px,40vh)]');
-    const copyButton = screen.getByRole('button', { name: 'Copy' });
-    expect(copyButton.closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
-    expect(screen.getByText('Test agent').closest('[data-ui="assistant-reply"]')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Thinking effort' })).not.toBeInTheDocument();
+  it('explicitly stops the server turn without treating unmount as cancellation', async () => {
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), status: 'streaming' });
+    apiMocks.fetch.mockResolvedValueOnce(new Response('data: [DONE]\n\n', { headers: {
+      'content-type': 'text/event-stream', 'X-Chat-Turn-Id': 'server-turn-1',
+    } }));
+    const view = renderConversation({ serverManaged: true, apiPath: '/api/v1/chat/threads/conv-1/turns', includeConversationIdInBody: false });
+    const { transport } = chatMocks.useChat.mock.calls.at(-1)![0];
+    const stream = await transport.sendMessages({
+      chatId: 'conv-1', trigger: 'submit-message',
+      messages: [{ id: 'user-1', role: 'user', parts: [{ type: 'text', text: 'Work on the server' }] }],
+      abortSignal: new AbortController().signal,
+    });
+    await stream.cancel();
+    apiMocks.fetch.mockResolvedValueOnce(Response.json({ cancelled: true }));
+    await userEvent.click(screen.getByRole('button', { name: /stop/i }));
+    await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith('/api/v1/chat/threads/conv-1/turns', {
+      method: 'DELETE', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ turnId: 'server-turn-1' }),
+    }));
+    expect(chatMocks.stop).not.toHaveBeenCalled();
+    view.unmount();
+    expect(apiMocks.fetch.mock.calls.filter(([, options]) => options?.method === 'DELETE')).toHaveLength(1);
   });
 
   it('renders branch position and delegates sibling navigation', async () => {
@@ -150,14 +151,13 @@ describe('AgentConversation', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start a new branch' }));
 
     expect(onStartBranch).toHaveBeenCalledWith('m1');
-    expect(screen.getByText('hello').closest('[data-ui="assistant-reply"]')).toHaveAttribute('id', 'chat-message-m1');
   });
 
   it('disables the composer while a branch switch is being committed', () => {
     renderConversation({ branchBusy: true });
 
     expect(screen.getByPlaceholderText('Message this agent')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send prompt' })).toBeDisabled();
   });
 
   it('sends an edited user message with its source id', async () => {
@@ -184,7 +184,7 @@ describe('AgentConversation', () => {
     const editor = screen.getByDisplayValue('original question');
     await userEvent.clear(editor);
     await userEvent.type(editor, 'edited question');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(within(editor.closest('form')!).getByRole('button', { name: 'Send prompt' }));
 
     await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -195,7 +195,7 @@ describe('AgentConversation', () => {
     ));
   });
 
-  it('shows Cherry-style context usage beside the send button', async () => {
+  it('shows context usage and token details in the composer', async () => {
     const messages: HermesUIMessage[] = [{
       id: 'm-usage',
       role: 'assistant',
@@ -222,7 +222,7 @@ describe('AgentConversation', () => {
 
     renderConversation({ initialMessages: messages });
 
-    const meter = screen.getByRole('meter', { name: 'Context usage 42%' });
+    const meter = screen.getByRole('meter', { name: 'Context usage' });
     expect(meter).toHaveAttribute('aria-valuenow', '42');
     await userEvent.hover(meter);
     expect((await screen.findAllByText('42 / 100 (42%)')).length).toBeGreaterThan(0);
@@ -256,7 +256,7 @@ describe('AgentConversation', () => {
   it('keeps the conversation and work context when regenerating', async () => {
     renderConversation({ activeConversationId: 'conv-1', workSessionId: 'work-1' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retry response' }));
 
     await waitFor(() => expect(chatMocks.regenerate).toHaveBeenCalledWith(expect.objectContaining({
       body: { conversationId: 'conv-1', workSessionId: 'work-1' },
@@ -266,7 +266,7 @@ describe('AgentConversation', () => {
   it('passes the persisted assistant id when regenerating a chat branch', async () => {
     renderConversation({ includeConversationIdInBody: false });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retry response' }));
 
     await waitFor(() => expect(chatMocks.regenerate).toHaveBeenCalledWith(expect.objectContaining({
       messageId: 'm1',
@@ -286,7 +286,7 @@ describe('AgentConversation', () => {
   it('can disable regeneration for a transport that persists every submitted turn', () => {
     renderConversation({ allowRegenerate: false });
 
-    expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry response' })).not.toBeInTheDocument();
     expect(chatMocks.regenerate).not.toHaveBeenCalled();
   });
 
@@ -299,7 +299,7 @@ describe('AgentConversation', () => {
     });
 
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Start here');
-    fireEvent.submit(screen.getByRole('button', { name: 'Send' }).closest('form')!);
+    await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
 
     await waitFor(() => {
       expect(ensureConversation).toHaveBeenCalledOnce();
@@ -353,7 +353,7 @@ describe('AgentConversation', () => {
     expect(fileInput).not.toBeNull();
     await userEvent.upload(fileInput!, new File(['notes'], 'notes.txt', { type: 'text/plain' }));
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Read this');
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
 
     await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
       '/api/v1/workspaces/workspace-1/attachments?filename=notes.txt',
@@ -390,7 +390,7 @@ describe('AgentConversation', () => {
     await userEvent.upload(fileInput!, new File(['one'], 'one.txt', { type: 'text/plain' }));
     const composer = screen.getByPlaceholderText('Message this agent');
     await userEvent.type(composer, 'Keep the file and text');
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Hermes storage is unavailable.');
     expect(composer).toHaveValue('Keep the file and text');
@@ -416,20 +416,12 @@ describe('AgentConversation', () => {
     });
     renderConversation({ initialMessages: streamingMessages });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Stop generating' }));
 
     expect(chatMocks.stop).toHaveBeenCalledOnce();
-    expect(screen.getByRole('button', { name: 'Stop' })).toHaveClass('text-destructive');
-    expect(screen.getByRole('button', { name: 'Stop' }).querySelector('svg')).toHaveClass('lucide-circle-pause');
-    const status = screen.getByRole('status');
-    expect(status).toHaveAttribute('aria-label');
-    expect(status.textContent?.trim()).toBe('');
-    expect(status.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
-    expect(document.querySelectorAll('[data-ui="conversation-pending-dot"]')).toHaveLength(3);
-    expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
   });
 
-  it('renders reasoning and tool activity inside the assistant message', () => {
+  it('renders reasoning and tool activity inside the assistant message', async () => {
     const messages = [{
       id: 'm-process',
       role: 'assistant' as const,
@@ -460,23 +452,26 @@ describe('AgentConversation', () => {
 
     renderConversation({ initialMessages: messages });
 
-    const process = screen.getByText('Processed').closest('[data-ui="assistant-process"]');
-    expect(process).toBeInTheDocument();
-    expect(process?.tagName).toBe('DETAILS');
-    expect(process).not.toHaveAttribute('open');
-    expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Test agent');
-    expect(process?.closest('[data-ui="assistant-reply"]')).toHaveTextContent('Here is the answer.');
+    const reasoning = screen.getByRole('button', { name: 'Thought' });
+    expect(reasoning).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(reasoning);
+    expect(reasoning).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Checking the available sources.')).toBeInTheDocument();
-    expect(screen.getByText('Search result with citation')).toBeInTheDocument();
+    const tool = screen.getByRole('button', { name: /web_search/ });
+    expect(tool).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(tool);
+    expect(tool).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/Search result with citation/)).toBeInTheDocument();
+    expect(screen.getByText('Here is the answer.')).toBeInTheDocument();
     expect(screen.queryByText('Agent is responding')).not.toBeInTheDocument();
   });
 
-  it('renders live reasoning and tools directly without a generic process heading', () => {
+  it('renders live reasoning and tools directly without a generic process heading', async () => {
     const messages = [{
       id: 'm-live-process',
       role: 'assistant' as const,
       parts: [
-        { type: 'reasoning', text: 'Checking the available sources.' },
+        { type: 'reasoning', text: 'Checking the available sources.', state: 'streaming' },
         {
           type: 'tool-mcp__tp_1_dep-one__read/file',
           toolCallId: 'call-1',
@@ -500,31 +495,51 @@ describe('AgentConversation', () => {
 
     renderConversation({ initialMessages: messages });
 
-    const process = document.querySelector('[data-ui="assistant-process"]');
-    expect(process?.tagName).toBe('DIV');
-    expect(process).toHaveTextContent('Checking the available sources.');
-    expect(screen.getByText('read/file')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Checking the available sources.')).toBeVisible());
+    expect(screen.getByRole('button', { name: /read\/file/ })).toBeInTheDocument();
     expect(screen.queryByText('mcp__tp_1_dep-one__read/file')).not.toBeInTheDocument();
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
     expect(screen.queryByText('Processed')).not.toBeInTheDocument();
   });
 
-  it('sends the Cherry-style web search toggle with the turn', async () => {
+  it.each(['menu', 'slash', 'pinned'])('shows web search state and sends it when toggled from %s', async (entry) => {
     const user = userEvent.setup();
+    if (entry === 'pinned') {
+      window.localStorage.setItem('toolplane.conversation.composer.toolbar', '["web-search"]');
+    }
     renderConversation({ webSearchAvailable: true });
 
+    if (entry === 'pinned') {
+      await user.click(screen.getByRole('button', { name: 'Enable web search', pressed: false }));
+    } else {
+      if (entry === 'slash') {
+        await user.type(screen.getByPlaceholderText('Message this agent'), '/');
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Open tools' }));
+      }
+      await user.click(await screen.findByRole('menuitem', { name: 'Enable web search' }));
+    }
+    const toggle = screen.getByRole('button', { name: 'Disable web search', pressed: true });
+    expect(toggle).toBeVisible();
+    expect(document.querySelectorAll('[data-composer-shortcut="web-search"]')).toHaveLength(1);
     const input = screen.getByPlaceholderText('Message this agent');
-    await user.type(input, '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    await user.click(within(menu).getByRole('option', { name: 'Enable web search' }));
     await user.type(input, 'Find current sources');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
-
-    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+    await user.click(screen.getByRole('button', { name: 'Send prompt' }));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({ role: 'user' }),
-      expect.objectContaining({
-        body: expect.objectContaining({ webSearchEnabled: true }),
-      }),
+      expect.objectContaining({ body: expect.objectContaining({ webSearchEnabled: true }) }),
+    ));
+
+    await user.click(toggle);
+    expect(screen.queryByRole('button', { name: 'Disable web search' })).not.toBeInTheDocument();
+    if (entry === 'pinned') {
+      expect(screen.getByRole('button', { name: 'Enable web search', pressed: false })).toBeVisible();
+    }
+    await user.type(input, 'Answer without searching');
+    await user.click(screen.getByRole('button', { name: 'Send prompt' }));
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ role: 'user' }),
+      expect.objectContaining({ body: expect.objectContaining({ webSearchEnabled: false }) }),
     ));
   });
 
@@ -551,15 +566,15 @@ describe('AgentConversation', () => {
     await user.click(tools);
 
     await user.type(screen.getByPlaceholderText('Message this agent'), '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    expect(within(menu).getByRole('option', { name: 'Add attachment' })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: 'MCP' })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: 'MCP resources' })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: 'MCP prompts' })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: /Clear context/ })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: 'Enable web search' })).toBeInTheDocument();
+    const menu = await screen.findByRole('menu', { name: 'Tools' });
+    expect(within(menu).getByRole('menuitem', { name: 'Add attachment' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'MCP' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'MCP resources' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'MCP prompts' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Clear context/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Enable web search' })).toBeInTheDocument();
 
-    await user.click(within(menu).getByRole('option', { name: /Clear context/ }));
+    await user.click(within(menu).getByRole('menuitem', { name: /Clear context/ }));
     expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 
@@ -582,18 +597,34 @@ describe('AgentConversation', () => {
     });
     renderConversation({ mcpResourceApiPath: '/composer' });
 
-    await user.type(screen.getByPlaceholderText('Message this agent'), '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    await user.click(within(menu).getByRole('option', { name: 'Customize toolbar' }));
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Customize toolbar' }));
     const customizer = await screen.findByRole('dialog', { name: 'Customize toolbar' });
-    expect(within(customizer).getByRole('checkbox', { name: 'Add attachment' })).toBeInTheDocument();
+    await user.click(within(customizer).getByRole('checkbox', { name: 'Add attachment' }));
     await user.click(within(customizer).getByRole('checkbox', { name: 'MCP resources' }));
+    const resources = within(customizer).getByRole('checkbox', { name: 'MCP resources' });
+    const attachment = within(customizer).getByRole('checkbox', { name: 'Add attachment' });
+    const data = new Map<string, string>();
+    const dataTransfer = { setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? '', effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(resources.closest('[draggable]')!, { dataTransfer });
+    fireEvent.dragOver(attachment.closest('[draggable]')!, { dataTransfer });
+    fireEvent.drop(attachment.closest('[draggable]')!, { dataTransfer });
+    expect([...document.querySelectorAll('[data-composer-shortcut]')].map((el) => el.getAttribute('aria-label'))).toEqual(['MCP resources', 'Add attachment']);
     await user.click(within(customizer).getByRole('button', { name: 'Close' }));
 
     await user.click(screen.getByRole('button', { name: 'MCP resources' }));
     const picker = await screen.findByRole('dialog', { name: 'MCP resources' });
-    await user.click(within(picker).getByRole('button', { name: /Project plan/ }));
-    expect((screen.getByPlaceholderText('Message this agent') as HTMLTextAreaElement).value).toContain('docs://plan');
+    await user.click(await within(picker).findByRole('button', { name: /Project plan/ }));
+    await waitFor(() => expect((screen.getByPlaceholderText('Message this agent') as HTMLTextAreaElement).value).toContain('docs://plan'));
+
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Customize toolbar' }));
+    const resetDialog = await screen.findByRole('dialog', { name: 'Customize toolbar' });
+    await user.click(within(resetDialog).getByRole('button', { name: 'Restore default toolbar' }));
+    expect(document.querySelector('[data-composer-shortcut]')).toBeNull();
+    await user.click(within(resetDialog).getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    expect(await screen.findByRole('menuitem', { name: 'MCP resources' })).toBeInTheDocument();
   });
 
   it('offers runtime slash commands and sends them through the command endpoint', async () => {
@@ -603,14 +634,14 @@ describe('AgentConversation', () => {
 
     const input = screen.getByPlaceholderText('Message this agent');
     await user.type(input, '/');
-    const menu = await screen.findByRole('listbox', { name: 'Tools' });
-    expect(within(menu).getByRole('option', { name: /\/compact/ })).toBeInTheDocument();
-    expect(within(menu).getByRole('option', { name: /\/goal/ })).toBeInTheDocument();
-    await user.click(within(menu).getByRole('option', { name: /\/compact/ }));
+    const menu = await screen.findByRole('menu', { name: 'Tools' });
+    expect(within(menu).getByRole('menuitem', { name: /compact/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /goal/ })).toBeInTheDocument();
+    await user.click(within(menu).getByRole('menuitem', { name: /compact/ }));
     expect(input).toHaveValue('/compact ');
 
     await user.type(input, 'preserve paths');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Send prompt' }));
 
     await waitFor(() => expect(apiMocks.fetch).toHaveBeenCalledWith(
       '/api/v1/agents/agent-1/conversations/conv-new/commands',
@@ -627,18 +658,13 @@ describe('AgentConversation', () => {
       reasoningAvailable: true,
     });
 
-    const effort = screen.getByRole('button', { name: 'Thinking effort' });
-    const send = screen.getByRole('button', { name: 'Send' });
-    expect(effort.parentElement).toBe(send.parentElement);
-    expect(effort.nextElementSibling).toBe(send);
+    const effort = screen.getByRole('combobox', { name: 'Thinking effort' });
     expect(effort).toHaveTextContent('Medium');
     await userEvent.click(effort);
-    const slider = screen.getByRole('slider', { name: 'Thinking effort' });
-    expect(slider).toHaveValue('2');
-    fireEvent.change(slider, { target: { value: '3' } });
+    await userEvent.click(screen.getByRole('option', { name: 'High' }));
     expect(effort).toHaveTextContent('High');
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Think carefully');
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
 
     await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ role: 'user' }),
@@ -647,7 +673,7 @@ describe('AgentConversation', () => {
       }),
     ));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retry response' }));
     await waitFor(() => expect(chatMocks.regenerate).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({ conversationId: 'conv-1', reasoningEffort: 'high' }),
     })));

@@ -1,4 +1,7 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
+
 
 import { useActionState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -26,59 +29,29 @@ export function SkillRegistrySync({ source }: { source: Source }) {
         <fieldset disabled={pending} className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('owner')}</span>
-            <input
-              name="owner"
-              defaultValue={source.owner}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="owner" defaultValue={source.owner} autoCapitalize="none" spellCheck={false} />
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('repo')}</span>
-            <input
-              name="repo"
-              defaultValue={source.repo}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="repo" defaultValue={source.repo} autoCapitalize="none" spellCheck={false} />
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-2">
             <span>{t('ref')}</span>
-            <input
-              name="ref"
-              defaultValue={source.ref}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="ref" defaultValue={source.ref} autoCapitalize="none" spellCheck={false} />
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-3">
             <span>{t('root')}</span>
-            <input
-              name="rootPath"
-              defaultValue={source.rootPath}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="rootPath" defaultValue={source.rootPath} autoCapitalize="none" spellCheck={false} />
           </label>
           <label className="block space-y-1.5 text-xs font-medium text-muted-foreground lg:col-span-1">
             <span>{t('prefix')}</span>
-            <input
-              name="slugPrefix"
-              defaultValue={source.slugPrefix}
-              className="ui-input h-11 font-mono"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="slugPrefix" defaultValue={source.slugPrefix} autoCapitalize="none" spellCheck={false} />
           </label>
           <SubmitButton
             pendingLabel={t('syncing')}
             savedLabel={t('synced')}
             error={state.error && !state.ok}
-            className="ui-button-primary h-11 w-full self-end lg:col-span-2"
+            variant="primary" size="md" className="w-full self-end lg:col-span-2"
           >
             <GitBranch className="size-4" />
             {t('syncTpSkills')}
@@ -98,15 +71,15 @@ export function SkillRegistrySync({ source }: { source: Source }) {
           </p>
         ) : null}
         {state.error ? (
-          <p className="flex items-start gap-2 text-sm text-destructive-text" role="alert">
+          <p className="flex items-start gap-2 text-sm text-destructive" role="alert">
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
             <span>{state.error}</span>
           </p>
         ) : null}
         {state.failures?.length ? <section className="space-y-3 border-t border-border pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">{ops('failedFiles')} ({state.failures.length})</h3><button type="submit" name="intent" value="retry" disabled={pending} className="ui-button-secondary"><RotateCcw className="size-4" />{pending ? t('syncing') : ops('retryFailed')}</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">{ops('failedFiles')} ({state.failures.length})</h3><Button type="submit" name="intent" value="retry" disabled={pending} variant="secondary" size="md"><RotateCcw className="size-4" />{pending ? t('syncing') : ops('retryFailed')}</Button></div>
           <p className="break-all font-mono text-xs text-muted-foreground">{state.source?.owner}/{state.source?.repo} @ {state.source?.ref}</p>
-          <ul className="max-h-80 divide-y divide-border overflow-auto">{state.failures.map((failure) => <li key={failure.path} className="py-3"><code className="block break-all text-xs font-medium">{failure.path}</code><p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive-text">{failure.error}</p></li>)}</ul>
+          <ul className="max-h-80 divide-y divide-border overflow-auto">{state.failures.map((failure) => <li key={failure.path} className="py-3"><code className="block break-all text-xs font-medium">{failure.path}</code><p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive">{failure.error}</p></li>)}</ul>
         </section> : null}
       </form>
     </AdminPanel>

@@ -19,7 +19,6 @@ vi.mock('@/lib/agents/actions', () => ({
   deleteAgentAction: vi.fn(),
   pinAgentAction: surfaceMocks.pinAgentAction,
 }));
-vi.mock('@/lib/sandboxes/actions', () => ({ startSandboxAction: vi.fn() }));
 
 vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
   AgentConversation: () => <div>Conversation surface</div>,
@@ -72,10 +71,8 @@ afterEach(() => {
 });
 
 describe('Chat, Work, and Knowledge surfaces', () => {
-  it('restores Work sidebar and agent disclosure preferences', async () => {
+  it('persists the Work sidebar visibility preference', async () => {
     const user = userEvent.setup();
-    window.localStorage.removeItem('toolplane:work-sidebar:workspace-1');
-    window.localStorage.removeItem('toolplane:work-agent-groups:workspace-1');
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
     const firstRender = render(<WorkspaceWork
       slug="acme"
@@ -85,32 +82,75 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    await user.click(screen.getByRole('button', { name: 'Builder' }));
-    expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-groups:workspace-1')!)).toEqual({
-      'agent-1': false,
-    });
-    expect(document.cookie).toContain('toolplane_work_agent_groups_workspace-1=%7B%22agent-1%22%3Afalse%7D');
     await user.click(screen.getByRole('button', { name: 'Hide Agents and work sessions' }));
     expect(window.localStorage.getItem('toolplane:work-sidebar:workspace-1')).toBe('false');
-    expect(document.cookie).toContain('toolplane_work_sidebar_workspace-1=false');
     firstRender.unmount();
-    window.localStorage.removeItem('toolplane:work-agent-groups:workspace-1');
 
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      initialExpandedAgents={{ 'agent-1': false }}
       initialSidebarOpen={false}
       agents={[agent]}
       sessions={[]}
       selectedWorkSessionId={null}
     />);
     expect(document.querySelector('aside')).toHaveClass('hidden');
-    expect(screen.getAllByRole('button', { name: 'Show Agents and work sessions' })).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Builder' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getAllByRole('button', { name: 'Show Agents and work sessions' })).toHaveLength(1);
   });
 
-  it('renders native and legacy command output as ordinary copyable assistant replies, without a command accordion', () => {
+  it('keeps the Work sidebar focused on the assistant list with creation and per-assistant session actions', async () => {
+    const user = userEvent.setup();
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    const settingUpAgent = { ...agent, id: 'agent-2', name: 'Setting up', ready: false };
+    const brokenAgent = { ...settingUpAgent, id: 'agent-3', name: 'Broken', sandboxes: [{ id: 'sandbox-1', name: 'Broken', kind: 'docker', deploymentId: 'deployment-1', status: 'error', running: false, isDefault: true }] };
+    const runningAgent = { ...agent, id: 'agent-4', name: 'Running agent', sandboxes: [{ id: 'sandbox-2', name: 'Running', kind: 'docker', deploymentId: 'deployment-2', status: 'running', running: true, isDefault: true }] };
+    const session = (id: string, status: string, agentId = agent.id) => ({ id, agentId, title: id, task: id, acceptanceCriteria: null, runtimeKind: 'pi', status, waitingQuestion: null, result: null, error: null, artifacts: [], conversationId: id, sandbox: null, messages: [], approvals: [] });
+    const sessions = [session('Failed task', 'failed'), session('Waiting task', 'waiting_approval'), session('Running task', 'running', runningAgent.id), session('Completed task', 'completed')];
+    const runningSession = sessions.find((item) => item.id === 'Running task')!;
+    const workspaceProps = { slug: 'acme', workspaceId: 'workspace-1', agents: [agent, settingUpAgent, brokenAgent, runningAgent], selectedWorkSessionId: runningSession.id, selectedSession: runningSession, initialExpandedAgents: { 'agent-1': true, 'agent-4': true } };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...runningSession, status: 'completed' }));
+    vi.stubGlobal('EventSource', WorkEventSource);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<WorkspaceWork {...workspaceProps} sessions={sessions} />);
+
+    expect(screen.queryByRole('textbox', { name: 'Search' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^New work$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Add agent' })).toHaveAttribute('href', expect.stringContaining('/agents?create=1'));
+    expect(screen.getByRole('link', { name: 'Add agent' }).parentElement).not.toHaveTextContent('Agents');
+    expect(screen.getByRole('treeitem', { name: 'Builder' }).querySelector('span.absolute')).toBeNull();
+    expect(screen.getByRole('treeitem', { name: 'Setting up' }).querySelector('span.absolute')).toHaveClass('bg-amber-500');
+    expect(screen.getByRole('treeitem', { name: 'Broken' }).querySelector('span.absolute')).toHaveClass('bg-destructive');
+    expect(screen.getByRole('treeitem', { name: 'Running agent' }).querySelector('span.absolute')).toHaveClass('bg-green-500');
+    expect(screen.getByRole('treeitem', { name: 'Running task' }).querySelector('svg.lucide-circle')).toHaveClass('text-green-500');
+    expect(screen.getByRole('treeitem', { name: 'Failed task' }).querySelector('svg.lucide-circle')).toHaveClass('text-destructive');
+    expect(screen.getByRole('treeitem', { name: 'Waiting task' }).querySelector('svg.lucide-circle')).toHaveClass('text-amber-500');
+    expect(screen.getByRole('treeitem', { name: 'Completed task' }).querySelector('svg.lucide-circle')).toBeNull();
+    WorkEventSource.latest?.emit('done', {});
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(screen.getByRole('treeitem', { name: 'Running agent' }).querySelector('span.absolute')).toBeNull();
+      expect(screen.getByRole('treeitem', { name: 'Running task' }).querySelector('svg.lucide-circle')).toBeNull();
+    });
+    const newWork = screen.getByRole('button', { name: 'New work Builder' });
+    const actions = screen.getByRole('button', { name: 'Actions for Builder' });
+    expect(newWork.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(newWork.parentElement).toBe(actions.parentElement?.parentElement);
+    expect(newWork.parentElement).toHaveClass('gap-0.5');
+    expect(newWork).toHaveClass('opacity-0', 'group-hover/resource:opacity-100');
+    expect(actions).toHaveClass('opacity-0', 'group-hover/resource:opacity-100');
+    await user.click(screen.getByRole('button', { name: 'List options' }));
+    expect(screen.queryByText('List options')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'List options' })).not.toHaveAttribute('title');
+    const expandAll = screen.getByRole('button', { name: 'Expand all' });
+    expect(expandAll).toHaveClass('justify-start', 'rounded-md');
+    expect(expandAll.querySelector('svg')).toHaveClass('shrink-0');
+    await user.click(screen.getByRole('button', { name: 'List options' }));
+
+    await user.click(newWork);
+    expect(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' })).toBeInTheDocument();
+  });
+  it('renders native and legacy command output as ordinary copyable assistant replies, without a command accordion', async () => {
+    const user = userEvent.setup();
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'claude-code', sandboxes: [] };
     const session = {
       id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
@@ -124,12 +164,19 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     for (const output of ['Total cost: $0.03', 'Context Usage: 123 tokens']) {
       const text = screen.getByText(output);
       expect(text.closest('details')).toBeNull();
-      expect(within(text.closest('[data-message-id]') as HTMLElement).getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+      const reply = within(text.closest('[data-message-id]') as HTMLElement);
+      await user.click(reply.getByRole('button', { name: 'Copy response' }));
+      expect(await navigator.clipboard.readText()).toBe(output);
     }
     expect(container.querySelector('[data-ui="conversation.command"]')).toBeNull();
+    const helpful = within(screen.getByText('Context Usage: 123 tokens').closest('[data-message-id]') as HTMLElement).getByRole('button', { name: 'Helpful' });
+    await user.click(helpful);
+    expect(helpful).toHaveAttribute('aria-pressed', 'true');
+    await user.click(helpful);
+    expect(helpful).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('shares the six tools between / and +, reserves /new for channels, and retains explicit compaction', async () => {
+  it('shares tools between / and + without New task, reserves /new for channels, and retains explicit compaction', async () => {
     const user = userEvent.setup();
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
     const session = {
@@ -145,24 +192,21 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     await user.type(input, '/');
     const menu = screen.getByRole('listbox', { name: 'Tools' });
     const options = within(menu).getAllByRole('option');
-    const labels = ['Add attachment', 'Prompt management', 'MCP prompts', 'MCP resources', 'Skills', 'New task'];
-    expect(options.slice(0, 6).map((option) => option.textContent)).toEqual(labels);
-    expect(options.slice(6).map((option) => option.textContent)).toEqual([expect.stringContaining('/compact'), expect.stringContaining('/goal')]);
-    expect(input).toHaveAttribute('placeholder', '/ for tools, @ for sandbox files or conversations');
-    expect(screen.queryByText('/ for tools, @ for sandbox files or conversations')).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('option', { name: 'New task' })).not.toBeInTheDocument();
+    expect(within(menu).getByRole('option', { name: /\/compact/ })).toBeInTheDocument();
     expect(input).toHaveAttribute('aria-controls', menu.id);
     expect(input).toHaveAttribute('aria-activedescendant', options[0].id);
     await user.keyboard('{ArrowUp}');
-    expect(options[7]).toHaveAttribute('aria-selected', 'true');
+    expect(options.at(-1)).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{ArrowDown}');
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Escape}');
     await user.clear(input);
     await user.click(screen.getByRole('button', { name: 'Open tools' }));
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(labels);
+    expect(screen.queryByRole('option', { name: 'New task' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     await user.type(input, '/new{Enter}');
-    expect(screen.getByText('/new is only available in messaging channels. Use New task from the + menu here.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByText('Original reply')).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     await user.clear(input);
@@ -186,10 +230,10 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(input).toHaveValue('/');
     await user.clear(input);
     await user.type(input, '/task');
-    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.queryByRole('option', { name: 'New task' })).not.toBeInTheDocument();
     await user.keyboard('{Tab}');
-    expect(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' })).toHaveValue('');
-    expect(screen.queryByText('Original reply')).not.toBeInTheDocument();
+    expect(input).toHaveValue('/task');
+    expect(screen.getByText('Original reply')).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -198,12 +242,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('EventSource', WorkEventSource);
-    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [{ id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true, isDefault: true }] };
     const props = { slug: 'acme', workspaceId: 'workspace-1', agents: [agent], sessions: [], selectedWorkSessionId: null };
     const { rerender } = render(<WorkspaceWork {...props} />);
     let input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
     await user.type(input, '/');
-    expect(screen.getAllByRole('option')).toHaveLength(8);
     expect(screen.getByRole('option', { name: /\/compact/ })).toBeInTheDocument();
     for (const value of ['/workspace/file', 'https://example.com', 'read /new', '/compact preserve details']) {
       fireEvent.change(input, { target: { value } });
@@ -222,7 +265,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     await user.clear(input);
     await user.type(input, '/');
-    await user.click(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }));
+    await user.click(screen.getByRole('button', { name: 'List options' }));
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     await user.click(input);
     await user.keyboard('{Shift>}{Enter}{/Shift}');
@@ -236,34 +279,41 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     };
     rerender(<WorkspaceWork {...props} sessions={[session]} selectedWorkSessionId={session.id} />);
     input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
-    await user.clear(input);
-    await user.type(input, '/');
+    expect(input).toBeDisabled();
+    fireEvent.change(input, { target: { value: '/compact' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-    await user.type(input, 'compact{Enter}');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('keeps compact, new-conversation, and idle controls out of the Work header', () => {
-    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [] };
+  it.each(['idle', 'running', 'completed'])('keeps only file and terminal actions in the %s Work header', (status) => {
+    vi.stubGlobal('EventSource', WorkEventSource);
+    const sandbox = { id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: false, isDefault: true };
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh', sandboxes: [sandbox] };
     const session = {
       id: 'work-1', agentId: agent.id, title: 'Task', task: 'Task', acceptanceCriteria: null,
-      runtimeKind: 'dsh', status: 'idle', waitingQuestion: null, result: null, error: null,
-      artifacts: [], conversationId: 'conversation-1', sandbox: null, messages: [], approvals: [],
+      runtimeKind: 'dsh', status, waitingQuestion: null, result: null, error: null,
+      artifacts: [], conversationId: 'conversation-1', sandbox, messages: [], approvals: [],
     };
     const { rerender } = render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[session]} selectedWorkSessionId={session.id} />);
 
-    expect(screen.queryByRole('button', { name: 'Compact context' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'New work' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Idle')).not.toBeInTheDocument();
+    const header = screen.getByRole('banner');
+    expect(within(header).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Hide Agents and work sessions', 'Files', 'Terminal']);
+    fireEvent.click(within(header).getByRole('button', { name: 'Files' }));
+    expect(screen.getByRole('dialog', { name: 'Files' })).toHaveTextContent('Files surface');
+    fireEvent.click(screen.getByRole('button', { name: 'Close workspace' }));
+    fireEvent.click(within(header).getByRole('button', { name: 'Terminal' }));
+    expect(screen.getByRole('dialog', { name: 'Terminal' })).toHaveTextContent('Terminal surface');
+    fireEvent.click(screen.getByRole('button', { name: 'Close workspace' }));
 
     rerender(<WorkspaceWork slug="acme" workspaceId="workspace-1" selectedWorkSessionId={null} sessions={[]}
       agents={[agent]}
       selectedConversation={{ id: 'channel-chat', agentId: agent.id, source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' }, readOnly: true, messages: [] }}
     />);
-    expect(screen.queryByRole('button', { name: 'New channel conversation' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('banner')).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Hide Agents and work sessions', 'Files', 'Terminal']);
   });
 
-  it('shows and searches channel conversations under their Agent and refreshes before the first message', () => {
+  it('shows channel conversations under their Agent and refreshes before the first message', () => {
     vi.useFakeTimers();
     const agent = {
       id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true,
@@ -282,20 +332,18 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       id: 'wechat-history', agentId: 'agent-wechat',
       source: { platform: 'weixin', chatType: 'dm', chatId: 'contact' },
     }]} />);
-    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toHaveAttribute(
-      'href', '/app/acme/work?agent=agent-wechat&c=wechat-history',
-    );
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'wechat' } });
-    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Builder' })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'no-match' } });
-    expect(screen.queryByRole('link', { name: 'WeChat · contact' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('treeitem', { name: 'WeChat agent' }));
+    const channelResource = screen.getByRole('treeitem', { name: 'WeChat · contact' });
+    expect(channelResource).toHaveAttribute('aria-level', '2');
+    fireEvent.click(channelResource);
+    expect(surfaceMocks.routerPush).toHaveBeenCalledWith('/app/acme/work?agent=agent-wechat&c=wechat-history');
+    expect(screen.getByRole('treeitem', { name: 'Builder' })).toBeInTheDocument();
     unmount();
     act(() => vi.advanceTimersByTime(5_000));
     expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the Work sidebar, search, and sandbox tools while switching between task and channel messages', () => {
+  it('keeps the Work sidebar and sandbox tools while switching between task and channel messages', () => {
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'dsh',
       sandboxes: [{ id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'dep-1', running: true, isDefault: true }] };
     const session = {
@@ -311,28 +359,24 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       ] };
     const props = { slug: 'acme', workspaceId: 'workspace-1', agents: [agent], sessions: [session], conversations: [channel] };
     const { container, rerender } = render(<WorkspaceWork {...props} selectedWorkSessionId="work-1" />);
-    const sidebar = screen.getByRole('textbox', { name: 'Search Agents and work sessions' }).closest('aside');
     expect(screen.getByText('Task reply')).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: 'Builder' } });
     rerender(<WorkspaceWork {...props} selectedWorkSessionId={null} selectedConversation={channel} />);
-    expect(screen.getByRole('textbox', { name: 'Search Agents and work sessions' })).toHaveValue('Builder');
-    expect(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }).closest('aside')).toBe(sidebar);
     expect(screen.getByText('WeChat reply').closest('[data-ui="work.transcript"]')).toBeInTheDocument();
     expect(screen.getByText('Incoming message')).toBeInTheDocument();
     expect(screen.queryByText(/Messaging source:/)).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'WeChat · contact' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: 'Task history' })).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'WeChat · contact' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('treeitem', { name: 'Task history' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument();
     expect(container.querySelector('[data-ui="chat.composer"]')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Builder' }));
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Builder' }));
     rerender(<WorkspaceWork {...props} selectedWorkSessionId="work-1" selectedConversation={null} />);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search Agents and work sessions' }), { target: { value: '' } });
-    expect(screen.getByRole('button', { name: 'Builder' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('treeitem', { name: 'Builder' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('treeitem', { name: 'Task history' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Builder' }));
     expect(screen.getByText('Task reply')).toBeInTheDocument();
     expect(container.querySelector('[data-ui="chat.composer"]')).toBeInTheDocument();
   });
-
   it.each(['pi', 'hermes'] as const)(
     'refreshes a newly created %s Agent until its runtime leaves provisioning',
     (runtimeKind) => {
@@ -362,8 +406,6 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       };
       const { rerender, unmount } = render(<WorkspaceWork {...props} agents={[agent]} />);
 
-      expect(screen.getByText('Starting…')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
       act(() => vi.advanceTimersByTime(1_500));
       expect(surfaceMocks.routerRefresh).toHaveBeenCalledTimes(1);
 
@@ -379,7 +421,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
 
   it('starts Work from the chat composer without a task form', async () => {
     const user = userEvent.setup();
-    const { container } = render(<WorkspaceWork
+    render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
       agents={[{
@@ -413,99 +455,35 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    const input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
-    expect(input).toHaveAttribute('rows', '2');
-    expect(input.closest('form')).toHaveClass('group/composer', 'hover:border-foreground/25', 'focus-within:border-foreground/25');
-    const expand = screen.getByRole('button', { name: 'Expand composer' });
-    expect(expand).toHaveClass('group-hover/composer:opacity-100');
-    fireEvent.click(expand);
-    expect(Number(input.getAttribute('rows'))).toBeGreaterThan(2);
-    expect(screen.getByRole('button', { name: 'Restore composer' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Agent' })).toHaveTextContent('Builder');
-    expect(screen.getByRole('button', { name: 'Model' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sandbox' })).toHaveTextContent('Workspace');
-    expect(screen.getByRole('button', { name: 'Working directory' })).toHaveTextContent('/workspace');
     expect(screen.getByRole('link', { name: 'Add agent' })).toHaveAttribute(
       'href',
       '/app/acme/agents?create=1&returnTo=%2Fapp%2Facme%2Fwork',
     );
     fireEvent.click(screen.getByRole('button', { name: 'List options' }));
     expect(screen.getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Manage agents' })).toHaveAttribute(
-      'href',
-      '/app/acme/agents?returnTo=%2Fapp%2Facme%2Fwork',
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
     expect(screen.queryByRole('link', { name: 'Manage agents' })).not.toBeInTheDocument();
-    const sidebar = container.querySelector('aside')!;
-    const builderDisclosure = screen.getByRole('button', { name: 'Builder' });
-    expect(builderDisclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: 'Hermes researcher' })).toHaveAttribute('aria-expanded', 'true');
-    expect(builderDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
-    expect(builderDisclosure.nextElementSibling).toHaveClass(
-      'grid-cols-[0fr]',
-      'group-hover:grid-cols-[1fr]',
-      'group-has-[:focus-visible]:grid-cols-[1fr]',
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
     const builderActions = screen.getByRole('button', { name: 'Actions for Builder' });
     await user.click(builderActions);
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Pin', 'Delete']);
-    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
-    expect(surfaceMocks.routerPush).toHaveBeenCalledWith(
-      '/app/acme/agents/agent-1?settings=agent&returnTo=%2Fapp%2Facme%2Fwork',
-    );
-    await user.click(builderActions);
-    await user.click(screen.getByRole('menuitem', { name: 'Pin' }));
+    await user.click(screen.getByRole('button', { name: 'Pin' }));
     await waitFor(() => expect(surfaceMocks.pinAgentAction).toHaveBeenCalledOnce());
     const pinForm = surfaceMocks.pinAgentAction.mock.calls[0][0] as FormData;
-    expect(Object.fromEntries(pinForm)).toEqual({
-      agentId: 'agent-1',
-      pinned: 'true',
-      workspace: 'acme',
-    });
+    expect(Object.fromEntries(pinForm)).toEqual({ agentId: 'agent-1', pinned: 'true', workspace: 'acme' });
     expect(surfaceMocks.routerRefresh).toHaveBeenCalledOnce();
     await user.click(screen.getByRole('button', { name: 'Actions for Hermes researcher' }));
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Unpin', 'Delete']);
-    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    expect(screen.getByRole('dialog', { name: 'Delete agent' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(sidebar.querySelectorAll('[aria-controls^="agent-work-sessions-"]')).toHaveLength(3);
-    for (const [name, title, tone] of [
-      ['Builder', 'ready', 'bg-emerald-500'],
-      ['Hermes researcher', 'needs model', 'bg-amber-500'],
-      ['Chat only', 'Not connected yet', 'bg-red-500'],
-    ] as const) {
-      const dot = screen.getByRole('button', { name }).parentElement?.querySelector(`[title="${title}"]`);
-      expect(dot?.parentElement).toHaveClass('relative');
-      expect(dot).toHaveClass('absolute', 'right-0', 'top-0', tone);
-    }
-    expect(screen.getAllByText('No work sessions yet.')).toHaveLength(3);
-    fireEvent.click(builderDisclosure);
-    expect(screen.getAllByText('No work sessions yet.')).toHaveLength(2);
-    const hermesRow = screen.getByRole('button', { name: 'Hermes researcher' }).parentElement!;
-    expect(screen.getByRole('button', { name: 'New work · Hermes researcher' })).toBeInTheDocument();
-    fireEvent.contextMenu(hermesRow, { clientX: 80, clientY: 120 });
-    expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/work?agent=agent-hermes');
-    const agentRow = builderDisclosure.parentElement!;
-    fireEvent.contextMenu(agentRow, { clientX: 80, clientY: 120 });
-    expect(screen.getByRole('menuitem', { name: 'New work' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Chat' })).toHaveAttribute('href', '/app/acme/work?agent=agent-1');
-    expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
-      'href',
-      expect.stringContaining('/app/acme/agents/agent-1?settings=agent'),
-    );
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete agent' }));
+    const hermesMenu = document.querySelector<HTMLElement>('[data-sidebar-resource-menu="agent:agent-hermes"]');
+    expect(hermesMenu).not.toBeNull();
+    await user.click(within(hermesMenu!).getByRole('button', { name: 'Delete agent' }));
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete agent' });
     expect(deleteDialog).toHaveTextContent('Delete this agent, its sandboxes, and all its conversations?');
     expect(deleteDialog.querySelector('input[name="returnTo"]')).toHaveValue('/app/acme/work');
-    expect(screen.queryByRole('button', { name: 'Thinking effort' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /Thinking effort/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Acceptance criteria')).not.toBeInTheDocument();
     expect(screen.queryByText('Run budget')).not.toBeInTheDocument();
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
   });
 
-  it('groups Work agents, opens the target group after a drop, and persists the workspace preference', async () => {
+  it('groups Work agents through the resource tree and persists the assignment', async () => {
     const user = userEvent.setup();
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
     render(<WorkspaceWork slug="acme" workspaceId="workspace-1" agents={[agent]} sessions={[]} selectedWorkSessionId={null} />);
@@ -515,303 +493,73 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     await user.type(screen.getByRole('textbox', { name: 'Group name' }), 'Engineering');
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
-    const group = screen.getByText('Engineering').closest('[data-sidebar-group-id]') as HTMLElement;
-    await user.click(screen.getByRole('button', { name: 'Hide Engineering' }));
-    expect(screen.getByRole('button', { name: 'Show Engineering' })).toHaveAttribute('aria-expanded', 'false');
-
     const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-    fireEvent.dragStart(screen.getByRole('button', { name: 'Move to group' }), { dataTransfer });
-    fireEvent.dragOver(group.firstElementChild!, { dataTransfer });
-    fireEvent.drop(group.firstElementChild!, { dataTransfer });
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Hide Engineering' })).toHaveAttribute('aria-expanded', 'true');
-      expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-sidebar-groups:workspace-1')!)).toEqual(expect.objectContaining({
-        groups: [expect.objectContaining({ name: 'Engineering' })],
-        assignments: { 'agent-1': expect.any(String) },
-      }));
-    });
-    const builder = screen.getByRole('button', { name: 'Builder' }).closest('li')!;
-    expect(group.compareDocumentPosition(builder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const builder = screen.getByRole('treeitem', { name: 'Builder' });
+    const engineering = screen.getByRole('treeitem', { name: 'Engineering' });
+    fireEvent.dragStart(builder, { dataTransfer });
+    const dragOver = createEvent.dragOver(engineering, { dataTransfer });
+    Object.defineProperty(dragOver, 'clientY', { value: 10 });
+    vi.spyOn(engineering, 'getBoundingClientRect').mockReturnValue({ top: 0, height: 20 } as DOMRect);
+    fireEvent(engineering, dragOver);
+    fireEvent.drop(engineering, { dataTransfer });
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-sidebar-groups:workspace-1')!).assignments['agent-1']).toBeTruthy());
+    expect(screen.getByRole('treeitem', { name: 'Builder' })).toHaveAttribute('aria-level', '2');
+    expect(JSON.parse(window.localStorage.getItem('toolplane:work-agent-sidebar-groups:workspace-1')!)).toEqual(expect.objectContaining({
+      groups: [expect.objectContaining({ name: 'Engineering' })],
+      assignments: { 'agent-1': expect.any(String) },
+    }));
   });
 
-  describe('Work sidebar ordering', () => {
+  it('reorders Work projects from resource actions and restores the saved order', async () => {
+    const user = userEvent.setup();
     const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    const agents = [agent, { ...agent, id: 'agent-2', name: 'Reviewer' }, { ...agent, id: 'agent-3', name: 'Researcher' }];
+    const props = { slug: 'acme', workspaceId: 'workspace-1', agents, sessions: [], selectedWorkSessionId: null };
+    const storageKey = 'toolplane:work-agent-sidebar-groups:workspace-1';
+    const { unmount } = render(<WorkspaceWork {...props} />);
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Researcher' }));
+    await user.click(screen.getByRole('button', { name: 'Move up' }));
+    expect(screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())).toEqual(['Builder', 'Researcher', 'Reviewer']);
+    expect(JSON.parse(window.localStorage.getItem(storageKey)!)).toEqual(expect.objectContaining({ entityOrder: ['agent-1', 'agent-3', 'agent-2'] }));
+    unmount();
+
+    render(<WorkspaceWork {...props} />);
+    expect(screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())).toEqual(['Builder', 'Researcher', 'Reviewer']);
+  });
+  it('lists Work threads, navigates from tree items, and preserves hidden-thread order when moving one', async () => {
+    const user = userEvent.setup();
+    const agent = { id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] };
+    const session = (id: string, title: string) => ({
+      id, agentId: agent.id, title, task: title, acceptanceCriteria: null, runtimeKind: 'pi', status: 'completed',
+      waitingQuestion: null, result: null, error: null, artifacts: [], conversationId: `${id}-conversation`, sandbox: null, messages: [], approvals: [],
+    });
     const props = {
-      slug: 'acme', workspaceId: 'workspace-1', selectedWorkSessionId: null, sessions: [],
-      agents: [agent, { ...agent, id: 'agent-2', name: 'Reviewer' }, { ...agent, id: 'agent-3', name: 'Researcher' }],
-      initialExpandedAgents: { 'agent-1': true, 'agent-2': true, 'agent-3': true },
+      slug: 'acme', workspaceId: 'workspace-1', agents: [agent],
+      sessions: [session('hidden', 'Hidden task'), session('work-1', 'Visible first'), session('work-2', 'Visible second')],
+      selectedWorkSessionId: null, initialExpandedAgents: { 'agent-1': true },
+      initialGroupPreferences: { groups: [], assignments: {}, collapsed: {}, conversationOrder: { 'agent-1': ['hidden', 'work-1', 'work-2'] } },
     };
     const storageKey = 'toolplane:work-agent-sidebar-groups:workspace-1';
-    const preferences = () => JSON.parse(window.localStorage.getItem(storageKey)!);
-    const entityRow = (id: string) => document.querySelector<HTMLElement>(`[data-sidebar-entity-id="${id}"]`)!;
-    const handle = (id: string) => within(entityRow(id)).getByRole('button', { name: 'Move to group' });
-    const conversationRow = (id: string) => document.querySelector<HTMLElement>(`[data-sidebar-conversation-id="${id}"]`)!;
-    const entityIds = () => Array.from(document.querySelectorAll('[data-sidebar-entity-id]'), (row) => row.getAttribute('data-sidebar-entity-id'));
-    const conversationIds = (agentId = agent.id) => Array.from(
-      document.getElementById(`agent-work-sessions-${agentId}`)!.querySelectorAll('[data-sidebar-conversation-id]'),
-      (row) => row.getAttribute('data-sidebar-conversation-id'),
-    );
-    const session = (id: string, agentId = agent.id) => ({
-      id, agentId, title: id, task: id, acceptanceCriteria: null, runtimeKind: 'pi', status: 'completed',
-      waitingQuestion: null, result: null, error: null, artifacts: [], conversationId: `${id}-conversation`,
-      sandbox: null, messages: [], approvals: [],
-    });
-    const channel = (id: string, agentId = agent.id) => ({
-      id, agentId, source: { platform: 'weixin', chatType: 'dm' as const, chatId: id },
-    });
-    function drag(source: HTMLElement, target: HTMLElement, edge: 'before' | 'after' = 'before') {
-      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-      fireEvent.dragStart(source, { dataTransfer });
-      const rect = vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 100, height: 32 } as DOMRect);
-      for (const type of ['dragOver', 'drop'] as const) {
-        const event = createEvent[type](target, { dataTransfer });
-        Object.defineProperty(event, 'clientY', { value: edge === 'before' ? 104 : 128 });
-        fireEvent(target, event);
-      }
-      rect.mockRestore();
-      fireEvent.dragEnd(source, { dataTransfer });
-    }
+    const { unmount } = render(<WorkspaceWork {...props} />);
+    expect(screen.getByRole('treeitem', { name: 'Visible second' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Visible second' }));
+    expect(surfaceMocks.routerPush).toHaveBeenCalledWith('/app/acme/work?w=work-2');
+    await user.click(screen.getByRole('button', { name: 'Actions for Visible second' }));
+    await user.click(screen.getByRole('button', { name: 'Move up' }));
+    expect(JSON.parse(window.localStorage.getItem(storageKey)!).conversationOrder['agent-1']).toEqual(['hidden', 'work-2', 'work-1']);
+    expect(screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())).toEqual([
+      'Builder', 'Hidden task', 'Visible second', 'Visible first',
+    ]);
+    unmount();
 
-    it('reorders ungrouped agents using both row halves and the handle keyboard shortcut, then restores the order', () => {
-      const first = render(<WorkspaceWork {...props} />);
-      drag(handle('agent-3'), entityRow('agent-1'));
-      expect(entityIds()).toEqual(['agent-3', 'agent-1', 'agent-2']);
-      drag(handle('agent-3'), entityRow('agent-2'), 'after');
-      expect(entityIds()).toEqual(['agent-1', 'agent-2', 'agent-3']);
-      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
-      expect(entityIds()).toEqual(['agent-1', 'agent-3', 'agent-2']);
-      expect(preferences().entityOrder).toEqual(['agent-1', 'agent-3', 'agent-2']);
-      expect(preferences().assignments).toEqual({});
-      expect(entityRow('agent-1')).not.toHaveAttribute('draggable', 'true');
-      first.unmount();
-
-      render(<WorkspaceWork {...props} />);
-      expect(entityIds()).toEqual(['agent-1', 'agent-3', 'agent-2']);
-      expect(surfaceMocks.pinAgentAction).not.toHaveBeenCalled();
-    });
-
-    it('opens collapsed Ungrouped after a group-header drop and persists its expanded state', () => {
-      render(<WorkspaceWork {...props}
-        initialGroupPreferences={{
-          groups: [{ id: 'team', name: 'Team' }], assignments: { 'agent-1': 'team' }, collapsed: { __ungrouped__: true },
-        }}
-      />);
-      const header = document.querySelector<HTMLElement>('[data-sidebar-group-id="__ungrouped__"] > div')!;
-      expect(within(header).getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-      expect(entityIds()).toEqual(['agent-1']);
-      drag(handle('agent-1'), header);
-      expect(within(header).getByRole('button')).toHaveAttribute('aria-expanded', 'true');
-      expect(entityIds()).toEqual(['agent-1', 'agent-2', 'agent-3']);
-      expect(preferences().assignments).toEqual({});
-      expect(preferences().collapsed.__ungrouped__).toBe(false);
-    });
-
-    it('ignores group-header drags when the source agent has disappeared', () => {
-      const groupProps = {
-        ...props,
-        initialGroupPreferences: { groups: [{ id: 'team', name: 'Team' }], assignments: {}, collapsed: { team: true } },
-      };
-      const { rerender } = render(<WorkspaceWork {...groupProps} />);
-      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-      fireEvent.dragStart(handle('agent-1'), { dataTransfer });
-      rerender(<WorkspaceWork {...groupProps} agents={props.agents.filter((item) => item.id !== 'agent-1')} />);
-      const header = document.querySelector<HTMLElement>('[data-sidebar-group-id="team"] > div')!;
-      expect(fireEvent.dragOver(header, { dataTransfer })).toBe(true);
-      expect(header).not.toHaveClass('ring-brand/50');
-      fireEvent.drop(header, { dataTransfer });
-      expect(window.localStorage.getItem(storageKey)).toBeNull();
-      expect(within(header).getByRole('button', { name: 'Show Team' })).toHaveAttribute('aria-expanded', 'false');
-    });
-
-    it('adopts the drop target group and position but keeps keyboard moves within the current group', () => {
-      render(<WorkspaceWork {...props}
-        agents={[...props.agents, { ...agent, id: 'agent-4', name: 'Ungrouped' }]}
-        initialGroupPreferences={{
-          groups: [{ id: 'first', name: 'First' }, { id: 'second', name: 'Second' }],
-          assignments: { 'agent-1': 'first', 'agent-2': 'second', 'agent-3': 'second' }, collapsed: {},
-        }}
-      />);
-      drag(handle('agent-1'), entityRow('agent-3'));
-      expect(entityIds()).toEqual(['agent-2', 'agent-1', 'agent-3', 'agent-4']);
-      expect(preferences().assignments['agent-1']).toBe('second');
-      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-1', 'agent-3', 'agent-4']);
-
-      drag(handle('agent-1'), entityRow('agent-4'), 'after');
-      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-4', 'agent-1']);
-      expect(preferences().assignments).not.toHaveProperty('agent-1');
-      const saved = window.localStorage.getItem(storageKey);
-      fireEvent.keyDown(handle('agent-4'), { altKey: true, key: 'ArrowUp' });
-      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowDown' });
-      expect(window.localStorage.getItem(storageKey)).toBe(saved);
-      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-4', 'agent-1']);
-      fireEvent.keyDown(handle('agent-1'), { altKey: true, key: 'ArrowUp' });
-      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1', 'agent-4']);
-      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-3', 'agent-1', 'agent-4']);
-      expect(preferences().assignments).toEqual({ 'agent-2': 'second', 'agent-3': 'second' });
-    });
-
-    it.each(['work-1', 'channel-1', 'chat-1'])('dims only the dragged %s row and clears it on drag end or drop', (id) => {
-      render(<WorkspaceWork {...props}
-        sessions={[session('work-1'), session('work-2')]}
-        conversations={[channel('channel-1'), channel('channel-2'), { id: 'chat-1', agentId: agent.id, title: 'Ordinary chat', source: null }]}
-      />);
-      const source = conversationRow(id);
-      const target = conversationRow(id === 'work-1' ? 'work-2' : 'channel-2');
-      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-      fireEvent.dragStart(source, { dataTransfer });
-      expect(source).toHaveClass('opacity-50');
-      expect(target).not.toHaveClass('opacity-50');
-      expect(entityRow(agent.id)).not.toHaveClass('opacity-50');
-      fireEvent.dragEnd(source);
-      expect(source).not.toHaveClass('opacity-50');
-      fireEvent.dragStart(source, { dataTransfer });
-      expect(source).toHaveClass('opacity-50');
-      fireEvent.drop(target, { dataTransfer });
-      expect(source).not.toHaveClass('opacity-50');
-    });
-
-    it('clears row insertion indicators on leave, drag end, and drop', () => {
-      render(<WorkspaceWork {...props} />);
-      const source = handle('agent-1');
-      const target = entityRow('agent-2');
-      const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-      const over = createEvent.dragOver(target, { dataTransfer });
-      Object.defineProperty(over, 'clientY', { value: -1 });
-      fireEvent.dragStart(source, { dataTransfer });
-      fireEvent(target, over);
-      expect(target).toHaveClass('relative', 'before:top-0');
-      fireEvent.dragLeave(target);
-      expect(target).not.toHaveClass('before:top-0');
-      fireEvent(target, over);
-      expect(target).toHaveClass('before:top-0');
-      fireEvent.dragEnd(source);
-      expect(target).not.toHaveClass('before:top-0');
-      fireEvent.dragStart(source, { dataTransfer });
-      fireEvent(target, over);
-      fireEvent.drop(target, { dataTransfer });
-      expect(target).not.toHaveClass('before:bg-brand');
-    });
-
-    it('keeps pinned agents first, rejects same-group pin crossings, and permits cross-group moves', () => {
-      render(<WorkspaceWork {...props}
-        agents={props.agents.map((item) => ({ ...item, pinned: item.id === 'agent-2' }))}
-        initialGroupPreferences={{
-          groups: [{ id: 'team', name: 'Team' }], assignments: { 'agent-2': 'team', 'agent-3': 'team' },
-          collapsed: {}, entityOrder: ['agent-3', 'agent-2', 'agent-1'],
-        }}
-      />);
-      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1']);
-      drag(handle('agent-3'), entityRow('agent-2'));
-      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
-      expect(window.localStorage.getItem(storageKey)).toBeNull();
-
-      drag(handle('agent-1'), entityRow('agent-2'));
-      expect(preferences().assignments['agent-1']).toBe('team');
-      expect(entityIds()).toEqual(['agent-2', 'agent-1', 'agent-3']);
-      const saved = window.localStorage.getItem(storageKey);
-      drag(handle('agent-2'), entityRow('agent-3'), 'after');
-      expect(window.localStorage.getItem(storageKey)).toBe(saved);
-      expect(surfaceMocks.pinAgentAction).not.toHaveBeenCalled();
-    });
-
-    it('sorts sessions and the shared channel/chat section separately and persists both drag and keyboard changes', () => {
-      const childProps = {
-        ...props,
-        sessions: [session('work-1'), session('work-2'), session('work-3')],
-        conversations: [channel('channel-1'), channel('channel-2'), { id: 'chat-1', agentId: agent.id, title: 'Ordinary chat', source: null }],
-        initialGroupPreferences: {
-          groups: [], assignments: {}, collapsed: {},
-          conversationOrder: { [agent.id]: ['work-3', 'channel-2', 'work-1', 'chat-1', 'work-2', 'channel-1'] },
-        },
-      };
-      const first = render(<WorkspaceWork {...childProps} />);
-      expect(conversationIds()).toEqual(['work-3', 'work-1', 'work-2', 'channel-2', 'chat-1', 'channel-1']);
-      drag(conversationRow('work-2'), conversationRow('work-3'));
-      drag(conversationRow('channel-1'), conversationRow('channel-2'));
-      const chatLink = within(conversationRow('chat-1')).getByRole('link');
-      fireEvent.keyDown(chatLink, { altKey: true, key: 'ArrowUp' });
-      fireEvent.keyDown(within(conversationRow('work-2')).getByRole('link'), { altKey: true, key: 'ArrowDown' });
-      expect(conversationIds()).toEqual(['work-3', 'work-2', 'work-1', 'channel-1', 'chat-1', 'channel-2']);
-      expect(preferences().conversationOrder[agent.id]).toEqual(['work-3', 'work-2', 'channel-1', 'chat-1', 'channel-2', 'work-1']);
-      expect(chatLink).toHaveAttribute('draggable', 'false');
-      expect(chatLink).toHaveAttribute('href', '/app/acme/work?agent=agent-1&c=chat-1');
-      expect(within(conversationRow('work-1')).getByRole('link')).toHaveAttribute('draggable', 'false');
-      expect(fireEvent.keyDown(chatLink, { key: 'ArrowDown' })).toBe(true);
-      expect(document.cookie).toContain(`toolplane_work_agent_group_preferences_workspace-1=${encodeURIComponent(JSON.stringify(preferences()))}`);
-      first.unmount();
-
-      render(<WorkspaceWork {...childProps} />);
-      expect(conversationIds()).toEqual(['work-3', 'work-2', 'work-1', 'channel-1', 'chat-1', 'channel-2']);
-    });
-
-    it('rejects child drops across owners, across sections, and onto agents or group headers', () => {
-      render(<WorkspaceWork {...props}
-        sessions={[session('work-1'), session('work-2', 'agent-2')]}
-        conversations={[channel('channel-1'), channel('channel-2', 'agent-2')]}
-        initialGroupPreferences={{ groups: [{ id: 'team', name: 'Team' }], assignments: {}, collapsed: {} }}
-      />);
-      const group = document.querySelector<HTMLElement>('[data-sidebar-group-id="team"] > div')!;
-      for (const [source, target] of [
-        [conversationRow('work-1'), conversationRow('work-2')],
-        [conversationRow('channel-1'), conversationRow('channel-2')],
-        [conversationRow('work-1'), conversationRow('channel-1')],
-        [conversationRow('channel-1'), conversationRow('work-1')],
-        [conversationRow('work-1'), entityRow('agent-2')],
-        [conversationRow('channel-1'), group],
-        [handle('agent-1'), conversationRow('work-2')],
-      ]) {
-        drag(source, target);
-        expect(window.localStorage.getItem(storageKey)).toBeNull();
-      }
-      fireEvent.keyDown(within(conversationRow('work-1')).getByRole('link'), { altKey: true, key: 'ArrowDown' });
-      fireEvent.keyDown(within(conversationRow('channel-1')).getByRole('link'), { altKey: true, key: 'ArrowUp' });
-      expect(window.localStorage.getItem(storageKey)).toBeNull();
-      expect(conversationIds()).toEqual(['work-1', 'channel-1']);
-      expect(conversationIds('agent-2')).toEqual(['work-2', 'channel-2']);
-    });
-
-    it('retains hidden session and conversation ordering when either section is reordered during search', () => {
-      render(<WorkspaceWork {...props}
-        sessions={[session('visible-work-1'), session('hidden-work'), session('visible-work-3')]}
-        conversations={[channel('visible-channel-1'), channel('hidden-channel'), channel('visible-channel-3')]}
-        initialGroupPreferences={{
-          groups: [], assignments: {}, collapsed: {},
-          conversationOrder: {
-            [agent.id]: ['hidden-work', 'visible-work-1', 'visible-work-3', 'hidden-channel', 'visible-channel-1', 'visible-channel-3'],
-            'agent-2': ['other-2', 'other-1'],
-          },
-        }}
-      />);
-      const search = screen.getByRole('textbox', { name: 'Search Agents and work sessions' });
-      fireEvent.change(search, { target: { value: 'visible' } });
-      expect(conversationRow('hidden-work')).toBeNull();
-      expect(conversationRow('hidden-channel')).toBeNull();
-      drag(conversationRow('visible-work-3'), conversationRow('visible-work-1'));
-      drag(conversationRow('visible-channel-3'), conversationRow('visible-channel-1'));
-      expect(preferences().conversationOrder).toEqual({
-        [agent.id]: ['hidden-work', 'visible-work-3', 'visible-work-1', 'hidden-channel', 'visible-channel-3', 'visible-channel-1'],
-        'agent-2': ['other-2', 'other-1'],
-      });
-      fireEvent.change(search, { target: { value: '' } });
-      expect(conversationIds()).toEqual(['hidden-work', 'visible-work-3', 'visible-work-1', 'hidden-channel', 'visible-channel-3', 'visible-channel-1']);
-    });
-
-    it('retains hidden agent order when moving visible agents during search', () => {
-      render(<WorkspaceWork {...props}
-        agents={props.agents.map((item) => ({ ...item, name: item.id === 'agent-2' ? 'Hidden' : `Visible ${item.id}` }))}
-        initialGroupPreferences={{ groups: [], assignments: {}, collapsed: {}, entityOrder: ['agent-2', 'agent-1', 'agent-3'] }}
-      />);
-      const search = screen.getByRole('textbox', { name: 'Search Agents and work sessions' });
-      fireEvent.change(search, { target: { value: 'visible' } });
-      fireEvent.keyDown(handle('agent-3'), { altKey: true, key: 'ArrowUp' });
-      expect(preferences().entityOrder).toEqual(['agent-2', 'agent-3', 'agent-1']);
-      fireEvent.change(search, { target: { value: '' } });
-      expect(entityIds()).toEqual(['agent-2', 'agent-3', 'agent-1']);
-    });
+    render(<WorkspaceWork {...props} />);
+    expect(screen.getAllByRole('treeitem').map((item) => item.textContent?.trim())).toEqual([
+      'Builder', 'Hidden task', 'Visible second', 'Visible first',
+    ]);
   });
 
-  it('shows Cherry-style thinking effort control for Hermes Work', async () => {
+  it('selects thinking effort for Hermes Work', async () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
@@ -830,10 +578,10 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    const effort = screen.getByRole('button', { name: 'Thinking effort' });
+    const effort = screen.getByRole('combobox', { name: /Thinking effort/ });
     expect(effort).toHaveTextContent('Default');
     await userEvent.click(effort);
-    fireEvent.change(screen.getByRole('slider', { name: 'Thinking effort' }), { target: { value: '4' } });
+    await userEvent.click(screen.getByRole('option', { name: 'Extra high' }));
     expect(effort).toHaveTextContent('Extra high');
   });
 
@@ -857,19 +605,17 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       sessions={[]}
       selectedWorkSessionId={null}
     />);
-
     const dialogProps = surfaceMocks.modelDialog.mock.calls.at(-1)?.[0] as {
       hermesConversation: { id: string | null; editable: boolean };
       onHermesDraftChange: (selection: { profile: string; provider: string | null; model: string | null }) => void;
     };
     expect(dialogProps.hermesConversation).toMatchObject({ id: null, editable: true });
     fireEvent.change(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' }), { target: { value: 'Research it' } });
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send prompt' })).toBeDisabled();
     act(() => dialogProps.onHermesDraftChange({ profile: 'research', provider: 'openrouter', model: 'model-b' }));
-    expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('research · model-b');
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send prompt' })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/work-sessions', expect.objectContaining({ method: 'POST' })));
     const request = fetchMock.mock.calls.find(([url]) => url === '/api/v1/work-sessions')?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({
@@ -900,7 +646,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     />);
 
     fireEvent.change(screen.getByRole('combobox', { name: 'What should the Agent accomplish?' }), { target: { value: 'Run it' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send prompt' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/work-sessions', expect.anything()));
     const request = fetchMock.mock.calls.find(([url]) => url === '/api/v1/work-sessions')?.[1] as RequestInit;
     const body = JSON.parse(String(request.body));
@@ -929,7 +675,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
-      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [] }]}
+      agents={[{ id: 'agent-1', name: 'Builder', pinned: false, supportsWork: true, ready: true, runtimeKind: 'pi', sandboxes: [{ id: 'sandbox-1', name: 'Workspace', kind: 'docker', deploymentId: 'deployment-1', running: true, isDefault: true }] }]}
       sessions={[]}
       selectedWorkSessionId={null}
     />);
@@ -994,25 +740,16 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       terminalOnly: true,
     }));
 
-    const agentGroup = screen.getByRole('button', { name: 'Builder' });
+    const agentGroup = screen.getByRole('treeitem', { name: 'Builder' });
     expect(agentGroup).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Ship release')).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Ship release' })).toBeInTheDocument();
     expect(screen.queryByText(/\d+ \/ \d+ runs/)).not.toBeInTheDocument();
-    fireEvent.click(agentGroup);
-    expect(screen.queryByText('Ship release')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Settings: Builder' })).toHaveAttribute(
-      'href',
-      expect.stringContaining('/app/acme/agents/agent-1?settings=agent'),
-    );
-    const copyButtons = screen.getAllByRole('button', { name: 'Copy' });
-    expect(copyButtons).toHaveLength(2);
-    expect(copyButtons[0]).toHaveClass('opacity-0', 'group-hover/message:opacity-100', 'group-focus-within/message:opacity-100');
-    const reply = screen.getByText('Release shipped').closest('[data-ui="assistant-reply"]');
+    fireEvent.click(screen.getByRole('button', { name: 'Close workspace' }));
+    const reply = screen.getByText('Release shipped').closest('[data-message-id]');
     expect(reply?.querySelector('[data-ui="assistant-reply-model"]')).toHaveTextContent('gpt-test');
     const replyTime = reply?.querySelector('time[data-ui="work-message-time"]');
     expect(replyTime).toHaveAttribute('dateTime', '2026-09-03T01:02:04.000Z');
-    expect(replyTime).toHaveClass('opacity-0', 'group-hover/message:opacity-100');
-    expect(screen.getByRole('meter', { name: 'Context usage 64%' })).toHaveAttribute('aria-valuenow', '64');
+    expect(screen.getByRole('meter', { name: 'Context usage' })).toHaveAttribute('aria-valuenow', '64');
   });
 
   it('renders Work deltas before loading the final persisted reply', async () => {
@@ -1047,20 +784,16 @@ describe('Chat, Work, and Knowledge surfaces', () => {
 
     expect(screen.queryByText('Generating')).not.toBeInTheDocument();
     expect(WorkEventSource.latest?.url).toBe('/api/v1/work-sessions/work-1/events');
-    expect(screen.getByText('Stream reply')).toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Stream reply' })).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
 
     act(() => WorkEventSource.latest?.emit('activity', { activities: [{
       id: 'tool:call-1', type: 'tool', status: 'running', toolCallId: 'call-1', toolName: 'read_file', input: '{}',
     }] }));
     expect(screen.queryByText('Using read_file')).not.toBeInTheDocument();
-    expect(screen.getAllByText('read_file')).toHaveLength(1);
     act(() => WorkEventSource.latest?.emit('activity', { activities: [{
       id: 'tool:call-1', type: 'tool', status: 'completed', toolCallId: 'call-1', toolName: 'read_file', deploymentName: 'Local filesystem', originalToolName: 'read_file', durationMs: 1200, input: '{}', output: 'contents',
     }] }));
-    expect(await screen.findByText('Completed')).toBeInTheDocument();
-    expect(screen.getByText('Local filesystem · read_file')).toBeInTheDocument();
-    expect(screen.getByText('1.2 s')).toBeInTheDocument();
 
     act(() => WorkEventSource.latest?.emit('delta', { delta: 'Hel' }));
     expect(await screen.findByText('Hel')).toBeInTheDocument();
@@ -1071,13 +804,11 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     act(() => WorkEventSource.latest?.emit('done', {}));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getAllByText('Hello')).toHaveLength(1));
-    expect(screen.getByText('Streaming response test')).toBeInTheDocument();
-    expect(screen.queryByText('Stream reply')).not.toBeInTheDocument();
-    expect(screen.getByText('Local filesystem · read_file')).toBeInTheDocument();
-    const completedProcess = document.querySelector('details[data-ui="work-process"]');
+    expect(await screen.findByRole('treeitem', { name: 'Streaming response test' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'Stream reply' })).not.toBeInTheDocument();
+    const completedProcess = document.querySelector('[data-ui="work-process"]');
     expect(completedProcess).not.toBeNull();
-    expect(completedProcess).not.toHaveAttribute('open');
-    expect(completedProcess?.querySelector('summary')).toHaveTextContent('Processed');
+    expect(within(completedProcess as HTMLElement).getByRole('button', { name: /Processed/ })).toHaveAttribute('aria-expanded', 'false');
     expect(completedProcess?.querySelector('[data-ui="work-process-duration"]')).toHaveTextContent('29 s');
     expect(screen.getByText('Hello').closest('details')).toBeNull();
   });
@@ -1128,8 +859,8 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(document.querySelector('[data-message-id="work-stream"]')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
-    expect(screen.getByRole('link', { name: 'Generated title' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Reply slowly' })).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: 'Generated title' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: 'Reply slowly' })).not.toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     unmount();
@@ -1157,7 +888,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId="work-text-only"
     />);
 
-    const reply = screen.getByText('Hi').closest('[data-ui="assistant-reply"]');
+    const reply = screen.getByText('Hi').closest('[data-message-id]');
     expect(reply?.querySelector('[data-ui="work-message-duration"]')).toHaveTextContent('29 s');
     expect(reply).not.toHaveTextContent('Pi');
     expect(screen.queryByText('Processed')).not.toBeInTheDocument();
@@ -1234,7 +965,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 
-  it('keeps a Work reader above streaming output until they return to the latest message', () => {
+  it('keeps a Work reader above streaming output while scrolled back', () => {
     const session = {
       id: 'work-scroll', agentId: 'agent-1', title: 'Scroll reply', task: 'Scroll reply',
       acceptanceCriteria: null, runtimeKind: 'pi', status: 'idle',
@@ -1262,7 +993,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     viewport.scrollTop = 120;
 
     fireEvent.scroll(viewport);
-    expect(screen.getByRole('button', { name: 'Scroll to latest message' })).toBeInTheDocument();
+    scrollTo.mockClear();
 
     rerender(<WorkspaceWork {...props} sessions={[{
       ...session,
@@ -1270,9 +1001,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     }]} />);
     expect(viewport.scrollTop).toBe(120);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Scroll to latest message' }));
-    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' });
-    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).not.toBeInTheDocument();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it('switches Knowledge task views without stacking all controls', () => {
@@ -1288,7 +1017,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     />);
 
     expect(screen.getByText('No documents indexed')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Recall test' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recall test' }));
     expect(screen.getByText('Test semantic retrieval')).toBeInTheDocument();
     expect(screen.queryByText('No documents indexed')).not.toBeInTheDocument();
   });

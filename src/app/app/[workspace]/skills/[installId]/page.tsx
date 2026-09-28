@@ -1,18 +1,16 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
+
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { ButtonLink, Button } from '@/components/motion/button';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
 import { getLocale, getTranslations } from 'next-intl/server';
 import type { ReactNode } from 'react';
 import { redirect, notFound } from 'next/navigation';
-import {
-  CheckCircle2,
-  Download,
-  ExternalLink,
-  FileArchive,
-  FileCode2,
-  GitBranch,
-  Info,
-  LinkIcon,
-  Settings2,
-  XCircle,
-} from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, FileArchive, FileCode2, GitBranch, Info, LinkIcon, Settings2, XCircle } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { db } from '@/lib/db';
@@ -21,7 +19,6 @@ import { deleteCustomSkillAction, updateSkillAttributesAction } from '@/lib/skil
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SkillMarkdownViewer } from '@/components/dashboard/SkillMarkdownViewer';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -158,21 +155,12 @@ function DetailItem({
 function BooleanPill({ value, label }: { value: boolean; label: string }) {
   const Icon = value ? CheckCircle2 : XCircle;
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${
-        value
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300'
-          : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400'
-      }`}
-    >
+    <AnimatedBadge  status="success" size="sm" showIcon={false}>
       <Icon className="size-3.5" />
       {label}
-    </span>
+    </AnimatedBadge>
   );
 }
-
-const controlInput =
-  'h-9 rounded-md border border-border bg-card px-3 text-sm text-foreground outline-none transition-colors focus:border-ring';
 
 export default async function SkillInspectorPage({
   params,
@@ -228,25 +216,20 @@ export default async function SkillInspectorPage({
 
   return (
     <>
-      <DashboardHeader
-        breadcrumb={[
-          { label: t('title'), href: `/app/${slug}/skills` },
-          { label: label.name },
-        ]}
-      />
-      <div className="ui-page w-full max-w-none space-y-5">
-        <section className="ui-panel overflow-hidden">
+      <DashboardHeader title={label.name} />
+      <div className="p-4 sm:p-6 w-full max-w-none space-y-5">
+        <section className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="border-b border-border px-5 py-4 sm:px-6">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                  <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                     {installSourceLabel}
-                  </span>
+                  </AnimatedBadge>
                   {extraFiles.length ? (
-                    <span className="rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                    <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                       {extraFiles.length} {t('bundledFiles')}
-                    </span>
+                    </AnimatedBadge>
                   ) : null}
                 </div>
                 <h2 className="break-words text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -258,20 +241,15 @@ export default async function SkillInspectorPage({
               </div>
               <div className="flex flex-wrap gap-2">
                 {githubOriginal ? (
-                  <a
-                    href={githubOriginal}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="ui-button-secondary"
-                  >
+                  <ButtonLink href={githubOriginal} target="_blank" rel="noreferrer" variant="secondary" size="md">
                     <ExternalLink className="size-4" />
                     {t('openGithub')}
-                  </a>
+                  </ButtonLink>
                 ) : null}
-                <a href={downloadHref} className="ui-button-primary">
+                <ButtonLink href={downloadHref} variant="primary" size="md">
                   <Download className="size-4" />
                   {t('download')}
-                </a>
+                </ButtonLink>
               </div>
             </div>
           </div>
@@ -333,9 +311,7 @@ export default async function SkillInspectorPage({
                   <form action={deleteCustomSkillAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="installId" value={install.id} />
-                    <button className="ui-button-secondary ui-button-sm text-red-600 hover:border-red-200 hover:text-red-700 dark:text-red-300">
-                      {t('delete')}
-                    </button>
+                    <Button variant="secondary" size="sm" type="submit">{t('delete')}</Button>
                   </form>
                 </div>
               </div>
@@ -343,23 +319,19 @@ export default async function SkillInspectorPage({
               <form action={updateSkillAttributesAction} className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="installId" value={install.id} />
-                <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <input type="checkbox" name="userInvocable" defaultChecked={install.userInvocable} />
-                  {t('user')}
-                </label>
-                <label className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
-                  <input type="checkbox" name="agentInvocable" defaultChecked={install.agentInvocable} />
-                  {t('agent')}
-                </label>
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                  <FormCheckbox name="userInvocable" defaultChecked={install.userInvocable} label={t('user')} />
+                  
+                </div>
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground">
+                  <FormCheckbox name="agentInvocable" defaultChecked={install.agentInvocable} label={t('agent')} />
+                  
+                </div>
                 <label className="space-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {t('effort')}
-                  <NativeSelect name="effort" defaultValue={install.effort} className={`${controlInput} mt-1 w-full`}>
-                    <option value="default">{t('default')}</option>
-                    <option value="low">{t('low')}</option>
-                    <option value="high">{t('high')}</option>
-                  </NativeSelect>
+                  <FormSelect name="effort" defaultValue={install.effort} label={t('effort')} options={[{ value: 'default', label: t('default') }, { value: 'low', label: t('low') }, { value: 'high', label: t('high') }]} />
                 </label>
-                <button className="ui-button-primary h-9">{t('save')}</button>
+                <Button variant="primary" size="sm" type="submit">{t('save')}</Button>
               </form>
             </div>
           ) : null}
@@ -372,7 +344,7 @@ export default async function SkillInspectorPage({
         />
 
         {extraFiles.length ? (
-          <section className="ui-panel overflow-hidden">
+          <section className="rounded-xl border border-border bg-card overflow-hidden">
             <div className="border-b border-border px-5 py-4 sm:px-6">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 {t('bundleFiles')}
@@ -383,24 +355,19 @@ export default async function SkillInspectorPage({
             </div>
             <div className="divide-y divide-border">
               {extraFiles.map((file) => (
-                <details key={file.path} className="group">
-                  <summary className="flex cursor-pointer list-none flex-col gap-1 px-5 py-3 text-sm transition-colors hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                    <span className="min-w-0 break-all font-mono text-foreground">
+                <BouncyAccordion items={[{ id: 'details', title: <><span className="min-w-0 break-all font-mono text-foreground">
                       {file.path}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       {formatBytes(file.content)}
-                    </span>
-                  </summary>
-                  <pre className="max-h-96 overflow-auto border-t border-border bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">
+                    </span></>, description: <><pre className="max-h-96 overflow-auto border-t border-border bg-muted/30 p-5 font-mono text-xs leading-6 text-foreground sm:p-6">
                     {file.content}
-                  </pre>
-                </details>
+                  </pre></> }]} />
               ))}
             </div>
           </section>
         ) : (
-          <section className="ui-panel-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
+          <section className="rounded-xl border border-border bg-muted px-5 py-4 text-sm text-muted-foreground sm:px-6">
             {t('noBundledFilesThisSkillSyncsAsASingleSkillmdFile')}
           </section>
         )}

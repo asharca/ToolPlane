@@ -1,3 +1,7 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink } from '@/components/motion/button';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -72,10 +76,10 @@ type InstalledResource = {
 };
 
 function statusTone(status: string) {
-  if (['error', 'failed', 'copy_failed', 'restore_failed'].includes(status)) return 'bg-red-500';
-  if (['ready', 'running', 'published', 'enabled'].includes(status)) return 'bg-emerald-500';
-  if (['modified', 'installing', 'provisioning', 'setup_required'].includes(status)) return 'bg-amber-500';
-  return 'bg-zinc-400';
+  if (['error', 'failed', 'copy_failed', 'restore_failed'].includes(status)) return 'bg-destructive';
+  if (['ready', 'running', 'published', 'enabled'].includes(status)) return 'bg-muted/35';
+  if (['modified', 'installing', 'provisioning', 'setup_required'].includes(status)) return 'bg-muted/35';
+  return 'bg-muted';
 }
 
 export default async function InstalledMarketPage({
@@ -264,15 +268,15 @@ export default async function InstalledMarketPage({
           </p>
         </div>
         {updates > 0 ? (
-          <span className="inline-flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+          <AnimatedBadge status="warning" size="sm">
             <RotateCw className="size-3.5" />
             {t('updatesAvailable', { count: updates })}
-          </span>
+          </AnimatedBadge>
         ) : null}
       </div>
 
       {error ? (
-        <p role="alert" className="rounded-md bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="text-sm text-destructive">
           {error === 'in_use' ? t('uninstallInUse') : t('uninstallFailed')}
         </p>
       ) : null}
@@ -282,7 +286,7 @@ export default async function InstalledMarketPage({
           icon={PackageCheck}
           title={t('installedEmptyTitle')}
           description={t('installedEmptyDescription')}
-          actions={<Link href={`${base}/market/mcp`} className="ui-button-primary">{t('browseMcp')}</Link>}
+          actions={<ButtonLink href={`${base}/market/mcp`} variant="primary" size="md">{t('browseMcp')}</ButtonLink>}
         />
       ) : (
         <section aria-label={t('installedResources')} className="space-y-1">
@@ -329,7 +333,7 @@ export default async function InstalledMarketPage({
                 </div>
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                   {item.market?.updateAvailable || item.copy?.updateAvailable ? (
-                    <span className="text-xs font-medium text-amber-700 dark:text-amber-300">{t('updateAvailable')}</span>
+                    <span className="text-xs font-medium text-(--color-warning) dark:text-(--color-warning)">{t('updateAvailable')}</span>
                   ) : item.market?.updateIgnored ? (
                     <span className="text-xs text-muted-foreground">{t('updateIgnored')}</span>
                   ) : null}
@@ -339,20 +343,20 @@ export default async function InstalledMarketPage({
                       <input type="hidden" name="installId" value={item.market.installId} />
                       <input type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
                       <input type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
-                      <SubmitButton flash={false} pendingLabel={t('updating')} className="ui-button-primary h-8 px-2.5 text-xs">
+                      <SubmitButton flash={false} pendingLabel={t('updating')} variant="primary" size="sm">
                         {t('update')}
                       </SubmitButton>
                     </form>
                   ) : null}
                   {item.copy?.updateAvailable ? (
-                    <Link href={item.copy.updateHref} className="ui-button-primary h-8 px-2.5 text-xs">
+                    <ButtonLink href={item.copy.updateHref} variant="primary" size="sm">
                       {t('createUpdatedCopy')}
-                    </Link>
+                    </ButtonLink>
                   ) : null}
                   {item.market?.updateAvailable && item.status === 'modified' ? (
-                    <Link href={item.market.detailHref} className="ui-button-secondary h-8 px-2.5 text-xs">
+                    <ButtonLink href={item.market.detailHref} variant="secondary" size="sm">
                       {t('reviewUpdate')}
-                    </Link>
+                    </ButtonLink>
                   ) : null}
                   {item.market?.updateAvailable ? (
                     <form action={ignoreMarketUpdateAction}>
@@ -360,14 +364,14 @@ export default async function InstalledMarketPage({
                       <input type="hidden" name="installId" value={item.market.installId} />
                       <input type="hidden" name="targetReleaseId" value={item.market.latestReleaseId ?? ''} />
                       <input type="hidden" name="currentReleaseId" value={item.market.currentReleaseId} />
-                      <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} className="ui-button-ghost h-8 px-2 text-xs">
+                      <SubmitButton flash={false} pendingLabel={t('ignoringUpdate')} variant="ghost" size="sm">
                         {t('ignoreThisVersion')}
                       </SubmitButton>
                     </form>
                   ) : null}
-                  <Link href={item.href} className="ui-button-ghost h-8 px-2 text-xs">
+                  <ButtonLink href={item.href} variant="ghost" size="sm">
                     {t('manage')} <ArrowUpRight className="size-3.5" />
-                  </Link>
+                  </ButtonLink>
                   {item.market ? (
                     <form action={removeMarketInstallAction}>
                       <input type="hidden" name="workspace" value={workspace.slug} />
@@ -379,9 +383,9 @@ export default async function InstalledMarketPage({
                         confirmLabel={t('uninstall')}
                         pendingLabel={t('uninstalling')}
                         cancelLabel={common('cancel')}
-                        triggerClassName="ui-button-ghost h-8 px-2 text-xs text-red-600 dark:text-red-400"
-                        confirmClassName="ui-button-primary ui-button-danger h-8 px-2.5 text-xs"
-                        cancelClassName="ui-button-ghost h-8 px-2 text-xs"
+                        
+                        
+                        
                         promptClassName="max-w-56 text-xs text-muted-foreground"
                       />
                     </form>
@@ -398,9 +402,9 @@ export default async function InstalledMarketPage({
                         confirmLabel={t('uninstall')}
                         pendingLabel={t('uninstalling')}
                         cancelLabel={common('cancel')}
-                        triggerClassName="ui-button-ghost h-8 px-2 text-xs text-red-600 dark:text-red-400"
-                        confirmClassName="ui-button-primary ui-button-danger h-8 px-2.5 text-xs"
-                        cancelClassName="ui-button-ghost h-8 px-2 text-xs"
+                        
+                        
+                        
                         promptClassName="max-w-56 text-xs text-muted-foreground"
                       />
                     </form>
@@ -416,9 +420,9 @@ export default async function InstalledMarketPage({
                         confirmLabel={t('uninstall')}
                         pendingLabel={t('uninstalling')}
                         cancelLabel={common('cancel')}
-                        triggerClassName="ui-button-ghost h-8 px-2 text-xs text-red-600 dark:text-red-400"
-                        confirmClassName="ui-button-primary ui-button-danger h-8 px-2.5 text-xs"
-                        cancelClassName="ui-button-ghost h-8 px-2 text-xs"
+                        
+                        
+                        
                         promptClassName="max-w-56 text-xs text-muted-foreground"
                       />
                     </form>

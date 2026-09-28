@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Features
+* rebuild agent and assistant chats with the full beUI Chat App resource tree and conversation components
+* streamline assistant and agent beUI sidebars and responsive headers; separate the assistant editor from the chat page
+* move assistant creation into the list header, add per-assistant session creation, and remove the Work sidebar search and top actions
+* remove the workspace Agent manager from the Work list options while keeping create-only entry
+* automatically fill and persist provider model prices, pricing tiers, context/output limits, reasoning, and input modalities from exact catalog matches; prioritize the selected Pi provider or known endpoint, then the native protocol catalog for compatible proxies; populate editable model fields, preserve manual values, and leave unresolved models unset
+* configure provider pricing with Pi's native base rates and optional `tiers[]`: add/remove multiple tiers, edit input thresholds and all four token rates, and preserve tier data when settings collapse; clarify that cached input counts toward strict thresholds and the highest matching tier prices the entire request
+
+### Bug Fixes
+* upgrade React and React DOM to 19.3.0 so animated form controls keep pending submissions disabled until the action settles
+* align Shiki with the Streamdown code plugin so clean installs share compatible highlighting types
+* hide closed and exiting overlays from assistive technology, focus visible controls when dialogs open, and expose required custom form controls correctly
+* render initial virtualized table rows before client measurement and preserve keyboard input during IME composition
+* keep toolkit sync scripts compatible with macOS Bash by moving the embedded Node heredoc outside command substitution
+* use a disposable PostgreSQL test database in CI and align regression coverage with Pi-only creation, native protocol catalog references, and current chat controls
+* synchronize chat sidebar state after rendering to keep responsive resizing compatible with React ref rules
+* center the provider model test icon alongside edit and remove actions by using the stateful button's icon slot instead of its animated text slot
+* keep the theme bootstrap executable during SSR but inert on client mounts, avoiding React script warnings while preserving theme persistence and switching
+* align knowledge base sidebar, tabs, and content with the WorkspaceShell surface and reuse shared sidebar primitives
+* sync workspace shell menus and sidebar hover animation with current beUI source
+* prevent sidebar action menus from reopening during dismissal
+* keep the agent prompt composer full-width inside its tools popover
+* show an Agent's green indicator only while it has a running Work session; clear it on completion, with yellow warnings and red errors
+* align model provider navigation, search, and icon actions on desktop and mobile; show beUI Tooltip only for icon-only controls and collapsed sidebar navigation, not visible text labels
+* bound beUI form select option lists to a scrollable viewport so provider formats do not stretch their dialog
+* save new model providers immediately, then discover models through an independent request with per-provider progress, failure, and refresh controls; keep saved providers and model caches on discovery failure
+* update the Pi model catalog to 0.87.1, including GPT-6 models, and recognize native provider metadata even when other Pi providers list the same model ID
+* refresh stale automatically discovered context/output limits and full pricing tiers from the official Pi catalog during discovery and provider-page backfill; preserve manually edited values and unmatched model metadata
+* correct Pi 0.87.1's stale OpenAI GPT-6 Astra/Sol/Luna context metadata to the documented 1,050,000-token maximum when importing or refreshing provider models; retain the separate 272,000-token pricing threshold, manual limits, and provider-specific catalog values
+
 ## [0.31.2](https://github.com/asharca/ToolPlane/compare/v0.31.1...v0.31.2) (2026-09-24)
 
 

@@ -29,7 +29,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { WorkspaceTabBar } from '@asharca/ui';
+import { WorkspaceTabBar } from '@/components/workspace/workspace-tab-bar';
 import { DashboardHeaderControls } from './DashboardHeaderControls';
 
 export const DASHBOARD_TAB_QUERY_PARAM = '__dashboardTab';
@@ -371,7 +371,6 @@ export function DashboardTabsProvider({ slug, children }: { slug: string; childr
 export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }) {
   const { activeTabId, base, closeTab, newTab, openInNewWindow, reorderTabs, selectTab, tabs, togglePinned } = useDashboardTabs();
   const sidebarT = useTranslations('console.sidebar');
-  const tabT = useTranslations('console.tabs');
   const visibleTabs = orderedTabs(tabs);
 
   return (
@@ -379,22 +378,15 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
       activeTabId={activeTabId}
       tabs={visibleTabs.map((tab) => {
         const definition = definitionForHref(tab.href, base);
-        return { ...tab, icon: definition.icon, label: sidebarT(definition.labelKey) };
+        const Icon = definition.icon;
+        return { ...tab, icon: <Icon />, title: sidebarT(definition.labelKey) };
       })}
-      labels={{
-        navigation: tabT('navigation'),
-        newTab: tabT('new'),
-        pin: (label) => tabT('pin', { label }),
-        unpin: (label) => tabT('unpin', { label }),
-        openInNewWindow: (label) => tabT('openInNewWindow', { label }),
-        close: (label) => tabT('close', { label }),
-      }}
       onClose={closeTab}
       onNewTab={newTab}
       onOpenInNewWindow={openInNewWindow}
       onReorder={reorderTabs}
       onSelect={selectTab}
-      onTogglePinned={togglePinned}
+      onPinnedChange={(id) => togglePinned(id)}
       actions={<DashboardHeaderControls canInstall={canInstall} />}
     />
   );
@@ -402,7 +394,7 @@ export function DashboardTabBar({ canInstall = false }: { canInstall?: boolean }
 
 export function DashboardTabContent({ children }: { children?: ReactNode }) {
   return (
-    <main className="m-2 mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain rounded-[12px] bg-background lg:ml-0">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-contain">
       {children}
     </main>
   );

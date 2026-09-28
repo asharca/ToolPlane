@@ -1,7 +1,10 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { ToolApproval, ToolApprovalCode } from '@/components/agents/tool-approval';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Alert, Button } from '@asharca/ui';
+
 type Approval = { id: string; taskId: string; toolName: string; input: unknown; inputHash: string; status: string; expiresAt: string };
 /** Decisions remain a same-origin human control plane, never an A2A message from a model. */
 export function A2AToolApprovals({ base, rootTaskId, taskId }: { base: string; rootTaskId: string; taskId: string }) {
@@ -54,14 +57,13 @@ export function A2AToolApprovals({ base, rootTaskId, taskId }: { base: string; r
   }
   return <section aria-label={t('title')} className="space-y-3">
     <h5 className="text-sm font-semibold">{t('title')}</h5><p className="text-xs text-muted-foreground">{t('hint')}</p>
-    {failed ? <Alert tone="warning">{t('failed')} <Button type="button" size="sm" variant="secondary" onClick={()=>setRevision(value=>value+1)}>{t('refresh')}</Button></Alert> : null}
-    {items.map(item=><article key={item.id} className="space-y-2 rounded-lg border border-border p-3">
-      <div className="flex flex-wrap justify-between gap-2"><strong className="text-sm">{item.toolName}</strong><span className="text-xs">{item.status}</span></div>
-      <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(item.input,null,2)}</pre>
-      {item.status==='pending' && Date.parse(item.expiresAt)>observedAt ? <div className="flex gap-2">
-        <Button type="button" size="sm" disabled={Boolean(busy)} onClick={()=>void decide(item,'approved')}>{t('approve')}</Button>
-        <Button type="button" size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void decide(item,'denied')}>{t('deny')}</Button>
-      </div> : null}
-    </article>)}
+    {failed ? <div role="alert" className="space-y-2 text-sm text-muted-foreground">{t('failed')} <Button type="button" onClick={()=>setRevision(value=>value+1)} variant={"secondary"} size={"sm"}>{t('refresh')}</Button></div> : null}
+    {items.map((item) => item.status === 'pending' && Date.parse(item.expiresAt) > observedAt ? (
+      <fieldset key={item.id} disabled={Boolean(busy)} className="contents"><ToolApproval tool={item.toolName} title={t('title')} description={t('hint')}
+        status={busy === item.id ? 'approving' : 'pending'} defaultOpen
+        parameters={[{ id: 'input', label: item.toolName, value: <ToolApprovalCode code={JSON.stringify(item.input, null, 2)} language="json" /> }]}
+        onApprove={() => void decide(item, 'approved')} onDeny={() => void decide(item, 'denied')} /></fieldset>
+    ) : <article key={item.id} className="space-y-2"><strong className="text-sm">{item.toolName}</strong><AnimatedBadge status={item.status === 'approved' ? 'success' : item.status === 'denied' ? 'danger' : 'neutral'}>{item.status}</AnimatedBadge><pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(item.input, null, 2)}</pre></article>)}
+
   </section>;
 }

@@ -1,9 +1,15 @@
 'use client';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
+import { Button } from '@/components/motion/button/base';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
 
 import { useActionState, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { useFormStatus } from 'react-dom';
 import {
   AlertTriangle,
   Braces,
@@ -12,7 +18,6 @@ import {
   Code2,
   Globe2,
   KeyRound,
-  Loader2,
   RotateCcwKey,
   Server,
   ShieldCheck,
@@ -20,7 +25,7 @@ import {
 } from 'lucide-react';
 import { CopyButton } from '@/components/dashboard/CopyButton';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import {
   createAgentApiClientAction,
   createAgentApiKeyAction,
@@ -98,23 +103,13 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
 }
 
-function SubmitButton({ idle, pending }: { idle: string; pending: string }) {
-  const status = useFormStatus();
-  return (
-    <button type="submit" disabled={status.pending} className="ui-button-primary gap-2 disabled:opacity-60">
-      {status.pending ? <Loader2 className="size-4 animate-spin" /> : null}
-      {status.pending ? pending : idle}
-    </button>
-  );
-}
-
 function ActionMessage({ state, success }: { state: ActionState; success: string }) {
   if (state.error) {
-    return <p className="text-sm text-red-600 dark:text-red-400" role="alert">{state.error}</p>;
+    return <p className="text-sm text-destructive text-destructive" role="alert">{state.error}</p>;
   }
   if (state.success || state.savedAt || state.endpointId || state.clientId) {
     return (
-      <p className="inline-flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-300">
+      <p className="inline-flex items-center gap-1.5 text-sm text-muted-foreground text-muted-foreground">
         <CheckCircle2 className="size-4" />
         {success}
       </p>
@@ -133,11 +128,11 @@ function SecretReveal({
   secret: string;
 }) {
   return (
-    <div className="rounded-md border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-      <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">{label}</p>
-      <p className="mt-1 text-xs leading-5 text-emerald-800 dark:text-emerald-300">{warning}</p>
+    <div className="rounded-md border border-border bg-muted p-4 border-border bg-muted">
+      <p className="text-sm font-semibold text-muted-foreground text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground text-muted-foreground">{warning}</p>
       <div className="mt-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-        <code className="min-w-0 flex-1 overflow-x-auto rounded-md border border-emerald-200 bg-background px-3 py-2 font-mono text-xs text-foreground dark:border-emerald-500/30">
+        <code className="min-w-0 flex-1 overflow-x-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground border-border">
           {secret}
         </code>
         <CopyButton text={secret} />
@@ -171,32 +166,21 @@ function ResourceChecklist({
       ) : (
         <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
           {options.map((option) => (
-            <label
-              key={option.id}
-              className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-accent/50"
-            >
-              <input
-                type="checkbox"
-                name={name}
-                value={option.id}
-                checked={selected.has(option.id)}
-                onChange={(event) => {
+            <div key={option.id} className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-accent/50">
+              <FormCheckbox name={name} value={option.id} checked={selected.has(option.id)} label={option.label} disabled={disabled} onCheckedChange={(checked) => {
                   const next = new Set(selected);
-                  if (event.target.checked) next.add(option.id);
+                  if (checked) next.add(option.id);
                   else next.delete(option.id);
                   setSelected(next);
-                }}
-                className="mt-0.5 size-4 rounded border-border"
-              />
+                }} />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-foreground">{option.label}</span>
                 {option.description || option.status ? (
                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                     {[option.description, option.status].filter(Boolean).join(' · ')}
                   </span>
                 ) : null}
               </span>
-            </label>
+            </div>
           ))}
         </div>
       )}
@@ -207,29 +191,13 @@ function ResourceChecklist({
 function CodeSnippet({ title, code }: { title: string; code: string }) {
   const t = useTranslations('console.agents');
   return (
-    <section className="overflow-hidden rounded-md border border-border bg-zinc-950">
+    <section className="overflow-hidden rounded-md border border-border bg-muted">
       <header className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2">
-        <span className="text-xs font-medium text-zinc-300">{title}</span>
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
         <CopyButton text={code} label={t('copyCode')} />
       </header>
-      <pre className="overflow-x-auto p-4 text-xs leading-5 text-zinc-100"><code>{code}</code></pre>
+      <pre className="overflow-x-auto p-4 text-xs leading-5 text-muted-foreground"><code>{code}</code></pre>
     </section>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const t = useTranslations('console.agents');
-  const active = status === 'active' || status === 'enabled' || status === 'published';
-  return (
-    <span className={cx(
-      'inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-xs font-medium',
-      active
-        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-        : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-300',
-    )}>
-      <span className={cx('size-1.5 rounded-full', active ? 'bg-emerald-500' : 'bg-zinc-400')} />
-      {active ? t('agentApiActive') : t('agentApiDisabled')}
-    </span>
   );
 }
 
@@ -343,16 +311,16 @@ print(response.choices[0].message.content)`,
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-5 sm:px-6">
-      <section className="ui-panel overflow-hidden">
+      <section className="rounded-2xl border border-border bg-card overflow-hidden">
         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-base font-semibold text-foreground">{t('agentApiTitle')}</h3>
-              {endpoint ? <StatusBadge status={endpoint.status} /> : null}
+              {endpoint ? <AnimatedBadge status={endpointActive ? 'success' : 'neutral'}>{t(endpointActive ? 'agentApiActive' : 'agentApiDisabled')}</AnimatedBadge> : null}
               {endpoint ? (
-                <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                <AnimatedBadge status="neutral">
                   {t('agentApiRevision', { revision: endpoint.revision })}
-                </span>
+                </AnimatedBadge>
               ) : null}
             </div>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -365,16 +333,10 @@ print(response.choices[0].message.content)`,
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="endpointId" value={endpoint.id} />
               <input type="hidden" name="status" value={endpointActive ? 'disabled' : 'active'} />
-              <button
-                type="submit"
-                className={cx(
-                  'ui-button-secondary shrink-0 gap-2',
-                  endpointActive && 'text-red-600 dark:text-red-400',
-                )}
-              >
+              <Button type="submit" variant={"secondary"}>
                 {endpointActive ? <CircleSlash2 className="size-4" /> : <Globe2 className="size-4" />}
                 {endpointActive ? t('disableAgentApi') : t('enableAgentApi')}
-              </button>
+              </Button>
             </form>
           ) : null}
         </div>
@@ -397,12 +359,12 @@ print(response.choices[0].message.content)`,
       </section>
 
       {!canManage ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+        <div className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground text-muted-foreground">
           {t('agentApiManagePermissionRequired')}
         </div>
       ) : null}
 
-      <section className="ui-panel overflow-hidden">
+      <section className="rounded-2xl border border-border bg-card overflow-hidden">
         <div className="border-b border-border px-5 py-4">
           <h3 className="text-sm font-semibold text-foreground">{t('agentApiConfiguration')}</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('agentApiConfigurationHelp')}</p>
@@ -413,29 +375,14 @@ print(response.choices[0].message.content)`,
           {endpoint ? <input type="hidden" name="endpointId" value={endpoint.id} /> : null}
 
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className="block text-xs font-semibold text-foreground">{t('agentApiEndpointName')}</span>
-              <input
-                className="ui-input h-10"
-                name="name"
-                defaultValue={endpoint?.name ?? agentName}
-                maxLength={80}
-                required
-                disabled={!canManage}
-              />
-            </label>
-            <label className="space-y-1.5">
+            <div className="space-y-1.5">
+              
+              <Input label={t('agentApiEndpointName')} name="name" maxLength={80} required disabled={!canManage} defaultValue={String(endpoint?.name ?? agentName)} />
+            </div>
+            <div className="space-y-1.5">
               <span className="block text-xs font-semibold text-foreground">{t('agentApiIsolationMode')}</span>
-              <NativeSelect
-                name="isolationMode"
-                defaultValue={endpoint?.isolationMode ?? 'subject'}
-                disabled={!canManage}
-                className="h-10"
-              >
-                <option value="subject">{t('agentApiSubjectIsolation')}</option>
-                <option value="shared">{t('agentApiSharedIsolation')}</option>
-              </NativeSelect>
-            </label>
+              <FormSelect name="isolationMode" defaultValue={endpoint?.isolationMode ?? 'subject'} disabled={!canManage} label={t('agentApiIsolationMode')} options={[({ value: "subject", label: t('agentApiSubjectIsolation') }), ({ value: "shared", label: t('agentApiSharedIsolation') })].flat().filter((option) => option != null)} />
+            </div>
           </div>
 
           <label className="block space-y-1.5">
@@ -447,7 +394,7 @@ print(response.choices[0].message.content)`,
               maxLength={20_000}
               disabled={!canManage}
               placeholder={t('agentApiSystemPromptPlaceholder')}
-              className="ui-input min-h-28 resize-y py-2.5"
+              className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <span className="block text-xs leading-5 text-muted-foreground">{t('agentApiSystemPromptHelp')}</span>
           </label>
@@ -463,19 +410,10 @@ print(response.choices[0].message.content)`,
               ['timeoutSeconds', t('agentApiTimeout'), endpoint?.timeoutSeconds ?? 300, 10, 840],
               ['retentionDays', t('agentApiRetention'), endpoint?.retentionDays ?? 30, 0, 365],
             ] as const).map(([name, label, defaultValue, min, max]) => (
-              <label key={name} className="space-y-1.5">
-                <span className="block text-xs font-semibold text-foreground">{label}</span>
-                <input
-                  className="ui-input h-10"
-                  type="number"
-                  name={name}
-                  defaultValue={defaultValue}
-                  min={min}
-                  max={max}
-                  required
-                  disabled={!canManage}
-                />
-              </label>
+              <div key={name} className="space-y-1.5">
+                
+                <Input label={label} type="number" name={name} min={min} max={max} required disabled={!canManage} defaultValue={String(defaultValue)} />
+              </div>
             ))}
           </div>
 
@@ -487,7 +425,7 @@ print(response.choices[0].message.content)`,
               rows={3}
               disabled={!canManage}
               placeholder="https://app.example.com"
-              className="ui-input min-h-24 resize-y py-2.5 font-mono text-xs"
+              className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <span className="block text-xs leading-5 text-muted-foreground">{t('agentApiAllowedOriginsHelp')}</span>
           </label>
@@ -520,16 +458,13 @@ print(response.choices[0].message.content)`,
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <ActionMessage state={publishState} success={t('agentApiPublished')} />
             {canManage ? (
-              <SubmitButton
-                idle={endpoint ? t('publishNewRevision') : t('publishAgentApi')}
-                pending={t('publishingAgentApi')}
-              />
+              <SubmitButton pendingLabel={t('publishingAgentApi')} flash={false}>{endpoint ? t('publishNewRevision') : t('publishAgentApi')}</SubmitButton>
             ) : null}
           </div>
         </form>
       </section>
 
-      <section className="ui-panel overflow-hidden">
+      <section className="rounded-2xl border border-border bg-card overflow-hidden">
         <div className="border-b border-border px-5 py-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <KeyRound className="size-4 text-muted-foreground" />
@@ -551,17 +486,11 @@ print(response.choices[0].message.content)`,
               <input type="hidden" name="workspace" value={workspaceSlug} />
               <input type="hidden" name="agentId" value={agentId} />
               <input type="hidden" name="endpointId" value={endpoint.id} />
-              <label className="min-w-0 flex-1 space-y-1.5">
-                <span className="block text-xs font-semibold text-foreground">{t('agentApiClientName')}</span>
-                <input
-                  name="name"
-                  className="ui-input h-10"
-                  placeholder={t('agentApiClientNamePlaceholder')}
-                  maxLength={80}
-                  required
-                />
-              </label>
-              <SubmitButton idle={t('createAgentApiClient')} pending={t('creatingAgentApiClient')} />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                
+                <Input label={t('agentApiClientName')} name="name" placeholder={t('agentApiClientNamePlaceholder')} maxLength={80} required />
+              </div>
+              <SubmitButton pendingLabel={t('creatingAgentApiClient')} flash={false}>{t('createAgentApiClient')}</SubmitButton>
             </form>
           ) : null}
           <ActionMessage state={clientState} success={t('agentApiClientCreated')} />
@@ -589,17 +518,11 @@ print(response.choices[0].message.content)`,
                         <input type="hidden" name="agentId" value={agentId} />
                         <input type="hidden" name="endpointId" value={endpoint.id} />
                         <input type="hidden" name="clientId" value={client.id} />
-                        <label className="space-y-1">
-                          <span className="block text-xs font-semibold text-foreground">{t('agentApiKeyName')}</span>
-                          <input
-                            name="name"
-                            className="ui-input h-9 w-40"
-                            placeholder={t('agentApiKeyNamePlaceholder')}
-                            maxLength={80}
-                            required
-                          />
-                        </label>
-                        <SubmitButton idle={t('createAgentApiKey')} pending={t('creatingAgentApiKey')} />
+                        <div className="space-y-1">
+                          
+                          <Input label={t('agentApiKeyName')} name="name" placeholder={t('agentApiKeyNamePlaceholder')} maxLength={80} required className="w-40" />
+                        </div>
+                        <SubmitButton pendingLabel={t('creatingAgentApiKey')} flash={false}>{t('createAgentApiKey')}</SubmitButton>
                       </form>
                     ) : null}
                   </div>
@@ -627,10 +550,10 @@ print(response.choices[0].message.content)`,
                               <input type="hidden" name="agentId" value={agentId} />
                               <input type="hidden" name="endpointId" value={endpoint.id} />
                               <input type="hidden" name="keyId" value={key.id} />
-                              <button type="submit" className="ui-button-secondary ui-button-sm gap-1.5 text-red-600 dark:text-red-400">
+                              <Button type="submit" variant={"secondary"} size={"sm"}>
                                 <Trash2 className="size-3.5" />
                                 {t('revokeAgentApiKey')}
-                              </button>
+                              </Button>
                             </form>
                           ) : null}
                         </li>
@@ -644,35 +567,31 @@ print(response.choices[0].message.content)`,
           <ActionMessage state={keyState} success={t('agentApiKeyCreated')} />
 
           {endpoint && endpoint.clients.length > 0 && canManage ? (
-            <details className="rounded-md border border-border bg-muted/10">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground">
+            <BouncyAccordion items={[{ id: 'details', title: <>
                 {t('agentApiBrowserToken')}
-              </summary>
+              </>, description: <>
+              
               <form action={tokenFormAction} className="grid gap-3 border-t border-border px-4 py-4 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
                 <input type="hidden" name="workspace" value={workspaceSlug} />
                 <input type="hidden" name="agentId" value={agentId} />
                 <input type="hidden" name="endpointId" value={endpoint.id} />
-                <label className="space-y-1.5">
+                <div className="space-y-1.5">
                   <span className="block text-xs font-semibold text-foreground">{t('agentApiClient')}</span>
-                  <NativeSelect name="clientId" className="h-10">
-                    {endpoint.clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-                  </NativeSelect>
-                </label>
-                <label className="space-y-1.5">
-                  <span className="block text-xs font-semibold text-foreground">{t('agentApiSubject')}</span>
-                  <input name="subject" className="ui-input h-10" maxLength={200} required placeholder="customer_42" />
-                </label>
-                <label className="space-y-1.5">
+                  <FormSelect name="clientId" label={t('agentApiClient')} options={[endpoint.clients.map((client) => ({ value: client.id, label: client.name }))].flat().filter((option) => option != null)} />
+                </div>
+                <div className="space-y-1.5">
+                  
+                  <Input label={t('agentApiSubject')} name="subject" maxLength={200} required placeholder="customer_42" />
+                </div>
+                <div className="space-y-1.5">
                   <span className="block text-xs font-semibold text-foreground">{t('agentApiAllowedOrigins')}</span>
-                  <NativeSelect name="origin" className="h-10" required>
-                    {endpoint.allowedOrigins.length === 0 ? (
-                      <option value="">{t('agentApiAllowedOrigins')}</option>
+                  <FormSelect name="origin" required label={t('agentApiAllowedOrigins')} options={[endpoint.allowedOrigins.length === 0 ? (
+                      ({ value: "", label: t('agentApiAllowedOrigins') })
                     ) : endpoint.allowedOrigins.map((origin) => (
-                      <option key={origin} value={origin}>{origin}</option>
-                    ))}
-                  </NativeSelect>
-                </label>
-                <SubmitButton idle={t('createAgentClientToken')} pending={t('creatingAgentClientToken')} />
+                      ({ value: origin, label: origin })
+                    ))].flat().filter((option) => option != null)} />
+                </div>
+                <SubmitButton pendingLabel={t('creatingAgentClientToken')} flash={false}>{t('createAgentClientToken')}</SubmitButton>
               </form>
               {clientToken ? (
                 <div className="border-t border-border p-4">
@@ -683,13 +602,13 @@ print(response.choices[0].message.content)`,
                   />
                 </div>
               ) : null}
-              {tokenState.error ? <p className="px-4 pb-4 text-sm text-red-600 dark:text-red-400" role="alert">{tokenState.error}</p> : null}
-            </details>
+              {tokenState.error ? <p className="px-4 pb-4 text-sm text-destructive text-destructive" role="alert">{tokenState.error}</p> : null}
+            </> }]} />
           ) : null}
         </div>
       </section>
 
-      <section className="ui-panel overflow-hidden">
+      <section className="rounded-2xl border border-border bg-card overflow-hidden">
         <div className="border-b border-border px-5 py-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <Code2 className="size-4 text-muted-foreground" />
@@ -714,20 +633,10 @@ print(response.choices[0].message.content)`,
               ['javascript', t('agentApiJavaScript')],
               ['python', t('agentApiPython')],
             ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={snippet === value}
-                onClick={() => setSnippet(value)}
-                className={cx(
-                  'ui-button-secondary ui-button-sm gap-1.5',
-                  snippet === value && 'border-primary/40 bg-accent text-foreground',
-                )}
-              >
+              <Button key={value} type="button" role="tab" aria-selected={snippet === value} onClick={() => setSnippet(value)} variant={"secondary"} size={"sm"}>
                 {value === 'curl' ? <Braces className="size-3.5" /> : <Code2 className="size-3.5" />}
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
           <CodeSnippet
@@ -738,25 +647,25 @@ print(response.choices[0].message.content)`,
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4">
+        <div className="rounded-md border border-border bg-muted p-4">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-300" />
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
             <div>
-              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-100">{t('agentApiKeepKeysServerSide')}</h3>
-              <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-200">{t('agentApiKeepKeysServerSideHelp')}</p>
+              <h3 className="text-sm font-semibold text-muted-foreground text-muted-foreground">{t('agentApiKeepKeysServerSide')}</h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground text-muted-foreground">{t('agentApiKeepKeysServerSideHelp')}</p>
             </div>
           </div>
         </div>
-        <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-4">
+        <div className="rounded-md border border-border bg-muted p-4">
           <div className="flex items-start gap-3">
             {endpoint?.isolationMode === 'shared'
-              ? <Server className="mt-0.5 size-5 shrink-0 text-blue-600 dark:text-blue-300" />
-              : <ShieldCheck className="mt-0.5 size-5 shrink-0 text-blue-600 dark:text-blue-300" />}
+              ? <Server className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
+              : <ShieldCheck className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />}
             <div>
-              <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100">
+              <h3 className="text-sm font-semibold text-muted-foreground text-muted-foreground">
                 {endpoint?.isolationMode === 'shared' ? t('agentApiSharedIsolationWarning') : t('agentApiSubjectIsolationNotice')}
               </h3>
-              <p className="mt-1 text-xs leading-5 text-blue-800 dark:text-blue-200">
+              <p className="mt-1 text-xs leading-5 text-muted-foreground text-muted-foreground">
                 {endpoint?.isolationMode === 'shared' ? t('agentApiSharedIsolationWarningHelp') : t('agentApiSubjectIsolationNoticeHelp')}
               </p>
             </div>

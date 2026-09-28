@@ -1,4 +1,6 @@
 'use client';
+import { Input } from '@/components/motion/input';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState } from 'react';
@@ -35,15 +37,7 @@ export default function ImportSkillPage() {
               <FolderGit2 className="size-4 text-muted-foreground" />
               {t('githubSource')}
             </span>
-            <input
-              name="githubSource"
-              required
-              placeholder="owner/repo/path/to/skill or https://github.com/owner/repo/tree/main/path"
-              className="ui-input h-11 font-mono"
-              autoFocus
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="githubSource" required placeholder="owner/repo/path/to/skill or https://github.com/owner/repo/tree/main/path" autoFocus autoCapitalize="none" spellCheck={false} />
           </label>
 
           <div className="border-t border-border pt-4">
@@ -63,13 +57,13 @@ export default function ImportSkillPage() {
             <SubmitButton
               pendingLabel={t('importing')}
               error={state.error}
-              className="ui-button-primary h-11 w-full sm:w-auto"
+              variant="primary" size="md" className="w-full sm:w-auto"
             >
               <Download className="size-4" />
               {t('importSkill')}
             </SubmitButton>
             {state.error ? (
-              <p className="text-sm text-destructive-text" role="alert">{state.error}</p>
+              <p className="text-sm text-destructive" role="alert">{state.error}</p>
             ) : null}
           </div>
         </form>

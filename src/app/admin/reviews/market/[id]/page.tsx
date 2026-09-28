@@ -110,7 +110,7 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
               >
                 <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
                   <div className="min-w-0 space-y-5">
-                    <div className="flex items-start gap-3 bg-amber-500/10 p-4 text-sm leading-6 text-amber-800 dark:text-amber-200">
+                    <div className="flex items-start gap-3 bg-muted p-4 text-sm leading-6 text-muted-foreground">
                       <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                       <p>
                         {listing.kind === 'assistant'
@@ -291,7 +291,7 @@ export default async function AdminMarketReviewPage({ params, searchParams }: {
                         </div>
                       </section>
                     ) : (
-                      <p role="alert" className="text-sm text-destructive-text">{t('errorInvalidMarketRelease')}</p>
+                      <p role="alert" className="text-sm text-destructive">{t('errorInvalidMarketRelease')}</p>
                     )}
 
                     <details className="border-y border-border py-3">

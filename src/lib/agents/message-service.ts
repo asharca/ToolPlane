@@ -129,16 +129,17 @@ export async function runAgentChannelMessage(params: {
       where: { agentId: agent.id, runtimeSessionKey: sessionKey }, orderBy: { createdAt: 'desc' },
       include: { messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
     });
-    // Native channel ingress must not advertise legacy commands that bypass its task core.
-    const commands = isDedicatedSandboxRuntimeKind(agent.runtimeKind) ? [] : sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []);
+    // Only Pi compaction is routed to the native lane; other legacy commands stay blocked.
+    const commands = sessionRuntimeCommands(agent.runtimeKind, prior?.messages ?? []).filter((item) =>
+      !isDedicatedSandboxRuntimeKind(agent.runtimeKind) || (agent.runtimeKind === 'pi' && item.name === 'compact'));
     let conversationId = prior?.id ?? '';
     let message: string;
     if (name === 'help') {
       message = ['/new - Start a new conversation', ...commands.map((item) => `/${item.name}${item.description ? ` - ${item.description}` : ''}`), '/whoami - Show your chat and user IDs', '/help - Show commands'].join('\n');
     } else if (name === 'whoami') {
       message = `User ID: ${event.source.userId ?? '-'}\nChat ID: ${event.source.chatId ?? '-'}\nPlatform: ${channel.platform}`;
-    } else if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && !['new'].includes(name)) {
-      message = 'Legacy runtime commands are unavailable through native A2A ingress. Use the native workbench.';
+    } else if (isDedicatedSandboxRuntimeKind(agent.runtimeKind) && name !== 'new' && !(agent.runtimeKind === 'pi' && name === 'compact')) {
+      message = 'Legacy runtime commands are unavailable through native A2A ingress. Use Agent settings → A2A integration.';
     } else if (name === 'compact' && !prior) {
       message = 'No active conversation to compact.';
     } else if (name !== 'new' && !commands.some((item) => item.name === name)) {
@@ -157,7 +158,7 @@ export async function runAgentChannelMessage(params: {
           } finally { release(); }
         }
         const result = await executeRuntimeCommand({ workspaceId: params.workspaceId, agentId: agent.id, conversationId,
-          sandboxId: channel.sandboxId ?? undefined, line: `/${name}${command[2] ? ` ${command[2]}` : ''}`, signal: params.signal });
+          actorId: channel.a2aActorId ?? undefined, sandboxId: channel.sandboxId ?? undefined, line: `/${name}${command[2] ? ` ${command[2]}` : ''}`, signal: params.signal });
         message = result.kind === 'output' ? result.text : 'Command completed.';
       } catch (error) {
         message = error instanceof RuntimeCommandError && error.message === 'busy' ? 'This conversation is busy. Please wait for the current operation to finish.'

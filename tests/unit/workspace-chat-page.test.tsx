@@ -37,6 +37,7 @@ vi.mock('@/lib/agents/queries', () => ({
 vi.mock('@/lib/chat/service', () => ({
   listChatAssistantsForWorkspace: mocks.listAssistants,
   getChatThreadForWorkspace: mocks.getThread,
+  listRunningChatThreadIds: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('@/lib/market/skills', () => ({
   getAssistantMarketTemplate: mocks.getAssistantMarketTemplate,
@@ -53,12 +54,6 @@ vi.mock('@/components/dashboard/chat/WorkspaceAssistantChat', () => ({
   WorkspaceAssistantChat: (props: unknown) => {
     mocks.surface(props);
     return <div>Chat surface</div>;
-  },
-}));
-vi.mock('@/components/dashboard/agents/WorkspaceChat', () => ({
-  WorkspaceChat: (props: unknown) => {
-    mocks.agentSurface(props);
-    return <div>Agent chat surface</div>;
   },
 }));
 

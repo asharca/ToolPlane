@@ -46,10 +46,9 @@ if ! curl -fsSL --max-time 30 --max-filesize 33554432 -H "Authorization: Bearer 
   echo 'ToolPlane sync: fetch failed; retaining last known good skills' >&2
 fi
 set +e
-COUNTS=$(node - "$TMP/config.json" "$TMP/response.json" "$SKILLS_DIR" "$SKILL_DIR_PREFIX" <<'NODE'
+node - "$TMP/config.json" "$TMP/response.json" "$SKILLS_DIR" "$SKILL_DIR_PREFIX" > "$TMP/counts.json" <<'NODE'
 ${SYNC_CLIENT_SOURCE}
 NODE
-)
 RESULT=$?
 set -e
 if [ "$RESULT" -ne 0 ]; then
@@ -57,6 +56,7 @@ if [ "$RESULT" -ne 0 ]; then
   curl -sS --max-time 3 -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/api/v1/plugin/sync-failure" >/dev/null 2>&1 || true
   exit "$RESULT"
 fi
+COUNTS=$(cat "$TMP/counts.json")
 BODY=$(COUNTS="$COUNTS" WORKSPACE="$WORKSPACE" TOOLKIT="$TOOLKIT" CLIENT="$CLIENT" node -e 'process.stdout.write(JSON.stringify({...JSON.parse(process.env.COUNTS),workspaceSlug:process.env.WORKSPACE,toolkitSlug:process.env.TOOLKIT,client:process.env.CLIENT}))')
 curl -sS --max-time 3 -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/api/v1/plugin/sync-applied" >/dev/null 2>&1 || true
 echo "ToolPlane sync committed: $COUNTS"

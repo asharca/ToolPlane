@@ -1,7 +1,11 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Alert, Badge, Button, Input } from '@asharca/ui';
+
 import type { RemoteAgentAction, RemoteAgentView } from '@/lib/a2a/remote-registry';
 
 export function AgentA2ARemotes({ base }: { base: string }) {
@@ -63,30 +67,33 @@ export function AgentA2ARemotes({ base }: { base: string }) {
   }
   return <section className="space-y-4 rounded-xl border border-border bg-background p-4 sm:p-5" aria-labelledby="a2a-remotes-title">
     <div className="flex items-center justify-between gap-3"><h3 id="a2a-remotes-title" className="font-semibold">{t('title')}</h3>
-      <Button size="sm" variant="secondary" disabled={busy} onClick={() => { setError(''); void load().catch(() => { if (mounted.current) setError(t('failed')); }); }}>{t('refresh')}</Button></div>
+      <Button disabled={busy} onClick={() => { setError(''); void load().catch(() => { if (mounted.current) setError(t('failed')); }); }} variant={"secondary"} size={"sm"}>{t('refresh')}</Button></div>
     <p className="text-sm text-muted-foreground">{t('boundary')}</p>
     <p className="text-xs text-muted-foreground">{t('allowlist')}</p>
-    {error ? <Alert role="alert">{error}</Alert> : null}
+    {error ? <div role="alert" className="space-y-2 text-sm text-muted-foreground">{error}</div> : null}
     {view?.canManage ? <div className="grid gap-3 sm:grid-cols-2">
-      <label className="text-sm">{t('name')}<Input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} /></label>
-      <label className="text-sm">{t('card')}<Input value={cardUrl} maxLength={2000} onChange={(e) => setCardUrl(e.target.value)} placeholder="https://agent.example/.well-known/agent-card.json" /></label>
-      <label className="text-sm">{t('rpc')}<Input value={rpcUrl} maxLength={2000} onChange={(e) => setRpcUrl(e.target.value)} placeholder="https://agent.example/a2a" /></label>
-      <label className="text-sm">{keyTarget ? t('replacementKey') : t('token')}<Input type="password" autoComplete="off" value={token} maxLength={8192} onChange={(e) => setToken(e.target.value)} /></label>
-      <div className="flex flex-wrap gap-2 sm:col-span-2"><Button disabled={busy || !!keyTarget || !name.trim() || !cardUrl || !rpcUrl} onClick={() => void mutate({ action: 'register', name, cardUrl, rpcUrl, ...(token ? { token } : {}) })}>{t('register')}</Button>
+      <div className="text-sm"><Input label={t('card')} value={cardUrl} maxLength={2000} placeholder="https://agent.example/.well-known/agent-card.json" onChange={(value) => setCardUrl(value)} /></div>
+      <div className="text-sm"><Input label={keyTarget ? t('replacementKey') : t('token')} type="password" autoComplete="off" value={token} maxLength={8192} onChange={(value) => setToken(value)} /></div>
+      <div className="sm:col-span-2"><BouncyAccordion items={[{ id: 'advanced', title: t('advanced'), description: <div className="grid gap-3 pt-3 sm:grid-cols-2">
+        <Input label={t('name')} value={name} maxLength={100} onChange={setName} />
+        <Input label={t('rpc')} value={rpcUrl} maxLength={2000} placeholder="https://agent.example/a2a" onChange={setRpcUrl} />
+        <p className="text-xs text-muted-foreground sm:col-span-2">{t('advancedHint')}</p>
+      </div> }]} /></div>
+      <div className="flex flex-wrap gap-2 sm:col-span-2"><Button disabled={busy || !!keyTarget || !cardUrl.trim()} onClick={() => void mutate({ action: 'register', cardUrl: cardUrl.trim(), ...(token ? { token } : {}), ...(name.trim() ? { name: name.trim() } : {}), ...(rpcUrl.trim() ? { rpcUrl: rpcUrl.trim() } : {}) })} variant={"primary"}>{t('register')}</Button>
         {keyTarget ? <><Button disabled={busy || !token} onClick={() => {
           const target = view.agents.find((row) => row.id === keyTarget);
           if (target) void mutate({ action: 'replace-key', id: target.id, revision: target.revision, token });
-        }}>{t('saveKey')}</Button><Button variant="secondary" disabled={busy} onClick={() => { setKeyTarget(null); setToken(''); }}>{t('dismiss')}</Button></> : null}</div>
+        }} variant={"ghost"}>{t('saveKey')}</Button><Button disabled={busy} onClick={() => { setKeyTarget(null); setToken(''); }} variant={"secondary"}>{t('dismiss')}</Button></> : null}</div>
     </div> : null}
     {view?.agents.length === 0 ? <p className="text-sm text-muted-foreground">{t('empty')}</p> : null}
     <div className="space-y-3">{view?.agents.map((remote) => <div key={remote.id} className="space-y-2 rounded-lg border border-border p-3">
-      <div className="flex flex-wrap items-center gap-2"><strong className="text-sm">{remote.name}</strong><Badge>{t(remote.enabled ? 'enabled' : 'disabled')}</Badge><Badge>{t(remote.allowed ? 'allowed' : 'denied')}</Badge></div>
+      <div className="flex flex-wrap items-center gap-2"><strong className="text-sm">{remote.name}</strong><AnimatedBadge>{t(remote.enabled ? 'enabled' : 'disabled')}</AnimatedBadge><AnimatedBadge>{t(remote.allowed ? 'allowed' : 'denied')}</AnimatedBadge></div>
       <code className="block break-all text-xs text-muted-foreground">{remote.rpcUrl}</code>
       <code className="block break-all text-xs">{remote.id}</code>
       {view.canManage ? <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void mutate({ action: 'configure', id: remote.id, revision: remote.revision, enabled: !remote.enabled })}>{t(remote.enabled ? 'disable' : 'enable')}</Button>
-        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void mutate({ action: 'configure', id: remote.id, revision: remote.revision, allowCurrentAgent: !remote.allowed })}>{t(remote.allowed ? 'revoke' : 'allow')}</Button>
-        <Button size="sm" variant="secondary" disabled={busy} onClick={() => { setToken(''); setKeyTarget(remote.id); }}>{t('replaceKey')}</Button>
+        <Button disabled={busy} onClick={() => void mutate({ action: 'configure', id: remote.id, revision: remote.revision, enabled: !remote.enabled })} variant={"secondary"} size={"sm"}>{t(remote.enabled ? 'disable' : 'enable')}</Button>
+        <Button disabled={busy} onClick={() => void mutate({ action: 'configure', id: remote.id, revision: remote.revision, allowCurrentAgent: !remote.allowed })} variant={"secondary"} size={"sm"}>{t(remote.allowed ? 'revoke' : 'allow')}</Button>
+        <Button disabled={busy} onClick={() => { setToken(''); setKeyTarget(remote.id); }} variant={"secondary"} size={"sm"}>{t('replaceKey')}</Button>
       </div> : null}
     </div>)}</div>
     <p className="text-xs text-muted-foreground">{t('workflow')}</p>

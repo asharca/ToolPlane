@@ -11,6 +11,7 @@ import { getMarketingContent } from '@/lib/marketing/content';
 import { searchPublicDirectory } from '@/lib/queries/public-search';
 import { SITE } from '@/lib/site';
 import { siteMetadata } from '../_lib/metadata';
+import { Input } from '@/components/motion/input';
 
 type SearchParams = { q?: string | string[] };
 
@@ -72,15 +73,14 @@ export default async function Page({
       </h1>
 
       <form action="/search" className="relative mt-4 max-w-3xl">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
+        <Input
           type="search"
           name="q"
           defaultValue={query}
           maxLength={160}
           placeholder={t('searchMcpServersSkillsAndClients')}
           aria-label={t('search')}
-          className="ui-input ui-input-search h-12 bg-background"
+          leftIcon={<Search aria-hidden="true" />}
         />
       </form>
 

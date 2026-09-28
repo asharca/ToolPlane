@@ -23,7 +23,7 @@ jobs:
         startsWith(github.event.pull_request.head.ref, 'release-please--branches--'))
     name: connector (${{ matrix.os }})
     env:
-      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_test
       AUTH_SECRET: connector-test-secret
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_TELEMETRY_DISABLED: 1
@@ -71,16 +71,16 @@ jobs:
         env:
           POSTGRES_USER: mcp
           POSTGRES_PASSWORD: mcp
-          POSTGRES_DB: toolplane
+          POSTGRES_DB: toolplane_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U mcp -d toolplane"
+          --health-cmd "pg_isready -U mcp -d toolplane_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane
+      DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_test
       AUTH_SECRET: test-auth-secret
       NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
       NEXT_TELEMETRY_DISABLED: 1

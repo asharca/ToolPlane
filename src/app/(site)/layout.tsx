@@ -24,7 +24,7 @@ export default async function SiteLayout({
     <NextIntlClientProvider
       messages={{ common: messages.common }}
     >
-      <div className="flex min-h-dvh flex-col bg-shell text-shell-foreground">
+      <div className="isolate flex min-h-dvh flex-col bg-background text-foreground">
         <a
           href="#main-content"
           className="sr-only fixed left-3 top-3 z-[100] rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg focus:not-sr-only"

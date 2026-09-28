@@ -1,5 +1,11 @@
 'use client';
 
+import { Checkbox } from '@/components/motion/checkbox';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Keyboard, Loader2, Monitor, RefreshCw } from 'lucide-react';
@@ -175,86 +181,60 @@ export function SandboxScreen({
   const frameUrl = `${apiBase}/frame?displayId=${encodeURIComponent(display.id)}&frame=${frame}`;
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-[#111419]">
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-100">
-          <Monitor className="size-4 shrink-0 text-zinc-400" />
+    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-foreground">
+          <Monitor className="size-4 shrink-0 text-muted-foreground" />
           <span className="truncate">{display.label}</span>
           {display.width && display.height ? (
-            <span className="font-mono text-xs font-normal text-zinc-500">{display.width}×{display.height}</span>
+            <span className="font-mono text-xs font-normal text-muted-foreground">{display.width}×{display.height}</span>
           ) : null}
         </div>
         <div className="flex items-center gap-2">
           {displays.length > 1 ? (
-            <label className="sr-only" htmlFor="sandbox-display">{t('selectDisplay')}</label>
-          ) : null}
-          {displays.length > 1 ? (
-            <select
-              id="sandbox-display"
-              value={display.id}
-              onChange={(event) => {
-                setDisplayId(event.target.value);
+            <FormSelect value={display.id} onValueChange={(value) => {
+                setDisplayId(value);
                 setFrameStatus('loading');
                 setRfbStatus('idle');
                 setViewOnly(true);
                 setPassword('');
-              }}
-              className="h-8 rounded-md border border-white/10 bg-zinc-900 px-2 text-xs text-zinc-200"
-            >
-              {displays.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
-            </select>
+              }} label={t('selectDisplay')} options={[...displays.map((candidate) => ({ value: candidate.id, label: candidate.label }))]} />
           ) : null}
           {snapshot ? (
-            <button
-              type="button"
-              onClick={() => { setFrameStatus('loading'); setFrame(Date.now()); }}
-              disabled={!running || !visible}
-              className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100 disabled:opacity-40"
-              title={t('refreshScreen')}
-              aria-label={t('refreshScreen')}
-            >
-              <RefreshCw className="size-3.5" />
-            </button>
+            <Button type="button"
+            onClick={() => { setFrameStatus('loading'); setFrame(Date.now()); }}
+            disabled={!running || !visible}
+            variant="ghost" size="icon"
+            title={t('refreshScreen')}
+            aria-label={t('refreshScreen')}><RefreshCw className="size-3.5" /></Button>
           ) : display.control ? (
             <div className="flex items-center gap-2">
               {rfbStatus === 'connected' && !viewOnly ? (
-                <button
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    if (virtualKeyboardOpen) virtualKeyboard.current?.blur();
-                    else {
-                      resetVirtualKeyboard();
-                      virtualKeyboard.current?.focus();
-                    }
-                  }}
-                  aria-label={t('virtualKeyboard')}
-                  aria-pressed={virtualKeyboardOpen}
-                  title={t('virtualKeyboard')}
-                  className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-white/10 hover:text-zinc-100 aria-pressed:bg-white/10 aria-pressed:text-white"
-                >
-                  <Keyboard className="size-4" />
-                </button>
+                <Button type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  if (virtualKeyboardOpen) virtualKeyboard.current?.blur();
+                  else {
+                    resetVirtualKeyboard();
+                    virtualKeyboard.current?.focus();
+                  }
+                }}
+                aria-label={t('virtualKeyboard')}
+                aria-pressed={virtualKeyboardOpen}
+                title={t('virtualKeyboard')}
+                variant="ghost" size="icon"><Keyboard className="size-4" /></Button>
               ) : null}
-              <label className="flex items-center gap-2 text-xs text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={!viewOnly}
-                  onChange={(event) => setViewOnly(!event.target.checked)}
-                  className="size-4 accent-white"
-                />
-                {t('controlScreen')}
-              </label>
+              <Checkbox checked={!viewOnly} onCheckedChange={(checked) => setViewOnly(!checked)} label={t('controlScreen')} />
             </div>
           ) : null}
         </div>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-black p-2">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-background p-2">
         {!running ? (
-          <p className="text-sm text-zinc-400">{t('startTheSandboxToViewScreen')}</p>
+          <p className="text-sm text-muted-foreground">{t('startTheSandboxToViewScreen')}</p>
         ) : !visible ? (
-          <p className="text-sm text-zinc-400">{t('screenPaused')}</p>
+          <p className="text-sm text-muted-foreground">{t('screenPaused')}</p>
         ) : snapshot ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element -- connector frames are live, authenticated snapshots. */}
@@ -265,8 +245,8 @@ export function SandboxScreen({
               onError={() => setFrameStatus('error')}
               className="max-h-full max-w-full object-contain"
             />
-            {frameStatus === 'loading' ? <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-zinc-400" /> : null}
-            {frameStatus === 'error' ? <p role="alert" className="absolute rounded-md bg-black/80 px-3 py-2 text-sm text-zinc-300">{t('screenUnavailable')}</p> : null}
+            {frameStatus === 'loading' ? <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-muted-foreground" /> : null}
+            {frameStatus === 'error' ? <p role="alert" className="text-sm text-destructive">{t('screenUnavailable')}</p> : null}
           </>
         ) : (
           <>
@@ -281,7 +261,7 @@ export function SandboxScreen({
               onFocus={() => {
                 if (!virtualKeyboardOpen) rfbClient.current?.focus();
               }}
-              className="h-full w-full overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white"
+              className="h-full w-full overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-border"
             />
             <textarea
               ref={virtualKeyboard}
@@ -304,14 +284,14 @@ export function SandboxScreen({
                 setVirtualKeyboardOpen(false);
                 if (rfbClient.current) rfbClient.current.focusOnClick = true;
               }}
-              className="absolute -left-10 -z-10 h-px w-px resize-none border-0 bg-white text-white"
+              className="absolute -left-10 -z-10 h-px w-px resize-none border-0 bg-border text-foreground"
             />
             {rfbStatus === 'idle' || rfbStatus === 'connecting' ? (
-              <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-zinc-400" />
+              <Loader2 aria-label={t('loadingScreen')} className="absolute size-6 animate-spin text-muted-foreground" />
             ) : null}
             {rfbStatus === 'credentials' ? (
               <form
-                className="absolute flex max-w-sm items-end gap-2 rounded-md border border-white/10 bg-black/90 p-3"
+                className="absolute flex max-w-sm items-end gap-2 rounded-md border border-border bg-background p-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   rfbClient.current?.sendCredentials({ password });
@@ -319,36 +299,30 @@ export function SandboxScreen({
                   setRfbStatus('connecting');
                 }}
               >
-                <label className="grid gap-1 text-xs text-zinc-300">
-                  {t('vncPassword')}
-                  <input
+                <div className="grid gap-1 text-xs text-muted-foreground">
+                  
+                  <Input label={t('vncPassword')}
                     type="password"
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(value) => setPassword(value)}
                     autoComplete="new-password"
-                    className="h-8 rounded-md border border-white/15 bg-zinc-900 px-2 text-sm text-white"
+                    
                   />
-                </label>
-                <button type="submit" className="h-8 rounded-md bg-white px-3 text-xs font-medium text-black">
-                  {t('connectScreen')}
-                </button>
+                </div>
+                <Button type="submit" variant="ghost" size="sm">{t('connectScreen')}</Button>
               </form>
             ) : null}
             {rfbStatus === 'error' ? (
-              <div className="absolute flex items-center gap-3 rounded-md bg-black/80 px-3 py-2 text-sm text-zinc-300">
+              <div className="absolute flex items-center gap-3 rounded-md bg-background px-3 py-2 text-sm text-muted-foreground">
                 <p role="alert">{t('screenUnavailable')}</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPassword('');
-                    setRfbStatus('connecting');
-                    setRfbAttempt((attempt) => attempt + 1);
-                  }}
-                  className="flex h-8 items-center gap-1.5 rounded-md bg-white px-3 text-xs font-medium text-black"
-                >
-                  <RefreshCw className="size-3.5" />
-                  {errorT('tryAgain')}
-                </button>
+                <Button type="button"
+                onClick={() => {
+                  setPassword('');
+                  setRfbStatus('connecting');
+                  setRfbAttempt((attempt) => attempt + 1);
+                }}
+                variant="ghost" size="sm"><RefreshCw className="size-3.5" />
+                {errorT('tryAgain')}</Button>
               </div>
             ) : null}
           </>

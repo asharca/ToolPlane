@@ -44,15 +44,14 @@ ToolPlane 平台负责原生频道工作和 Agent 执行。一个频道连接属
 
 频道支持 `/new`、`/help`、`/whoami` 以及 Agent runtime 的自有命令。命令与同一 chat 的
 传入消息按序处理。`/new` 把后续消息切到新会话，不删除之前的历史；`/help` 和 `/whoami`
-不进入模型上下文。频道配置弹窗列出这些命令。`/new` 仅频道可用；Work 输入框使用
-**New task** 动作。
+不进入模型上下文。频道配置弹窗列出这些命令。`/new` 仅频道可用；新工作会话通过
+智能体侧栏的新建工作入口创建。
 
-Agent Work 头部还提供 Compact context 和 New channel conversation 控件。普通 Work 会话
-保留自己的 New work 控件。操作绝不会把控制台文本作为频道消息发出，也不会把用户带进
-助手界面。
+智能体侧栏保留 New work 控件。操作绝不会把控制台文本作为频道消息发出，也不会把
+用户带进助手界面。
 
-Work 输入框在 `+` 和 `/` 之间共享一个六项菜单：附件、已存 prompt 管理、MCP prompts、
-MCP resources、用户可调用的已绑定 skills、New task。占位符说明 `/` 和 `@` 的用法。
+Work 输入框在 `+` 和 `/` 之间共享一个五项菜单：附件、已存 prompt 管理、MCP prompts、
+MCP resources、用户可调用的已绑定 skills。菜单和固定工具栏均不再提供“新任务”。
 `@` 在当前沙箱中搜索文件和会话（包括频道历史），排除当前会话。引用读取会校验工作
 区、Agent 和沙箱归属。选中的引用以可移除 chip 呈现，作为带引用元数据的 text part 持久
 化，并进入 runtime 上下文。Prompt 模板按 Agent 存储，不存浏览器。菜单的 **Customize

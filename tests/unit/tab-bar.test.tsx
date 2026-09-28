@@ -1,11 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TabBar } from '@/components/dashboard/TabBar';
 
 describe('TabBar', () => {
-  it('marks and scrolls the active tab into view', () => {
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
+  it('marks the active route without changing link navigation', () => {
 
     render(
       <TabBar
@@ -21,7 +19,6 @@ describe('TabBar', () => {
     );
 
     expect(screen.getByRole('link', { name: 'Tools' })).toHaveAttribute('aria-current', 'page');
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'center' });
   });
 
   it('preserves query filters while switching tabs', () => {

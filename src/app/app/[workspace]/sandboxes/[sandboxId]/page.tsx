@@ -1,6 +1,11 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
-import Link from 'next/link';
+
 import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
@@ -32,7 +37,6 @@ import {
 import { readSandboxEnv, sandboxEnvToText } from '@/lib/sandboxes/env';
 import { effectiveStatus } from '@/lib/process/supervisor';
 import { mcpRpc } from '@/lib/process/mcp-client';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { DashboardPage, DashboardPanel } from '@/components/dashboard/DashboardUI';
 import { SandboxWorkspace } from '@/components/dashboard/sandboxes/SandboxWorkspace';
@@ -47,7 +51,6 @@ import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
 
-const rowButton = 'text-xs text-muted-foreground transition-colors hover:text-foreground';
 
 function CommandBlock({ label, command, copyLabel }: { label: string; command: string; copyLabel: string }) {
   return (
@@ -169,20 +172,20 @@ export default async function SandboxDetailPage({
           <Globe2 className="size-4 shrink-0" />
           <span>{t('platformUrl')}</span>
           <span className="break-all font-mono text-foreground">{connector.serverUrl}</span>
-          <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+          <AnimatedBadge status="neutral" size="sm">
             {t('automatic')}
-          </span>
+          </AnimatedBadge>
         </div>
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
           <label className="block space-y-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {t('localRoot')}
             <span className="relative block">
               <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <Input
                 name="connectorRemoteRoot"
                 required
                 defaultValue={connector.remoteRoot || DEFAULT_CONNECTOR_REMOTE_ROOT}
-                className="ui-input ui-input-icon h-9 w-full font-mono text-xs"
+                className="w-full"
                 aria-describedby="connector-root-hint"
               />
             </span>
@@ -190,7 +193,7 @@ export default async function SandboxDetailPage({
               {t('directoryOnTheUsersMachineExposedToTheAgent')}
             </span>
           </label>
-          <SubmitButton pendingLabel={t('generating')} className="ui-button-primary mt-5 h-9 w-full text-sm lg:w-auto">
+          <SubmitButton pendingLabel={t('generating')} variant="primary" size="sm" className="mt-5 w-full lg:w-auto">
             {token ? t('updateAndRegenerateCommand') : t('generateCommand')}
           </SubmitButton>
         </div>
@@ -255,12 +258,6 @@ export default async function SandboxDetailPage({
           || status === 'upgrading'
           || connectorWaiting}
       />
-      <DashboardHeader
-        breadcrumb={[
-          { label: t('sandboxes'), href: `/app/${slug}/sandboxes` },
-          { label: sandbox.name },
-        ]}
-      />
       <DashboardPage>
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -317,16 +314,16 @@ export default async function SandboxDetailPage({
                       <input type="hidden" name="workspace" value={slug} />
                       <input type="hidden" name="sandboxId" value={sandbox.id} />
                       <fieldset disabled={lifecycleBlocked} className="flex items-end gap-2 disabled:opacity-60">
-                        <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
-                          {t('sandboxName')}
-                          <input
+                        <div className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
+                          
+                          <Input label={t('sandboxName')}
                             name="name"
                             defaultValue={sandbox.name}
                             maxLength={80}
-                            className="ui-input h-9 min-w-0 text-sm"
+                            className="min-w-0"
                           />
-                        </label>
-                        <SubmitButton pendingLabel={t('renaming')} className="ui-button-secondary h-9 text-xs">
+                        </div>
+                        <SubmitButton pendingLabel={t('renaming')} variant="secondary" size="sm">
                           {t('rename')}
                         </SubmitButton>
                       </fieldset>
@@ -356,12 +353,12 @@ export default async function SandboxDetailPage({
                           rows={5}
                           spellCheck={false}
                           placeholder={t('envPlaceholder')}
-                          className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                          className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
                           aria-label={t('environmentVariables')}
                         />
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <p className="text-xs text-muted-foreground">{t('environmentVariablesHint')}</p>
-                          <SubmitButton pendingLabel={t('saving')} className="ui-button-secondary h-8 text-xs">
+                          <SubmitButton pendingLabel={t('saving')} variant="secondary" size="sm">
                             {t('saveEnvironment')}
                           </SubmitButton>
                         </div>
@@ -406,14 +403,14 @@ export default async function SandboxDetailPage({
                         <p className="max-w-xl text-xs leading-5 text-muted-foreground">
                           {t('deleteAgentSandboxFromAgent')}
                         </p>
-                        <Link href={`/app/${slug}/agents/${agent.id}`} className="ui-button-secondary h-9 text-sm">
+                        <ButtonLink href={`/app/${slug}/agents/${agent.id}`} variant="secondary" size="sm">
                           {t('openAgent')}
-                        </Link>
+                        </ButtonLink>
                       </div>
                     </section>
                   ) : (
                     <section className="pt-5">
-                      <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">{t('dangerZone')}</h3>
+                      <h3 className="text-sm font-semibold text-destructive dark:text-destructive">{t('dangerZone')}</h3>
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                         <p className="max-w-xl text-xs leading-5 text-muted-foreground">
                           {t(sandbox.kind === 'docker'
@@ -431,9 +428,9 @@ export default async function SandboxDetailPage({
                               ? 'deleteSandboxPrompt'
                               : 'deleteExternalSandboxPrompt', { name: sandbox.name })}
                             pendingLabel={t('deletingSandbox')}
-                            triggerClassName="ui-button-secondary h-9 border-red-200 text-sm text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
-                            confirmClassName="ui-button-primary h-9 bg-red-600 text-sm text-white hover:bg-red-700"
-                            cancelClassName="ui-button-ghost h-9 text-sm"
+                            
+                            
+                            
                             promptClassName="max-w-sm text-xs text-muted-foreground"
                           />
                         </form>
@@ -443,23 +440,23 @@ export default async function SandboxDetailPage({
                 </div>
               </SandboxSettingsDialog>
               {lifecycleBlocked ? null : (
-                <Link href={agent ? `/app/${slug}/agents/${agent.id}` : `/app/${slug}/agents`} className={rowButton}>
+                <ButtonLink href={agent ? `/app/${slug}/agents/${agent.id}` : `/app/${slug}/agents`} variant="ghost" size="sm">
                   {agent ? t('openAgent') : t('attachToAgent')}
-                </Link>
+                </ButtonLink>
               )}
               {disabledLegacy || lifecycleBlocked ? null : running ? (
                 <>
                   <form action={stopSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <SubmitButton flash={false} pendingLabel={t('stopping')} className={rowButton}>
+                    <SubmitButton flash={false} pendingLabel={t('stopping')} variant="ghost" size="sm">
                       {t('stop')}
                     </SubmitButton>
                   </form>
                   <form action={restartSandboxAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="sandboxId" value={sandbox.id} />
-                    <SubmitButton flash={false} pendingLabel={t('restarting')} className={rowButton}>
+                    <SubmitButton flash={false} pendingLabel={t('restarting')} variant="ghost" size="sm">
                       {t('restart')}
                     </SubmitButton>
                   </form>
@@ -468,7 +465,7 @@ export default async function SandboxDetailPage({
                 <form action={startSandboxAction}>
                   <input type="hidden" name="workspace" value={slug} />
                   <input type="hidden" name="sandboxId" value={sandbox.id} />
-                  <SubmitButton flash={false} pendingLabel={t('starting')} className={rowButton}>
+                  <SubmitButton flash={false} pendingLabel={t('starting')} variant="ghost" size="sm">
                     {t('start')}
                   </SubmitButton>
                 </form>
@@ -480,9 +477,9 @@ export default async function SandboxDetailPage({
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>{t('attachedAgents')}</span>
               {sandbox.agentLinks.map((link) => (
-                <Link key={link.agent.id} href={`/app/${slug}/agents/${link.agent.id}`} className="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted">
+                <ButtonLink key={link.agent.id} href={`/app/${slug}/agents/${link.agent.id}`} variant="ghost" size="sm">
                   {link.agent.name}
-                </Link>
+                </ButtonLink>
               ))}
             </div>
           ) : null}

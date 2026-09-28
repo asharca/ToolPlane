@@ -18,6 +18,8 @@ When repository rules require reviews, review and merge the release PR under tho
 
 Ordinary PRs and manual CI runs execute lint, tests, the application build, runtime-artifact verification, and Connector checks on Linux, macOS, and Windows. Linux also runs the Docker runtime helper checks.
 
+CI runs the full suite against the disposable `toolplane_test` PostgreSQL database. For local full-suite validation, use a separate local database whose name includes `test` or `disposable`, enable pgvector, and apply the current Prisma schema before running `pnpm test`. Do not point these tests at an active application database.
+
 Same-repository branches beginning `release-please--branches--` use the release-metadata gate instead of rerunning the full suite. That gate requires the changed-file list to be exactly `.release-please-manifest.json`, `CHANGELOG.md`, and `package.json`, then supplies the corresponding Connector gate results. A release PR containing other file changes fails this gate.
 
 A normal feature merge does not rerun full CI or publish an image. A push to `main` does trigger the separate release workflow, but publishing steps run only when release-please creates a release. A pushed `vX.Y.Z` tag is also an explicit publishing path.

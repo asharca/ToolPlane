@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -227,9 +228,12 @@ describe('workspace market management pages', () => {
     render(await MarketPublishPage({ params: Promise.resolve({ workspace: 'acme' }) }));
 
     expect(screen.getByText('Market assistant')).toBeInTheDocument();
-    expect(document.querySelector('input[name="assistantId"]')).toHaveValue('assistant-1');
-    expect(screen.getByText('Publish new version')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'unpublishListing' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Publish new version' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Publish new version' });
+    const formData = new FormData(dialog.querySelector('form')!);
+    expect(formData.get('assistantId')).toBe('assistant-1');
+    expect(formData.get('workspace')).toBe('acme');
   });
 
   it('keeps publishing available after a reviewed MCP receives a catalog identity', async () => {
@@ -249,8 +253,11 @@ describe('workspace market management pages', () => {
 
     render(await MarketPublishPage({ params: Promise.resolve({ workspace: 'acme' }) }));
 
-    expect(document.querySelector('input[name="deploymentId"]')).toHaveValue('deployment-1');
-    expect(screen.getByText('Publish new version')).toBeInTheDocument();
     expect(screen.queryByText('catalogAlreadyListed')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Publish new version' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Publish new version' });
+    const formData = new FormData(dialog.querySelector('form')!);
+    expect(formData.get('deploymentId')).toBe('deployment-1');
+    expect(formData.get('workspace')).toBe('acme');
   });
 });

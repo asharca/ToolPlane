@@ -1,27 +1,17 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
+
 
 import type { ComponentType } from 'react';
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import {
-  Activity,
-  Braces,
-  ChevronDown,
-  CircleAlert,
-  Clock3,
-  HeartPulse,
-  List,
-  RefreshCw,
-  Search,
-  Wrench,
-  X,
-} from 'lucide-react';
+import { Activity, Braces, ChevronDown, CircleAlert, Clock3, HeartPulse, List, RefreshCw, Search, Wrench, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import {
-  inspectMcpLog,
-  type McpLogOperation,
-} from '@/lib/observability/mcp-log-entry';
+import { inspectMcpLog, type McpLogOperation } from '@/lib/observability/mcp-log-entry';
 
 export type McpRequestLogView = {
   id: string;
@@ -87,9 +77,9 @@ function Metric({
   tone?: 'default' | 'danger' | 'warning';
 }) {
   const toneClass = tone === 'danger'
-    ? 'text-red-700 dark:text-red-400'
+    ? 'text-destructive dark:text-destructive'
     : tone === 'warning'
-      ? 'text-amber-700 dark:text-amber-400'
+      ? 'text-(--color-warning) dark:text-(--color-warning)'
       : 'text-foreground';
   return (
     <div className="rounded-md border border-border bg-background px-3 py-2.5">
@@ -193,14 +183,8 @@ export function McpRequestLogs({
 
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={t('searchLogs')}
-            aria-label={t('searchLogs')}
-            className="ui-input ui-input-icon h-9 w-full"
-          />
+          
+          <Input value={query} onChange={(value) => setQuery(value)} placeholder={t('searchLogs')} aria-label={t('searchLogs')} leftIcon={<Search className="size-4" />} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-md border border-border bg-background p-0.5" role="group" aria-label={t('filterLogs')}>
@@ -209,35 +193,12 @@ export function McpRequestLogs({
               ['failed', t('failedRequests'), failed],
               ['slow', t('slowRequests', { threshold: SLOW_REQUEST_MS }), slow],
             ] as const).map(([value, label, count]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
-                className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                  filter === value
-                    ? value === 'failed'
-                      ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                      : value === 'slow'
-                        ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                        : 'bg-foreground text-background'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                }`}
-              >
-                {label} <span className="tabular-nums">{count}</span>
-              </button>
+              <Button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} variant={filter === value ? "primary" : "ghost"} size="md">{label} <span className="tabular-nums">{count}</span></Button>
             ))}
           </div>
           {refreshIntervalMs ? (
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={isRefreshing}
-              className="ui-button-secondary h-9 text-xs"
-            >
-              <RefreshCw className={`size-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              {t('refresh')}
-            </button>
+            <Button type="button" onClick={refresh} disabled={isRefreshing} variant="secondary" size="sm"><RefreshCw className={`size-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {t('refresh')}</Button>
           ) : null}
         </div>
       </div>
@@ -246,21 +207,19 @@ export function McpRequestLogs({
         <span>{t('showingFilteredRequests', { shown: filtered.length, total: logs.length })}</span>
         {refreshIntervalMs ? (
           <span className="inline-flex items-center gap-1.5">
-            <span className="size-1.5 rounded-full bg-emerald-500" />
+            <span className="size-1.5 rounded-full bg-(--color-success)" />
             {t('autoRefreshing')}
           </span>
         ) : null}
       </div>
 
       {filtered.length === 0 ? (
-        <div className="ui-empty min-h-44">
+        <div className="flex flex-col items-center justify-center text-center min-h-44">
           <Search className="mb-3 size-7 text-muted-foreground" />
           <p className="text-sm font-medium text-foreground">{t('noMatchingRequests')}</p>
           {filtersActive ? (
-            <button type="button" onClick={clearFilters} className="ui-button-secondary ui-button-sm mt-4">
-              <X className="size-3.5" />
-              {t('clearLogFilters')}
-            </button>
+            <Button type="button" onClick={clearFilters} variant="secondary" size="sm" className="mt-4"><X className="size-3.5" />
+            {t('clearLogFilters')}</Button>
           ) : null}
         </div>
       ) : (
@@ -280,78 +239,65 @@ export function McpRequestLogs({
                 log.time,
               ].filter(Boolean).join(' · ');
               return (
-                <article key={log.id} className={isError ? 'bg-red-500/[0.025]' : undefined}>
-                  <button
-                    type="button"
-                    onClick={() => hasDetails && toggle(log.id)}
-                    aria-expanded={hasDetails ? expanded : undefined}
-                    aria-controls={hasDetails ? detailsId : undefined}
-                    aria-label={rowLabel}
-                    className="group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
-                  >
-                    <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md ${
-                      isError
-                        ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                        : inspection.operation === 'toolCall'
-                          ? 'bg-brand/10 text-brand'
-                          : 'bg-muted text-muted-foreground'
-                    }`}>
-                      <Icon className="size-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-medium text-foreground">{readableOperation}</span>
-                        {inspection.toolName ? (
-                          <code className="max-w-full truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                            {inspection.toolName}
-                          </code>
-                        ) : null}
-                      </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                        <span className="font-mono">{log.method}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{log.time}</span>
-                        {inspection.rpcMethod && inspection.operation !== 'toolCall' ? (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-mono">{inspection.rpcMethod}</span>
-                          </>
-                        ) : null}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2 pt-0.5">
-                      <span className={`hidden rounded-full px-2 py-0.5 text-xs font-semibold sm:inline-flex ${
-                        isError
-                          ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                          : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                      }`}>
-                        {isError ? t('error') : t('success')}
-                      </span>
-                      <span className={`hidden items-center gap-1 text-xs tabular-nums md:inline-flex ${
-                        log.durationMs >= SLOW_REQUEST_MS
-                          ? 'text-amber-700 dark:text-amber-400'
-                          : 'text-muted-foreground'
-                      }`}>
-                        <Clock3 className="size-3.5" />
-                        {log.durationMs}{t('ms')}
-                      </span>
-                      {hasDetails ? (
-                        <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                <article key={log.id} className={isError ? 'bg-destructive/[0.025]' : undefined}>
+                  <Button type="button" onClick={() => hasDetails && toggle(log.id)} aria-expanded={hasDetails ? expanded : undefined} aria-controls={hasDetails ? detailsId : undefined} aria-label={rowLabel} variant="ghost" size="md" className="group flex w-full items-start text-left"><span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md ${
+                    isError
+                      ? 'bg-destructive text-destructive dark:text-destructive'
+                      : inspection.operation === 'toolCall'
+                        ? 'bg-primary/10 text-primary'
+                        : 'bg-muted text-muted-foreground'
+                  }`}>
+                    <Icon className="size-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-medium text-foreground">{readableOperation}</span>
+                      {inspection.toolName ? (
+                        <code className="max-w-full truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          {inspection.toolName}
+                        </code>
                       ) : null}
                     </span>
-                  </button>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <span className="font-mono">{log.method}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{log.time}</span>
+                      {inspection.rpcMethod && inspection.operation !== 'toolCall' ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono">{inspection.rpcMethod}</span>
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 pt-0.5">
+                    <AnimatedBadge  status="success" size="sm" showIcon={false}>
+                      {isError ? t('error') : t('success')}
+                    </AnimatedBadge>
+                    <span className={`hidden items-center gap-1 text-xs tabular-nums md:inline-flex ${
+                      log.durationMs >= SLOW_REQUEST_MS
+                        ? 'text-(--color-warning) dark:text-(--color-warning)'
+                        : 'text-muted-foreground'
+                    }`}>
+                      <Clock3 className="size-3.5" />
+                      {log.durationMs}{t('ms')}
+                    </span>
+                    {hasDetails ? (
+                      <ChevronDown className={`size-4 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                    ) : null}
+                  </span></Button>
 
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3 pl-[3.75rem] text-xs text-muted-foreground">
                     <span className={`inline-flex rounded-full px-2 py-0.5 font-semibold sm:hidden ${
                       isError
-                        ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                        : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        ? 'bg-destructive text-destructive dark:text-destructive'
+                        : 'bg-(--color-success) text-(--color-success) dark:text-(--color-success)'
                     }`}>
                       {isError ? t('error') : t('success')}
                     </span>
                     <span className={`inline-flex items-center gap-1 tabular-nums md:hidden ${
                       log.durationMs >= SLOW_REQUEST_MS
-                        ? 'text-amber-700 dark:text-amber-400'
+                        ? 'text-(--color-warning) dark:text-(--color-warning)'
                         : 'text-muted-foreground'
                     }`}>
                       <Clock3 className="size-3.5" />
@@ -373,7 +319,7 @@ export function McpRequestLogs({
                   </div>
 
                   {isError && inspection.errorSummary ? (
-                    <p className="mx-4 mb-3 ml-[3.75rem] flex items-start gap-1.5 rounded-md border border-red-500/15 bg-red-500/[0.06] px-2.5 py-2 text-xs leading-5 text-red-700 dark:text-red-300">
+                    <p className="mx-4 mb-3 ml-[3.75rem] flex items-start gap-1.5 rounded-md border border-destructive bg-destructive/[0.06] px-2.5 py-2 text-xs leading-5 text-destructive dark:text-destructive">
                       <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
                       <span>{inspection.errorSummary}</span>
                     </p>

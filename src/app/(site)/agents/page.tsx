@@ -6,6 +6,7 @@ import { AgentListingCard } from '@/components/cards/AgentListingCard';
 import { getMarketingContent } from '@/lib/marketing/content';
 import { listPublicAgents } from '../_lib/catalog';
 import { capabilityMetadata } from '../_lib/metadata';
+import { Input } from '@/components/motion/input';
 
 export function generateMetadata(): Promise<Metadata> {
   return capabilityMetadata('agents', '/agents');
@@ -31,19 +32,18 @@ export default async function Page() {
               <p className="mt-3 text-sm leading-6 text-muted-foreground">{t('heroDescription')}</p>
             </div>
             <form action="/search" className="relative w-full max-w-md">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <Input
                 type="search"
                 name="q"
                 maxLength={160}
                 placeholder={t('searchPlaceholder')}
                 aria-label={t('searchPlaceholder')}
-                className="ui-input ui-input-search bg-card"
+                leftIcon={<Search aria-hidden="true" />}
               />
             </form>
           </div>
           {agents.length === 0 ? (
-            <div className="ui-empty mt-10 min-h-48">
+            <div className="mt-10 flex min-h-48 flex-col items-center justify-center rounded-2xl border border-border bg-card p-6 text-center">
               <h3 className="font-semibold text-foreground">{t('emptyTitle')}</h3>
               <p className="mt-2 max-w-md text-sm text-muted-foreground">{t('emptyDescription')}</p>
             </div>

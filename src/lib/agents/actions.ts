@@ -1,14 +1,16 @@
 'use server';
 
+import type { ModelCost, ModelCostRates, ModelCostTier } from '@earendil-works/pi-ai';
 import { systemLog } from '@/lib/observability/system';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/lib/auth/current-user';
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
-import { getProvider } from '@/lib/agents/queries';
+import { getProvider, ORDINARY_AGENT_FILTER } from '@/lib/agents/queries';
 import { generateConsoleConversationTitle } from '@/lib/agents/conversation-naming';
-import { buildModel, providerModelIds } from '@/lib/agents/model';
+import { buildModel } from '@/lib/agents/model';
 import { providerPreset } from '@/lib/agents/provider-catalog';
+import { hermesAgentsUsingProvider, refreshProviderModels, revalidateProviderViews, syncHermesAgents } from '@/lib/agents/provider-model-refresh';
 import {
   cloneAgent,
   cloneHermesVolumeData,
@@ -20,7 +22,6 @@ import {
   updateProvider,
   updateAgentModelSelection,
   deleteProvider,
-  setProviderModels,
   addProviderModels,
   updateProviderModel,
   deleteProviderModel,
@@ -42,10 +43,6 @@ import {
   type ModelPrimaryType,
   type ProviderModelValues,
 } from '@/lib/agents/model-catalog';
-import {
-  fetchProviderModels,
-  type ProviderModelFetchConfig,
-} from '@/lib/agents/models-fetch';
 import { AGENT_STEP_BOUNDS } from '@/lib/agents/constants';
 import {
   createAgentChannelConnection,
@@ -83,12 +80,14 @@ import {
   withdrawPendingAgentRelease,
 } from '@/lib/agents/market';
 import { safeRelativePath } from '@/lib/auth/safe-redirect';
-import { implementedAgentRuntimeKind } from '@/lib/agents/runtime-kind';
 import { isAgentEndpointRuntimeSandboxConfig } from '@/lib/agents/public-api/tool-policy';
 import { db } from '@/lib/db';
 import { deleteManagedAgent } from '@/lib/agents/deletion';
 import { resolveSpawnSpec } from '@/lib/process/spawn-spec';
 import { startProcess } from '@/lib/process/supervisor';
+import { getPiRuntimeVersion, updatePiRuntimeVersion, validatePiVersion } from './sandbox-runtime';
+import type { PiRuntimeVersion } from './sandbox-runtime';
+import { SandboxExecutionBusyError } from './sandbox-execution-gate';
 
 async function authorizedWorkspace(slug: string, ownerOnly = false) {
   const user = await getCurrentUser();
@@ -119,47 +118,9 @@ export type ActionState = {
   savedAt?: number;
   conversationId?: string;
   created?: boolean;
+  providerId?: string;
 };
 
-function revalidateProviderViews(slug: string) {
-  for (const path of ['agents', 'chat', 'knowledge', 'providers', 'settings', 'settings/providers']) {
-    revalidatePath(`/app/${slug}/${path}`);
-  }
-}
-
-type HermesRuntimeRef = { agentId: string; sandboxId: string };
-
-async function hermesAgentsUsingProvider(
-  workspaceId: string,
-  providerId: string,
-): Promise<HermesRuntimeRef[]> {
-  const agents = await db.agent.findMany({
-    where: {
-      workspaceId,
-      runtime: { is: { kind: 'hermes' } },
-      modelProviders: { some: { providerId } },
-    },
-    select: { id: true, runtime: { select: { sandboxId: true } } },
-  });
-  return agents.flatMap(({ id, runtime }) => (
-    runtime ? [{ agentId: id, sandboxId: runtime.sandboxId }] : []
-  ));
-}
-
-async function syncHermesAgents(workspaceId: string, agents: HermesRuntimeRef[]): Promise<string | null> {
-  const errors: string[] = [];
-  for (const { agentId, sandboxId } of agents) {
-    const result = await runHermesRuntimeMaintenance(
-      workspaceId,
-      agentId,
-      sandboxId,
-      { quiesce: false, reprojectAfter: true },
-      async () => undefined,
-    );
-    if (result.status === 'error') errors.push(result.error);
-  }
-  return errors.length ? `Hermes sync failed: ${errors.join('; ')}` : null;
-}
 
 function providerFormValue(format: string, baseUrl: string) {
   const selectedFormat = providerPreset(format) ? format : 'openai';
@@ -190,11 +151,6 @@ function cloneOptionsFromFormData(formData: FormData) {
   };
 }
 
-function modelFetchError(result: Exclude<Awaited<ReturnType<typeof fetchProviderModels>>, { ok: true }>): string {
-  if (result.reason === 'status') return `Provider returned ${result.status}.`;
-  if (result.reason === 'empty') return 'No models found at that base URL.';
-  return 'Could not reach the provider base URL.';
-}
 
 async function startCreatedAgentRuntime(workspaceId: string, agentId: string) {
   let deploymentId: string | null = null;
@@ -254,21 +210,6 @@ async function startCreatedAgentRuntime(workspaceId: string, agentId: string) {
   }
 }
 
-async function refreshProviderModels(
-  workspaceId: string,
-  providerId: string,
-  provider: ProviderModelFetchConfig & { name: string },
-): Promise<string | null> {
-  const builtinModels = providerModelIds(provider);
-  if (builtinModels) {
-    await setProviderModels(workspaceId, providerId, builtinModels);
-    return null;
-  }
-  const result = await fetchProviderModels(provider);
-  if (!result.ok) return modelFetchError(result);
-  await setProviderModels(workspaceId, providerId, result.models);
-  return null;
-}
 
 export async function createProviderAction(
   _prev: ActionState,
@@ -293,12 +234,8 @@ export async function createProviderAction(
   } catch {
     return { error: 'A provider with that name already exists.' };
   }
-  const refreshError = await refreshProviderModels(ctx.ws.id, provider.id, { name, format, baseUrl, apiKey });
   revalidateProviderViews(slug);
-  if (refreshError) {
-    return { warning: `Provider added, but models were not refreshed: ${refreshError}`, savedAt: Date.now() };
-  }
-  return { savedAt: Date.now() };
+  return { savedAt: Date.now(), providerId: provider.id };
 }
 
 export async function updateProviderAction(
@@ -362,24 +299,6 @@ export async function deleteProviderAction(formData: FormData) {
   if (warning) throw new Error(warning);
 }
 
-export async function refreshModelsAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const slug = String(formData.get('workspace') ?? '');
-  const providerId = String(formData.get('providerId') ?? '');
-  const ctx = await authorizedWorkspace(slug, true);
-  if (!ctx) return { error: 'Not authorized.' };
-  const provider = await getProvider(ctx.ws.id, providerId);
-  if (!provider) return { error: 'Provider not found.' };
-  const hermesAgents = await hermesAgentsUsingProvider(ctx.ws.id, providerId);
-  const refreshError = await refreshProviderModels(ctx.ws.id, providerId, provider);
-  if (refreshError) return { error: refreshError };
-  const syncError = await syncHermesAgents(ctx.ws.id, hermesAgents);
-  if (syncError) return { warning: syncError, savedAt: Date.now() };
-  revalidateProviderViews(slug);
-  return { savedAt: Date.now() };
-}
 
 function optionalPositiveInteger(formData: FormData, name: string): number | null | undefined {
   const raw = String(formData.get(name) ?? '').trim();
@@ -392,13 +311,39 @@ function selectedValues<T extends string>(formData: FormData, name: string, allo
   return [...new Set(formData.getAll(name).map(String).filter((value): value is T => allowed.includes(value as T)))];
 }
 
+function providerModelCost(formData: FormData): ModelCost | null | undefined {
+  const raw = String(formData.get('cost') ?? '').trim();
+  if (!raw) return null;
+  if (raw.length > 16_000) return undefined;
+  try {
+    const value = JSON.parse(raw);
+    if (value === null) return null;
+    const validRates = (rates: unknown): boolean => !!rates && typeof rates === 'object'
+      && ['input', 'output', 'cacheRead', 'cacheWrite'].every((key) => {
+        const rate = (rates as Record<string, unknown>)[key];
+        return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0;
+      });
+    if (!validRates(value)) return undefined;
+    if (value.tiers !== undefined && (!Array.isArray(value.tiers) || value.tiers.length > 100
+      || !value.tiers.every((tier: Record<string, unknown>) => validRates(tier)
+        && Number.isSafeInteger(tier.inputTokensAbove) && Number(tier.inputTokensAbove) >= 0))) return undefined;
+    const rates = ({ input, output, cacheRead, cacheWrite }: ModelCostRates) => ({ input, output, cacheRead, cacheWrite });
+    return { ...rates(value), ...(value.tiers ? {
+      tiers: value.tiers.map((tier: ModelCostTier) => ({ ...rates(tier), inputTokensAbove: tier.inputTokensAbove })),
+    } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
 function providerModelValues(formData: FormData, modelId: string): ProviderModelValues | null {
   const primaryTypeValue = String(formData.get('primaryType') ?? 'text');
   if (!MODEL_PRIMARY_TYPES.includes(primaryTypeValue as ModelPrimaryType)) return null;
   const contextWindow = optionalPositiveInteger(formData, 'contextWindow');
   const maxInputTokens = optionalPositiveInteger(formData, 'maxInputTokens');
   const maxOutputTokens = optionalPositiveInteger(formData, 'maxOutputTokens');
-  if ([contextWindow, maxInputTokens, maxOutputTokens].includes(undefined)) return null;
+  const cost = providerModelCost(formData);
+  if ([contextWindow, maxInputTokens, maxOutputTokens, cost].includes(undefined)) return null;
   const defaults = defaultProviderModel(modelId);
   const name = String(formData.get('name') ?? '').trim();
   const group = String(formData.get('group') ?? '').trim();
@@ -413,6 +358,7 @@ function providerModelValues(formData: FormData, modelId: string): ProviderModel
     contextWindow: contextWindow ?? null,
     maxInputTokens: maxInputTokens ?? null,
     maxOutputTokens: maxOutputTokens ?? null,
+    cost,
   };
 }
 
@@ -435,7 +381,7 @@ export async function addProviderModelAction(
     return { error: 'Enter between 1 and 50 valid model IDs.' };
   }
   const base = providerModelValues(formData, modelIds[0]!);
-  if (!base) return { error: 'Check the model classification and token limits.' };
+  if (!base) return { error: 'Check the model classification, token limits, and prices.' };
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
   const models = modelIds.length === 1
@@ -470,7 +416,7 @@ export async function updateProviderModelAction(
   const modelId = String(formData.get('modelId') ?? '').trim();
   const model = providerModelValues(formData, modelId);
   if (!providerId || !modelId || modelId.length > 200 || !model) {
-    return { error: 'Check the model fields and token limits.' };
+    return { error: 'Check the model fields, token limits, and prices.' };
   }
   const ctx = await authorizedWorkspace(slug, true);
   if (!ctx) return { error: 'Not authorized.' };
@@ -576,18 +522,14 @@ export async function createAgentAction(formData: FormData) {
   const name = String(formData.get('name') ?? '').trim() || 'New agent';
   const ctx = await authorizedWorkspace(slug);
   if (!ctx) return;
-  const runtime = implementedAgentRuntimeKind(formData.get('runtime'));
-  if (!runtime) throw new Error('Choose an available Agent runtime.');
+  if (formData.get('runtime') !== 'pi') throw new Error('Only the Pi runtime is available for new agents.');
+  const runtime = 'pi';
   const providerIds = formData.getAll('providerId').map(String).filter(Boolean);
   const providerId = providerIds[0] ?? null;
   const model = String(formData.get('model') ?? '') || null;
-  if (runtime === 'hermes') {
-    if (providerIds.length === 0) throw new Error('Choose an available model.');
-  } else {
-    const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
-    if (!provider || !model || !provider.models.includes(model)) {
-      throw new Error('Choose an available model.');
-    }
+  const provider = providerId ? await getProvider(ctx.ws.id, providerId) : null;
+  if (!provider || !model || !provider.models.includes(model)) {
+    throw new Error('Choose an available model.');
   }
   const agent = await createConfiguredAgent(
     ctx.ws.id,
@@ -1039,6 +981,98 @@ export async function upgradeHermesRuntimeAction(
   } catch {
     return { error: 'Could not upgrade the Hermes runtime.' };
   }
+}
+
+export type PiRuntimeAgentState = {
+  agentId: string;
+  name: string;
+  version?: string;
+  installed?: boolean;
+  status: 'ready' | 'updated' | 'unchanged' | 'error';
+  error?: string;
+};
+
+export type PiRuntimeManagementState = {
+  agents?: PiRuntimeAgentState[];
+  latestVersion?: string;
+  targetVersion?: string;
+  error?: string;
+  warning?: string;
+  finishedAt?: number;
+};
+
+async function latestPiVersion(): Promise<string> {
+  const response = await fetch('https://registry.npmjs.org/@earendil-works%2fpi-coding-agent/latest', {
+    cache: 'no-store', signal: AbortSignal.timeout(15_000), redirect: 'error',
+  });
+  if (!response.ok) throw new Error('Could not check the latest Pi release.');
+  const data = await response.json();
+  if (typeof data.version !== 'string') throw new Error('Invalid Pi release metadata.');
+  return validatePiVersion(data.version);
+}
+
+async function managePiRuntimes(slug: string, target?: string, agentIds?: string[]): Promise<PiRuntimeManagementState> {
+  const ctx = await authorizedWorkspace(slug);
+  if (!ctx) return { error: 'Not authorized.' };
+  if (target !== undefined && (!Array.isArray(agentIds) || !agentIds.length
+    || agentIds.some((id) => typeof id !== 'string' || !id.trim()))) {
+    return { error: 'Select at least one Pi agent.' };
+  }
+  if (target !== undefined && target !== 'latest') {
+    try { validatePiVersion(target); }
+    catch { return { error: 'Enter an exact Pi version, for example 0.80.3.' }; }
+  }
+  // Authorize the collection on the server before applying the requested selection.
+  const agents = await db.agent.findMany({
+    where: { workspaceId: ctx.ws.id, runtimeKind: 'pi', ...ORDINARY_AGENT_FILTER },
+    select: { id: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
+  const selectedIds = new Set(agentIds);
+  const targets = target === undefined ? agents : agents.filter((agent) => selectedIds.has(agent.id));
+  if (target !== undefined && targets.length !== selectedIds.size) {
+    return { error: 'One or more selected Pi agents are unavailable in this workspace. Refresh and select again.' };
+  }
+  let latestVersion: string | undefined;
+  let warning: string | undefined;
+  if (target === undefined || target === 'latest') {
+    try { latestVersion = await latestPiVersion(); }
+    catch {
+      const error = 'Could not check the latest Pi release. Retry or specify an exact version.';
+      if (target) return { error };
+      warning = error;
+    }
+  }
+  const version = target === 'latest' ? latestVersion : target;
+  const results: PiRuntimeAgentState[] = [];
+  for (const agent of targets) {
+    let current: PiRuntimeVersion | undefined;
+    try {
+      if (!await isManageableAgent(ctx.ws.id, agent.id)) throw new Error('Agent unavailable.');
+      current = await getPiRuntimeVersion(ctx.ws.id, agent.id);
+      if (version && (!current.installed || current.version !== version)) {
+        const updated = await updatePiRuntimeVersion(ctx.ws.id, agent.id, version);
+        results.push({ agentId: agent.id, name: agent.name, ...updated, status: 'updated' });
+      } else {
+        results.push({ agentId: agent.id, name: agent.name, ...current, status: version ? 'unchanged' : 'ready' });
+      }
+    } catch (error) {
+      results.push({ agentId: agent.id, name: agent.name, ...current, status: 'error',
+        error: error instanceof SandboxExecutionBusyError ? error.message
+          : 'Could not manage this Pi runtime. Check its sandbox, network and requested version, then check again before retrying.' });
+    }
+  }
+  if (version) revalidatePath(`/app/${slug}/agents`);
+  return { agents: results, ...(latestVersion ? { latestVersion } : {}), ...(warning ? { warning } : {}),
+    ...(version ? { targetVersion: version, finishedAt: Date.now() } : {}) };
+}
+
+export async function checkPiRuntimesAction(slug: string): Promise<PiRuntimeManagementState> {
+  return managePiRuntimes(slug);
+}
+
+export async function updatePiRuntimesAction(slug: string, target: string, agentIds: string[]): Promise<PiRuntimeManagementState> {
+  if (typeof target !== 'string' || !target.trim()) return { error: 'Enter an exact Pi version or choose latest.' };
+  return managePiRuntimes(slug, target, agentIds);
 }
 
 export async function updateAgentRuntimeEnvAction(

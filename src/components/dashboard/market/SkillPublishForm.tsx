@@ -1,8 +1,14 @@
 'use client';
 
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
+import { Input } from '@/components/motion/input';
+
 import { useActionState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronDown, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
+import { Button } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
 import {
   publishAssistantReleaseAction,
   publishMcpReleaseAction,
@@ -57,52 +63,43 @@ function MarketPublishForm({
   }
 
   return (
-    <details className="group sm:col-span-4">
-      <summary className="ui-button-secondary ml-auto h-8 w-fit cursor-pointer list-none px-2.5 text-xs [&::-webkit-details-marker]:hidden">
-        <Upload className="size-3.5" />
-        {listing ? t('publishNewVersion') : t('publishToMarket')}
-        <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-      </summary>
+    <div className="sm:col-span-4">
+      <CenterMorphModal>
+        <CenterMorphModalTrigger>
+          <Button type="button" variant="secondary" size="sm"><Upload className="size-3.5" />{listing ? t('publishNewVersion') : t('publishToMarket')}</Button>
+        </CenterMorphModalTrigger>
+        <CenterMorphModalContent ariaLabel={listing ? t('publishNewVersion') : t('publishToMarket')}>
       <form action={action} className="mt-4 grid gap-3 rounded-lg bg-muted/35 p-4 sm:grid-cols-2">
         <input type="hidden" name="workspace" value={workspace} />
         <input type="hidden" name={sourceField} value={resource.id} />
-        <label className="text-xs font-medium text-foreground">
-          {t('listingName')}
-          <input
+        <div className="text-xs font-medium text-foreground">
+          
+          <Input label={t('listingName')}
             name="name"
             required
             maxLength={240}
             defaultValue={listing?.name ?? resource.name}
-            className="ui-input mt-1.5 h-9"
+            className="mt-1.5"
           />
-        </label>
+        </div>
         <fieldset className="sm:col-span-2">
           <legend className="text-xs font-medium text-foreground">{t('filterByCategory')}</legend>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
             {categories.map((category) => (
-              <label key={category.id} className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  name="categoryIds"
-                  value={category.id}
-                  defaultChecked={listing?.categoryIds.includes(category.id)}
-                  className="size-3.5 accent-foreground"
-                />
-                <span>{category.name}</span>
-              </label>
+              <FormCheckbox key={category.id} name="categoryIds" value={category.id} defaultChecked={listing?.categoryIds.includes(category.id)} label={category.name} />
             ))}
           </div>
         </fieldset>
-        <label className="text-xs font-medium text-foreground">
-          {t('listingSlug')}
-          <input
+        <div className="text-xs font-medium text-foreground">
+          
+          <Input label={t('listingSlug')}
             name="slug"
             required
             maxLength={100}
             defaultValue={listing?.slug ?? resource.slug}
-            className="ui-input mt-1.5 h-9"
+            className="mt-1.5"
           />
-        </label>
+        </div>
         <label className="text-xs font-medium text-foreground sm:col-span-2">
           {t('listingSummary')}
           <textarea
@@ -111,45 +108,47 @@ function MarketPublishForm({
             maxLength={4000}
             rows={3}
             defaultValue={listing?.summary ?? resource.description ?? ''}
-            className="ui-input mt-1.5 resize-y py-2"
+            className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mt-1.5 resize-y py-2"
           />
         </label>
-        <label className="text-xs font-medium text-foreground">
-          {t('listingTags')}
-          <input
+        <div className="text-xs font-medium text-foreground">
+          
+          <Input label={t('listingTags')}
             name="tags"
             maxLength={400}
             defaultValue={listing?.tags.join(', ') ?? ''}
             placeholder={t('listingTagsPlaceholder')}
-            className="ui-input mt-1.5 h-9"
+            className="mt-1.5"
           />
-        </label>
-        <label className="text-xs font-medium text-foreground">
-          {t('releaseNotes')}
-          <input
+        </div>
+        <div className="text-xs font-medium text-foreground">
+          
+          <Input label={t('releaseNotes')}
             name="releaseNotes"
             maxLength={10000}
             placeholder={t('releaseNotesPlaceholder')}
-            className="ui-input mt-1.5 h-9"
+            className="mt-1.5"
           />
-        </label>
+        </div>
         <div className="flex flex-wrap items-center justify-end gap-3 sm:col-span-2">
           {state.error ? (
-            <p role="alert" className="mr-auto text-xs text-red-600 dark:text-red-400">
+            <p role="alert" className="text-sm text-destructive">
               {errorLabels[state.error] ?? t('publishErrorGeneric')}
             </p>
           ) : null}
           {state.ok ? (
-            <p role="status" className="mr-auto text-xs text-emerald-700 dark:text-emerald-300">
+            <p role="status" className="mr-auto text-xs text-(--color-success) dark:text-(--color-success)">
               {t('releaseSubmitted')}
             </p>
           ) : null}
-          <SubmitButton pendingLabel={t('submittingRelease')} flash={false} className="ui-button-primary h-9 px-3 text-xs">
+          <SubmitButton pendingLabel={t('submittingRelease')} flash={false} variant="primary" size="sm">
             {listing ? t('submitNewVersion') : t('submitForReview')}
           </SubmitButton>
         </div>
       </form>
-    </details>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
+    </div>
   );
 }
 

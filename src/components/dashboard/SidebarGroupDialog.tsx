@@ -1,12 +1,7 @@
 'use client';
-
-import {
-  Dialog,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalClose } from '@/components/motion/center-morph-modal';
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
 
 export function SidebarGroupDialog({
   initialName,
@@ -30,10 +25,10 @@ export function SidebarGroupDialog({
   onSubmit: (name: string) => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent className="!max-w-sm">
+    <CenterMorphModal open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      
+        
+        <CenterMorphModalContent ariaLabel={title} closeButtonLabel={cancelLabel} className="w-full max-w-xl p-6">
           <form
             key={`${open}:${initialName}`}
             onSubmit={(event) => {
@@ -43,27 +38,18 @@ export function SidebarGroupDialog({
             }}
             className="space-y-4"
           >
-            <DialogTitle>{title}</DialogTitle>
+            <h2 className="pr-10">{title}</h2>
             <label className="block text-sm font-medium">
               {nameLabel}
-              <input
-                autoFocus
-                aria-label={nameLabel}
-                className="ui-input mt-1 w-full"
-                defaultValue={initialName}
-                maxLength={80}
-                name="name"
-                placeholder={placeholder}
-                required
-              />
+              <Input autoFocus aria-label={nameLabel} defaultValue={initialName} maxLength={80} name="name" placeholder={placeholder} required className="mt-1 w-full" />
             </label>
             <div className="flex justify-end gap-2">
-              <button type="button" className="ui-button-secondary h-9 px-3" onClick={onClose}>{cancelLabel}</button>
-              <button type="submit" className="ui-button-primary h-9 px-3">{submitLabel}</button>
+              <CenterMorphModalClose><Button type="button" variant="secondary" size="sm">{cancelLabel}</Button></CenterMorphModalClose>
+              <Button type="submit" variant="primary" size="sm">{submitLabel}</Button>
             </div>
           </form>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      
+    </CenterMorphModal>
   );
 }

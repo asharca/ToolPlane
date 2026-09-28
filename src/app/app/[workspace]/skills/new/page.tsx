@@ -1,8 +1,5 @@
 import { redirect } from 'next/navigation';
-import {
-  legacyMarketRedirectTarget,
-  type MarketSearchParams,
-} from '@/lib/workspace/market-url';
+import { legacyMarketRedirectTarget, type MarketSearchParams } from '@/lib/workspace/market-url';
 
 export default async function LegacySkillMarketRedirect({
   params,

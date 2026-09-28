@@ -38,10 +38,11 @@ export function HermesRuntimePanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200 sm:px-5">
+      <div className="shrink-0 border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground text-muted-foreground sm:px-5">
         {t('hermesManagedFieldsWarning')}
       </div>
       <iframe
+        tabIndex={0}
         ref={iframeRef}
         key={dashboardUrl}
         src={dashboardUrl}
@@ -49,7 +50,7 @@ export function HermesRuntimePanel({
         sandbox="allow-downloads allow-modals allow-popups allow-same-origin allow-scripts"
         allow="clipboard-read; clipboard-write"
         referrerPolicy="no-referrer"
-        className="min-h-0 w-full flex-1 border-0 bg-black"
+        className="min-h-0 w-full flex-1 border-0 bg-background"
       />
     </div>
   );

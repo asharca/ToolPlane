@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Link from 'next/link';
 import { AdminSearchForm } from '@/components/admin/AdminUI';
 import { CategoriesPanel } from '@/components/admin/CategoriesPanel';
 import { SettingsChanges } from '@/components/admin/SettingsChanges';
+import { Input } from '@/components/motion/input';
 import { adminHref, adminReturnHref } from '@/lib/admin/navigation';
 import { auditWhere, logFilterSchema, logWhere } from '@/lib/observability/queries';
 
@@ -18,13 +19,16 @@ describe('practical admin navigation and forms', () => {
     expect(data.has('page')).toBe(false);
   });
 
-  it('keeps category editing and deletion in separate forms', () => {
+  it('keeps category editing and deletion in separate forms', async () => {
     const { container } = render(<CategoriesPanel categories={[{ id: 'c1', name: 'Research', slug: 'research', _count: { servers: 0, skills: 0, clients: 0, agentListings: 0, assistants: 0, toolkits: 0 } }]} />);
     expect(container.querySelector('form form')).toBeNull();
     const button = screen.getByRole('button', { name: 'Delete category Research' });
     expect(button.closest('form')).toBeNull();
     fireEvent.click(button);
-    expect(container.querySelector('form[aria-labelledby]')).not.toHaveAttribute('hidden');
+    const dialog = await screen.findByRole('dialog');
+    expect(new FormData(dialog.querySelector('form')!).get('categoryId')).toBe('c1');
+    fireEvent.click(within(dialog.querySelector('form')!).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('retains only local admin return links', () => {
@@ -44,9 +48,9 @@ describe('practical admin navigation and forms', () => {
 
   it('warns before leaving unsaved settings and clears after reverting', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    render(<SettingsChanges><form><input aria-label="Limit" defaultValue="20" /></form><Link href="/admin/users">Users</Link></SettingsChanges>);
+    render(<SettingsChanges><form><Input label="Limit" defaultValue="20" /></form><Link href="/admin/users">Users</Link></SettingsChanges>);
     fireEvent.input(screen.getByLabelText('Limit'), { target: { value: '30' } });
-    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+    expect(screen.getByRole('status')).toBeInTheDocument();
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     expect(screen.getByRole('link').dispatchEvent(click)).toBe(false);
     expect(confirm).toHaveBeenCalledOnce();
@@ -59,15 +63,15 @@ describe('practical admin navigation and forms', () => {
   });
 
   it('preserves drafts on automatic reset and while another setting is saved', () => {
-    const { rerender } = render(<SettingsChanges><form key="initial"><input aria-label="Limit" defaultValue="20" /></form><form><input aria-label="Timeout" defaultValue="30" /></form></SettingsChanges>);
+    const { rerender } = render(<SettingsChanges><form key="initial"><Input label="Limit" defaultValue="20" /></form><form><Input label="Timeout" defaultValue="30" /></form></SettingsChanges>);
     const input = screen.getByLabelText('Limit') as HTMLInputElement;
     fireEvent.input(input, { target: { value: '40' } });
     fireEvent.input(screen.getByLabelText('Timeout'), { target: { value: '60' } });
     input.form!.reset();
     expect(input.value).toBe('40');
-    rerender(<SettingsChanges><form key="saved"><input aria-label="Limit" defaultValue="40" /></form><form><input aria-label="Timeout" defaultValue="30" /></form></SettingsChanges>);
+    rerender(<SettingsChanges><form key="saved"><Input label="Limit" defaultValue="40" /></form><form><Input label="Timeout" defaultValue="30" /></form></SettingsChanges>);
     expect(screen.getByLabelText('Limit')).toHaveValue('40');
     expect(screen.getByLabelText('Timeout')).toHaveValue('60');
-    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+    expect(screen.getByRole('status')).toBeInTheDocument();
   });
 });

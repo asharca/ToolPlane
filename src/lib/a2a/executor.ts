@@ -9,7 +9,7 @@ import { runHermesTextStream } from '@/lib/agents/hermes/client';
 import { A2A_LIMITS, textArtifact } from './model';
 import { assertLiveGrant, isLocalGrant, isRemoteGrant, type A2AGrant, type TaskGrant } from './principal';
 
-export type ExecutionResult = { state: TaskState; message?: string; artifact?: Artifact; deferred?: true };
+export type ExecutionResult = { state: TaskState; message?: string; artifact?: Artifact; deferred?: true; nativeOperationId?: string };
 export type TaskExecutor = (task: A2ATask, signal: AbortSignal) => Promise<ExecutionResult>;
 /**
  * Runtime port only: no AgentRun, Responses API, old conversations or delegation runner.

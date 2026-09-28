@@ -53,7 +53,6 @@ describe('AgentSettings', () => {
     expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Instructions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Basic' })).toBeInTheDocument();
-    expect(screen.queryByText(/^Tools$/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Built-in tools' }));
     expect(screen.getByText('settings:builtInTools:false')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Message this agent')).not.toBeInTheDocument();

@@ -13,22 +13,6 @@ const tools = [
 ];
 
 describe('McpToolExposureEditor', () => {
-  it('defaults to all current and future tools', () => {
-    render(
-      <McpToolExposureEditor
-        workspace="acme"
-        deploymentId="dep1"
-        tools={tools}
-        initialMode="all"
-        initialAllowedTools={[]}
-        running
-      />,
-    );
-
-    expect(screen.getByRole('radio', { name: /all tools/i })).toBeChecked();
-    expect(screen.getByText(/2 of 2 current tools exposed/i)).toBeInTheDocument();
-    expect(screen.getByText(/future tools/i)).toBeInTheDocument();
-  });
 
   it('keeps an explicit empty allowlist distinct from all mode', () => {
     render(

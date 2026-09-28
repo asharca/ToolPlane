@@ -103,7 +103,7 @@ export function getSidebarDropEdge(clientY: number, rect: { top: number; height:
 
 export function sidebarDropIndicatorClassName(edge: SidebarDropEdge | undefined) {
   if (!edge) return '';
-  return `before:pointer-events-none before:absolute before:inset-x-0 before:z-10 before:h-0.5 before:bg-brand before:content-[''] ${
+  return `before:pointer-events-none before:absolute before:inset-x-0 before:z-10 before:h-0.5 before:bg-primary before:content-[''] ${
     edge === 'before' ? 'before:top-0' : 'before:bottom-0'
   }`;
 }

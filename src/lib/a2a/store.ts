@@ -17,6 +17,13 @@ import { refreshTaskStorage, assertNativeStorageCapacity, reserveNativeExecution
 type Tx = Prisma.TransactionClient;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const notFound = () => new TaskNotFoundError();
+function isPiHarnessTask(row: A2ATask): boolean {
+  if (row.executionBackend === 'legacy') return false;
+  if (row.executionBackend !== 'pi-harness' || !isLocalGrant(row.grant as unknown as TaskGrant)) {
+    throw new UnsupportedOperationError('Invalid task execution backend.');
+  }
+  return true;
+}
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => [key, canonical(v)]));
@@ -43,7 +50,9 @@ export async function lockTask(tx: Tx, id: string) {
   // All task writes share the workspace-first lock order with public Responses admission.
   await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
   await tx.$queryRaw`SELECT id FROM "A2ATask" WHERE id=${id} FOR UPDATE`;
-  return tx.a2ATask.findUniqueOrThrow({ where: { id } });
+  const row = await tx.a2ATask.findUniqueOrThrow({ where: { id } });
+  isPiHarnessTask(row);
+  return row;
 }
 export async function persist(tx: Tx, row: A2ATask, task: Task, event: StreamResponse, data: Prisma.A2ATaskUpdateInput = {}) {
   if (Buffer.byteLength(JSON.stringify(jsonTask(task)), 'utf8') > A2A_LIMITS.snapshotBytes) throw new UnsupportedOperationError('Task storage limit exceeded.');
@@ -153,7 +162,11 @@ export async function submitTaskInTransaction(tx: Tx, grant: TaskGrant, request:
         status: { state: TaskState.TASK_STATE_SUBMITTED, timestamp: new Date().toISOString() }, metadata: request.metadata });
       const deadline = Math.min(Date.now() + Math.min(grant.timeoutSeconds, A2A_LIMITS.deadlineSeconds) * 1000,
         grant.expiresAt ?? Infinity, context.expiresAt.getTime());
+      const executionBackend = isLocalGrant(grant)
+        && (await tx.agent.findFirstOrThrow({ where: { id: grant.agentId, workspaceId: grant.workspaceId }, select: { runtimeKind: true } })).runtimeKind === 'pi'
+        ? 'pi-harness' : 'legacy';
       row = await tx.a2ATask.create({ data: { id, contextId: context.id, state: TaskState.TASK_STATE_SUBMITTED,
+        executionBackend,
         statusAt: new Date(task.status!.timestamp!), snapshot: json(jsonTask(task)), request: json(SendMessageRequest.toJSON({ ...request, message: accepted })),
         ...(isWorkspaceGrant(grant) ? { rootTaskId: grant.rootTaskId ?? id, parentTaskId: grant.parentTaskId, depth: grant.ancestorTaskIds.length } : {}),
         grant: json(isWorkspaceGrant(grant) ? grant : { ...grant, revisionId: context.revisionId }), deadlineAt: new Date(deadline),
@@ -167,13 +180,14 @@ export async function requestCancellation(grant: TaskGrant, id: string) {
   await getTaskRow(grant, id);
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
+    const native = isPiHarnessTask(row);
     const task = Task.fromJSON(row.snapshot);
     if (row.state === TaskState.TASK_STATE_CANCELED && row.cancelRequestedAt) return task;
     assertCancelable(task);
     if (isRemoteGrant(row.grant as unknown as TaskGrant) && row.remoteDispatchedAt) {
       // Remote cancellation is not acknowledged until the remote service confirms its state.
       await markRemoteCancellation(tx, row, task);
-    } else if (row.state === TaskState.TASK_STATE_WORKING && row.phase === 'executing' && row.leaseToken) {
+    } else if ((native && row.nativeOperationId) || (row.state === TaskState.TASK_STATE_WORKING && row.phase === 'executing' && row.leaseToken)) {
       // A cancel request does not mean the executor has stopped. The worker settles it.
       await tx.a2ATask.update({ where: { id }, data: { cancelRequestedAt: row.cancelRequestedAt ?? new Date() } });
     } else {
@@ -187,37 +201,89 @@ export async function requestCancellation(grant: TaskGrant, id: string) {
 export async function claimTask(id: string) {
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
-    if (row.cancelRequestedAt || row.deadlineAt <= new Date()) return null;
+    const native = isPiHarnessTask(row);
+    const cleanup = !!(native && row.nativeOperationId && (row.cancelRequestedAt || row.deadlineAt <= new Date()));
+    if ((row.cancelRequestedAt || row.deadlineAt <= new Date()) && !cleanup) return null;
     const resume = row.state === TaskState.TASK_STATE_WORKING && row.phase === 'resumable';
     if (row.state !== TaskState.TASK_STATE_SUBMITTED && !resume) return null;
-    await assertNativeStorageCapacity(tx, row.grant as unknown as TaskGrant, false);
-    await reserveNativeExecutionOutput(tx, row.grant as unknown as TaskGrant, row.deadlineAt);
+    if (!(native && row.nativeOperationId)) {
+      await assertNativeStorageCapacity(tx, row.grant as unknown as TaskGrant, false);
+      await reserveNativeExecutionOutput(tx, row.grant as unknown as TaskGrant, row.deadlineAt);
+    }
     const task = Task.fromJSON(row.snapshot);
     if (resume) {
-      const { resumeMessage } = await import('./local-continuation');
-      task.history.push(await resumeMessage(tx, row));
+      if (!native) {
+        // Defer the store/continuation cycle until a legacy continuation is claimed.
+        const { resumeMessage } = await import('./local-continuation');
+        task.history.push(await resumeMessage(tx, row));
+      }
       task.status!.timestamp = new Date().toISOString();
     } else transition(task, TaskState.TASK_STATE_WORKING);
     return persist(tx, row, task, taskEvent(task), { leaseToken: randomUUID(), phase: 'executing',
-      waitForTaskIds: [], pendingQuestion: null, ...(resume ? { resumeCount: { increment: 1 } } : {}) });
+      waitForTaskIds: [], pendingQuestion: null, approvalReadyLease: null, ...(resume && !native ? { resumeCount: { increment: 1 } } : {}) });
   });
 }
-export async function finishTask(id: string, leaseToken: string, state: TaskState, detail?: string, artifact?: Artifact) {
+export async function bindPiHarnessOperation(taskId: string, leaseToken: string, operationId: string): Promise<string> {
+  if (!operationId.trim()) throw new RequestMalformedError('Missing native operation ID.');
+  return db.$transaction(async (tx) => {
+    const row = await lockTask(tx, taskId);
+    if (!isPiHarnessTask(row) || !leaseToken || row.leaseToken !== leaseToken
+      || row.state !== TaskState.TASK_STATE_WORKING || row.phase !== 'executing') throw notFound();
+    if (row.nativeOperationId) return row.nativeOperationId;
+    if (row.cancelRequestedAt || row.deadlineAt <= new Date()) throw new UnsupportedOperationError('Task execution is no longer permitted.');
+    await tx.a2ATask.update({ where: { id: taskId }, data: { nativeOperationId: operationId } });
+    return operationId;
+  });
+}
+export async function releasePiHarnessClaim(taskId: string, leaseToken: string): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, taskId);
+    if (!isPiHarnessTask(row)) throw new UnsupportedOperationError('Task is not a Pi Harness task.');
+    if (!leaseToken || row.leaseToken !== leaseToken || row.state !== TaskState.TASK_STATE_WORKING || row.phase !== 'executing') return;
+    await tx.a2ATask.update({ where: { id: taskId }, data: { phase: 'resumable', leaseToken: null, approvalReadyLease: null } });
+  });
+}
+
+/** Observer-only projection; native Session state remains the execution truth. */
+export async function projectPiHarnessProgress(taskId: string, leaseToken: string, operationId: string, detail: string): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, taskId);
+    if (!isPiHarnessTask(row) || row.nativeOperationId !== operationId || row.leaseToken !== leaseToken
+      || row.state !== TaskState.TASK_STATE_WORKING || row.phase !== 'executing' || row.cancelRequestedAt) return;
+    const task = Task.fromJSON(row.snapshot);
+    task.status!.timestamp = new Date().toISOString();
+    task.status!.message = agentMessage(task, detail.slice(-2048));
+    await persist(tx, row, task, statusEvent(task));
+  });
+}
+export async function finishTask(id: string, leaseToken: string, state: TaskState, detail?: string, artifact?: Artifact, nativeResult?: { nativeOperationId: string }) {
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (row.leaseToken !== leaseToken || row.state !== TaskState.TASK_STATE_WORKING) return;
+    const native = isPiHarnessTask(row);
+    const confirmedNative = native && !!row.nativeOperationId && nativeResult?.nativeOperationId === row.nativeOperationId;
+    if ((nativeResult && !confirmedNative) || (native && row.nativeOperationId && !confirmedNative)) {
+      throw new UnsupportedOperationError('Native terminal result must match the bound operation.');
+    }
+    if (confirmedNative && ![TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_REJECTED, TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_FAILED].includes(state)) {
+      throw new UnsupportedOperationError('Invalid native terminal state.');
+    }
+    if (native && !confirmedNative && state !== TaskState.TASK_STATE_FAILED && state !== TaskState.TASK_STATE_CANCELED && state !== TaskState.TASK_STATE_REJECTED) {
+      throw new UnsupportedOperationError('Pi execution requires a bound native terminal result.');
+    }
     const task = Task.fromJSON(row.snapshot);
     const grant = row.grant as unknown as TaskGrant;
     const local = isLocalGrant(grant);
-    if (local && await tx.a2AToolApproval.count({ where: { taskId: id, leaseToken,
+    if (local && (!confirmedNative || state === TaskState.TASK_STATE_COMPLETED) && await tx.a2AToolApproval.count({ where: { taskId: id, leaseToken,
       status: { in: ['pending', 'approved'] } } })) {
       state = TaskState.TASK_STATE_FAILED;
       detail = 'Executor ended with unresolved native tool approvals.';
       artifact = undefined;
     }
-    if (local && [TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED].includes(state)
+    if (!confirmedNative && local && [TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED].includes(state)
       && !row.cancelRequestedAt && row.deadlineAt > new Date()) await assertLocalGrant(grant, tx);
-    if (local && state === TaskState.TASK_STATE_COMPLETED && !row.cancelRequestedAt && row.deadlineAt > new Date()) {
+    if (!native && local && state === TaskState.TASK_STATE_COMPLETED && !row.cancelRequestedAt && row.deadlineAt > new Date()) {
+      // Continuation imports this store; only load its legacy join path when needed.
       const { suspendLocalTurn } = await import('./local-continuation');
       if (await suspendLocalTurn(tx, row, task, artifact)) return;
       if (row.pendingQuestion) { state = TaskState.TASK_STATE_INPUT_REQUIRED; detail = row.pendingQuestion; artifact = undefined; }
@@ -230,8 +296,8 @@ export async function finishTask(id: string, leaseToken: string, state: TaskStat
         if (!task.artifacts.length) { state = TaskState.TASK_STATE_FAILED; detail = 'The executor did not publish an artifact in the requested output format.'; }
       }
     }
-    // Cancellation/deadline wins over a racing successful executor return.
-    const actual = row.cancelRequestedAt ? TaskState.TASK_STATE_CANCELED
+    // A confirmed native terminal result wins late cancellation/deadline races.
+    const actual = confirmedNative ? state : row.cancelRequestedAt ? TaskState.TASK_STATE_CANCELED
       : row.deadlineAt <= new Date() ? TaskState.TASK_STATE_FAILED : state;
     let current = row;
     if (actual === TaskState.TASK_STATE_COMPLETED && artifact) {
@@ -251,6 +317,9 @@ export async function interruptTask(id: string, detail: string, expected?: { rem
   return db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (terminal(row.state) || expected && (row.remoteMessageId !== expected.remoteMessageId || row.phase !== expected.phase)) return;
+    if (isPiHarnessTask(row) && row.nativeOperationId) {
+      throw new UnsupportedOperationError('A bound Pi operation must be resumed or canceled natively.');
+    }
     const task = Task.fromJSON(row.snapshot);
     transition(task, row.cancelRequestedAt && !row.remoteDispatchedAt ? TaskState.TASK_STATE_CANCELED : TaskState.TASK_STATE_FAILED,
       row.remoteDispatchedAt ? `${detail} Remote completion or cancellation could not be confirmed; the remote service may still be running.` : detail);
@@ -309,9 +378,10 @@ export async function cancelLocalDescendants(tx: Tx, parent: A2ATask) {
     if (!row.parentTaskId || !ancestors.has(row.parentTaskId)) continue;
     ancestors.add(row.id);
     if (terminal(row.state)) continue;
+    const native = isPiHarnessTask(row);
     if (isRemoteGrant(row.grant as unknown as TaskGrant) && row.remoteDispatchedAt) {
       await markRemoteCancellation(tx, row, Task.fromJSON(row.snapshot));
-    } else if (row.phase === 'executing' && row.leaseToken) {
+    } else if ((native && row.nativeOperationId) || (row.phase === 'executing' && row.leaseToken)) {
       await tx.a2ATask.update({ where: { id: row.id }, data: { cancelRequestedAt: row.cancelRequestedAt ?? new Date() } });
     } else {
       const task = Task.fromJSON(row.snapshot); transition(task, TaskState.TASK_STATE_CANCELED);

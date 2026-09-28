@@ -1,4 +1,7 @@
 'use client';
+import { RadioGroup } from '@/components/motion/radio';
+import { RadioGroupItem } from '@/components/motion/radio';
+
 
 import { useId } from 'react';
 import { useTranslations } from 'next-intl';
@@ -40,47 +43,19 @@ export function McpNetworkModeControl({
       <legend className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {t('networkMode')}
       </legend>
-      <div className="grid grid-cols-2 gap-1 rounded-md border border-border bg-muted/20 p-1">
-        {options.map((option) => {
-          const Icon = option.icon;
-          const active = value === option.value;
-          return (
-            <label
-              key={option.value}
-              className={`flex min-h-14 cursor-pointer items-center gap-2 rounded px-3 py-2 transition-colors ${
-                active
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
-              } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
-            >
-              <input
-                type="radio"
-                name="network"
-                value={option.value}
-                checked={active}
-                onChange={() => onChange(option.value)}
-                className="sr-only"
-              />
-              <Icon className="size-4 shrink-0" />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">{option.label}</span>
-                <span className="block text-xs leading-4 text-muted-foreground">
-                  {option.description}
-                </span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
+      <input type="hidden" name="network" value={value} disabled={disabled} />
+      <RadioGroup value={value} onValueChange={(next) => onChange(next as McpNetworkMode)} orientation="horizontal">
+        {options.map((option) => (<div key={option.value} className="min-w-0 flex-1 space-y-2"><RadioGroupItem value={option.value} label={option.label} disabled={disabled} /><p className="text-xs text-muted-foreground">{option.description}</p></div>))}
+      </RadioGroup>
       <p id={descriptionId} className="mt-1.5 text-xs leading-5 text-muted-foreground">
         {t('networkModeHint')}
       </p>
-      <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+      <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-(--color-warning) dark:text-(--color-warning)">
         <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
         <span>{t('networkLoopbackProxyHint')}</span>
       </p>
       {value === 'none' && warnAboutPackageInstall ? (
-        <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+        <p className="mt-2 flex items-start gap-1.5 text-xs leading-5 text-(--color-warning) dark:text-(--color-warning)">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span>{t('networkNonePackageWarning')}</span>
         </p>

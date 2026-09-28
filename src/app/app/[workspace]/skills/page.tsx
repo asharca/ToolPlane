@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -8,11 +10,7 @@ import { getWorkspaceForUser, getInstalledSkills } from '@/lib/workspace/queries
 import { skillLabel } from '@/lib/workspace/skill-label';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { AddSkillDialog } from '@/components/dashboard/AddSkillDialog';
-import {
-  DashboardEmptyState,
-  DashboardPage,
-  DashboardToolbar,
-} from '@/components/dashboard/DashboardUI';
+import { DashboardEmptyState, DashboardPage, DashboardToolbar } from '@/components/dashboard/DashboardUI';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 import { InstalledSkillsTable } from '@/components/dashboard/InstalledSkillsTable';
 
@@ -71,10 +69,10 @@ export default async function SkillsPage({
         <DashboardToolbar
           actions={
             <>
-              <Link href={`/app/${slug}/market/skills`} className="ui-button-secondary">
+              <ButtonLink href={`/app/${slug}/market/skills`} variant="secondary" size="md">
                 <Store className="size-4" />
                 {t('browseSkillMarket')}
-              </Link>
+              </ButtonLink>
               <AddSkillDialog
                 slug={slug}
                 maxSkillImportSkills={skillImportSettings.maxSkills}
@@ -83,24 +81,24 @@ export default async function SkillsPage({
             </>
           }
         >
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-foreground dark:text-foreground">
             {t('instructionsAndAssetsYourAgentLoadsOnDemandAuthorOrSyncFromGithub')}
           </p>
         </DashboardToolbar>
 
         {importedSkills.length > 0 ? (
-          <section className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/70 dark:bg-emerald-950/30">
+          <section className="rounded-xl border border-border bg-card px-4 py-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <CheckCircle2 className="size-4" />
                   {t('importedSkills', { count: importedSkills.length })}
                 </div>
-                <p className="mt-1 text-sm text-emerald-700 dark:text-emerald-300">
+                <p className="mt-1 text-sm text-(--color-success) dark:text-(--color-success)">
                   {t('importedSkillsDescription')}
                 </p>
               </div>
-              <Link href={`/app/${slug}/skills`} className="text-xs font-medium text-emerald-800 underline-offset-4 hover:underline dark:text-emerald-200">
+              <Link href={`/app/${slug}/skills`} className="text-xs font-medium text-(--color-success) underline-offset-4 hover:underline dark:text-(--color-success)">
                 {t('clear')}
               </Link>
             </div>
@@ -111,7 +109,7 @@ export default async function SkillsPage({
                   <Link
                     key={skill.id}
                     href={`/app/${slug}/skills/${skill.id}`}
-                    className="min-w-0 rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-zinc-950 dark:hover:bg-emerald-950/40"
+                    className="min-w-0 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
                   >
                     <span className="block truncate font-medium text-foreground">
                       {label.name}
@@ -133,12 +131,9 @@ export default async function SkillsPage({
             actions={
               <>
                 <AddSkillDialog slug={slug} maxSkillImportSkills={skillImportSettings.maxSkills} />
-                <Link
-                  href={`/app/${slug}/market/skills`}
-                  className="ui-button-secondary"
-                >
+                <ButtonLink href={`/app/${slug}/market/skills`} variant="secondary" size="md">
                   {t('browseSkillMarket')}
-                </Link>
+                </ButtonLink>
               </>
             }
           >

@@ -7,10 +7,13 @@ export const A2A_DOCS = {
 
 export function a2aDeploymentOrigin(raw: string): string {
   const url = new URL(raw);
+  // Only literal RFC1918 addresses qualify; public hosts still require HTTPS.
+  const developmentLan = process.env.NODE_ENV === 'development'
+    && /^(?:10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)$/.test(url.hostname);
   if (url.username || url.password || url.search || url.hash
     || !['http:', 'https:'].includes(url.protocol)
-    || (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-    throw new Error('A2A requires a configured HTTPS origin (HTTP is allowed on loopback).');
+    || (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && !developmentLan)) {
+    throw new Error('A2A requires HTTPS (HTTP is allowed on loopback and private IPv4 addresses in development).');
   }
   return url.origin;
 }

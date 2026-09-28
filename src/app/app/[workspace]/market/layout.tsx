@@ -37,7 +37,7 @@ export default async function MarketLayout({
   return (
     <>
       <DashboardHeader title={t('title')} />
-      <div className="bg-card px-4 sm:px-8">
+      <div className="px-4 sm:px-8">
         <MarketTabs slug={workspace.slug} updateCount={updateCount} />
       </div>
       {children}

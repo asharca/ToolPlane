@@ -14,10 +14,6 @@ const mocks = vi.hoisted(() => ({
   effectiveStatus: vi.fn(),
   surface: vi.fn(),
   cookies: vi.fn(),
-  nativeAgents: vi.fn(),
-  nativeSurface: vi.fn(),
-  nativeTree: vi.fn(),
-  nativeMonitor: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ redirect: vi.fn(), notFound: () => { throw new Error('not found'); } }));
@@ -49,10 +45,6 @@ vi.mock('@/components/dashboard/work/WorkspaceWork', () => ({
   },
 }));
 
-vi.mock('@/lib/a2a/workbench', () => ({ listWorkbenchAgents: mocks.nativeAgents }));
-vi.mock('@/components/dashboard/work/A2AWorkbench', () => ({ A2AWorkbench: (props: unknown) => { mocks.nativeSurface(props); return <div>Native workbench</div>; } }));
-vi.mock('@/lib/a2a/console-tasks', () => ({ getConsoleTaskTree: mocks.nativeTree }));
-vi.mock('@/components/dashboard/agents/AgentA2ATaskMonitor', () => ({ AgentA2ATaskMonitor: (props: unknown) => { mocks.nativeMonitor(props); return <div>Native task monitor</div>; } }));
 
 import WorkspaceWorkPage from '@/app/app/[workspace]/work/page';
 
@@ -61,8 +53,6 @@ describe('Workspace Work page', () => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', status: 'active' });
-    mocks.nativeAgents.mockResolvedValue([{ id: 'agent-pi', name: 'Pi', runtimeKind: 'pi', enabled: true, configured: true }]);
-    mocks.nativeTree.mockResolvedValue({ rootTaskId: 'task-1', nodes: [{ id: 'task-1', name: 'Pi' }], selectedTask: { id: 'task-1' } });
     mocks.listProviders.mockResolvedValue([]);
     mocks.listConversations.mockResolvedValue([]);
     mocks.getConversation.mockResolvedValue(null);
@@ -232,34 +222,14 @@ describe('Workspace Work page', () => {
 });
 
 
-describe('explicit native Work entry', () => {
-  beforeEach(() => vi.clearAllMocks());
-  it('opens an ordinary chat task as a read-only monitor without enabling A2A RPC', async () => {
-    render(await WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }),
-      searchParams: Promise.resolve({ mode: 'a2a', agent: 'agent-pi', task: 'task-1', view: 'entry' }) }));
-    expect(mocks.nativeTree).toHaveBeenCalledWith({ workspaceId: 'workspace-1', actorId: 'user-1', agentId: 'agent-pi', slug: 'ws' }, 'task-1');
-    expect(mocks.nativeMonitor).toHaveBeenCalledWith(expect.objectContaining({ rootTaskId: 'task-1', showHistory: true }));
-    expect(mocks.nativeSurface).not.toHaveBeenCalled();
-    expect(mocks.nativeAgents).not.toHaveBeenCalled();
-  });
-  it('does not show an ordinary task when its source is unauthorized', async () => {
-    mocks.nativeTree.mockRejectedValue(new Error('Task not found'));
-    await expect(WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }),
-      searchParams: Promise.resolve({ mode: 'a2a', agent: 'agent-pi', task: 'task-1', view: 'entry' }) })).rejects.toThrow('not found');
-    expect(mocks.nativeMonitor).not.toHaveBeenCalled();
-  });
-  it('uses native tasks without loading, resuming or migrating classic Work/chat records', async () => {
+describe('removed A2A Work mode', () => {
+  it('rejects the removed workbench instead of executing a task as ordinary Work', async () => {
     vi.clearAllMocks();
-    mocks.getCurrentUser.mockResolvedValue({ id: 'native-user' });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'native-workspace', status: 'active' });
-    mocks.nativeAgents.mockResolvedValue([{ id: 'agent-pi', name: 'Pi', runtimeKind: 'pi', enabled: true, configured: true }]);
-    render(await WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }), searchParams: Promise.resolve({ mode: 'a2a', agent: 'agent-pi', task: 'task-1' }) }));
-    expect(mocks.nativeSurface).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-pi', initialTaskId: 'task-1' }));
-    expect(mocks.nativeAgents).toHaveBeenCalledWith('native-workspace', 'native-user');
-    expect(mocks.listWorkSessions).not.toHaveBeenCalled(); expect(mocks.getConversation).not.toHaveBeenCalled();
+    mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
+    mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', status: 'active' });
+    await expect(WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }),
+      searchParams: Promise.resolve({ mode: 'a2a', agent: 'agent-pi' }) })).rejects.toThrow('not found');
+    expect(mocks.listWorkSessions).not.toHaveBeenCalled();
     expect(mocks.surface).not.toHaveBeenCalled();
-  });
-  it.each([{ w: 'old-work' }, { c: 'old-chat' }, { agent: 'foreign-agent' }, { task: 'orphan-task' }])('rejects ambiguous or unauthorized mode selection %s', async (extra) => {
-    await expect(WorkspaceWorkPage({ params: Promise.resolve({ workspace: 'ws' }), searchParams: Promise.resolve({ mode: 'a2a', ...extra }) })).rejects.toThrow('not found');
   });
 });

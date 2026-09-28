@@ -1,3 +1,7 @@
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -13,7 +17,6 @@ import {
   DashboardPage,
   DashboardPagination,
 } from '@/components/dashboard/DashboardUI';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
 
 export const dynamic = 'force-dynamic';
@@ -100,25 +103,19 @@ export default async function AgentMarketPage({
 
       <form className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_10rem_auto]">
         <input type="hidden" name="category" value={category} />
-        <label className="relative min-w-0 sm:col-span-2 lg:col-span-1">
-          <span className="sr-only">{t('searchPlaceholder')}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+        <div className="relative min-w-0 sm:col-span-2 lg:col-span-1">
+          
+          
+          <Input label={t('searchPlaceholder')} leftIcon={<Search />}
             name="q"
             defaultValue={q}
             placeholder={t('searchPlaceholder')}
-            className="ui-input ui-input-icon h-10 w-full"
+            className="w-full"
           />
-        </label>
-        <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortLabel')} className="ui-input h-10">
-          <option value="popular">{t('mostCloned')}</option>
-          <option value="newest">{t('newest')}</option>
-          <option value="name">{t('sortName')}</option>
-        </NativeSelect>
-        <button className="ui-button-secondary h-10">
-          <SlidersHorizontal className="size-4" />
-          {t('sortLabel')}
-        </button>
+        </div>
+        <FormSelect name="sort" defaultValue={sort} label={t('sortLabel')} options={[{ value: "popular", label: t('mostCloned') }, { value: "newest", label: t('newest') }, { value: "name", label: t('sortName') }]} />
+        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />
+        {t('sortLabel')}</Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -140,9 +137,9 @@ export default async function AgentMarketPage({
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
             <span>{t('resultCount', { count: result.total })}</span>
             {hasFilters ? (
-              <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">
+              <ButtonLink href={marketHref(slug, {})} variant="ghost" size="sm">
                 {t('clearFilters')}
-              </Link>
+              </ButtonLink>
             ) : null}
           </div>
 
@@ -157,13 +154,13 @@ export default async function AgentMarketPage({
               {result.items.map((agent) => {
                 const detailHref = `/app/${encodeURIComponent(slug)}/market/agents/${encodeURIComponent(agent.id)}`;
                 return (
-                  <article key={agent.id} className="ui-panel flex min-w-0 flex-col p-4">
+                  <article key={agent.id} className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
                 <div className="flex items-start gap-3">
                   {agent.iconUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={agent.iconUrl} alt="" width={44} height={44} className="size-11 rounded-lg object-cover" />
                   ) : (
-                    <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft font-semibold text-accent-foreground">
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-muted font-semibold text-accent-foreground">
                       {avatarLabel(agent.name)}
                     </span>
                   )}
@@ -184,13 +181,13 @@ export default async function AgentMarketPage({
                 </p>
                 <div className="mt-4 flex flex-wrap gap-1.5">
                   {agent.categories.slice(0, 2).map((item) => (
-                    <Link
+                    <ButtonLink
                       key={item.slug}
                       href={marketHref(slug, { category: item.slug, sort })}
-                      className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                      variant="ghost" size="sm"
                     >
                       {item.name}
-                    </Link>
+                    </ButtonLink>
                   ))}
                 </div>
                 <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-4 text-[11px] text-muted-foreground">
@@ -208,12 +205,12 @@ export default async function AgentMarketPage({
                   </div>
                 </dl>
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  <Link href={detailHref} className="ui-button-secondary h-9 min-w-0 px-3">
+                  <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
                     {t('viewDetails')} <ArrowRight className="size-4" />
-                  </Link>
-                  <Link href={`${detailHref}#install`} className="ui-button-primary h-9 min-w-0 px-3">
+                  </ButtonLink>
+                  <ButtonLink href={`${detailHref}#install`} variant="primary" size="sm" className="min-w-0">
                     <Plus className="size-4" /> {t('addAgent')}
-                  </Link>
+                  </ButtonLink>
                 </div>
                   </article>
                 );

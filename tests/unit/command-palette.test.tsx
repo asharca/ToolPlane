@@ -31,10 +31,10 @@ describe('DashboardHeaderControls (command palette)', () => {
     render(<DashboardHeaderControls />);
     fireEvent.keyDown(document, { key: 'k', metaKey: true });
 
-    const dialog = await screen.findByRole('dialog', { name: /quick navigation/i });
+    const dialog = await screen.findByRole('dialog', { name: 'Command palette' });
     expect(dialog).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /^Skills/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Skills/ }));
     expect(pushMock).toHaveBeenCalledWith('/app/acme/skills');
   });
 
@@ -43,8 +43,8 @@ describe('DashboardHeaderControls (command palette)', () => {
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
     const input = screen.getByPlaceholderText(/search navigation items/i);
     await userEvent.type(input, 'logs');
-    expect(screen.getByRole('button', { name: /Logs/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Members/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /Logs/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /^Members/ })).toBeNull();
   });
 
   it('closes with Escape and restores focus to its trigger', async () => {
@@ -55,7 +55,7 @@ describe('DashboardHeaderControls (command palette)', () => {
     await user.click(trigger);
     await user.keyboard('{Escape}');
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull());
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
@@ -64,7 +64,7 @@ describe('DashboardHeaderControls (command palette)', () => {
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
     const input = screen.getByPlaceholderText(/search navigation items/i);
     await userEvent.type(input, 'Browse MCP');
-    await userEvent.click(screen.getByRole('button', { name: /^Browse MCP/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Browse MCP/ }));
 
     expect(pushMock).toHaveBeenCalledWith('/app/acme/market/mcp');
   });
@@ -73,32 +73,26 @@ describe('DashboardHeaderControls (command palette)', () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
     await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Browse toolkits');
-    await userEvent.click(screen.getByRole('button', { name: /^Browse toolkits/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Browse toolkits/ }));
 
     expect(pushMock).toHaveBeenCalledWith('/app/acme/market/toolkits');
   });
 
-  it('keeps settings in quick navigation without a duplicate header button', async () => {
+  it('preserves the return route when opening settings', async () => {
     render(<DashboardHeaderControls />);
-    expect(screen.queryByRole('button', { name: /^Settings$/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
     await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Settings');
-    await userEvent.click(screen.getByRole('button', { name: /^Settings/i }));
+    await userEvent.click(screen.getByRole('option', { name: /^Settings/i }));
 
     expect(pushMock).toHaveBeenCalledWith('/app/acme/settings?returnTo=%2Fapp%2Facme%2Fmcp%3F__dashboardTab%3Dtab-1');
   });
 
-  it('does not render a header help link', () => {
-    render(<DashboardHeaderControls />);
-
-    expect(screen.queryByRole('link', { name: 'Get help' })).not.toBeInTheDocument();
-  });
 
   it('toggles the theme from quick navigation', async () => {
     render(<DashboardHeaderControls />);
     await userEvent.click(screen.getByRole('button', { name: /quick navigation/i }));
     await userEvent.type(screen.getByPlaceholderText(/search navigation items/i), 'Toggle dark mode');
-    await userEvent.click(screen.getByRole('button', { name: /^Toggle dark mode/i }));
+    await userEvent.click(screen.getByRole('option', { name: /^Toggle dark mode/i }));
     expect(setThemeMock).toHaveBeenCalledWith('dark');
   });
 });

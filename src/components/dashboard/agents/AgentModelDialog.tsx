@@ -1,4 +1,8 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { FormSelect } from '@/components/ui/FormSelect';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+import { CenterMorphModal, CenterMorphModalTrigger, CenterMorphModalClose, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
 
 import {
   startTransition,
@@ -7,22 +11,12 @@ import {
   useEffect,
   useRef,
   useState,
-  type ReactNode,
+  type ReactElement,
 } from 'react';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { Check, Cpu, Loader2 } from 'lucide-react';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import {
   updateAgentModelAction,
   updateHermesConversationSelectionAction,
@@ -83,7 +77,7 @@ export function AgentModelDialog({
   slug: string;
   agent: ModelAgent;
   providers: Provider[];
-  trigger: ReactNode;
+  trigger: ReactElement;
   confirmationMessage?: string;
   hermesConversation?: HermesConversationSelection;
   onHermesDraftChange?: (selection: HermesSelectionValue) => void;
@@ -293,59 +287,44 @@ export function AgentModelDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/45 backdrop-blur-[1px]" />
-        <DialogContent className="max-w-xl">
-          <div className="flex items-start gap-3">
+    <CenterMorphModal open={open} onOpenChange={handleOpenChange}>
+      <CenterMorphModalTrigger>{trigger}</CenterMorphModalTrigger>
+      <>
+        
+        <CenterMorphModalContent ariaLabel={t('modelConfiguration')} closeButtonLabel={t('close')} showCloseButton={!hermesPending} dismissible={!hermesPending} className="max-w-xl">
+          <div className="flex items-start gap-3 pr-16">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
               <Cpu className="size-5" />
             </span>
             <div className="min-w-0">
-              <DialogTitle>{t('modelConfiguration')}</DialogTitle>
-              <DialogDescription className="mt-1">{t('modelConfigurationDescription', { agent: agent.name })}</DialogDescription>
+              <h2 className="text-base font-semibold text-foreground">{t('modelConfiguration')}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t('modelConfigurationDescription', { agent: agent.name })}</p>
             </div>
           </div>
 
           <div className="space-y-4">
-            <label className="block space-y-1.5 text-sm font-medium text-foreground">
+            <div className="block space-y-1.5 text-sm font-medium text-foreground">
               {t('hermesProfile')}
-              <NativeSelect
-                value={profile}
-                disabled={profilesLoading || hermesPending || profileChatSupported !== true || !hermesConversation?.editable}
-                onChange={(event) => {
-                  setProfile(event.target.value);
+              <FormSelect value={profile} disabled={profilesLoading || hermesPending || profileChatSupported !== true || !hermesConversation?.editable} label={t('hermesProfile')} options={[profiles.length === 0 ? ({ value: profile, label: profilesLoading ? t('loadingHermesProfiles') : profile }) : null, profiles.map((item) => ({ value: item.name, label: item.name }))].flat().filter((option) => option != null)} onValueChange={(value) => {
+                  setProfile(value);
                   setUseProfileDefault(true);
                   setHermesModel(null);
                   setProfileError(null);
-                }}
-                className="ui-input h-10 w-full"
-              >
-                {profiles.length === 0 ? <option value={profile}>{profilesLoading ? t('loadingHermesProfiles') : profile}</option> : null}
-                {profiles.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-              </NativeSelect>
-            </label>
+                }} className="w-full" />
+            </div>
 
-            <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={useProfileDefault}
-                disabled={hermesPending || profileChatSupported !== true || !hermesConversation?.editable}
-                onChange={(event) => {
-                  setUseProfileDefault(event.target.checked);
+            <div className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm text-foreground">
+              <FormCheckbox checked={useProfileDefault} disabled={hermesPending || profileChatSupported !== true || !hermesConversation?.editable} label={t('useHermesProfileDefault')} onCheckedChange={(checked) => {
+                  setUseProfileDefault(checked);
                   setProfileError(null);
-                  if (!event.target.checked) setProfileModelsLoading(true);
-                }}
-                className="size-4 rounded border-input"
-              />
+                  if (!checked) setProfileModelsLoading(true);
+                }} />
               <span className="min-w-0 flex-1">
-                <span className="block font-medium">{t('useHermesProfileDefault')}</span>
                 <span className="block truncate text-xs font-normal text-muted-foreground">
                   {profiles.find((item) => item.name === profile)?.model ?? t('noModelSelected')}
                 </span>
               </span>
-            </label>
+            </div>
 
             {!useProfileDefault ? (
               <ModelPicker
@@ -354,34 +333,29 @@ export function AgentModelDialog({
                 pending={profileModelsLoading}
                 onSelect={setHermesModel}
                 trigger={(
-                  <button type="button" className="ui-button-secondary flex h-10 w-full justify-between px-3" disabled={profileModelsLoading || hermesPending || profileChatSupported !== true}>
+                  <Button type="button" variant="secondary" className="w-full justify-between" disabled={profileModelsLoading || hermesPending || profileChatSupported !== true}>
                     <span className="truncate">{hermesModel?.model ?? t('selectModel')}</span>
                     {profileModelsLoading ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />}
-                  </button>
+                  </Button>
                 )}
               />
             ) : null}
 
             {hermesError ? (
-              <p role="alert" className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+              <p role="alert" className="text-sm text-destructive">
                 {hermesError}
               </p>
             ) : null}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <DialogClose asChild><button type="button" className="ui-button-secondary" disabled={hermesPending}>{t('cancel')}</button></DialogClose>
-              <button
-                type="button"
-                onClick={saveHermesSelection}
-                className="ui-button-primary gap-2"
-                disabled={hermesPending || profilesLoading || profileChatSupported !== true || !hermesConversation?.editable || (!useProfileDefault && !hermesModel)}
-              >
+              <CenterMorphModalClose><Button type="button" disabled={hermesPending} variant={"secondary"}>{t('cancel')}</Button></CenterMorphModalClose>
+              <Button type="button" onClick={saveHermesSelection} disabled={hermesPending || profilesLoading || profileChatSupported !== true || !hermesConversation?.editable || (!useProfileDefault && !hermesModel)} variant={"primary"}>
                 {hermesPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
                 {t('save')}
-              </button>
+              </Button>
             </div>
           </div>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      </>
+    </CenterMorphModal>
   );
 }

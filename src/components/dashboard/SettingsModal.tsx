@@ -1,18 +1,11 @@
 'use client';
+import { CenterMorphModal, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
 
-import type { ReactNode } from 'react';
+
+import { useState, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { hasUnsavedWorkspaceChanges } from '@/lib/workspace/navigation';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
 
 export function SettingsModal({
   title,
@@ -26,6 +19,7 @@ export function SettingsModal({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const [open, setOpen] = useState(true);
   const t = useTranslations('console.common');
   const workspaceT = useTranslations('console.workspaces');
   const returnTo = useSearchParams().get('returnTo');
@@ -34,30 +28,20 @@ export function SettingsModal({
     : fallbackHref;
   const close = () => {
     if (hasUnsavedWorkspaceChanges() && !window.confirm(workspaceT('unsavedChanges'))) return;
-    router.replace(closeHref);
+    setOpen(false);
   };
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent
-          aria-describedby={undefined}
-          className={`ui-panel !inset-0 !flex !h-full !w-full !max-h-none !max-w-none !translate-y-0 !flex-col !gap-0 !overflow-hidden !rounded-none !p-0 !shadow-2xl sm:!inset-auto sm:!left-1/2 sm:!top-1/2 sm:!w-[calc(100vw-2rem)] sm:!-translate-x-1/2 sm:!-translate-y-1/2 sm:!rounded-2xl sm:!p-0 ${compact
-            ? 'sm:!h-[min(600px,76vh)] sm:!max-w-[720px]'
-            : 'sm:!h-[calc(100dvh-2rem)] sm:!max-w-6xl'}`}
-        >
-          <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
-            <DialogTitle className="text-sm">{title}</DialogTitle>
-            <DialogClose asChild>
-              <button type="button" aria-label={t('close')} className="ui-button-ghost ui-icon-button">
-                <X className="size-4" />
-              </button>
-            </DialogClose>
+    <CenterMorphModal open={open} onOpenChange={(next) => { if (!next) close(); }}>
+      
+        
+        <CenterMorphModalContent ariaLabel={title} closeButtonLabel={t('close')} onExitComplete={() => router.replace(closeHref)} className={`flex flex-col overflow-hidden w-full ${compact ? 'max-w-3xl h-[min(600px,76vh)]' : 'max-w-6xl h-[calc(100dvh-4rem)]'}`}>
+          <header className="flex h-14 shrink-0 items-center pl-4 pr-16 sm:pl-6">
+            <h2 className="text-sm">{title}</h2>
           </header>
           <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      
+    </CenterMorphModal>
   );
 }

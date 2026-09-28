@@ -1,5 +1,7 @@
 'use client';
 
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -16,10 +18,6 @@ type Status = {
 
 function runtimeSignature(status: Status): string {
   return [status.connected, status.connectedAt, status.root, status.platform, status.arch, status.shell].join('|');
-}
-
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
 }
 
 export function SandboxConnectorStatus({
@@ -92,19 +90,12 @@ export function SandboxConnectorStatus({
   ].filter(Boolean).join(' · ');
 
   return (
-    <span
+    <AnimatedBadge
       aria-live="polite"
       title={details || undefined}
-      className={cx(
-        'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium',
-        connected
-          ? 'border-brand/40 bg-brand-soft text-accent-foreground'
-          : 'border-border bg-muted/60 text-muted-foreground',
-        className,
-      )}
+      status={connected ? 'success' : 'neutral'} size="sm" className={className}
     >
-      <span className={cx('size-1.5 rounded-full', connected ? 'bg-brand' : 'bg-muted-foreground/70')} />
       {label}
-    </span>
+    </AnimatedBadge>
   );
 }

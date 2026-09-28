@@ -1,6 +1,7 @@
 import { getTranslations } from 'next-intl/server';
-import Link from 'next/link';
 import { Search } from 'lucide-react';
+import { ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
 
 type Category = { slug: string; name: string };
 
@@ -16,12 +17,9 @@ function CategoryChip({
   active?: boolean;
 }) {
   return (
-    <Link
-      href={href}
-      className={`ui-chip snap-start ${active ? 'ui-chip-active' : ''}`}
-    >
+    <ButtonLink href={href} variant={active ? 'primary' : 'secondary'} size="sm" className="snap-start shrink-0" aria-current={active ? 'page' : undefined}>
       {label}
-    </Link>
+    </ButtonLink>
   );
 }
 
@@ -53,8 +51,6 @@ export async function ListingHero({
   const t = await getTranslations('common');
   return (
     <section className="relative mt-1 overflow-hidden rounded-[14px] border border-border/80 bg-card px-5 py-10 sm:mt-2 sm:px-8 sm:py-12">
-      <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-28 size-64 rounded-full bg-brand/10 blur-3xl" />
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand/35 to-transparent" />
       <div className="relative text-center">
         <h1 className="mx-auto max-w-4xl text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-6xl">
           <span className="text-foreground">{lead}</span>{' '}
@@ -64,14 +60,13 @@ export async function ListingHero({
           {subtitle}
         </p>
         <form action={searchAction} className="relative mx-auto mt-7 max-w-2xl">
-          <Search aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             type="search"
             name="q"
             defaultValue={defaultSearchValue}
             placeholder={placeholder}
             aria-label={placeholder}
-            className="ui-input ui-input-search !h-12 !pl-11 bg-background shadow-sm"
+            leftIcon={<Search aria-hidden="true" />}
           />
           {Object.entries(hiddenFields ?? {}).map(([name, value]) =>
             value === null || value === undefined ? null : (

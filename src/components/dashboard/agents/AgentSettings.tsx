@@ -1,7 +1,8 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { AgentResourceOption } from '@/components/dashboard/agents/AgentResourceSelect';
 import type { ModelProviderOption } from '@/components/dashboard/models/ModelPicker';
@@ -139,6 +140,7 @@ export function AgentSettings({
   agentName,
   marketSetup = null,
   initialSettingsTab,
+  initialA2ATaskId,
 }: {
   slug: string;
   agentId: string;
@@ -149,6 +151,7 @@ export function AgentSettings({
   agentName: string;
   marketSetup?: AgentMarketSetupGuide | null;
   initialSettingsTab?: InitialSettingsTab | null;
+  initialA2ATaskId?: string;
 }) {
   const t = useTranslations('console.agents');
   const isHermesRuntime = settings.runtimeKind === 'hermes';
@@ -162,40 +165,25 @@ export function AgentSettings({
   });
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(requestedTab);
   const hermesIframeRef = useRef<HTMLIFrameElement>(null);
-  const activeTabRef = useRef<HTMLButtonElement>(null);
-  const navigationRef = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    const navigation = navigationRef.current;
-    const active = activeTabRef.current;
-    if (!navigation || !active) return;
-    const bounds = navigation.getBoundingClientRect();
-    const item = active.getBoundingClientRect();
-    if (item.left < bounds.left) navigation.scrollLeft -= bounds.left - item.left;
-    else if (item.right > bounds.right) navigation.scrollLeft += item.right - bounds.right;
-    if (item.top < bounds.top) navigation.scrollTop -= bounds.top - item.top;
-    else if (item.bottom > bounds.bottom) navigation.scrollTop += item.bottom - bounds.bottom;
-  }, [settingsTab]);
 
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
     { id: 'general', label: t('basic') },
     { id: 'instructions', label: t('instructions') },
+    { id: 'sandboxes', label: t('sandboxes') },
+    { id: 'advanced', label: t('advanced') },
+    ...(isHermesRuntime ? [
+      { id: 'profiles' as const, label: t('hermesProfilesSettingsTab') },
+      { id: 'hermes' as const, label: t('hermesSettingsTab') },
+      { id: 'terminal' as const, label: t('terminalSettingsTab') },
+    ] : []),
     { id: 'builtInTools', label: t('builtInTools') },
     { id: 'mcp', label: t('mcp') },
     { id: 'skills', label: t('skills') },
     { id: 'toolkits', label: t('toolkits') },
-    { id: 'sandboxes', label: t('sandboxes') },
     { id: 'subAgents', label: t('subAgents') },
-    { id: 'advanced', label: t('advanced') },
-    { id: 'channels' as const, label: t('channelSettingsTab') },
     { id: 'a2a', label: t('a2a.title') },
-    ...(isHermesRuntime
-      ? [
-          ...(apiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab') }] : []),
-          { id: 'profiles' as const, label: t('hermesProfilesSettingsTab') },
-          { id: 'hermes' as const, label: t('hermesSettingsTab') },
-          { id: 'terminal' as const, label: t('terminalSettingsTab') },
-        ] : []),
+    { id: 'channels', label: t('channelSettingsTab') },
+    ...(supportsApiSettings ? [{ id: 'api' as const, label: t('agentApiSettingsTab') }] : []),
   ];
 
   return (
@@ -204,31 +192,18 @@ export function AgentSettings({
         {marketSetup ? <AgentMarketSetupBanner slug={slug} setup={marketSetup} /> : null}
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <aside className="flex min-h-0 shrink-0 flex-col border-b border-border/60 bg-muted/20 sm:w-48 sm:border-b-0 sm:border-r">
-            <nav
-              ref={navigationRef}
-              aria-label={t('configurationNavigation')}
-              className="flex w-full min-w-0 flex-1 gap-1 overflow-x-auto p-2 [scrollbar-width:none] sm:block sm:space-y-1 sm:overflow-y-auto sm:p-3 [&::-webkit-scrollbar]:hidden"
-            >
+          <aside className="shrink-0 border-b border-border/60 bg-muted/20 sm:flex sm:w-52 sm:min-h-0 sm:flex-col sm:border-b-0 sm:border-r">
+            <div className="p-3 sm:hidden">
+              <select aria-label={t('configurationNavigation')} value={settingsTab} onChange={(event) => setSettingsTab(event.target.value as SettingsTab)} className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {navigationItems.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </div>
+            <nav aria-label={t('configurationNavigation')} className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto p-4 sm:block">
               {navigationItems.map(({ id, label }) => {
                 const active = settingsTab === id;
-                return (
-                  <button
-                    key={id}
-                    ref={active ? activeTabRef : undefined}
-                    type="button"
-                    aria-current={active ? 'page' : undefined}
-                    onClick={() => setSettingsTab(id)}
-                    className={cx(
-                      'inline-flex h-8 min-w-max items-center rounded-md px-2.5 text-sm transition-colors sm:flex sm:w-full',
-                      active
-                        ? 'bg-background font-medium text-foreground ring-1 ring-border'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                    )}
-                  >
-                    <span className="whitespace-nowrap">{label}</span>
-                  </button>
-                );
+                return <Button key={id} type="button" aria-current={active ? 'page' : undefined} onClick={() => setSettingsTab(id)} variant={active ? 'secondary' : 'ghost'} size="sm" className="w-full justify-start text-left">
+                  <span className="truncate">{label}</span>
+                </Button>;
               })}
             </nav>
           </aside>
@@ -279,7 +254,7 @@ export function AgentSettings({
               />
             </div>
           ) : settingsTab === 'a2a' ? (
-            <AgentA2APanel key={`${slug}:${agentId}`} slug={slug} agentId={agentId} runtimeKind={settings.runtimeKind} />
+            <AgentA2APanel key={`${slug}:${agentId}:${initialA2ATaskId ?? ''}`} slug={slug} agentId={agentId} runtimeKind={settings.runtimeKind} initialTaskId={initialA2ATaskId} />
           ) : settingsTab === 'api' && isHermesRuntime && apiSettings ? (
             <AgentApiPanel
               key={`${apiSettings.endpoint?.id ?? 'draft'}:${apiSettings.endpoint?.revision ?? 0}`}

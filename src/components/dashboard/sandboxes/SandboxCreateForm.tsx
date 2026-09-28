@@ -1,5 +1,15 @@
 'use client';
 
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
+import { RadioGroup, RadioGroupItem } from '@/components/motion/radio';
+
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -9,19 +19,16 @@ import {
   Check,
   Container,
   Loader2,
-  Network,
   Plus,
   Server,
   ShieldCheck,
   Sparkles,
   Upload,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import { createSandboxAction } from '@/lib/sandboxes/actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { HermesImageSelector } from '@/components/dashboard/agents/HermesImageSelector';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import {
   DEFAULT_SANDBOX_IMAGE,
   SANDBOX_IMAGE_OPTIONS,
@@ -39,7 +46,6 @@ type HermesImportState = {
   error?: string;
 };
 
-const inputClass = 'ui-input h-9 w-full';
 const recommendedImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'recommended');
 const generalImages = SANDBOX_IMAGE_OPTIONS.filter((option) => option.category === 'general');
 
@@ -94,30 +100,13 @@ function ModeButton({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={cx(
-        'group flex min-h-20 items-start gap-3 rounded-md border px-3 py-3 text-left transition-colors',
-        active
-          ? 'border-brand bg-brand-soft text-accent-foreground'
-          : 'border-border bg-background text-foreground hover:border-ring/60 hover:bg-muted/50',
-      )}
-    >
-      <span
-        className={cx(
-          'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border',
-          active ? 'border-brand/30 bg-background text-brand' : 'border-border bg-muted text-muted-foreground',
-        )}
-      >
+    <div className="space-y-2">
+      <Button type="button" aria-pressed={active} onClick={onClick} variant={active ? 'primary' : 'secondary'} className="w-full">
         <Icon className="size-4" />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold">{title}</span>
-        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{description}</span>
-      </span>
-    </button>
+        {title}
+      </Button>
+      <p className="text-xs leading-5 text-muted-foreground">{description}</p>
+    </div>
   );
 }
 
@@ -131,42 +120,27 @@ function ImageCard({
   onSelect: (image: string) => void;
 }) {
   return (
-    <label
-      className={cx(
-        'group flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 transition-colors',
-        selected
-          ? 'border-brand bg-brand-soft text-accent-foreground'
-          : 'border-border bg-background hover:border-ring/60 hover:bg-muted/40',
-      )}
-    >
-      <input
-        type="radio"
-        name="imageChoice"
-        value={option.image}
-        checked={selected}
-        onChange={() => onSelect(option.image)}
-        className="sr-only"
-      />
+    <div onClick={(event) => { if (!(event.target as HTMLElement).closest('button, label')) onSelect(option.image); }} className="flex items-start gap-3 rounded-lg border border-border p-3">
+      <RadioGroupItem value={option.image} label={option.name} />
       <span
         className={cx(
           'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border',
-          selected ? 'border-brand/30 bg-background text-brand' : 'border-border bg-muted text-muted-foreground',
+          selected ? 'border-primary/30 bg-background text-primary' : 'border-border bg-muted text-muted-foreground',
         )}
       >
         {selected ? <Check className="size-3.5" /> : <Server className="size-3.5" />}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-foreground">{option.name}</span>
-          <span className="rounded-md border border-border bg-muted/35 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <AnimatedBadge status="neutral" size="sm">
             {option.badge}
-          </span>
+          </AnimatedBadge>
         </span>
         <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.summary}</span>
         <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground/80">{option.image}</span>
         <span className="mt-2 block text-[11px] font-medium text-foreground">{option.bestFor}</span>
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -240,7 +214,7 @@ function CreateSandboxFooter({
   return (
     <div className="sticky bottom-0 -mx-5 mt-5 border-t border-border bg-card/95 px-5 py-4 backdrop-blur">
       {pending ? (
-        <div className="mb-3 rounded-md border border-brand/25 bg-brand-soft px-3 py-3" aria-live="polite">
+        <div className="mb-3 rounded-md border border-primary/25 bg-muted px-3 py-3" aria-live="polite">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Loader2 className="size-4 animate-spin" />
             {pendingTitle}{percent !== null ? ` ${percent}%` : ''}
@@ -250,7 +224,7 @@ function CreateSandboxFooter({
           </p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background/80">
             <div
-              className={cx('h-full rounded-full bg-brand', percent === null && 'w-1/3 animate-pulse')}
+              className={cx('h-full rounded-full bg-primary', percent === null && 'w-1/3 animate-pulse')}
               style={percent === null ? undefined : { width: `${Math.max(2, percent)}%` }}
             />
           </div>
@@ -258,20 +232,16 @@ function CreateSandboxFooter({
       ) : null}
       <div className="flex justify-end">
         {isHermesImport ? (
-          <button
-            type="submit"
-            disabled={pending}
-            aria-busy={pending}
-            className="ui-button-primary h-9 w-full disabled:cursor-wait disabled:opacity-70 sm:w-auto"
-          >
-            {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-4" />}
-            {pending ? pendingLabel : submitLabel}
-          </button>
+          <Button type="submit"
+          disabled={pending}
+          aria-busy={pending}
+          variant="primary" size="sm" className="w-full sm:w-auto">{pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-4" />}
+          {pending ? pendingLabel : submitLabel}</Button>
         ) : (
           <SubmitButton
             flash={false}
             pendingLabel={pendingLabel}
-            className="ui-button-primary h-9 w-full sm:w-auto"
+            variant="primary" size="sm" className="w-full sm:w-auto"
           >
             <Plus className="size-4" />
             {submitLabel}
@@ -419,42 +389,19 @@ export function SandboxCreateForm({
   };
 
   return (
-    <>
-      <button type="button" onClick={() => setOpen(true)} className="ui-button-primary">
-        <Plus className="size-4" />
-        {t('newSandbox')}
-      </button>
-
-      {open ? (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-[4vh]"
-          onMouseDown={() => {
-            if (!importState.pending) setOpen(false);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('newSandbox')}
-            className="flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+    <CenterMorphModal open={open} onOpenChange={(next) => { if (!importState.pending) setOpen(next); }}>
+      <CenterMorphModalTrigger>
+        <Button type="button" variant="primary"><Plus className="size-4" />
+      {t('newSandbox')}</Button>
+      </CenterMorphModalTrigger>
+      <CenterMorphModalContent ariaLabel={t('newSandbox')} dismissible={!importState.pending} showCloseButton={!importState.pending} closeButtonLabel={t('close')} className="max-w-6xl">
+            <div className="flex items-start gap-4 border-b border-border pl-5 pr-16 py-4">
               <div>
                 <h2 className="text-base font-semibold text-foreground">{t('newSandbox')}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {t('chooseASandboxSource')}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                disabled={importState.pending}
-                aria-label={t('close')}
-                className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
-              >
-                <X className="size-4" />
-              </button>
             </div>
 
             <form
@@ -464,6 +411,7 @@ export function SandboxCreateForm({
             >
               <input type="hidden" name="workspace" value={workspace} />
               <input type="hidden" name="kind" value={mode} />
+              <input type="hidden" name="imageChoice" value={selectedImage} />
 
               <div className="grid gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
                 <div className="space-y-4">
@@ -498,22 +446,16 @@ export function SandboxCreateForm({
                   </div>
 
                   <div className="rounded-md border border-border bg-muted/20 px-3 py-3">
-                    <Field label={t('name')}>
-                      <input
-                        name="name"
-                        placeholder={isHermesImport ? t('importedHermes') : isDocker ? t('researchContainer') : t('myLaptop')}
-                        className={inputClass}
-                      />
-                    </Field>
+                    <Input
+                      label={t('name')}
+                      name="name"
+                      placeholder={isHermesImport ? t('importedHermes') : isDocker ? t('researchContainer') : t('myLaptop')}
+                    />
 
                     {isDocker ? (
                       <Field label={t('network')} className="mt-3" hint={t('isolatedKeepsItOffTheAppdatabaseNetworkWhileAllowingInternetEgress')}>
                         <div className="relative">
-                          <Network className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                          <NativeSelect name="network" defaultValue="isolated" className="ui-input ui-input-icon h-9 w-full">
-                            <option value="isolated">{t('isolated')}</option>
-                            <option value="none">{t('none')}</option>
-                          </NativeSelect>
+                          <FormSelect name="network" defaultValue="isolated" label={t('network')} options={[{ value: "isolated", label: t('isolated') }, { value: "none", label: t('none') }]} className="w-full" />
                         </div>
                       </Field>
                     ) : null}
@@ -537,24 +479,13 @@ export function SandboxCreateForm({
                             onChange={() => {
                               hermesImportId.current = null;
                             }}
-                            className="ui-input h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
+                            className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring h-9 w-full cursor-pointer px-2 text-xs file:mr-3 file:border-0 file:bg-transparent file:text-xs file:font-medium"
                           />
                         </Field>
-                        <label className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-xs leading-5 text-foreground">
-                          <input name="trustArchive" type="checkbox" required className="mt-0.5 size-3.5 shrink-0 accent-brand" />
-                          <span>{t('trustHermesArchive')}</span>
-                        </label>
-                        <label className="mt-3 flex items-start gap-2 rounded-md border border-border bg-background px-3 py-3 text-xs leading-5 text-foreground">
-                          <input name="allowSudo" type="checkbox" className="mt-0.5 size-3.5 shrink-0 accent-brand" />
-                          <span>
-                            {t('allowSudo')}
-                            <span className="mt-0.5 block text-[11px] font-normal leading-4 text-muted-foreground">
-                              {t('allowSudoHint')}
-                            </span>
-                          </span>
-                        </label>
+                        <FormCheckbox name="trustArchive" required label={t('trustHermesArchive')} />
+                        <div className="mt-3"><FormCheckbox name="allowSudo" label={t('allowSudo')} /><p className="mt-1 text-xs text-muted-foreground">{t('allowSudoHint')}</p></div>
                         {importState.error ? (
-                          <p className="mt-3 text-xs leading-5 text-red-700 dark:text-red-300" role="alert">{importState.error}</p>
+                          <p className="text-sm text-destructive" role="alert">{importState.error}</p>
                         ) : null}
                       </>
                     ) : (
@@ -565,7 +496,7 @@ export function SandboxCreateForm({
                             rows={5}
                             spellCheck={false}
                             placeholder={t('envPlaceholder')}
-                            className="ui-input min-h-28 w-full resize-y font-mono text-xs leading-5"
+                            className="rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-28 w-full resize-y font-mono text-xs leading-5"
                           />
                         </Field>
 
@@ -587,9 +518,9 @@ export function SandboxCreateForm({
 
                 {isHermesImport ? (
                   <div className="space-y-4">
-                    <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-4 py-4">
+                    <div className="rounded-md border border-(--color-warning) bg-muted/35 px-4 py-4">
                       <div className="flex items-start gap-3">
-                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-amber-500/25 bg-background text-amber-700 dark:text-amber-300">
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-(--color-warning) bg-background text-(--color-warning) dark:text-(--color-warning)">
                           <ShieldCheck className="size-4" />
                         </span>
                         <div>
@@ -608,6 +539,7 @@ export function SandboxCreateForm({
                     </div>
                   </div>
                 ) : isDocker ? (
+                  <RadioGroup value={selectedImage} onValueChange={setSelectedImage}>
                   <div className="space-y-5">
             <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -617,9 +549,9 @@ export function SandboxCreateForm({
                     {t('officialImagesFromMcrmicrosoftcomdevcontainersYouCanInstallMorePackagesAfterTheSandboxStarts')}
                   </p>
                 </div>
-                <span className="rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                <AnimatedBadge status="neutral" size="sm">
                   {customSelected ? customImage || t('customImage') : selectedImage}
-                </span>
+                </AnimatedBadge>
               </div>
             </div>
 
@@ -639,41 +571,30 @@ export function SandboxCreateForm({
               onSelect={setSelectedImage}
             />
 
-            <label
-              className={cx(
-                'block rounded-md border px-3 py-3 transition-colors',
-                customSelected ? 'border-brand bg-brand-soft' : 'border-border bg-background',
-              )}
-            >
+            <div className="rounded-lg border border-border p-3">
                 <span className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                  name="imageChoice"
-                  value="custom"
-                  checked={customSelected}
-                  onChange={() => setSelectedImage('custom')}
-                />
-                <span className="text-sm font-semibold text-foreground">{t('customImage1')}</span>
+                  <RadioGroupItem value="custom" label={t('customImage1')} />
               </span>
               <span className="mt-1 block text-xs text-muted-foreground">
                 {t('useAnotherDockerImageWhenTheOfficialPresetsDoNotFit')}
               </span>
               <div className="relative mt-3">
-                <Server className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
+                
+                <Input leftIcon={<Server />}
                   name="customImage"
                   value={customImage}
-                  onChange={(event) => {
-                    setCustomImage(event.target.value);
+                  onChange={(value) => {
+                    setCustomImage(value);
                     setSelectedImage('custom');
                   }}
                   placeholder={t('ghcrioorgimagetag')}
-                  className="ui-input ui-input-icon h-9 w-full font-mono text-xs"
+                  className="w-full"
                 />
               </div>
-            </label>
+            </div>
 
                   </div>
+                  </RadioGroup>
                 ) : (
                   <div className="space-y-4">
             <div className="rounded-md border border-border bg-muted/15 px-4 py-3">
@@ -696,9 +617,7 @@ export function SandboxCreateForm({
               </div>
               <CreateSandboxFooter mode={mode} hermesImport={importState} />
             </form>
-          </div>
-        </div>
-      ) : null}
-    </>
+      </CenterMorphModalContent>
+    </CenterMorphModal>
   );
 }

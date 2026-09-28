@@ -64,11 +64,8 @@ describe('HermesRuntimeDialogLauncher', () => {
     render(<HermesRuntimeDialogLauncher runtime={runtime} />);
     await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Hermes runtime' });
-    const frameClassName = dialog.className;
     await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
 
-    expect(dialog.className).toBe(frameClassName);
     expect(screen.getByText('Hermes shell test surface')).toBeInTheDocument();
     expect(sandboxConsoleMocks.render).toHaveBeenLastCalledWith(expect.objectContaining({
       deploymentId: 'deployment-1',
@@ -78,7 +75,6 @@ describe('HermesRuntimeDialogLauncher', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'Web' }));
     expect(screen.getByTitle('Hermes runtime dashboard')).toBeInTheDocument();
-    expect(dialog.className).toBe(frameClassName);
   });
 
   it('can open the terminal directly and closes with Escape or the backdrop', async () => {
@@ -88,15 +84,15 @@ describe('HermesRuntimeDialogLauncher', () => {
 
     expect(screen.getByRole('tab', { name: 'Terminal' })).toHaveAttribute('aria-selected', 'true');
     await userEvent.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
     await waitFor(() => expect(terminalTrigger).toHaveFocus());
 
     await userEvent.click(screen.getByRole('button', { name: 'Open Hermes' }));
     const dialog = screen.getByRole('dialog', { name: 'Hermes runtime' });
-    fireEvent.mouseDown(dialog);
+    await userEvent.click(dialog);
     expect(dialog).toBeInTheDocument();
-    fireEvent.mouseDown(dialog.parentElement!);
-    expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss modal' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
   });
 
   it('accepts an Escape close request from the embedded Hermes dashboard', async () => {
@@ -109,7 +105,7 @@ describe('HermesRuntimeDialogLauncher', () => {
       source: iframe.contentWindow,
     }));
 
-    expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hermes runtime' })).not.toBeInTheDocument());
   });
 
   it('opens the managed runtime settings from its dedicated trigger and tab', async () => {

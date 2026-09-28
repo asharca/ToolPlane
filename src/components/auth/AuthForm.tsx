@@ -2,27 +2,15 @@
 
 import Link from 'next/link';
 import { useActionState } from 'react';
-import { useFormStatus } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import type { AuthState } from '@/lib/auth/actions';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/auth/password-policy';
 import { useDetectedClientTimeZone } from '@/components/timezone/UserTimeZoneContext';
+import { SubmitButton } from '@/components/dashboard/SubmitButton';
+import { Input } from '@/components/motion/input';
 
 type Action = (prev: AuthState, formData: FormData) => Promise<AuthState>;
 
-function SubmitButton({ label }: { label: string }) {
-  const { pending } = useFormStatus();
-  const t = useTranslations('auth');
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="ui-button-primary h-10 w-full"
-    >
-      {pending ? t('pending') : label}
-    </button>
-  );
-}
 
 export function AuthForm({
   mode,
@@ -41,7 +29,7 @@ export function AuthForm({
 
   return (
     <div className="mx-auto w-full max-w-sm px-4 py-10">
-      <div className="ui-panel rounded-2xl p-6 shadow-xl shadow-black/5 sm:p-7 dark:shadow-black/20">
+      <div className="rounded-2xl border border-border bg-card p-6 sm:p-7">
         <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {isSignup ? t('signupTitle') : t('loginTitle')}
         </h1>
@@ -57,49 +45,37 @@ export function AuthForm({
             value={detectedTimeZone ?? ''}
           />
           {isSignup && (
-            <div className="space-y-1.5">
-              <label htmlFor="name" className="text-sm font-medium text-foreground">
-                {t('name')}
-              </label>
-              <input
-                id="name"
-                name="name"
-                type="text"
-                autoComplete="name"
-                className="ui-input"
-              />
-            </div>
+            <Input
+              label={t('name')}
+              id="name"
+              name="name"
+              type="text"
+              autoComplete="name"
+            />
           )}
 
-          <div className="space-y-1.5">
-            <label htmlFor="email" className="text-sm font-medium text-foreground">
-              {t('email')}
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              className="ui-input"
-            />
-          </div>
+          <Input
+            label={t('email')}
+            id="email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+          />
 
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-3">
-              <label htmlFor="password" className="text-sm font-medium text-foreground">
-                {t('password')}
-              </label>
-              {!isSignup ? (
+            {!isSignup ? (
+              <div className="flex justify-end">
                 <Link
                   href="/app/forgot-password"
                   className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 >
                   {t('forgotPasswordLink')}
                 </Link>
-              ) : null}
-            </div>
-            <input
+              </div>
+            ) : null}
+            <Input
+              label={t('password')}
               id="password"
               name="password"
               type="password"
@@ -107,7 +83,6 @@ export function AuthForm({
               minLength={isSignup ? PASSWORD_MIN_LENGTH : undefined}
               maxLength={PASSWORD_MAX_LENGTH}
               autoComplete={isSignup ? 'new-password' : 'current-password'}
-              className="ui-input"
             />
             {isSignup ? (
               <p className="text-xs text-muted-foreground">
@@ -117,10 +92,12 @@ export function AuthForm({
           </div>
 
           {state.error ? (
-            <p className="text-sm text-destructive">{state.error}</p>
+            <p role="alert" className="text-sm text-destructive">{state.error}</p>
           ) : null}
 
-          <SubmitButton label={isSignup ? t('createAccount') : t('signIn')} />
+          <SubmitButton pendingLabel={t('pending')} flash={false} className="w-full">
+            {isSignup ? t('createAccount') : t('signIn')}
+          </SubmitButton>
           {isSignup ? (
             <p className="text-center text-xs leading-5 text-muted-foreground">
               {t('agreementPrefix')}{' '}

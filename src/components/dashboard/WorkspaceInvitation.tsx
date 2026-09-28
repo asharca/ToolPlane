@@ -1,7 +1,9 @@
 'use client';
+import { ButtonLink, Button } from '@/components/motion/button';
+
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+
 import { useTranslations } from 'next-intl';
 import { previewWorkspaceInvitationAction, switchInvitationAccountAction } from '@/lib/workspace/management-actions';
 import { AcceptWorkspaceInvitationForm } from './WorkspaceForms';
@@ -32,10 +34,10 @@ export function WorkspaceInvitation({ signedIn }: { signedIn: boolean }) {
   const next = encodeURIComponent('/app?view=invitation');
   return (
     <div className="space-y-4">
-      {!state ? <p role="status">{t('loadingInvitation')}</p> : !signedIn ? <><p className="text-sm text-muted-foreground">{t('signInToJoin')}</p><div className="flex flex-wrap gap-2"><Link href={`/app/login?next=${next}`} className="ui-button-primary">{auth('signIn')}</Link><Link href={`/app/signup?next=${next}`} className="ui-button-secondary">{auth('signUpLink')}</Link></div></> : !state.preview ? <p role="alert">{t('errors.invalidInvitation')}</p> : !state.preview.canJoin ? (
-        <form action={switchInvitationAccountAction} className="space-y-4"><p>{t('invitationAccount', { email: state.preview.email })}</p><button type="submit" className="ui-button-primary">{t('switchAccount')}</button></form>
+      {!state ? <p role="status">{t('loadingInvitation')}</p> : !signedIn ? <><p className="text-sm text-muted-foreground">{t('signInToJoin')}</p><div className="flex flex-wrap gap-2"><ButtonLink href={`/app/login?next=${next}`} variant="primary" size="md">{auth('signIn')}</ButtonLink><ButtonLink href={`/app/signup?next=${next}`} variant="secondary" size="md">{auth('signUpLink')}</ButtonLink></div></> : !state.preview ? <p role="alert">{t('errors.invalidInvitation')}</p> : !state.preview.canJoin ? (
+        <form action={switchInvitationAccountAction} className="space-y-4"><p>{t('invitationAccount', { email: state.preview.email })}</p><Button type="submit" variant="primary" size="md">{t('switchAccount')}</Button></form>
       ) : <><h2 className="break-words text-lg font-medium">{state.preview.name}</h2><p className="text-sm text-muted-foreground">{t('invitationAccount', { email: state.preview.email })}</p><AcceptWorkspaceInvitationForm token={state.token} /></>}
-      <Link href="/app?view=workspaces" className="ui-button-ghost">{t('backToList')}</Link>
+      <ButtonLink href="/app?view=workspaces" variant="ghost" size="md">{t('backToList')}</ButtonLink>
     </div>
   );
 }

@@ -1,15 +1,12 @@
 'use client';
+import { Button } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalClose } from '@/components/motion/center-morph-modal';
+import { Input } from '@/components/motion/input';
+
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronLeft, Loader2, ScrollText } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
 
 type McpPromptOption = {
   deploymentId: string;
@@ -144,37 +141,20 @@ export function McpPromptPickerButton({
 
   return (
     <>
-      {!hideTrigger && <button
-        type="button"
-        disabled={disabled}
-        aria-label={t('openMcpPrompts')}
-        title={t('openMcpPrompts')}
-        onClick={() => setDialogOpen(true)}
-        className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        <ScrollText className="size-[17px]" />
-      </button>}
-      <Dialog open={open} onOpenChange={setDialogOpen}>
-        <DialogPortal>
-          <DialogOverlay className="!bg-black/40" />
-          <DialogContent aria-describedby={undefined} className="!z-[51] !flex !max-h-[min(38rem,calc(100vh-2rem))] !w-full !max-w-xl !flex-col !gap-0 !overflow-hidden !rounded-xl !p-0">
-            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+      {!hideTrigger && <Button type="button" disabled={disabled} aria-label={t('openMcpPrompts')} title={t('openMcpPrompts')} onClick={() => setDialogOpen(true)} variant="ghost" size="icon" className="flex shrink-0 items-center justify-center"><ScrollText className="size-[17px]" /></Button>}
+      <CenterMorphModal open={open} onOpenChange={setDialogOpen}>
+        
+          
+          <CenterMorphModalContent ariaLabel={selectedLabel ?? t('mcpPrompts')} closeButtonLabel={common('close')} className="flex max-h-[calc(100dvh-6rem)] w-full max-w-xl flex-col">
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border pl-4 pr-16 py-3">
               <div className="min-w-0">
-                <DialogTitle className="!text-sm !tracking-normal">
+                <h2 className="!text-sm !tracking-normal">
                   {selected ? selectedLabel : t('mcpPrompts')}
-                </DialogTitle>
+                </h2>
                 {selected ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{selected.serverName}</p> : null}
               </div>
               {selected ? (
-                <button
-                  type="button"
-                  onClick={() => { setSelected(null); setArgumentsValue({}); setError(null); }}
-                  aria-label={common('back')}
-                  title={common('back')}
-                  className="ui-button-ghost ui-icon-button shrink-0"
-                >
-                  <ChevronLeft className="size-4" />
-                </button>
+                <Button type="button" onClick={() => { setSelected(null); setArgumentsValue({}); setError(null); }} aria-label={common('back')} title={common('back')} variant="ghost" size="icon" className="shrink-0"><ChevronLeft className="size-4" /></Button>
               ) : null}
             </header>
             {loading ? (
@@ -196,58 +176,40 @@ export function McpPromptPickerButton({
                           {argument.title ?? argument.name}
                           {argument.required ? <span className="text-destructive">*</span> : null}
                         </span>
-                        <input
-                          value={argumentsValue[argument.name] ?? ''}
-                          onChange={(event) => setArgumentsValue((current) => ({
+                        <Input value={argumentsValue[argument.name] ?? ''} onChange={(value) => setArgumentsValue((current) => ({
                             ...current,
-                            [argument.name]: event.target.value,
-                          }))}
-                          required={argument.required}
-                          maxLength={20_000}
-                          placeholder={argument.description ?? argument.name}
-                          className="ui-input mt-1.5 h-9 w-full text-sm"
-                        />
+                            [argument.name]: value,
+                          }))} required={argument.required} maxLength={20_000} placeholder={argument.description ?? argument.name} className="mt-1.5 w-full" />
                       </label>
                     ))}
                   </div>
                   {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
                 </div>
                 <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
-                  <button type="button" onClick={() => setDialogOpen(false)} className="ui-button-secondary h-8 px-3 text-xs">
-                    {common('cancel')}
-                  </button>
-                  <button type="submit" disabled={resolving} className="ui-button-primary h-8 px-3 text-xs">
-                    {resolving ? <Loader2 className="size-3.5 animate-spin" /> : <ScrollText className="size-3.5" />}
-                    {t('insertMcpPrompt')}
-                  </button>
+                  <CenterMorphModalClose><Button type="button" variant="secondary" size="sm">{common('cancel')}</Button></CenterMorphModalClose>
+                  <Button type="submit" disabled={resolving} variant="primary" size="sm">{resolving ? <Loader2 className="size-3.5 animate-spin" /> : <ScrollText className="size-3.5" />}
+                  {t('insertMcpPrompt')}</Button>
                 </footer>
               </form>
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {error ? <p role="alert" className="px-2 py-2 text-sm text-destructive">{error}</p> : null}
                 {prompts.length ? prompts.map((prompt) => (
-                  <button
-                    key={`${prompt.deploymentId}:${prompt.name}`}
-                    type="button"
-                    onClick={() => choosePrompt(prompt)}
-                    className="flex w-full min-w-0 items-start gap-3 rounded-md px-3 py-2.5 text-left hover:bg-muted"
-                  >
-                    <ScrollText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-foreground">{prompt.title ?? prompt.name}</span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{prompt.serverName}</span>
-                      {prompt.description ? <span className="mt-1 block line-clamp-2 text-xs leading-4 text-muted-foreground">{prompt.description}</span> : null}
-                    </span>
-                    {prompt.arguments.length ? <span className="shrink-0 text-[11px] text-muted-foreground">{prompt.arguments.length}</span> : null}
-                  </button>
+                  <Button key={`${prompt.deploymentId}:${prompt.name}`} type="button" onClick={() => choosePrompt(prompt)} variant="ghost" size="lg" className="w-full min-w-0 justify-start text-left"><ScrollText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">{prompt.title ?? prompt.name}</span>
+                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{prompt.serverName}</span>
+                    {prompt.description ? <span className="mt-1 block line-clamp-2 text-xs leading-4 text-muted-foreground">{prompt.description}</span> : null}
+                  </span>
+                  {prompt.arguments.length ? <span className="shrink-0 text-[11px] text-muted-foreground">{prompt.arguments.length}</span> : null}</Button>
                 )) : (
                   <p className="px-2 py-8 text-center text-sm text-muted-foreground">{t('noMcpPrompts')}</p>
                 )}
               </div>
             )}
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
+          </CenterMorphModalContent>
+        
+      </CenterMorphModal>
     </>
   );
 }

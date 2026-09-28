@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,36 +23,27 @@ describe('SettingsModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(confirm).toHaveBeenCalled();
     expect(replaceMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
     confirm.mockReturnValue(true);
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(replaceMock).toHaveBeenCalledWith('/app/acme/mcp?__dashboardTab=tab-1');
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/app/acme/mcp?__dashboardTab=tab-1'));
   });
 
-  it('closes directly to the page that opened it', async () => {
+  it.each(['Close', 'Escape', 'Dismiss modal'])('waits for the native exit before navigating after %s', async (method) => {
     render(
       <SettingsModal title="Settings" fallbackHref="/app/acme/chat">
         Content
       </SettingsModal>,
     );
+    const panel = screen.getByRole('dialog', { name: 'Settings' });
+    if (method === 'Escape') fireEvent.keyDown(window, { key: 'Escape' });
+    else fireEvent.click(screen.getByRole('button', { name: method }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-
-    expect(replaceMock).toHaveBeenCalledWith('/app/acme/mcp?__dashboardTab=tab-1');
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(panel).toBeInTheDocument();
+    expect(panel.closest('[inert]')).not.toBeNull();
+    await waitFor(() => expect(panel).not.toBeInTheDocument());
+    expect(replaceMock).toHaveBeenCalledExactlyOnceWith('/app/acme/mcp?__dashboardTab=tab-1');
   });
 
-  it('keeps compact modals full-screen on mobile and constrains them on larger screens', () => {
-    render(
-      <SettingsModal title="Settings" fallbackHref="/app/acme/chat" compact>
-        Content
-      </SettingsModal>,
-    );
-
-    expect(screen.getByRole('dialog')).toHaveClass(
-      '!h-full',
-      '!w-full',
-      '!rounded-none',
-      'sm:!h-[min(600px,76vh)]',
-      'sm:!max-w-[720px]',
-    );
-  });
 });

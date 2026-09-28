@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { GitBranch, Plus, Wrench } from 'lucide-react';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
@@ -63,14 +65,14 @@ export default async function AdminSkillsPage({
         meta={t('skillCount', { count: total.toLocaleString() })}
         actions={
           <>
-            <Link href="/admin/skills/import" className="ui-button-secondary">
+            <ButtonLink href="/admin/skills/import" variant="secondary" size="md">
               <GitBranch className="size-4" aria-hidden="true" />
               {t('importFromGithub')}
-            </Link>
-            <Link href="/admin/skills/new" className="ui-button-primary">
+            </ButtonLink>
+            <ButtonLink href="/admin/skills/new" variant="primary" size="md">
               <Plus className="size-4" aria-hidden="true" />
               {t('addSkill')}
-            </Link>
+            </ButtonLink>
           </>
         }
       />
@@ -92,32 +94,28 @@ export default async function AdminSkillsPage({
           title={t('noSkills')}
           description={q ? t('noSkillsDescription') : t('emptySkillsDescription')}
           actions={q ? null : (
-            <Link href="/admin/skills/new" className="ui-button-primary">
+            <ButtonLink href="/admin/skills/new" variant="primary" size="md">
               <Plus className="size-4" aria-hidden="true" />
               {t('addSkill')}
-            </Link>
+            </ButtonLink>
           )}
         />
       ) : (
-        <DashboardTable
-          ariaLabel={t('skillsTableLabel')}
-          minWidth="64rem"
-          headers={[
-            { label: t('skillColumn'), className: 'w-full' },
+        <DashboardTable ariaLabel={t('skillsTableLabel')}
+minWidth="64rem"
+headers={[
+            { label: t('skillColumn'), width: "35%" },
             { label: t('scoreColumn'), align: 'right' },
             { label: t('installsColumn'), align: 'right' },
             { label: t('bundleColumn'), align: 'right' },
             { label: t('statusColumn') },
             { label: <span className="sr-only">{t('edit')}</span> },
           ]}
-        >
-          {items.map((skill) => {
+rows={items.map((skill) => {
             const bundleSize = Array.isArray(skill.files) ? skill.files.length + 1 : 1;
 
             return (
-              <tr key={skill.id}>
-                <td className="px-4 py-3">
-                  <AdminEntity
+              ({ id: skill.id, cells: [<> <AdminEntity
                     title={
                       <Link
                         href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
@@ -128,34 +126,21 @@ export default async function AdminSkillsPage({
                     }
                     description={`/${skill.slug}`}
                     initials={skill.name}
-                  />
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                  {skill.score}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                  {skill._count.installs}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums text-foreground">
-                  {bundleSize}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  {skill.curated ? (
-                    <AdminBadge tone="brand">{t('curated')}</AdminBadge>
+                  /> </>,
+skill.score,
+skill._count.installs,
+bundleSize,
+skill.curated ? (
+                    <AdminBadge tone="info">{t('curated')}</AdminBadge>
                   ) : (
                     <span className="text-sm text-muted-foreground">{t('none')}</span>
-                  )}
-                </td>
-                <td className="px-2 py-3">
-                  <AdminTableLink
+                  ),
+<> <AdminTableLink
                     href={adminHref(`/admin/skills/${skill.id}/edit`, { returnTo: hrefForPage(currentPage) })}
                     label={`${t('edit')}: ${skill.name}`}
-                  />
-                </td>
-              </tr>
+                  /> </>] })
             );
-          })}
-        </DashboardTable>
+          })} />
       )}
 
       <AdminPagination

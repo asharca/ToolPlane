@@ -11,6 +11,7 @@ import { A2A_PROTOCOL_VERSION, A2A_LIMITS, historyView, settled, terminal, taskE
 import { assertLiveGrant, isLocalGrant, isRemoteGrant, grantTargetId, type TaskGrant, type A2AOperation } from './principal';
 import * as store from './store';
 import { wakeA2AWorker } from './worker';
+import { a2aDeploymentOrigin } from './connection-info';
 
 export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   if (isLocalGrant(grant)) {
@@ -21,9 +22,7 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   const endpoint = await db.agentEndpoint.findFirstOrThrow({ where: { id: grant.endpointId,
     a2aEnabled: true, status: 'active', workspaceId: grant.workspaceId },
     select: { name: true, publicId: true, currentRevision: { select: { version: true } } } });
-  const base = new URL(runtimeEnv('NEXT_PUBLIC_APP_URL') || 'http://localhost:3000');
-  if (base.username || base.password || !['http:', 'https:'].includes(base.protocol)) throw new Error('Invalid public A2A origin');
-  if (base.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)) throw new Error('A2A requires HTTPS outside loopback');
+  const base = a2aDeploymentOrigin(runtimeEnv('NEXT_PUBLIC_APP_URL') || 'http://localhost:3000');
   const url = new URL(`/api/v1/agent-endpoints/${encodeURIComponent(endpoint.publicId)}/a2a`, base).href;
   return AgentCard.fromJSON({ name: endpoint.name, description: 'An explicitly published ToolPlane Agent service.',
     version: String(endpoint.currentRevision?.version ?? 1),

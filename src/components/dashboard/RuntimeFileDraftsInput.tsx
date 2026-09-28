@@ -1,4 +1,9 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+
 
 import { useId, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslations } from 'next-intl';
@@ -105,9 +110,9 @@ export function RuntimeFileDraftsInput({
             <h3 id={`${id}-heading`} className="text-sm font-semibold text-foreground">
               {t('runtimeFiles')}
             </h3>
-            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+            <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
               {value.length}
-            </span>
+            </AnimatedBadge>
           </div>
           <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
             {t('runtimeFilesCreateDescription')}
@@ -122,24 +127,10 @@ export function RuntimeFileDraftsInput({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => inputRef.current?.click()}
-            className="ui-button-secondary ui-button-sm disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <Upload className="size-3.5" />
-            {t('uploadTextFiles')}
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={addFile}
-            className="ui-button-secondary ui-button-sm disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <Plus className="size-3.5" />
-            {t('addFile')}
-          </button>
+          <Button type="button" disabled={disabled} onClick={() => inputRef.current?.click()} variant="secondary" size="sm"><Upload className="size-3.5" />
+          {t('uploadTextFiles')}</Button>
+          <Button type="button" disabled={disabled} onClick={addFile} variant="secondary" size="sm"><Plus className="size-3.5" />
+          {t('addFile')}</Button>
           <input
             ref={inputRef}
             type="file"
@@ -164,34 +155,14 @@ export function RuntimeFileDraftsInput({
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <label className="min-w-0 flex-1 space-y-1.5 text-xs font-medium text-muted-foreground">
                   {t('relativeFilePath')}
-                  <input
-                    value={file.path}
-                    onChange={(event) => updateFile(index, { path: event.target.value })}
-                    disabled={disabled}
-                    placeholder="ssh-config.json"
-                    spellCheck={false}
-                    className="ui-input font-mono text-xs disabled:cursor-not-allowed disabled:opacity-70"
-                  />
+                  <Input value={file.path} onChange={(value) => updateFile(index, { path: value })} disabled={disabled} placeholder="ssh-config.json" spellCheck={false} />
                 </label>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => removeFile(index)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-red-500/10 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-70 dark:hover:text-red-400"
-                >
-                  <Trash2 className="size-3.5" />
-                  {t('remove')}
-                </button>
+                <Button type="button" disabled={disabled} onClick={() => removeFile(index)} variant="ghost" size="sm" className="inline-flex items-center"><Trash2 className="size-3.5" />
+                {t('remove')}</Button>
               </div>
               <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 {t('textContent')}
-                <textarea
-                  value={file.content}
-                  onChange={(event) => updateFile(index, { content: event.target.value })}
-                  disabled={disabled}
-                  spellCheck={false}
-                  className="ui-input h-auto min-h-44 resize-y p-3 font-mono text-xs leading-5 disabled:cursor-not-allowed disabled:opacity-70"
-                />
+                <textarea value={file.content} onChange={(event) => updateFile(index, { content: event.target.value })} disabled={disabled} spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-44" />
               </label>
             </div>
           ))}
@@ -199,7 +170,7 @@ export function RuntimeFileDraftsInput({
       )}
 
       {uploadError ? (
-        <p className="border-t border-border px-4 py-3 text-xs text-red-600 dark:text-red-400" role="alert">
+        <p className="border-t border-border px-4 py-3 text-xs text-destructive dark:text-destructive" role="alert">
           {uploadError}
         </p>
       ) : null}

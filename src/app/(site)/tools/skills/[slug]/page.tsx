@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Star } from 'lucide-react';
 import { getLocale, getTranslations } from 'next-intl/server';
@@ -7,6 +6,7 @@ import { getMarketingContent } from '@/lib/marketing/content';
 import { SITE } from '@/lib/site';
 import { getPublicSkill } from '../../../_lib/catalog';
 import { siteMetadata } from '../../../_lib/metadata';
+import { ButtonLink } from '@/components/motion/button';
 
 export async function generateMetadata({
   params,
@@ -70,22 +70,22 @@ export default async function Page({
       {skill.categories.length > 0 ? (
         <div className="mt-6 flex flex-wrap gap-2">
           {skill.categories.map((category) => (
-            <Link key={category.id} href={`/categories/${category.slug}`} className="ui-chip">
+            <ButtonLink key={category.id} href={`/categories/${category.slug}`} variant="secondary" size="sm">
               {category.name}
-            </Link>
+            </ButtonLink>
           ))}
         </div>
       ) : null}
 
       <div className="mt-10 rounded-lg border border-border bg-card p-4">
-        <Link
+        <ButtonLink
           href={skill.installable
             ? `/app?skill=${encodeURIComponent(skill.slug)}`
             : `/app?market=skills&q=${encodeURIComponent(skill.slug)}`}
-          className="ui-button-primary flex min-h-10 w-full"
+          className="w-full"
         >
           {skill.installable ? t('addToMyWorkspace') : t('browseInstallableSkills')}
-        </Link>
+        </ButtonLink>
         <p className="mt-2 text-center text-xs text-muted-foreground">
           {skill.installable ? t('oneclickInstall') : t('curatedSkillsOnly')}
         </p>
@@ -98,9 +98,9 @@ export default async function Page({
             <code>npx skillfish add {skill.githubSource}</code>
           </pre>
         ) : null}
-        <Link href="/app" className="ui-button-secondary mt-3">
+        <ButtonLink href="/app" variant="secondary" className="mt-3">
           {t('openDashboard')}
-        </Link>
+        </ButtonLink>
       </section>
     </article>
   );

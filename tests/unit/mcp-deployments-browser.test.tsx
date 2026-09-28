@@ -35,7 +35,7 @@ const deployments = [
 ];
 
 describe('McpDeploymentsBrowser', () => {
-  it('replaces the desktop header with batch actions after selecting deployments', async () => {
+  it('shows batch actions for selected deployments and clears their successful form values', async () => {
     const user = userEvent.setup();
     render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
 
@@ -43,12 +43,8 @@ describe('McpDeploymentsBrowser', () => {
     const selectMatches = within(table).getByRole('checkbox', { name: 'Select all matching (2)' });
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
     await user.click(selectMatches);
-    const toolbar = within(table).getByRole('toolbar', { name: '2 selected' });
-    const headers = within(table).getAllByRole('columnheader');
-    expect(headers).toHaveLength(1);
-    expect(headers[0]).toHaveAttribute('colspan', '5');
-    expect(within(table).queryByRole('checkbox', { name: 'Select all matching (2)' })).not.toBeInTheDocument();
-    const batchForms = [...table.querySelectorAll('form')].filter(
+    const toolbar = screen.getAllByRole('toolbar', { name: '2 selected' }).at(-1)!;
+    const batchForms = [...toolbar.querySelectorAll('form')].filter(
       (form) => new FormData(form).getAll('deploymentId').length === 2,
     );
     expect(batchForms.map((form) => new FormData(form).getAll('deploymentId'))).toEqual([
@@ -61,9 +57,8 @@ describe('McpDeploymentsBrowser', () => {
     expect(within(toolbar).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
 
     await user.click(within(toolbar).getByRole('button', { name: 'Clear selection' }));
-    expect(within(table).queryByRole('toolbar')).not.toBeInTheDocument();
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(5);
-    expect(within(table).getByRole('checkbox', { name: 'Select all matching (2)' })).toBeInTheDocument();
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(within(table).getByRole('checkbox', { name: 'Select all matching (2)' })).not.toBeChecked();
   });
 
   it('preserves desktop row selections while filtering', async () => {
@@ -71,22 +66,18 @@ describe('McpDeploymentsBrowser', () => {
     render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
 
     const table = screen.getByRole('table');
-    await user.click(within(table).getByRole('checkbox', { name: 'Select Filesystem' }));
-    expect(within(table).getByRole('toolbar', { name: '1 selected' })).toBeInTheDocument();
+    await user.click(await within(table).findByRole('checkbox', { name: 'Select Filesystem' }));
+    expect(screen.getAllByRole('toolbar', { name: '1 selected' }).at(-1)).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText('Search MCP...'), 'private');
     await user.click(within(table).getByRole('checkbox', { name: 'Select Private API' }));
-    expect(within(table).getByRole('toolbar', { name: '2 selected' })).toBeInTheDocument();
+    expect(screen.getAllByRole('toolbar', { name: '2 selected' }).at(-1)).toBeInTheDocument();
   });
 
-  it('opens deployment details from the full identity cell without an Inspect action', () => {
+  it('opens deployment details from the identity cell', async () => {
     render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
-
-    const links = screen.getAllByRole('link', { name: /Filesystem/ });
-    expect(links).toHaveLength(2);
-    for (const link of links) expect(link).toHaveAttribute('href', '/app/acme/mcp/running-mcp');
-    expect(links.find((link) => link.closest('table'))?.parentElement).toHaveClass('p-0');
-    expect(screen.queryByRole('link', { name: 'Inspect' })).not.toBeInTheDocument();
+    const link = await within(screen.getByRole('table')).findByRole('link', { name: /Filesystem/ });
+    expect(link).toHaveAttribute('href', '/app/acme/mcp/running-mcp');
   });
 
   it('filters deployments by text and live status without leaving the page', async () => {
@@ -100,15 +91,17 @@ describe('McpDeploymentsBrowser', () => {
     expect(screen.queryByText('Filesystem')).not.toBeInTheDocument();
     expect(screen.getAllByText('Private API')).toHaveLength(2);
 
-    await user.click(screen.getByRole('button', { name: /^error \(1\)$/i }));
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    await user.click(screen.getByRole('option', { name: /^error \(1\)$/i }));
     expect(screen.getAllByText('Private API')).toHaveLength(2);
 
     await user.clear(screen.getByPlaceholderText('Search MCP...'));
-    await user.click(screen.getByRole('button', { name: /^all \(2\)$/i }));
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    await user.click(screen.getByRole('option', { name: /^all \(2\)$/i }));
     expect(screen.getByText('Servers deployed to this workspace: 2.')).toBeInTheDocument();
   });
 
-  it('keeps lifecycle actions aligned with the deployment detail page', () => {
+  it('keeps lifecycle actions aligned with the deployment detail page', async () => {
     render(
       <McpDeploymentsBrowser
         slug="acme"
@@ -135,11 +128,27 @@ describe('McpDeploymentsBrowser', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Stop' })).toHaveLength(2);
-    expect(screen.getAllByRole('link', { name: 'Variables' }))
-      .toHaveLength(2);
-    expect(screen.getAllByRole('link', { name: 'Variables' })[0])
+    const table = within(screen.getByRole('table'));
+    expect(await table.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(await table.findByRole('link', { name: 'Variables' }))
       .toHaveAttribute('href', '/app/acme/mcp/needs-config?tab=variables');
+    expect(table.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
+  });
+
+  it('reveals secondary actions on demand and requires confirmation before removal', async () => {
+    const user = userEvent.setup();
+    render(<McpDeploymentsBrowser slug="acme" deployments={deployments} />);
+    const table = screen.getByRole('table');
+    const trigger = await within(table).findByRole('button', { name: 'Actions: Filesystem' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await user.click(trigger);
+    const menu = within(document.getElementById(trigger.getAttribute('aria-controls')!)!);
+    expect(menu.getByRole('link', { name: 'Logs' })).toHaveAttribute('href', '/app/acme/mcp/running-mcp?tab=logs');
+    expect(menu.getByRole('button', { name: 'Restart' })).toBeInTheDocument();
+    await user.click(menu.getByRole('button', { name: 'Remove' }));
+    expect(menu.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    await user.click(menu.getByRole('button', { name: 'Cancel' }));
+    expect(menu.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+    expect(menu.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
   });
 });

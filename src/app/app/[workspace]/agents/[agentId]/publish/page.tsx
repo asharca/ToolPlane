@@ -1,4 +1,8 @@
-import Link from 'next/link';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { Button, ButtonLink } from '@/components/motion/button/base';
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 import { notFound, redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import {
@@ -27,7 +31,6 @@ import {
   unpublishAgentListingAction,
   withdrawPendingAgentReleaseAction,
 } from '@/lib/agents/actions';
-import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardPage } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { db } from '@/lib/db';
@@ -93,58 +96,42 @@ export default async function AgentPublishPage({
 
   return (
     <>
-      <DashboardHeader
-        breadcrumb={[
-          { label: t('title'), href: `/app/${workspaceSlug}/agents` },
-          { label: agent.name, href: `/app/${workspaceSlug}/agents/${agentId}` },
-          { label: t('publishBreadcrumb') },
-        ]}
-      />
       <DashboardPage className="mx-auto max-w-5xl space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <Link
-              href={`/app/${workspaceSlug}/agents/${agentId}`}
-              className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-            >
+            <ButtonLink href={`/app/${workspaceSlug}/agents/${agentId}`} variant="ghost" className="mb-3">
               <ArrowLeft className="size-3.5" /> {agent.name}
-            </Link>
+            </ButtonLink>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('marketListing')}</h1>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
               {t('marketListingDescription')}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
-              isPublished
-                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                : isPending
-                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                : 'bg-muted text-muted-foreground'
-            }`}>
+            <AnimatedBadge status={isPublished ? 'success' : isPending ? 'warning' : 'neutral'}>
               <Globe2 className="size-3.5" />
               {isPublished && latestRelease
                 ? t('publishedVersion', { version: latestRelease.version })
                 : isPending && pendingRelease
                   ? t('pendingReviewVersion', { version: pendingRelease.version })
                 : t('notPublished')}
-            </span>
+            </AnimatedBadge>
             {isPublished && isPending && pendingRelease ? (
-              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500/10 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <AnimatedBadge status="neutral">
                 <FileLock2 className="size-3.5" />
                 {t('pendingUpdateVersion', { version: pendingRelease.version })}
-              </span>
+              </AnimatedBadge>
             ) : null}
             {previewHref ? (
-              <Link href={previewHref} className="ui-button-secondary h-8 gap-1.5 px-2.5 text-xs">
+              <ButtonLink href={previewHref} variant="secondary" size="sm">
                 <Eye className="size-3.5" /> {t('previewListing')}
-              </Link>
+              </ButtonLink>
             ) : null}
           </div>
         </div>
 
         {statusParams.submitted ? (
-          <p role="status" className="rounded-md bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+          <p role="status" className="rounded-md bg-muted px-4 py-3 text-sm text-muted-foreground text-muted-foreground">
             {t('submissionSuccess')}
           </p>
         ) : null}
@@ -159,12 +146,12 @@ export default async function AgentPublishPage({
           </p>
         ) : null}
         {formError ? (
-          <p role="alert" className="rounded-md border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+          <p role="alert" className="text-sm text-destructive">
             {formError}
           </p>
         ) : null}
         {!isOwner ? (
-          <p role="alert" className="rounded-md border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          <p role="alert" className="text-sm text-destructive">
             {t('ownerOnlyPublish')}
           </p>
         ) : null}
@@ -174,7 +161,7 @@ export default async function AgentPublishPage({
           <input type="hidden" name="agentId" value={agentId} />
           <input type="hidden" name="listingSlug" value={currentListing?.slug ?? agent.slug} />
 
-          <section className="ui-panel overflow-hidden">
+          <section className="rounded-2xl border border-border bg-card overflow-hidden">
             <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
               <Globe2 className="size-[18px] text-muted-foreground" />
               <div>
@@ -183,27 +170,15 @@ export default async function AgentPublishPage({
               </div>
             </div>
             <div className="grid gap-4 p-5 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicName')}</span>
-                <input
-                  name="name"
-                  required
-                  maxLength={80}
-                  defaultValue={draftName}
-                  className="ui-input h-10"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('marketTags')}</span>
-                <input
-                  name="tags"
-                  maxLength={240}
-                  defaultValue={draftTags.join(', ')}
-                  placeholder={t('marketTagsPlaceholder')}
-                  className="ui-input h-10"
-                />
+              <div className="block">
+                
+                <Input label={t('publicName')} name="name" required maxLength={80} defaultValue={String(draftName)} />
+              </div>
+              <div className="block">
+                
+                <Input label={t('marketTags')} name="tags" maxLength={240} placeholder={t('marketTagsPlaceholder')} defaultValue={String(draftTags.join(', '))} />
                 <span className="mt-1.5 block text-xs text-muted-foreground">{t('marketTagsHint')}</span>
-              </label>
+              </div>
               <label className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicSummary')}</span>
                 <textarea
@@ -213,47 +188,34 @@ export default async function AgentPublishPage({
                   rows={4}
                   defaultValue={draftSummary}
                   placeholder={t('publicSummaryPlaceholder')}
-                  className="ui-input min-h-28 resize-y py-3"
+                  className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1.5 block text-xs font-semibold text-foreground">{t('publicIconUrl')}</span>
-                <input
-                  name="iconUrl"
-                  type="url"
-                  maxLength={2000}
-                  defaultValue={draftIconUrl}
-                  placeholder="https://example.com/agent-icon.png"
-                  className="ui-input h-10"
-                />
-              </label>
+              <div className="block sm:col-span-2">
+                
+                <Input label={t('publicIconUrl')} name="iconUrl" type="url" maxLength={2000} placeholder="https://example.com/agent-icon.png" defaultValue={String(draftIconUrl)} />
+              </div>
               <fieldset className="sm:col-span-2">
                 <legend className="text-xs font-semibold text-foreground">{t('marketCategories')}</legend>
                 <p className="mt-1 text-xs text-muted-foreground">{t('marketCategoriesHint')}</p>
                 <div className="mt-2 grid gap-1 sm:grid-cols-2">
                   {categories.map((category) => (
-                    <label key={category.id} className="flex min-h-10 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
-                      <input
-                        type="checkbox"
-                        name="categoryIds"
-                        value={category.id}
-                        defaultChecked={draftCategoryIds.has(category.id)}
-                        className="size-4 accent-brand"
-                      />
+                    <div key={category.id} className="flex min-h-10 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
+                      <FormCheckbox name="categoryIds" value={category.id} defaultChecked={draftCategoryIds.has(category.id)} label={category.name} />
                       <span className="truncate">{category.name}</span>
-                    </label>
+                    </div>
                   ))}
                 </div>
               </fieldset>
             </div>
           </section>
 
-          <section className="ui-panel overflow-hidden">
+          <section className="rounded-2xl border border-border bg-card overflow-hidden">
             <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
               {assessment.portable ? (
-                <CheckCircle2 className="size-[18px] text-emerald-600" />
+                <CheckCircle2 className="size-[18px] text-muted-foreground" />
               ) : (
-                <AlertTriangle className="size-[18px] text-amber-600" />
+                <AlertTriangle className="size-[18px] text-muted-foreground" />
               )}
               <div>
                 <h2 className="text-sm font-semibold text-foreground">{t('portabilityCheck')}</h2>
@@ -264,7 +226,7 @@ export default async function AgentPublishPage({
             </div>
             {assessment.portable && manifest ? (
               <div className="p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground text-muted-foreground">
                   <ShieldCheck className="size-4" /> {t('portableTitle')}
                 </div>
                 <dl className="mt-5 grid gap-x-7 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -288,11 +250,11 @@ export default async function AgentPublishPage({
               </div>
             ) : (
               <div className="p-5">
-                <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-300">{t('notPortableTitle')}</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground text-muted-foreground">{t('notPortableTitle')}</h3>
                 <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
                   {issueText.map((issue) => (
                     <li key={issue} className="flex gap-2">
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                       <span>{issue}</span>
                     </li>
                   ))}
@@ -301,7 +263,7 @@ export default async function AgentPublishPage({
             )}
           </section>
 
-          <section className="ui-panel overflow-hidden">
+          <section className="rounded-2xl border border-border bg-card overflow-hidden">
             <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
               <FileLock2 className="size-[18px] text-muted-foreground" />
               <div>
@@ -309,17 +271,10 @@ export default async function AgentPublishPage({
                 <p className="mt-0.5 text-xs text-muted-foreground">{t('willNotPublishDescription')}</p>
               </div>
             </div>
-            <label className="flex cursor-pointer items-start gap-3 p-5 text-sm leading-6 text-foreground">
-              <input
-                type="checkbox"
-                name="confirmPublicContents"
-                value="yes"
-                required
-                disabled={!assessment.portable || !isOwner}
-                className="mt-1 size-4 rounded border-input accent-brand"
-              />
+            <div className="flex cursor-pointer items-start gap-3 p-5 text-sm leading-6 text-foreground">
+              <FormCheckbox name="confirmPublicContents" value="yes" required disabled={!assessment.portable || !isOwner} label={t('confirmPublicContents')} />
               <span>{t('confirmPublicContents')}</span>
-            </label>
+            </div>
           </section>
 
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background/95 py-3 backdrop-blur-sm">
@@ -329,7 +284,7 @@ export default async function AgentPublishPage({
               savedLabel={t('submissionSuccess')}
               disabled={!assessment.portable || !isOwner}
               flash={false}
-              className="ui-button-primary h-10 gap-2 px-4"
+              variant="primary"
             >
               <Globe2 className="size-4" />
               {isPublished ? t('submitUpdateForReview') : t('submitForReview')}
@@ -338,7 +293,7 @@ export default async function AgentPublishPage({
         </form>
 
         {isPending && isOwner ? (
-          <section className="ui-panel p-5">
+          <section className="rounded-2xl border border-border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">{t('withdrawSubmission')}</h2>
@@ -347,16 +302,16 @@ export default async function AgentPublishPage({
               <form action={withdrawPendingAgentReleaseAction}>
                 <input type="hidden" name="workspace" value={workspaceSlug} />
                 <input type="hidden" name="agentId" value={agentId} />
-                <button type="submit" className="ui-button-secondary h-9 px-3 text-xs">
+                <Button type="submit" variant={"secondary"} size={"sm"}>
                   {t('withdrawSubmission')}
-                </button>
+                </Button>
               </form>
             </div>
           </section>
         ) : null}
 
         {isPublished && isOwner ? (
-          <section className="ui-panel ui-panel-danger p-5">
+          <section className="rounded-2xl border border-border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">
@@ -369,9 +324,9 @@ export default async function AgentPublishPage({
               <form action={unpublishAgentListingAction}>
                 <input type="hidden" name="workspace" value={workspaceSlug} />
                 <input type="hidden" name="agentId" value={agentId} />
-                <button type="submit" className="ui-button-secondary ui-button-danger-secondary h-9 px-3 text-xs">
+                <Button type="submit" variant={"secondary"} size={"sm"}>
                   {t('unpublish')}
-                </button>
+                </Button>
               </form>
             </div>
           </section>

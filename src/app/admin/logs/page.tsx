@@ -1,7 +1,11 @@
+/* eslint-disable react/jsx-key -- DashboardTable consumes cell arrays as indexed values. */
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalContent, CenterMorphModalTrigger } from '@/components/motion/center-morph-modal';
 import Link from 'next/link';
 import { getLocale, getTranslations } from 'next-intl/server';
 import { Activity, ArrowDown, ArrowUpRight, Bot, ChevronDown, ChevronRight, CircleAlert, Clock3, Download, Gauge, RefreshCw, ScrollText, Server, ShieldCheck } from 'lucide-react';
-import { Alert, DataTable, Pagination, Tab, TabList } from '@asharca/ui';
+import { DashboardTable } from '@/components/dashboard/DashboardUI';
 import type { Prisma } from '@prisma/client';
 import { requireAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/db';
@@ -29,8 +33,8 @@ export default async function AdminLogsPage({ searchParams }: { searchParams: Pr
   const parsed = logFilterSchema.safeParse({ ...raw, domain: raw.domain ?? (tab === 'audit' ? undefined : tab) });
   if (!parsed.success) return <AdminPage>
     <AdminPageHeader title={t('logsTitle')} />
-    <Alert tone="danger">{t('logsInvalidFilter')}</Alert>
-    <Link href="/admin/logs" className="ui-button-secondary">{t('logsReset')}</Link>
+    <p role="alert" className="text-sm text-destructive">{t('logsInvalidFilter')}</p>
+    <ButtonLink href="/admin/logs" variant="secondary" size="md">{t('logsReset')}</ButtonLink>
   </AdminPage>;
   const filters = parsed.data;
   const observedAt = new Date().getTime();
@@ -73,38 +77,36 @@ export default async function AdminLogsPage({ searchParams }: { searchParams: Pr
 
   return <AdminPage>
     <AdminPageHeader title={t('logsTitle')} backHref={raw.returnTo ? adminReturnHref(raw.returnTo, '/admin') : undefined} backLabel={t('viewDetails')} meta={<AdminBadge>{t(`logsTab_${tab}`)}</AdminBadge>} actions={<>
-      <Link href={`/api/v1/admin/logs/export?${query}`} className="ui-button-secondary" title={t('logsExport')}><Download className="size-4" aria-hidden="true" />{t('logsExportShort')}</Link>
-      <Link href={`/admin/logs?${refreshQuery}`} aria-label={t('logsRefresh')} title={t('logsRefresh')} className="ui-button-secondary ui-icon-button"><RefreshCw className="size-4" aria-hidden="true" /></Link>
+      <ButtonLink href={`/api/v1/admin/logs/export?${query}`} title={t('logsExport')} variant="secondary" size="md"><Download className="size-4" aria-hidden="true" />{t('logsExportShort')}</ButtonLink>
+      <ButtonLink href={`/admin/logs?${refreshQuery}`} aria-label={t('logsRefresh')} title={t('logsRefresh')} variant="secondary" size="icon"><RefreshCw className="size-4" aria-hidden="true" /></ButtonLink>
     </>} />
 
-    <TabList navigation label={t('logsViews')} className="w-full rounded-md sm:w-auto">
+    <nav aria-label={t('logsViews')} className="flex flex-wrap gap-1">
       {tabs.map(({ value, icon: Icon }) => {
         const tabQuery = new URLSearchParams({ tab: value });
         for (const key of ['q', 'workspaceId', 'actorId', 'requestId', 'traceId', 'since', 'until']) {
           if (raw[key]) tabQuery.set(key, raw[key]);
         }
-        return <Tab key={value} asChild navigation current={tab === value} className="min-h-10 flex-1 justify-center rounded px-2.5 sm:px-4">
-          <Link href={`/admin/logs?${tabQuery}`}><Icon className="hidden size-4 sm:block" aria-hidden="true" />{t(`logsTab_${value}`)}</Link>
-        </Tab>;
+        return <ButtonLink key={value} href={`/admin/logs?${tabQuery}`} variant={tab === value ? "primary" : "ghost"} aria-current={tab === value ? "page" : undefined}><Icon className="hidden size-4 sm:block" aria-hidden="true" />{t(`logsTab_${value}`)}</ButtonLink>;
       })}
-    </TabList>
+    </nav>
 
     {stats ? <section aria-label={t('logsSummary')} className="grid grid-cols-2 gap-px border-y border-border bg-border xl:grid-cols-4">
       <AdminMetric icon={ScrollText} label={t('logsTotal')} value={number(stats.total)} note={t('logsFilteredWindow')} />
-      <AdminMetric icon={CircleAlert} label={t('logsFailures')} value={number(stats.errors)} valueClassName={stats.errors ? 'text-destructive-text' : undefined} note={t('logsFailureTypes')} />
+      <AdminMetric icon={CircleAlert} label={t('logsFailures')} value={number(stats.errors)} valueClassName={stats.errors ? 'text-destructive' : undefined} note={t('logsFailureTypes')} />
       <AdminMetric icon={Gauge} label={t('logsErrorRate')} value={stats.total ? `${((stats.errors / stats.total) * 100).toFixed(1)}%` : '-'} note={t('logsFilteredWindow')} />
       <AdminMetric icon={Clock3} label={t('p95Latency')} value={stats.total ? `${number(stats.p95Ms)} ms` : '-'} note={t('logsAverage', { value: number(stats.avgMs) })} />
     </section> : null}
 
     <LogFilters tab={tab} raw={raw} filters={filters} observedAt={observedAt} />
 
-    {logHealth.failures > 0 || logHealth.dropped > 0 ? <Alert tone="danger" role="status">
+    {logHealth.failures > 0 || logHealth.dropped > 0 ? <p role="status" className="flex items-start gap-2 text-sm text-destructive">
       <CircleAlert className="size-4 shrink-0" aria-hidden="true" />{t('logsWriteHealth', { failures: logHealth.failures, dropped: logHealth.dropped })}
-    </Alert> : null}
+    </p> : null}
 
     {groups.length ? <details className="group border-l-2 border-destructive/60 bg-destructive/5 px-4">
       <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 text-sm [&::-webkit-details-marker]:hidden">
-        <CircleAlert className="size-4 shrink-0 text-destructive-text" aria-hidden="true" />
+        <CircleAlert className="size-4 shrink-0 text-destructive" aria-hidden="true" />
         <span className="font-medium">{t('logsErrors')}</span><AdminBadge tone="danger">{groups.length}</AdminBadge>
         <ChevronDown className="ml-auto size-4 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
       </summary>
@@ -115,7 +117,7 @@ export default async function AdminLogsPage({ searchParams }: { searchParams: Pr
         groupQuery.set('outcome', group.outcome);
         if (group.errorType) groupQuery.set('errorType', group.errorType);
         if (group.errorCode) groupQuery.set('errorCode', group.errorCode);
-        return <Link key={index} href={`/admin/logs?${groupQuery}`} className="flex flex-wrap items-center gap-3 py-3 text-xs hover:text-destructive-text">
+        return <Link key={index} href={`/admin/logs?${groupQuery}`} className="flex flex-wrap items-center gap-3 py-3 text-xs hover:text-destructive">
           <span className="min-w-0 flex-1 basis-48"><span className="block break-all font-mono font-medium">{group.errorType ?? group.eventName}{group.errorCode ? ` / ${group.errorCode}` : ''}</span><span className="mt-1 block break-all text-muted-foreground">{group.eventName}</span></span>
           <span className="text-muted-foreground" title={`${group.first.toISOString()} / ${group.last.toISOString()}`}>{t('logsAffectedWorkspaces', { count: group.workspaces })}</span>
           <AdminBadge tone="danger">{t('logsOccurrences', { count: group.count })}</AdminBadge><ArrowUpRight className="size-4" aria-hidden="true" />
@@ -128,42 +130,29 @@ export default async function AdminLogsPage({ searchParams }: { searchParams: Pr
         <h2 className="flex items-center gap-2 text-sm font-semibold">{t(tab === 'audit' ? 'logsTab_audit' : 'logsEvents')}<AdminBadge>{number(stats?.total ?? auditCount)}</AdminBadge></h2>
         <span className="text-xs text-muted-foreground">{windowFormat.format(filters.since)} - {windowFormat.format(filters.until)} UTC</span>
       </div>
-      {rowCount ? <DataTable label={t('logsEvents')} minWidth="52rem" className="rounded-md" headers={[
-        { label: t('logsTime'), className: 'w-36' }, { label: t('logsResult'), className: 'w-28' },
-        { label: t('logsEvent') }, { label: t('logsResource'), className: 'w-48' },
+      {rowCount ? <DashboardTable ariaLabel={t('logsEvents')}
+minWidth="52rem"
+className="rounded-md"
+headers={[
+        { label: t('logsTime'), width: "9rem" }, { label: t('logsResult'), width: "7rem" },
+        { label: t('logsEvent') }, { label: t('logsResource'), width: "12rem" },
         { label: tab === 'audit' ? t('logFields.actorId') : t('logsDuration'), align: 'right' },
         { label: <span className="sr-only">{t('logsDetails')}</span> },
-      ]}>
-        {events?.rows.map((row) => <tr key={row.id}>
-          <td className="px-4 py-3"><LogTimestamp date={row.createdAt} /></td>
-          <td className="px-4 py-3"><LogOutcomeBadge outcome={row.outcome} />{row.httpStatus !== null ? <span className="mt-1 block font-mono text-xs text-muted-foreground">HTTP {row.httpStatus}</span> : null}</td>
-          <td className="max-w-sm px-4 py-3">
-            <Link href={detailHref(row.id)} className="block truncate font-medium text-foreground hover:underline" title={row.message}>{row.message}</Link>
-            <span className="mt-1 block truncate font-mono text-xs text-muted-foreground" title={row.eventName}>{row.eventName}{row.errorCode ? ` / ${row.errorCode}` : ''}</span>
-          </td>
-          <td className="max-w-48 px-4 py-3">
-            <span className="block truncate text-xs font-medium" title={row.toolName ?? row.model ?? row.deploymentId ?? row.agentId ?? ''}>{row.toolName ?? row.model ?? (row.deploymentId ? t('deployments') : row.agentId ? t('agents') : t.has(`logDomains.${row.domain}`) ? t(`logDomains.${row.domain}`) : row.domain)}</span>
-            {row.workspaceId ? <Link href={adminHref(`/admin/workspaces/${row.workspaceId}`, { returnTo: listHref })} className="mt-1 block truncate text-xs text-muted-foreground hover:underline" title={row.workspaceId}>{workspaces.get(row.workspaceId) ?? row.workspaceId}</Link> : <span className="mt-1 block text-xs text-muted-foreground">{t('logsPlatform')}</span>}
-          </td>
-          <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs tabular-nums">{row.durationMs === null ? '-' : `${number(row.durationMs)} ms`}</td>
-          <td className="px-2 py-3"><Link href={detailHref(row.id)} className="ui-button-ghost ui-icon-button" aria-label={t('logsDetails')} title={t('logsDetails')}><ChevronRight className="size-4" aria-hidden="true" /></Link></td>
-        </tr>)}
-        {visibleAudits?.map((row) => <tr key={row.id}>
-          <td className="px-4 py-3"><LogTimestamp date={row.createdAt} /></td>
-          <td className="px-4 py-3"><LogOutcomeBadge outcome={row.outcome} /></td>
-          <td className="max-w-sm px-4 py-3"><details>
-            <summary className="cursor-pointer break-all font-mono text-xs font-medium">{row.action}</summary>
-            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all bg-muted/50 p-3 text-xs leading-relaxed">{JSON.stringify({ actorId: row.actorId, requestId: row.requestId, traceId: row.traceId, changes: row.changes }, null, 2)}</pre>
-          </details></td>
-          <td className="max-w-48 px-4 py-3"><span className="block text-xs font-medium">{row.targetType}</span>
-            {row.targetType === 'user' && users.has(row.targetId) ? <Link href={adminHref(`/admin/users/${row.targetId}`, { returnTo: listHref })} className="mt-1 block truncate text-xs hover:underline">{users.get(row.targetId)}</Link>
+      ]}
+rows={[...(events?.rows.map((row) => ({ id: row.id, cells: [<> <LogTimestamp date={row.createdAt} /> </>,
+<> <LogOutcomeBadge outcome={row.outcome} />{row.httpStatus !== null ? <span className="mt-1 block font-mono text-xs text-muted-foreground">HTTP {row.httpStatus}</span> : null} </>,
+<div className="min-w-0 max-w-sm"><> <Link href={detailHref(row.id)} className="block truncate font-medium text-foreground hover:underline" title={row.message}>{row.message}</Link><span className="mt-1 block truncate font-mono text-xs text-muted-foreground" title={row.eventName}>{row.eventName}{row.errorCode ? ` / ${row.errorCode}` : ''}</span> </></div>,
+<div className="min-w-0 max-w-48"><> <span className="block truncate text-xs font-medium" title={row.toolName ?? row.model ?? row.deploymentId ?? row.agentId ?? ''}>{row.toolName ?? row.model ?? (row.deploymentId ? t('deployments') : row.agentId ? t('agents') : t.has(`logDomains.${row.domain}`) ? t(`logDomains.${row.domain}`) : row.domain)}</span>{row.workspaceId ? <Link href={adminHref(`/admin/workspaces/${row.workspaceId}`, { returnTo: listHref })} className="mt-1 block truncate text-xs text-muted-foreground hover:underline" title={row.workspaceId}>{workspaces.get(row.workspaceId) ?? row.workspaceId}</Link> : <span className="mt-1 block text-xs text-muted-foreground">{t('logsPlatform')}</span>} </></div>,
+row.durationMs === null ? '-' : `${number(row.durationMs)} ms`,
+<ButtonLink href={detailHref(row.id)} aria-label={t('logsDetails')} title={t('logsDetails')} variant="ghost" size="icon"><ChevronRight className="size-4" aria-hidden="true" /></ButtonLink>] })) ?? []), ...(visibleAudits?.map((row) => ({ id: row.id, cells: [<> <LogTimestamp date={row.createdAt} /> </>,
+<> <LogOutcomeBadge outcome={row.outcome} /> </>,
+<div className="min-w-0 max-w-sm"><CenterMorphModal><CenterMorphModalTrigger><Button variant="ghost" size="sm" className="max-w-full"><span className="truncate">{row.action}</span></Button></CenterMorphModalTrigger><CenterMorphModalContent ariaLabel={row.action} closeButtonLabel={t('cancel')} className="max-w-2xl"><div className="space-y-4 p-6"><h2 className="pr-8 text-sm font-semibold">{row.action}</h2><pre tabIndex={0} className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6">{JSON.stringify({ actorId: row.actorId, requestId: row.requestId, traceId: row.traceId, changes: row.changes }, null, 2)}</pre></div></CenterMorphModalContent></CenterMorphModal></div>,
+<div className="min-w-0 max-w-48"><> <span className="block text-xs font-medium">{row.targetType}</span>{row.targetType === 'user' && users.has(row.targetId) ? <Link href={adminHref(`/admin/users/${row.targetId}`, { returnTo: listHref })} className="mt-1 block truncate text-xs hover:underline">{users.get(row.targetId)}</Link>
               : row.targetType === 'workspace' && workspaces.has(row.targetId) ? <Link href={adminHref(`/admin/workspaces/${row.targetId}`, { returnTo: listHref })} className="mt-1 block truncate text-xs hover:underline">{workspaces.get(row.targetId)}</Link>
-              : <span className="mt-1 block truncate font-mono text-xs text-muted-foreground" title={row.targetId}>{row.targetId}</span>}
-          </td>
-          <td colSpan={2} className="max-w-40 truncate px-4 py-3 text-right text-xs text-muted-foreground" title={row.actorId}>{users.has(row.actorId) ? <Link href={adminHref(`/admin/users/${row.actorId}`, { returnTo: listHref })} className="hover:underline">{users.get(row.actorId)}</Link> : row.actorId}</td>
-        </tr>)}
-      </DataTable> : <AdminEmptyState icon={ScrollText} title={t('logsEmpty')} description={t('logsEmptyHint')} actions={<Link href={`/admin/logs?tab=${tab}`} className="ui-button-secondary">{t('logsReset')}</Link>} />}
-      <Pagination summary={t('logsPageCount', { count: rowCount })} next={next ? <Link href={`/admin/logs?${nextQuery}`} className="ui-button-secondary">{t('logsNext')}<ArrowDown className="size-4" aria-hidden="true" /></Link> : null} />
+              : <span className="mt-1 block truncate font-mono text-xs text-muted-foreground" title={row.targetId}>{row.targetId}</span>} </></div>,
+<div className="min-w-0 max-w-40">{users.has(row.actorId) ? <Link href={adminHref(`/admin/users/${row.actorId}`, { returnTo: listHref })} className="hover:underline">{users.get(row.actorId)}</Link> : row.actorId}</div>,
+null] })) ?? [])]} /> : <AdminEmptyState icon={ScrollText} title={t('logsEmpty')} description={t('logsEmptyHint')} actions={<ButtonLink href={`/admin/logs?tab=${tab}`} variant="secondary" size="md">{t('logsReset')}</ButtonLink>} />}
+      <nav aria-label={t('page')} className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{t('logsPageCount', { count: rowCount })}</span>{next ? <ButtonLink href={`/admin/logs?${nextQuery}`} variant="secondary" size="md">{t('logsNext')}<ArrowDown className="size-4" aria-hidden="true" /></ButtonLink> : null}</nav>
     </section>
 
     <LogSettings settings={{ ...settings, captures: settings.captures.filter((item) => new Date(item.expiresAt).getTime() > observedAt) }} />

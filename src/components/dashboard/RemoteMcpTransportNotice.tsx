@@ -1,7 +1,9 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
 
 import { useLocale } from 'next-intl';
-import { AlertTriangle } from 'lucide-react';
+
 import { isInsecureRemoteMcpUrl } from '@/lib/remote-mcp/url';
 
 const messages = {
@@ -38,10 +40,10 @@ export function RemoteMcpTransportNotice({
     <div className="space-y-2" data-testid="remote-mcp-transport-notice">
       {showHelp ? <p className="text-xs leading-5 text-muted-foreground">{text.help}</p> : null}
       {insecure ? (
-        <div role="alert" className="flex gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
-          <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+        <div role="alert" className="space-y-2 text-sm leading-6">
+          
           <div className="min-w-0 space-y-2">
-            <p className="font-semibold">{text.title}</p>
+            <AnimatedBadge status="warning">{text.title}</AnimatedBadge>
             <p>{text.risk}</p>
             <p>{text.guidance}</p>
             <p>{text.boundary}</p>

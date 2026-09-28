@@ -51,10 +51,10 @@ export default async function AgentDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; agentId: string }>;
-  searchParams: Promise<{ c?: string; settings?: string; tab?: string }>;
+  searchParams: Promise<{ c?: string; settings?: string; tab?: string; task?: string }>;
 }) {
   const { workspace: slug, agentId } = await params;
-  const { c, settings, tab } = await searchParams;
+  const { c, settings, tab, task } = await searchParams;
 
   const user = await getCurrentUser();
   if (!user) redirect('/app/login');
@@ -64,6 +64,7 @@ export default async function AgentDetailPage({
 
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
+  if (task !== undefined && (typeof task !== 'string' || !task || task.length > 200 || settings !== 'a2a')) notFound();
 
   if (c || tab === 'chat') {
     const query = new URLSearchParams({ agent: agentId });
@@ -122,11 +123,12 @@ export default async function AgentDetailPage({
     : agent.sandboxes.find((sandbox) => sandbox.isDefault)?.sandbox;
 
   return (
-    <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/work?agent=${encodeURIComponent(agent.id)}`} compact>
+    <SettingsModal title={agent.name} fallbackHref={`/app/${slug}/work?agent=${encodeURIComponent(agent.id)}`}>
       <AgentSettings
         key={settings ?? 'general'}
         slug={slug}
         agentId={agentId}
+        initialA2ATaskId={task}
         settings={{
           workspaceId: ws.id,
           name: agent.name,
@@ -148,6 +150,7 @@ export default async function AgentDetailPage({
               primaryType: model.primaryType,
               capabilities: model.capabilities,
               inputModalities: model.inputModalities,
+              cost: model.cost,
             })),
           })),
           deployments,

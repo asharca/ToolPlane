@@ -1,4 +1,9 @@
 'use client';
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { Input } from '@/components/motion/input';
+import { FormCheckbox } from '@/components/ui/FormCheckbox';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useEffect, useState } from 'react';
@@ -10,7 +15,7 @@ import {
   type RecipeActionState,
 } from '@/lib/admin/market-actions';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
-import { NativeSelect } from '@/components/ui/NativeSelect';
+
 import { AdminBadge, AdminPanel } from '@/components/admin/AdminUI';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 
@@ -29,8 +34,6 @@ type Initial = {
 };
 
 const LABEL_CLASS = 'block space-y-1.5 text-sm font-medium text-foreground';
-const CODE_INPUT_CLASS = 'ui-input h-11 font-mono';
-const CODE_TEXTAREA_CLASS = 'ui-input h-auto min-h-24 resize-y py-2.5 font-mono text-xs leading-5';
 
 function RecipeValidation({
   serverId,
@@ -50,21 +53,14 @@ function RecipeValidation({
       <input type="hidden" name="id" value={serverId} />
       <label className={LABEL_CLASS}>
         <span>{t('testEnvForValidationOptionalKeyvaluePerLineNotStored')}</span>
-        <textarea
-          name="testEnv"
-          rows={4}
-          placeholder="FIRECRAWL_API_KEY=fc-..."
-          className={CODE_TEXTAREA_CLASS}
-          autoCapitalize="none"
-          spellCheck={false}
-        />
+        <textarea name="testEnv" rows={4} placeholder="FIRECRAWL_API_KEY=fc-..." autoCapitalize="none" spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
       </label>
       <SubmitButton
         error={state.error}
         flash={false}
         disabled={!hasRecipe || dirty}
         pendingLabel={t('validatingFirstRun1Min')}
-        className="ui-button-secondary h-11 w-full sm:w-auto"
+        variant="secondary" size="md" className="w-full sm:w-auto"
       >
         <ShieldCheck className="size-4" />
         {t('validate')}
@@ -84,7 +80,7 @@ function RecipeValidation({
         </p>
       ) : null}
       {state.error && feedbackIsCurrent ? (
-        <p className="flex items-start gap-2 text-sm text-destructive-text" role="alert">
+        <p className="flex items-start gap-2 text-sm text-destructive" role="alert">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <span>{state.error}</span>
         </p>
@@ -142,87 +138,37 @@ export function RecipeEditor({
         <form action={saveAction} className="space-y-3" onChange={() => setDirty(true)}>
           <input type="hidden" name="id" value={serverId} />
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className={LABEL_CLASS}>
+            <div className={LABEL_CLASS}>
               <span>{t('source')}</span>
-              <NativeSelect
-                name="recipeSource"
-                defaultValue={initial.source || 'npm'}
-                onChange={(event) => setSource(event.currentTarget.value)}
-                className="ui-input h-11"
-              >
-                <option value="npm">{t('npm')}</option>
-                <option value="pypi">{t('pypi')}</option>
-                <option value="github">{t('github')}</option>
-                <option value="docker">{t('docker')}</option>
-                <option value="remote">{t('connectorRemote')}</option>
-              </NativeSelect>
-            </label>
+              <FormSelect name="recipeSource" defaultValue={initial.source || 'npm'} onValueChange={(value) => { setSource(value); setDirty(true); }} label={t('source')} options={[{ value: "npm", label: t('npm') }, { value: "pypi", label: t('pypi') }, { value: "github", label: t('github') }, { value: "docker", label: t('docker') }, { value: "remote", label: t('connectorRemote') }]} />
+            </div>
             <label className={LABEL_CLASS}>
               <span>{source === 'remote' ? t('connectorEndpointUrl') : t('referencePackageImageRepo')}</span>
-              <input
-                name="recipeRef"
-                defaultValue={initial.ref}
-                placeholder={source === 'remote' ? 'https://mcp.example.com/mcp' : 'firecrawl-mcp'}
-                className={CODE_INPUT_CLASS}
-                inputMode={source === 'remote' ? 'url' : undefined}
-                autoCapitalize="none"
-                spellCheck={false}
-              />
+              <Input name="recipeRef" defaultValue={initial.ref} placeholder={source === 'remote' ? 'https://mcp.example.com/mcp' : 'firecrawl-mcp'} inputMode={source === 'remote' ? 'url' : undefined} autoCapitalize="none" spellCheck={false} />
             </label>
           </div>
           {source === 'remote' ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className={LABEL_CLASS}>
+                <div className={LABEL_CLASS}>
                   <span>{t('transport')}</span>
-                  <NativeSelect
-                    name="recipeTransport"
-                    defaultValue={initial.transport ?? 'streamable-http'}
-                    className="ui-input h-11"
-                  >
-                    <option value="streamable-http">{t('streamableHttp')}</option>
-                    <option value="sse">{t('serverSentEvents')}</option>
-                  </NativeSelect>
-                </label>
-                <label className={LABEL_CLASS}>
+                  <FormSelect onValueChange={() => setDirty(true)} name="recipeTransport" defaultValue={initial.transport ?? 'streamable-http'} label={t('transport')} options={[{ value: "streamable-http", label: t('streamableHttp') }, { value: "sse", label: t('serverSentEvents') }]} />
+                </div>
+                <div className={LABEL_CLASS}>
                   <span>{t('authentication')}</span>
-                  <NativeSelect
-                    name="recipeAuthType"
-                    defaultValue={initial.authType ?? 'none'}
-                    onChange={(event) => setAuthType(event.currentTarget.value as typeof authType)}
-                    className="ui-input h-11"
-                  >
-                    <option value="none">{t('authNone')}</option>
-                    <option value="bearer">{t('authBearerToken')}</option>
-                    <option value="headers">{t('authCustomHeaders')}</option>
-                  </NativeSelect>
-                </label>
+                  <FormSelect name="recipeAuthType" defaultValue={initial.authType ?? 'none'} onValueChange={(value) => { setAuthType(value as typeof authType); setDirty(true); }} label={t('authentication')} options={[{ value: "none", label: t('authNone') }, { value: "bearer", label: t('authBearerToken') }, { value: "headers", label: t('authCustomHeaders') }]} />
+                </div>
               </div>
               {authType === 'bearer' ? (
                 <label className={LABEL_CLASS}>
                   <span>{t('bearerTokenEnvKey')}</span>
-                  <input
-                    name="recipeBearerEnv"
-                    defaultValue={initial.bearerEnv ?? 'MCP_BEARER_TOKEN'}
-                    placeholder="MCP_BEARER_TOKEN"
-                    className={CODE_INPUT_CLASS}
-                    autoCapitalize="characters"
-                    spellCheck={false}
-                  />
+                  <Input name="recipeBearerEnv" defaultValue={initial.bearerEnv ?? 'MCP_BEARER_TOKEN'} placeholder="MCP_BEARER_TOKEN" autoCapitalize="characters" spellCheck={false} />
                 </label>
               ) : null}
               {authType === 'headers' ? (
                 <label className={LABEL_CLASS}>
                   <span>{t('customHeaderEnvMappings')}</span>
-                  <textarea
-                    name="recipeHeaderEnv"
-                    defaultValue={initial.headerEnv ?? ''}
-                    rows={4}
-                    placeholder={'X-API-Key=MCP_API_KEY\nX-Tenant-ID=MCP_TENANT_ID'}
-                    className={CODE_TEXTAREA_CLASS}
-                    autoCapitalize="none"
-                    spellCheck={false}
-                  />
+                  <textarea name="recipeHeaderEnv" defaultValue={initial.headerEnv ?? ''} rows={4} placeholder={'X-API-Key=MCP_API_KEY\nX-Tenant-ID=MCP_TENANT_ID'} autoCapitalize="none" spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
                 </label>
               ) : null}
             </>
@@ -230,73 +176,38 @@ export function RecipeEditor({
             <>
               <label className={LABEL_CLASS}>
                 <span>{t('startCommandDockerOnly')}</span>
-                <input
-                  name="recipeStartCommand"
-                  defaultValue={initial.startCommand}
-                  placeholder="node dist/index.js"
-                  className={CODE_INPUT_CLASS}
-                  autoCapitalize="none"
-                  spellCheck={false}
-                />
+                <Input name="recipeStartCommand" defaultValue={initial.startCommand} placeholder="node dist/index.js" autoCapitalize="none" spellCheck={false} />
               </label>
               <label className={LABEL_CLASS}>
                 <span>{t('requiredEnvKeysUserFillsSpaceOrCommaSeparated')}</span>
-                <input
-                  name="recipeEnv"
-                  defaultValue={initial.env}
-                  placeholder="GITHUB_TOKEN"
-                  className={CODE_INPUT_CLASS}
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                />
+                <Input name="recipeEnv" defaultValue={initial.env} placeholder="GITHUB_TOKEN" autoCapitalize="characters" spellCheck={false} />
               </label>
               <label className={LABEL_CLASS}>
                 <span>{t('presetEnvValuesFixedWiringKeyvaluePerLine')}</span>
-                <textarea
-                  name="recipeEnvValues"
-                  defaultValue={initial.envValues}
-                  rows={4}
-                  placeholder={'FIRECRAWL_API_URL=http://firecrawl-api:3002\nFIRECRAWL_API_KEY=self-hosted'}
-                  className={CODE_TEXTAREA_CLASS}
-                  autoCapitalize="none"
-                  spellCheck={false}
-                />
+                <textarea name="recipeEnvValues" defaultValue={initial.envValues} rows={4} placeholder={'FIRECRAWL_API_URL=http://firecrawl-api:3002\nFIRECRAWL_API_KEY=self-hosted'} autoCapitalize="none" spellCheck={false} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
               </label>
-              <label className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
-                <input
-                  type="checkbox"
-                  name="recipeNetwork"
-                  defaultChecked={initial.network}
-                  className="size-4 shrink-0 accent-brand"
-                />
-                {t('disconnectFromNetworkNetworkNone')}
-              </label>
+              <div className="flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-foreground hover:bg-muted/60">
+                <FormCheckbox onCheckedChange={() => setDirty(true)} name="recipeNetwork" defaultChecked={initial.network} label={t('disconnectFromNetworkNetworkNone')} />
+                
+              </div>
             </>
           )}
           <label className={LABEL_CLASS}>
             <span>{t('sourceUrl')}</span>
-            <input
-              name="recipeSourceUrl"
-              defaultValue={initial.sourceUrl}
-              placeholder="https://github.com/owner/repository"
-              className={CODE_INPUT_CLASS}
-              inputMode="url"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
+            <Input name="recipeSourceUrl" defaultValue={initial.sourceUrl} placeholder="https://github.com/owner/repository" inputMode="url" autoCapitalize="none" spellCheck={false} />
           </label>
           <div className="flex flex-col items-start gap-3 pt-1 sm:flex-row sm:items-center">
             <SubmitButton
               error={saveState.error}
               pendingLabel={t('saving')}
               savedLabel={t('saved')}
-              className="ui-button-primary h-11 w-full sm:w-auto"
+              variant="primary" size="md" className="w-full sm:w-auto"
             >
               <Save className="size-4" />
               {t('saveRecipe')}
             </SubmitButton>
             {saveState.error ? (
-              <p className="text-sm text-destructive-text" role="alert">
+              <p className="text-sm text-destructive" role="alert">
                 {saveState.error}
               </p>
             ) : null}

@@ -60,12 +60,15 @@ describe('ConfirmSubmitButton', () => {
     renderButton({ action });
 
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    const submit = screen.getByRole('button', { name: 'Confirm' });
+    await userEvent.click(submit);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Removing...' })).toBeDisabled();
+      expect(submit).toBeDisabled();
+      expect(submit).toHaveAttribute('aria-busy', 'true');
       expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     });
+    await userEvent.click(submit);
     expect(action).toHaveBeenCalledTimes(1);
 
     finishAction?.();

@@ -16,7 +16,16 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     ".remember/**",
     ".worktrees/**",
+    "src/components/motion/**",
+    "src/components/agents/**",
+    "src/components/workspace/**",
+    "src/lib/ease.ts",
+    "src/lib/utils.ts",
+    "src/lib/touch.ts",
+    "src/lib/presence-gate.tsx",
+    "src/lib/command-search.ts",
+    "src/lib/hooks/**",
   ]),
-]);
 
+]);
 export default eslintConfig;

@@ -46,11 +46,9 @@ describe('SandboxCreateForm', () => {
     expect(archive).toHaveAttribute('type', 'file');
     expect(archive).toHaveAttribute('accept', '.zip,application/zip');
     expect(screen.getByText(/up to 17 MiB/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /I trust this archive/ })).toBeRequired();
-    expect(screen.getByRole('checkbox', { name: /Allow the agent to use sudo/ })).not.toBeRequired();
-    expect(screen.getByRole('combobox', { name: 'Hermes version' })).toHaveValue(
-      'nousresearch/hermes-agent:latest',
-    );
+    const form = screen.getByRole('button', { name: 'Import and create Hermes sandbox' }).closest('form')!;
+    expect(form.elements.namedItem('trustArchive')).toBeRequired();
+    expect(form.elements.namedItem('allowSudo')).not.toBeRequired();
     expect(screen.getByText('What gets imported')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Import and create Hermes sandbox' })).toBeInTheDocument();
     expect(document.querySelector('input[name="workspace"]')).toHaveValue('acme');
@@ -79,9 +77,8 @@ describe('SandboxCreateForm', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New sandbox' }));
     await userEvent.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
 
-    expect(screen.getByRole('combobox', { name: 'Hermes version' })).toHaveValue(
-      'registry.example/hermes-agent:stable',
-    );
+    const form = screen.getByRole('button', { name: 'Import and create Hermes sandbox' }).closest('form')!;
+    expect(new FormData(form).get('hermesImage')).toBe('registry.example/hermes-agent:stable');
   });
 
   it('sends a stable client import ID with the raw Hermes archive request', async () => {
@@ -92,10 +89,8 @@ describe('SandboxCreateForm', () => {
 
     await user.click(screen.getByRole('button', { name: 'New sandbox' }));
     await user.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Hermes version' }),
-      'nousresearch/hermes-agent:v2026.8.3',
-    );
+    await user.click(screen.getByRole('combobox', { name: 'Hermes version' }));
+    await user.click(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.8.3' }));
     const archive = new File(['zip'], 'backup.zip', { type: 'application/zip' });
     await user.upload(screen.getByLabelText('Hermes archive'), archive);
     await user.click(screen.getByRole('checkbox', { name: /I trust this archive/ }));
@@ -117,5 +112,31 @@ describe('SandboxCreateForm', () => {
       '1',
     );
     expect(request.send).toHaveBeenCalledWith(archive);
+  });
+
+  it('blocks dismissal during archive import and restores native closing after failure', async () => {
+    class PendingRequest extends MockXmlHttpRequest {
+      send = vi.fn();
+    }
+    vi.stubGlobal('XMLHttpRequest', PendingRequest);
+    const user = userEvent.setup();
+    render(<SandboxCreateForm workspace="acme" />);
+    const trigger = screen.getByRole('button', { name: 'New sandbox' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
+    await user.upload(screen.getByLabelText('Hermes archive'), new File(['zip'], 'backup.zip', { type: 'application/zip' }));
+    await user.click(screen.getByRole('checkbox', { name: /I trust this archive/ }));
+    fireEvent.submit(screen.getByRole('button', { name: 'Import and create Hermes sandbox' }).closest('form')!);
+
+    await waitFor(() => expect(MockXmlHttpRequest.instances).toHaveLength(1));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Dismiss modal' }));
+    expect(screen.getByRole('dialog', { name: 'New sandbox' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+
+    MockXmlHttpRequest.instances[0].dispatchEvent(new Event('error'));
+    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+    expect(trigger).toHaveFocus();
   });
 });

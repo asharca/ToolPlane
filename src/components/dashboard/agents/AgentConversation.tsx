@@ -1,12 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react';
+import { Button } from '@/components/motion/button';
+import { ComposerToolbarCustomizer } from '@/components/dashboard/ComposerToolbarCustomizer';
+import { ComposerToolsButton } from '@/components/dashboard/ComposerToolsButton';
+import { Message, MessageAvatar, MessageBubble, MessageBubbleContent, MessageContent, MessageFooter, MessageGroup, MessageHeader, MessageTyping } from '@/components/agents/message';
+import { MessageScroller } from '@/components/agents/message-scroller';
+import { PromptInput } from '@/components/agents/prompt-input';
+import { StreamingResponse } from '@/components/agents/streaming-response';
+import { AgentActivity } from '@/components/agents/agent-activity';
+import { ToolApproval } from '@/components/agents/tool-approval';
+import { ToolResult, ToolResultOutput } from '@/components/agents/tool-result';
+import { MorphPopover, MorphPopoverContent, MorphPopoverTrigger } from '@/components/motion/popover-morph';
+import { AssistantMarkdown } from '@/components/dashboard/ConversationMessage';
+import { ConversationFilePreview } from '@/components/dashboard/ConversationComposer';
+import { CopyButton } from '@/components/dashboard/CopyButton';
+
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useChat } from '@ai-sdk/react';
 import {
-  ComposerPrimitive,
-  unstable_useSlashCommandAdapter,
+  AssistantRuntimeProvider,
   useAui,
+  useAuiState,
   type AppendMessage,
   type AssistantRuntime,
   type AttachmentAdapter,
@@ -15,39 +30,27 @@ import {
 import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk';
 import { DefaultChatTransport, generateId, type CreateUIMessage, type UIMessage } from 'ai';
 import {
-  ArrowDown,
-  ArrowUp,
   Bot,
+  ChevronLeft,
+  ChevronRight,
+  GitBranch,
+  Pencil,
+  UserRound,
   Database,
   Eraser,
   Globe2,
   Paperclip,
-  Plus,
-  RotateCcw,
   ScrollText,
   Server,
   SlidersHorizontal,
   TerminalSquare,
-  X,
   type LucideIcon,
 } from 'lucide-react';
-import { Popover } from 'radix-ui';
-import {
-  ChatThread,
-  type ChatThreadLabels,
-} from '@asharca/ui';
+
 import { ConversationContextUsage } from '@/components/dashboard/ConversationComposer';
 import { McpPromptPickerButton } from '@/components/dashboard/McpPromptPickerButton';
 import { McpResourcePickerButton } from '@/components/dashboard/McpResourcePickerButton';
 import { McpServerPickerButton } from '@/components/dashboard/McpServerPickerButton';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/Dialog';
 import { resolveContextUsage } from '@/lib/context-usage';
 import type { ChatBranchNavigation } from '@/lib/chat/branches';
 import type { ReasoningEffort } from '@/lib/agents/constants';
@@ -238,8 +241,10 @@ function ConversationTools({
 }) {
   const t = useTranslations('console.runtimeCommands');
   const agentsT = useTranslations('console.agents');
-  const common = useTranslations('common');
   const aui = useAui();
+  const composerText = useAuiState((state) => state.composer.text);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [dismissedSlash, setDismissedSlash] = useState<string | null>(null);
   const [mcpPromptOpen, setMcpPromptOpen] = useState(false);
   const [mcpResourceOpen, setMcpResourceOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -249,19 +254,6 @@ function ConversationTools({
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
   const toolbarValue = useSyncExternalStore(subscribeToolbar, readToolbar, () => '[]');
 
-  useLayoutEffect(() => {
-    const legacyTrigger = toolsButtonRef.current?.previousElementSibling;
-    if (!(legacyTrigger instanceof HTMLButtonElement)) return;
-    const wasHidden = legacyTrigger.hidden;
-    const previousTabIndex = legacyTrigger.getAttribute('tabindex');
-    legacyTrigger.hidden = true;
-    legacyTrigger.tabIndex = -1;
-    return () => {
-      legacyTrigger.hidden = wasHidden;
-      if (previousTabIndex === null) legacyTrigger.removeAttribute('tabindex');
-      else legacyTrigger.setAttribute('tabindex', previousTabIndex);
-    };
-  }, []);
 
   const setCommandText = useCallback((text: string) => {
     aui.composer.setText(text);
@@ -366,7 +358,10 @@ function ConversationTools({
     }
   }, [toolbarValue]);
   const pinnedIds = [...new Set(toolbarIds)].filter((id) => actionById.get(id)?.pinable !== false);
-  const pinnedActions = pinnedIds.flatMap((id) => actionById.get(id) ?? []);
+  const toolbarActions = [
+    ...pinnedIds.flatMap((id) => actionById.get(id) ?? []),
+    ...actions.filter((action) => action.pressed && !pinnedIds.includes(action.id)),
+  ];
   const availableToolbarActions = actions.filter((action) => action.pinable !== false);
 
   const saveToolbar = useCallback((ids: string[]) => {
@@ -377,12 +372,6 @@ function ConversationTools({
       onError(agentsT('toolbarSaveFailed'));
     }
   }, [agentsT, onError]);
-  const moveShortcut = useCallback((index: number, offset: number) => {
-    const next = [...pinnedIds];
-    const [id] = next.splice(index, 1);
-    next.splice(index + offset, 0, id);
-    saveToolbar(next);
-  }, [pinnedIds, saveToolbar]);
   const invoke = useCallback((action: ComposerToolItem) => {
     if (action.disabled) return;
     onError(null);
@@ -391,115 +380,63 @@ function ConversationTools({
     });
   }, [agentsT, onError]);
   const menuItems = actions.filter((action) => !pinnedIds.includes(action.id));
-  const slashItems = menuItems.filter((item) => !item.disabled);
-  const slashItemsById = new Map(slashItems.map((item) => [item.id, item]));
-  const slash = unstable_useSlashCommandAdapter({
-    commands: slashItems.map(({ id, label, description }) => ({
-      id,
-      label,
-      description,
-      execute: () => invoke(slashItemsById.get(id)!),
-    })),
-    removeOnExecute: true,
-  });
+  const slashQuery = /^\/[^\s]*$/.test(composerText) ? composerText.slice(1).toLowerCase() : null;
+  const slashItems = menuItems.filter((item) => !item.disabled && slashQuery !== null && item.label.toLowerCase().includes(slashQuery));
+  const slashOpen = !disabled && dismissedSlash !== composerText && slashItems.length > 0;
+  const selectedSlashIndex = Math.min(slashIndex, Math.max(0, slashItems.length - 1));
+  useEffect(() => {
+    if (!slashOpen) return;
+    const input = toolsButtonRef.current?.closest('[data-ui="chat.composer"]')?.querySelector('textarea');
+    if (!input) return;
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === 'Escape') { event.preventDefault(); setDismissedSlash(composerText); return; }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSlashIndex((index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + slashItems.length) % slashItems.length);
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        aui.composer.setText('');
+        setSlashIndex(0);
+        invoke(slashItems[selectedSlashIndex]);
+      }
+    };
+    input.addEventListener('keydown', keyDown, true);
+    return () => input.removeEventListener('keydown', keyDown, true);
+  }, [aui.composer, composerText, invoke, selectedSlashIndex, slashItems, slashOpen]);
 
   return (
     <>
-      <Popover.Root open={toolsOpen} onOpenChange={setToolsOpen}>
-        <Popover.Trigger asChild>
-          <button
-            ref={toolsButtonRef}
-            type="button"
-            disabled={disabled}
-            aria-label={agentsT('openComposerTools')}
-            aria-expanded={toolsOpen}
-            aria-haspopup="menu"
-            title={agentsT('openComposerTools')}
-            className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-          >
-            <Plus className="size-[18px]" />
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content
-            side="top"
-            align="start"
-            sideOffset={8}
-            collisionPadding={12}
-            role="menu"
-            aria-label={agentsT('composerTools')}
-            className="z-50 w-64 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg"
-          >
-            {menuItems.map((action, index) => {
+      <MorphPopover open={toolsOpen || slashOpen} onOpenChange={(open) => { setToolsOpen(open); if (!open) setDismissedSlash(composerText); }}>
+        <MorphPopoverTrigger>
+          <ComposerToolsButton ref={toolsButtonRef} open={toolsOpen || slashOpen} disabled={disabled} aria-label={agentsT('openComposerTools')} title={agentsT('openComposerTools')} />
+        </MorphPopoverTrigger>
+        <MorphPopoverContent side="top" align="start" sideOffset={8} radius={12} className="w-56 p-1.5">
+          <div role="menu" aria-label={agentsT('tools')}>
+            {(slashOpen ? slashItems : menuItems).map((action, index) => {
               const Icon = action.icon;
               const previousGroup = menuItems[index - 1]?.group;
               return (
                 <div key={action.id} role="presentation">
                   {action.group && action.group !== previousGroup ? <p className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{action.group}</p> : null}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={action.disabled}
-                    onClick={() => {
-                      setToolsOpen(false);
-                      invoke(action);
-                    }}
-                    className={`flex min-h-10 w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 ${action.pressed ? 'bg-brand/10 text-brand' : ''}`}
-                  >
-                    <Icon className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm">{action.label}</span>
-                      {action.description ? <span className="block truncate text-xs text-muted-foreground">{action.description}</span> : null}
+                  <button type="button" role="menuitem" disabled={action.disabled} aria-current={slashOpen && index === selectedSlashIndex ? 'true' : undefined} onClick={() => {
+                    setToolsOpen(false);
+                    if (slashOpen) aui.composer.setText('');
+                    invoke(action);
+                  }} className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted aria-[current=true]:bg-muted disabled:pointer-events-none disabled:opacity-50">
+                    <span className="mt-0.5 grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4"><Icon aria-hidden="true" /></span>
+                    <span className="min-w-0 break-words">
+                      <span className="block text-sm text-foreground">{action.label}</span>
+                      {action.description ? <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{action.description}</span> : null}
                     </span>
                   </button>
                 </div>
               );
             })}
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
+          </div>
+        </MorphPopoverContent>
+      </MorphPopover>
       <input id={attachmentInputId} type="file" multiple hidden onChange={(event) => void addAttachments(event)} />
-      {!disabled && slashItems.length ? (
-        <ComposerPrimitive.Unstable_TriggerPopover
-          char="/"
-          adapter={slash.adapter}
-          aria-label={agentsT('composerTools')}
-          matcher={(text, triggerChar, cursorPosition) => {
-            if (cursorPosition < triggerChar.length || !text.startsWith(triggerChar)) return null;
-            const query = text.slice(triggerChar.length, cursorPosition);
-            if (/\s/.test(query)) return null;
-            const normalized = query.toLowerCase();
-            if (normalized && !slashItems.some((item) => item.label.toLowerCase().includes(normalized))) return null;
-            return { query, offset: 0, endOffset: cursorPosition };
-          }}
-          className="absolute inset-x-0 bottom-full z-30 mb-2 max-h-[min(24rem,50dvh)] overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg"
-        >
-          <ComposerPrimitive.Unstable_TriggerPopover.Action {...slash.action} />
-          <ComposerPrimitive.Unstable_TriggerPopoverItems>
-            {(items) => items.map((item, index) => {
-              const action = slashItemsById.get(item.id);
-              if (!action) return null;
-              const Icon = action.icon;
-              const previousGroup = slashItemsById.get(items[index - 1]?.id)?.group;
-              return (
-                <div key={item.id} role="presentation">
-                  {action.group && action.group !== previousGroup ? <p className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{action.group}</p> : null}
-                  <ComposerPrimitive.Unstable_TriggerPopoverItem
-                    item={item}
-                    className="flex min-h-10 w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-muted data-[highlighted]:bg-muted"
-                  >
-                    <Icon className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm">{item.label}</span>
-                      {item.description ? <span className="block truncate text-xs text-muted-foreground">{item.description}</span> : null}
-                    </span>
-                  </ComposerPrimitive.Unstable_TriggerPopoverItem>
-                </div>
-              );
-            })}
-          </ComposerPrimitive.Unstable_TriggerPopoverItems>
-        </ComposerPrimitive.Unstable_TriggerPopover>
-      ) : null}
       <McpServerPickerButton
         apiPath={mcpResourceApiPath}
         disabled={disabled}
@@ -525,79 +462,14 @@ function ConversationTools({
         open={mcpPromptOpen}
         onOpenChange={setMcpPromptOpen}
       />
-      {pinnedActions.map((action) => {
+      {toolbarActions.map((action) => {
         const Icon = action.icon;
         return (
-          <button
-            key={action.id}
-            type="button"
-            data-composer-shortcut={action.id}
-            disabled={disabled}
-            aria-label={action.label}
-            aria-pressed={action.pressed}
-            title={action.label}
-            onClick={() => invoke(action)}
-            className={`flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${action.pressed
-              ? 'bg-brand/10 text-brand'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-          >
-            <Icon className="size-[17px]" />
-          </button>
+          <Button key={action.id} type="button" data-composer-shortcut={action.id} disabled={disabled} aria-label={action.label} aria-pressed={action.pressed} title={action.label} onClick={() => invoke(action)} variant={action.pressed ? 'primary' : 'ghost'} size="icon" className="flex shrink-0 items-center justify-center"><Icon className="size-[17px]" /></Button>
         );
       })}
-      <Dialog open={customizing} onOpenChange={setCustomizing}>
-        <DialogPortal>
-          <DialogOverlay className="!bg-black/40" />
-          <DialogContent aria-describedby={undefined} className="!z-[51] !max-h-[calc(100dvh-2rem)] !max-w-md !overflow-y-auto !rounded-lg">
-            <header className="flex items-center justify-between gap-3">
-              <DialogTitle className="!text-base !tracking-normal">{agentsT('customizeToolbar')}</DialogTitle>
-              <DialogClose asChild>
-                <button type="button" aria-label={common('close')} title={common('close')} className="ui-button-ghost ui-icon-button">
-                  <X className="size-4" />
-                </button>
-              </DialogClose>
-            </header>
-            <div className="mt-3 divide-y divide-border">
-              {[...pinnedActions, ...availableToolbarActions.filter((action) => !pinnedIds.includes(action.id))].map((action) => {
-                const index = pinnedIds.indexOf(action.id);
-                const Icon = action.icon;
-                return (
-                  <div key={action.id} className="flex min-h-11 items-center gap-2 py-1">
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={index >= 0}
-                        onChange={(event) => saveToolbar(event.target.checked
-                          ? [...pinnedIds, action.id]
-                          : pinnedIds.filter((id) => id !== action.id))}
-                        className="accent-brand"
-                      />
-                      <Icon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 break-words">{action.label}</span>
-                    </label>
-                    {index >= 0 ? (
-                      <>
-                        <button type="button" disabled={index === 0} aria-label={agentsT('moveShortcutUp', { name: action.label })} title={agentsT('moveShortcutUp', { name: action.label })} onClick={() => moveShortcut(index, -1)} className="ui-button-ghost ui-icon-button">
-                          <ArrowUp className="size-3.5" />
-                        </button>
-                        <button type="button" disabled={index === pinnedIds.length - 1} aria-label={agentsT('moveShortcutDown', { name: action.label })} title={agentsT('moveShortcutDown', { name: action.label })} onClick={() => moveShortcut(index, 1)} className="ui-button-ghost ui-icon-button">
-                          <ArrowDown className="size-3.5" />
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <footer className="mt-3 flex justify-end border-t border-border pt-3">
-              <button type="button" disabled={!pinnedIds.length} onClick={() => saveToolbar([])} className="ui-button-secondary text-xs">
-                <RotateCcw className="size-3.5" />
-                {agentsT('resetToolbar')}
-              </button>
-            </footer>
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
+      <ComposerToolbarCustomizer open={customizing} onOpenChange={setCustomizing}
+        title={agentsT('customizeToolbar')} resetLabel={agentsT('resetToolbar')} options={availableToolbarActions} pinnedIds={pinnedIds} onChange={saveToolbar} />
     </>
   );
 }
@@ -758,6 +630,29 @@ function useAgentAttachmentAdapter({
   }), [agentId, attachmentUploadUrl, draftSnapshotRef, ensureConversation, isHermes, onError, onUploadingChange, recoveryErrorRef, runtimeRef, sendConversationIdRef, t]);
 }
 
+function ConversationReasoning({ text, working }: { text: string; working: boolean }) {
+  const work = useTranslations('console.work');
+  const startedAt = useRef<number | null>(null);
+  const [duration, setDuration] = useState<number>();
+  useEffect(() => {
+    if (working) {
+      startedAt.current = performance.now();
+      return;
+    }
+    if (startedAt.current === null) return;
+    const elapsed = (performance.now() - startedAt.current) / 1000;
+    const frame = requestAnimationFrame(() => setDuration(elapsed));
+    return () => cancelAnimationFrame(frame);
+  }, [working]);
+  return <AgentActivity
+    contentType="text"
+    status={working ? 'working' : 'complete'}
+    duration={duration}
+    summary={!working && duration === undefined ? work('thought') : undefined}
+    items={text.split('\n').map((content, line) => ({ id: String(line), type: 'text' as const, content })).filter((item) => item.content.length > 0)}
+  />;
+}
+
 export function AgentConversation({
   activeConversationId,
   agentId,
@@ -777,6 +672,7 @@ export function AgentConversation({
   initialReasoningEffort = 'default',
   initialMessages,
   modelName,
+  modelPicker,
   mcpPromptApiPath,
   mcpResourceApiPath,
   onBranchChange,
@@ -788,6 +684,7 @@ export function AgentConversation({
   reasoningAvailable = false,
   runtimeKind,
   supportsAttachments,
+  serverManaged = false,
   webSearchAvailable,
   workSessionId,
 }: {
@@ -809,6 +706,7 @@ export function AgentConversation({
   initialReasoningEffort?: ReasoningEffort;
   initialMessages: HermesUIMessage[];
   modelName?: string | null;
+  modelPicker?: ReactNode;
   mcpPromptApiPath?: string;
   mcpResourceApiPath?: string;
   onBranchChange?: (messageId: string) => void | Promise<void>;
@@ -820,6 +718,7 @@ export function AgentConversation({
   reasoningAvailable?: boolean;
   runtimeKind: string | null;
   supportsAttachments?: boolean;
+  serverManaged?: boolean;
   webSearchAvailable?: boolean;
   workSessionId?: string;
 }) {
@@ -829,6 +728,7 @@ export function AgentConversation({
   const chatAssistants = useTranslations('console.chatAssistants');
   const commandsT = useTranslations('console.runtimeCommands');
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [followingOutput, setFollowingOutput] = useState(true);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [commandBusy, setCommandBusy] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
@@ -837,28 +737,59 @@ export function AgentConversation({
   const sendConversationIdRef = useRef<string | null>(null);
   const attachmentDraftSnapshotRef = useRef<DraftSnapshot | null>(null);
   const attachmentRecoveryErrorRef = useRef<string | null>(null);
-  const transport = useMemo(() => new DefaultChatTransport({
-    api: apiPath ?? `/api/v1/agents/${agentId}/chat`,
-    ...(!includeConversationIdInBody ? {
-      prepareSendMessagesRequest: ({ body, messageId, messages, trigger }) => {
-        const editMessageId = (messages.at(-1)?.metadata as { toolplaneEditMessageId?: unknown } | undefined)
-          ?.toolplaneEditMessageId;
-        return {
-          body: {
-            ...body,
-            messageId: messageId ?? (typeof editMessageId === 'string' ? editMessageId : undefined),
-            messages: messages.slice(-1),
-            trigger,
+  const { transport, getServerResponse } = useMemo(() => {
+    let serverResponse: Promise<Response> | null = null;
+    return {
+      getServerResponse: () => serverResponse,
+      transport: new DefaultChatTransport({
+        api: apiPath ?? `/api/v1/agents/${agentId}/chat`,
+        ...(serverManaged ? {
+          fetch: (...args: Parameters<typeof fetch>) => {
+            serverResponse = fetch(...args);
+            return serverResponse;
           },
-        };
-      },
-    } : {}),
-  }), [agentId, apiPath, includeConversationIdInBody]);
+          prepareReconnectToStreamRequest: () => ({ api: `${apiPath}/stream` }),
+        } : {}),
+        ...(!includeConversationIdInBody ? {
+          prepareSendMessagesRequest: ({ body, messageId, messages, trigger }) => {
+            const editMessageId = (messages.at(-1)?.metadata as { toolplaneEditMessageId?: unknown } | undefined)
+              ?.toolplaneEditMessageId;
+            return {
+              body: {
+                ...body,
+                messageId: messageId ?? (typeof editMessageId === 'string' ? editMessageId : undefined),
+                messages: messages.slice(-1),
+                trigger,
+              },
+            };
+          },
+        } : {}),
+      }),
+    };
+  }, [agentId, apiPath, includeConversationIdInBody, serverManaged]);
   const chat = useChat<HermesUIMessage>({
     transport,
+    resume: serverManaged,
     messages: initialMessages,
     onFinish: () => { void onConversationChanged?.(); },
   });
+  const stopLocalChat = chat.stop;
+  const stop = useCallback(async () => {
+    if (!serverManaged) { await stopLocalChat(); return; }
+    try {
+      const response = await getServerResponse();
+      const turnId = response?.headers.get('X-Chat-Turn-Id');
+      if (!turnId) { await stopLocalChat(); return; }
+      const stopped = await fetch(apiPath!, {
+        method: 'DELETE', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId }),
+      });
+      if (!stopped.ok) throw new Error((await stopped.json()).error || work('processFailed'));
+      // Keep observing until the server settles and persists the stopped turn.
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : work('processFailed'));
+    }
+  }, [apiPath, getServerResponse, serverManaged, stopLocalChat, work]);
   const chatBusy = chat.status === 'submitted' || chat.status === 'streaming';
   const busy = chatBusy || commandBusy;
   useEffect(() => {
@@ -887,10 +818,11 @@ export function AgentConversation({
   const setChatMessages = chat.setMessages;
   const lastInitialMessagesSignatureRef = useRef(initialMessagesSignature);
   useEffect(() => {
+    if (chatBusy) return;
     if (lastInitialMessagesSignatureRef.current === initialMessagesSignature) return;
     lastInitialMessagesSignatureRef.current = initialMessagesSignature;
     setChatMessages(initialMessages);
-  }, [initialMessages, initialMessagesSignature, setChatMessages]);
+  }, [chatBusy, initialMessages, initialMessagesSignature, setChatMessages]);
   const sendChatMessage = chat.sendMessage;
   const regenerateChat = chat.regenerate;
   const sendMessage = useCallback<typeof chat.sendMessage>(async (message, options) => {
@@ -965,6 +897,7 @@ export function AgentConversation({
       await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
       return;
     }
+    setFollowingOutput(true);
     await sendChatMessage(message, {
       ...options,
       body: {
@@ -988,6 +921,7 @@ export function AgentConversation({
       setSubmitError(t('couldNotCreateConversation'));
       return;
     }
+    setFollowingOutput(true);
     await regenerateChat({
       ...options,
       body: {
@@ -1018,7 +952,8 @@ export function AgentConversation({
     messages: displayMessages,
     sendMessage,
     regenerate,
-  }), [chat, displayMessages, regenerate, sendMessage]);
+    stop,
+  }), [chat, displayMessages, regenerate, sendMessage, stop]);
   const runtime = useAISDKRuntime(assistantChat, {
     adapters: { attachments: attachmentAdapter },
     isSendDisabled: !ready || branchBusy || commandBusy || creatingConversation || uploadingAttachments,
@@ -1043,110 +978,121 @@ export function AgentConversation({
       : !activeConversationId
         ? t('conversationWillBeCreated')
         : null;
-  const threadLabels = useMemo<ChatThreadLabels>(() => ({
-    addAttachment: t('addAttachment'),
-    allowTool: t('toolAllow'),
-    attachment: t('attachment'),
-    attachmentsUnavailable: t('attachmentRuntimeRequired'),
-    cancel: common('cancel'),
-    composerTools: t('composerTools'),
-    conversationBranch: t('conversationBranch'),
-    copy: common('copy'),
-    edit: common('edit'),
-    expandComposer: t('expandComposer'),
-    generatingReply: work('generatingReply'),
-    messagePlaceholder: t('messageThisAgent'),
-    next: common('next'),
-    openComposerTools: t('openComposerTools'),
-    preparingReply: work('preparingReply'),
-    previous: common('previous'),
-    processFailed: work('processFailed'),
-    processed: work('processed'),
-    processing: work('processing'),
-    regenerate: common('regenerate'),
-    rejectTool: t('toolReject'),
-    removeAttachment: (name) => t('removeAttachment', { name }),
-    restoreComposer: t('restoreComposer'),
-    save: common('save'),
-    scrollToLatestMessage: t('scrollToLatestMessage'),
-    send: t('send'),
-    startBranch: chatAssistants('newBranch'),
-    startConversation: workSessionId ? t('startWorkConversation') : t('startAConversation'),
-    stop: t('stop'),
-    thinking: work('thinking'),
-    thought: work('thought'),
-    toolApprovalDescription: t('toolApprovalDescription'),
-    toolAwaitingApproval: t('toolAwaitingApproval'),
-    toolCompleted: t('toolCompleted'),
-    toolFailed: t('toolFailed'),
-    toolInput: t('toolInput'),
-    toolKindMcp: t('toolKindMcp'),
-    toolKindSandbox: t('toolKindSandbox'),
-    toolKindSkill: t('toolKindSkill'),
-    toolKindSubagent: t('toolKindSubagent'),
-    toolKindTool: t('toolKindTool'),
-    toolKindWeb: t('toolKindWeb'),
-    toolOutput: t('toolOutput'),
-    toolRunning: t('toolRunning'),
-    user: t('user'),
-    usingTool: (toolName) => work('usingTool', { tool: toolName }),
-  }), [chatAssistants, common, t, work, workSessionId]);
+  const composer = useSyncExternalStore(runtime.thread.composer.subscribe, runtime.thread.composer.getState, runtime.thread.composer.getState);
+  const thread = useSyncExternalStore(runtime.thread.subscribe, runtime.thread.getState, runtime.thread.getState);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const blocked = !ready || composerDisabled || busy;
+  const runAction = async (action: () => void | Promise<void>) => {
+    try { await action(); } catch (cause) { setSubmitError(cause instanceof Error ? cause.message : work('processFailed')); }
+  };
+  const formatToolValue = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
+  const safeAttachmentUrl = (url: string) => url.startsWith('/api/v1/attachments/') || /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(url);
+  const messageActionClassName = 'size-7 rounded-md border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5';
 
-  return (
-    <ComposerPrimitive.Unstable_TriggerPopoverRoot>
-      <ChatThread
-        runtime={runtime}
-        assistantName={agentName}
-        className="toolplane-unified-composer-tools"
-        allowAttachments={attachmentsEnabled}
-        allowEdit={allowEdit}
-        allowRegenerate={allowRegenerate}
-        branchNavigation={branchNavigation}
-        busy={branchBusy || commandBusy}
-        disabled={!ready || composerDisabled}
-        error={submitError || chat.error?.message}
-        labels={threadLabels}
-        transformUserText={displayMessagingUserText}
-        onBranchSelect={onBranchChange}
-        onBranchStart={onStartBranch}
-        onRegenerateMessage={!includeConversationIdInBody
-          ? (messageId) => void regenerate({ messageId })
-          : undefined}
-        composerTools={(
-          <ConversationTools
-            attachmentsEnabled={attachmentsEnabled}
-            disabled={!ready || composerDisabled}
-            mcpPromptApiPath={mcpPromptApiPath}
-            mcpResourceApiPath={mcpResourceApiPath}
-            onError={setSubmitError}
-            onNewConversation={onNewConversation}
-            runtimeCommands={runtimeCommands}
-            webSearchAvailable={Boolean(webSearchAvailable)}
-            webSearchEnabled={webSearchEnabled}
-            onWebSearchChange={setWebSearchEnabled}
-          />
-        )}
-        composerStatus={composerStatus}
-        composerEnd={<>
-          <ConversationContextUsage busy={busy} usage={contextUsage} />
-          {reasoningAvailable ? (
-            <ReasoningEffortControl
-              value={reasoningEffort}
-              disabled={composerDisabled}
-              onChange={setReasoningEffort}
-            />
-          ) : null}
-        </>}
-        emptyState={workSessionId ? (
-          <div className="max-w-md text-center">
-            <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <Bot className="size-6" />
-            </div>
-            <h3 className="text-lg font-medium text-foreground">{t('startWorkConversation')}</h3>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('startWorkConversationDescription')}</p>
-          </div>
-        ) : undefined}
-      />
-    </ComposerPrimitive.Unstable_TriggerPopoverRoot>
-  );
+  return <AssistantRuntimeProvider runtime={runtime}>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <MessageScroller label={agentName} busy={chatBusy} followOutput={followingOutput} onFollowChange={setFollowingOutput} navigation="rail" className="min-h-0 flex-1" contentClassName="mx-auto w-full max-w-3xl p-4">
+        {thread.messages.length ? <MessageGroup spacing="default">
+          {thread.messages.map((message, messageIndex) => {
+            const from = message.role === 'user' ? 'user' : 'assistant';
+            const messageRuntime = runtime.thread.getMessageById(message.id);
+            const streaming = message.role === 'assistant' && message.status.type === 'running';
+            const text = message.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
+            const branch = branchNavigation.find((item) => item.messageId === message.id);
+            const actionVisibility = messageIndex === thread.messages.length - 1
+              ? ''
+              : 'opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none';
+            const branchActions = branch && onBranchChange ? <div role="group" aria-label={t('conversationBranch')} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+              <Button type="button" variant="ghost" size="icon" className={messageActionClassName} disabled={blocked} aria-label={common('previous')} onClick={() => void runAction(() => onBranchChange(branch.previousMessageId))}><ChevronLeft className="size-3.5" /></Button>
+              <span>{branch.position}/{branch.total}</span>
+              <Button type="button" variant="ghost" size="icon" className={messageActionClassName} disabled={blocked} aria-label={common('next')} onClick={() => void runAction(() => onBranchChange(branch.nextMessageId))}><ChevronRight className="size-3.5" /></Button>
+            </div> : null;
+            const messageBody = <>
+                    {message.content.map((part, index) => {
+                      if (part.type === 'text') return from === 'user' ? <span key={index} className="whitespace-pre-wrap">{displayMessagingUserText(part.text)}</span> : <AssistantMarkdown key={index} text={part.text} streaming={streaming} />;
+                      if (part.type === 'reasoning') return <ConversationReasoning
+                        key={`${message.id}:${index}`}
+                        text={part.text}
+                        working={messageRuntime.getMessagePartByIndex(index).getState().status.type === 'running'}
+                      />;
+                      if (part.type === 'file' && safeAttachmentUrl(part.data)) return <ConversationFilePreview key={index} name={part.filename ?? t('attachment')} url={part.data} mimeType={part.mimeType} />;
+                      if (part.type === 'image' && safeAttachmentUrl(part.image)) return <ConversationFilePreview key={index} name={t('attachment')} url={part.image} mimeType="image/png" />;
+                      if (part.type !== 'tool-call') return null;
+                      const partRuntime = messageRuntime.getMessagePartByIndex(index);
+                      const partState = partRuntime.getState();
+                      const awaiting = part.approval && part.approval.approved === undefined && !part.approval.resolution;
+                      const tool = /^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__(.+)$/.exec(part.toolName)?.[1] ?? part.toolName;
+                      const failed = part.isError || (partState.status.type === 'incomplete' && partState.status.reason === 'error');
+                      const cancelled = part.approval?.approved === false || (partState.status.type === 'incomplete' && partState.status.reason === 'cancelled');
+                      const runningTool = partState.status.type === 'running';
+                      if (awaiting) {
+                        const decide = (approved: boolean) => {
+                          if (approvalBusy) return;
+                          setApprovalBusy(part.toolCallId);
+                          void runAction(() => partRuntime.respondToToolApproval({ approved })).finally(() => setApprovalBusy(null));
+                        };
+                        return <ToolApproval key={part.toolCallId} tool={tool} title={t('toolAwaitingApproval')} description={t('toolApprovalDescription')} status={approvalBusy === part.toolCallId ? 'approving' : 'pending'} parameters={[{ id: 'input', label: t('toolInput'), value: <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{part.argsText?.trim() || formatToolValue(part.args)}</pre> }]} onApprove={() => decide(true)} onDeny={() => decide(false)} />;
+                      }
+                      return <ToolResult key={part.toolCallId} tool={tool} title={runningTool ? t('toolRunning') : failed ? t('toolFailed') : t('toolCompleted')} status={failed ? 'error' : cancelled ? 'cancelled' : runningTool ? 'running' : 'success'} defaultOpen={runningTool || failed} copyText={formatToolValue(part.result)}>
+                        <p className="text-xs text-muted-foreground">{t('toolInput')}</p><ToolResultOutput language="json">{part.argsText?.trim() || formatToolValue(part.args)}</ToolResultOutput>
+                        {part.result !== undefined ? <><p className="text-xs text-muted-foreground">{t('toolOutput')}</p><ToolResultOutput language={typeof part.result === 'string' ? 'text' : 'json'}>{formatToolValue(part.result)}</ToolResultOutput></> : null}
+                      </ToolResult>;
+                    })}
+                    {message.attachments?.map((attachment) => {
+                      const content = attachment.content.find((part) => part.type === 'file' || part.type === 'image');
+                      const url = content?.type === 'file' ? content.data : content?.type === 'image' ? content.image : undefined;
+                      return <ConversationFilePreview key={attachment.id} name={attachment.name} url={url && safeAttachmentUrl(url) ? url : undefined} mimeType={attachment.contentType} />;
+                    })}
+                    {streaming && !message.content.some((part) => part.type !== 'text' || part.text.length > 0) ? <MessageTyping label={work('generatingReply')} /> : null}
+            </>;
+            return <Message key={message.id} id={`chat-message-${message.id}`} from={from} aria-busy={streaming || undefined}>
+              <MessageAvatar>{from === 'user' ? <UserRound /> : <Bot />}</MessageAvatar>
+              <MessageContent>
+                <MessageHeader>{from === 'user' ? t('user') : agentName}</MessageHeader>
+                {editingId === message.id ? <div className="w-full">
+                  <PromptInput value={editText} autoFocus disabled={blocked} aria-label={t('messageThisAgent')} onValueChange={(value) => { setEditText(value); messageRuntime.composer.setText(value); }} onSubmit={() => { messageRuntime.composer.send(); setEditingId(null); }} leadingAction={<Button type="button" variant="ghost" size="sm" onClick={() => { messageRuntime.composer.cancel(); setEditingId(null); }}>{common('cancel')}</Button>} />
+                </div> : from === 'assistant' ? (
+                  <StreamingResponse
+                    status={streaming ? 'streaming' : message.status?.type === 'incomplete' && message.status.reason === 'error' ? 'error' : 'complete'}
+                    copyText={text}
+                    onRetry={allowRegenerate && !blocked ? () => void runAction(() => includeConversationIdInBody ? messageRuntime.reload() : regenerate({ messageId: message.id })) : undefined}
+                    announce={false}
+                    actionsClassName={actionVisibility}
+                    actions={<>
+                      {branchActions}
+                      {onStartBranch ? <Button type="button" variant="ghost" size="icon" className={messageActionClassName} disabled={blocked} aria-label={chatAssistants('newBranch')} onClick={() => void runAction(() => onStartBranch(message.id))}><GitBranch className="size-3.5" /></Button> : null}
+                    </>}
+                  >
+                    {messageBody}
+                  </StreamingResponse>
+                ) : <MessageBubble variant="soft"><MessageBubbleContent>{messageBody}</MessageBubbleContent></MessageBubble>}
+                {from === 'user' && editingId !== message.id ? <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                  {branchActions}
+                  {text ? <CopyButton text={displayMessagingUserText(text)} label={common('copy')} className={messageActionClassName} iconOnly /> : null}
+                  {allowEdit ? <Button type="button" variant="ghost" size="icon" className={messageActionClassName} disabled={blocked} aria-label={common('edit')} onClick={() => { messageRuntime.composer.beginEdit(); setEditText(text); setEditingId(message.id); }}><Pencil className="size-3.5" /></Button> : null}
+                </MessageFooter> : null}
+              </MessageContent>
+            </Message>;
+          })}
+        </MessageGroup> : <div className="flex min-h-64 items-center justify-center text-center"><div className="max-w-md"><Bot className="mx-auto mb-4 size-8 text-muted-foreground" /><h3 className="text-lg font-medium">{t(workSessionId ? 'startWorkConversation' : 'startAConversation')}</h3>{workSessionId ? <p className="mt-2 text-sm text-muted-foreground">{t('startWorkConversationDescription')}</p> : null}</div></div>}
+        {chat.status === 'submitted' && !thread.messages.some((message) => message.role === 'assistant' && message.status.type === 'running') ? <MessageTyping label={work('preparingReply')} /> : null}
+      </MessageScroller>
+      <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+        {submitError || chat.error?.message ? <p role="alert" className="mb-2 text-sm text-destructive">{submitError || chat.error?.message}</p> : null}
+        <div data-ui="chat.composer" className="relative" onDragOver={(event) => { if (attachmentsEnabled && !blocked && event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={(event) => { if (!attachmentsEnabled || blocked || !event.dataTransfer.files.length) return; event.preventDefault(); for (const file of event.dataTransfer.files) void runAction(() => runtime.thread.composer.addAttachment(file)); }}>
+          {composer.attachments.length ? <div className="mb-2 flex flex-wrap gap-3">{composer.attachments.map((attachment, index) => <ConversationFilePreview key={attachment.id} file={attachment.file} name={attachment.name} mimeType={attachment.contentType} progress={attachment.status.type === 'running' ? attachment.status.progress : undefined} removeLabel={t('removeAttachment', { name: attachment.name })} onRemove={() => void runAction(() => runtime.thread.composer.getAttachmentByIndex(index).remove())} />)}</div> : null}
+          <PromptInput className="bg-transparent" value={composer.text} onValueChange={runtime.thread.composer.setText} onSubmit={() => runtime.thread.composer.send()} disabled={!ready || composerDisabled} loading={busy} onStop={chatBusy ? () => void stop() : undefined} aria-label={t('messageThisAgent')} placeholder={t('messageThisAgent')} minRows={2} maxRows={8} leadingAction={<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            <ConversationTools attachmentsEnabled={attachmentsEnabled} disabled={blocked} mcpPromptApiPath={mcpPromptApiPath} mcpResourceApiPath={mcpResourceApiPath} onError={setSubmitError} onNewConversation={onNewConversation} runtimeCommands={runtimeCommands} webSearchAvailable={Boolean(webSearchAvailable)} webSearchEnabled={webSearchEnabled} onWebSearchChange={setWebSearchEnabled} />
+            {modelPicker}
+            <ConversationContextUsage busy={busy} usage={contextUsage} />
+            {reasoningAvailable ? <ReasoningEffortControl value={reasoningEffort} disabled={blocked} onChange={setReasoningEffort} /> : null}
+            {!composer.text.trim() && composer.attachments.length ? <Button type="button" size="sm" disabled={blocked} onClick={() => runtime.thread.composer.send()}>{t('send')}</Button> : null}
+          </div>} />
+        </div>
+        {composerStatus ? <p role="status" className="mt-2 text-xs text-muted-foreground">{composerStatus}</p> : null}
+      </div>
+    </div>
+  </AssistantRuntimeProvider>;
 }

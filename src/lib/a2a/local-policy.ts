@@ -24,11 +24,11 @@ export async function assertLocalActor(tx: Database, workspaceId: string, actorI
     { ownerId: actorId }, { members: { some: { userId: actorId, user: { status: 'active' } } } },
   ] } }) || !await tx.user.count({ where: { id: actorId, status: 'active' } })) throw missing();
 }
-/** Hash configured capabilities, never persist their credentials in a grant or task. */
-export async function localTarget(tx: Database, workspaceId: string, agentId: string, entry?: LocalA2AGrant['entryPolicy']) {
-  if (entry && entry.sourceAgentId !== agentId) throw missing();
+/** Hash configured capabilities; delegation callers must separately authorize the parent-child edge. */
+export async function localTarget(tx: Database, workspaceId: string, agentId: string, entry?: LocalA2AGrant['entryPolicy'] | 'delegation') {
+  if (entry && entry !== 'delegation' && entry.sourceAgentId !== agentId) throw missing();
   const agent = await tx.agent.findFirst({ where: { ...ORDINARY_AGENT_FILTER, id: agentId,
-    workspaceId, ...(!entry || entry.kind === 'channel' ? { a2aInternalEnabled: true } : {}) }, select: {
+    workspaceId, ...(!entry || entry !== 'delegation' && entry.kind === 'channel' ? { a2aInternalEnabled: true } : {}) }, select: {
     id: true, name: true, runtimeKind: true, systemPrompt: true, model: true, maxSteps: true,
     disabledBuiltinTools: true, provider: { select: { id: true, format: true, baseUrl: true, apiKey: true } },
     sandboxes: { select: { sandboxId: true, sandbox: { select: { workspaceId: true, kind: true, network: true, image: true, config: true } } } },
@@ -68,7 +68,7 @@ export async function assertLocalGrant(grant: LocalA2AGrant, tx: Database = db) 
     && grant.ownerKey !== localOwnerKey(grant.workspaceId, grant.agentId, grant.actorId)) throw missing();
   await assertLocalActor(tx, grant.workspaceId, grant.actorId);
   if (grant.entryPolicy) await (await import('./entry-policy')).assertEntryPolicy(tx, grant);
-  const entry = grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : undefined;
+  const entry = grant.ancestorTaskIds.length === 0 ? grant.entryPolicy : 'delegation';
   if ((await localTarget(tx, grant.workspaceId, grant.agentId, entry)).binding !== grant.targetBinding) throw missing();
   for (let index = 0; index < grant.ancestorTaskIds.length; index++) {
     const ancestor = await tx.a2ATask.findUnique({ where: { id: grant.ancestorTaskIds[index] } });
@@ -77,7 +77,8 @@ export async function assertLocalGrant(grant: LocalA2AGrant, tx: Database = db) 
     const authority = ancestor.grant as unknown as TaskGrant;
     if (!isLocalGrant(authority) || authority.workspaceId !== grant.workspaceId || authority.actorId !== grant.actorId
       || authority.agentId !== grant.ancestorAgentIds[index]) throw missing();
-    const current = await localTarget(tx, grant.workspaceId, authority.agentId);
+    const current = await localTarget(tx, grant.workspaceId, authority.agentId,
+      authority.ancestorTaskIds.length === 0 ? authority.entryPolicy : 'delegation');
     const next = grant.ancestorAgentIds[index + 1] ?? grant.agentId;
     if (current.binding !== authority.targetBinding || !current.targets.includes(next)) throw missing();
   }
@@ -107,13 +108,12 @@ export async function childGrant(parentId: string, lease: string, targetId: stri
   const authority = parent.grant as unknown as TaskGrant;
   if (!isLocalGrant(authority)) throw missing();
   await assertLocalGrant(authority);
-  if (authority.entryPolicy && !(await db.agent.count({ where: { id: authority.agentId,
-    workspaceId: authority.workspaceId, a2aInternalEnabled: true } }))) throw missing();
   const chain = [...authority.ancestorAgentIds, authority.agentId];
   if (chain.includes(targetId) || chain.length > LOCAL_LIMITS.depth) throw new UnsupportedOperationError('Delegation cycle or depth limit.');
-  const caller = await localTarget(db, authority.workspaceId, authority.agentId);
+  const caller = await localTarget(db, authority.workspaceId, authority.agentId,
+    authority.ancestorTaskIds.length === 0 ? authority.entryPolicy : 'delegation');
   if (!caller.targets.includes(targetId)) throw missing();
-  const target = await localTarget(db, authority.workspaceId, targetId);
+  const target = await localTarget(db, authority.workspaceId, targetId, 'delegation');
   return { ...authority, agentId: targetId, targetBinding: target.binding,
     parentTaskId: parentId, rootTaskId: parent.rootTaskId ?? parent.id,
     ancestorTaskIds: [...authority.ancestorTaskIds, parent.id], ancestorAgentIds: chain,

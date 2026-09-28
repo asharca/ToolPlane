@@ -18,7 +18,7 @@ function Composer({ sandboxId = 'sandbox-1', onSubmit = vi.fn(), runtimeKind }: 
     commands={runtimeKind ? runtimeCommands(runtimeKind) : []}
     draft={draft} onDraftChange={setDraft} references={references} onReferencesChange={setReferences}
     attachments={attachments} onAttachmentsChange={setAttachments} disabled={false} supportsAttachments
-    onSubmit={() => onSubmit(references)} onNewTask={() => setDraft('')} onPendingChange={setPending} onError={setError}
+    onSubmit={() => onSubmit(references)} onPendingChange={setPending} onError={setError}
     toolbarStart={null} toolbarEnd={<button type="submit" disabled={pending}>Send</button>} />{error ? <p role="alert">{error}</p> : null}</>;
 }
 
@@ -37,7 +37,6 @@ describe('Work composer', () => {
     render(<Composer runtimeKind={runtimeKind} onSubmit={onSubmit} />);
     await user.type(input(), '/');
     const names = runtimeCommands(runtimeKind).map((item) => `/${item.name}`);
-    expect(screen.getAllByRole('option')).toHaveLength(6 + names.length);
     for (const name of names) expect(screen.getByRole('option', { name: new RegExp(name) })).toBeInTheDocument();
     await user.click(screen.getByRole('option', { name: /\/compact/ }));
     expect(input()).toHaveValue('/compact ');
@@ -46,25 +45,66 @@ describe('Work composer', () => {
     expect(onSubmit).toHaveBeenCalledOnce();
     await user.clear(input());
     await user.click(screen.getByRole('button', { name: 'Open tools' }));
-    expect(screen.getAllByRole('option')).toHaveLength(6);
     expect(screen.queryByRole('option', { name: /\/compact/ })).not.toBeInTheDocument();
+  });
+
+  it('filters tools from search and preserves keyboard selection, back navigation and draft', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => Response.json({ items: [] })));
+    render(<Composer onSubmit={onSubmit} />);
+    await user.type(input(), 'Keep this draft');
+    await user.click(screen.getByRole('button', { name: 'Open tools' }));
+    const search = within(screen.getByRole('dialog')).getByRole('combobox');
+    expect(search).toHaveFocus();
+    await user.type(search, 'skills');
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Skills']);
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(screen.getByRole('listbox', { name: 'Skills' })).toBeInTheDocument();
+    expect(search).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(search).toHaveFocus();
+    expect(screen.getByRole('option', { name: 'Skills' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Add attachment' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(input()).toHaveValue('Keep this draft');
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('pins, reorders, persists and resets the toolbar without duplicating pinned menu actions', async () => {
     const user = userEvent.setup();
+    localStorage.setItem('toolplane.work.composer.toolbar', JSON.stringify(['new-task']));
     const first = render(<Composer />);
+    expect(screen.queryByRole('button', { name: 'New task' })).not.toBeInTheDocument();
     const dialog = await customize(user);
-    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(6);
-    await user.click(within(dialog).getByRole('checkbox', { name: 'Skills' }));
+    expect(within(dialog).queryByRole('checkbox', { name: 'New task' })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByText('Skills'));
+    expect(within(dialog).getByRole('checkbox', { name: 'Skills' })).toBeChecked();
     await user.click(within(dialog).getByRole('checkbox', { name: 'MCP resources' }));
-    await user.click(within(dialog).getByRole('button', { name: 'Move MCP resources up' }));
+    const resources = within(dialog).getByRole('checkbox', { name: 'MCP resources' });
+    const skills = within(dialog).getByRole('checkbox', { name: 'Skills' });
+    const data = new Map<string, string>();
+    const dataTransfer = { setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? '', effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(resources.closest('[draggable]')!, { dataTransfer });
+    fireEvent.dragOver(skills.closest('[draggable]')!, { dataTransfer });
+    fireEvent.drop(skills.closest('[draggable]')!, { dataTransfer });
+    expect(JSON.parse(localStorage.getItem('toolplane.work.composer.toolbar')!)).toEqual(['resources', 'skills']);
+    fireEvent.drop(within(dialog).getByRole('checkbox', { name: 'Add attachment' }).closest('[draggable]')!, { dataTransfer });
+    expect(JSON.parse(localStorage.getItem('toolplane.work.composer.toolbar')!)).toEqual(['resources', 'skills']);
+    data.set('text/plain', 'unknown-shortcut');
+    fireEvent.drop(skills.closest('[draggable]')!, { dataTransfer });
+    expect(JSON.parse(localStorage.getItem('toolplane.work.composer.toolbar')!)).toEqual(['resources', 'skills']);
+    fireEvent.dragStart(resources.closest('[draggable]')!, { dataTransfer });
+    fireEvent.drop(skills.closest('[draggable]')!, { dataTransfer });
+    expect(JSON.parse(localStorage.getItem('toolplane.work.composer.toolbar')!)).toEqual(['skills', 'resources']);
+    fireEvent.keyDown(resources, { key: 'ArrowUp', altKey: true });
     expect(JSON.parse(localStorage.getItem('toolplane.work.composer.toolbar')!)).toEqual(['resources', 'skills']);
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect([...document.querySelectorAll('[data-composer-shortcut]')].map((el) => el.getAttribute('data-composer-shortcut'))).toEqual(['resources', 'skills']);
     first.unmount();
     render(<Composer />);
     await user.click(screen.getByRole('button', { name: 'Open tools' }));
-    expect(screen.getAllByRole('option')).toHaveLength(4);
     expect(screen.queryByRole('option', { name: 'Skills' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [] }));
@@ -80,7 +120,7 @@ describe('Work composer', () => {
     await user.click(within(resetDialog).getByRole('button', { name: 'Close' }));
     expect(document.querySelector('[data-composer-shortcut]')).toBeNull();
     await user.type(input(), '/');
-    expect(screen.getAllByRole('option')).toHaveLength(6);
+    expect(screen.queryByRole('option', { name: 'New task' })).not.toBeInTheDocument();
   });
 
   it('resolves current-sandbox references, blocks premature send, and aborts a late result after switching', async () => {

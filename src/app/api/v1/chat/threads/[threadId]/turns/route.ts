@@ -27,6 +27,8 @@ import {
 } from '@/lib/chat/service';
 import { isWebSearchDeployment } from '@/lib/chat/web-search';
 import { buildKeylessWebSearchToolSet } from '@/lib/chat/keyless-web-search';
+import { startChatRun, cancelChatRun, isChatRunActive, type ChatRunOutput } from '@/lib/chat/run-control';
+import { assertRuntimeOwner } from '@/lib/runtime/ownership-state';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -47,6 +49,8 @@ export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/turns", 
   if (!assistant.modelProvider || !assistant.model) {
     return Response.json({ error: 'This chat assistant has no model configured' }, { status: 400 });
   }
+  assertRuntimeOwner();
+  if (isChatRunActive(threadId)) return Response.json({ error: 'A chat turn is already running' }, { status: 409 });
 
   const last = input.messages.at(-1)!;
   const targetMessageId = input.trigger === 'regenerate-message'
@@ -81,113 +85,105 @@ export const POST = withRequestLogging("/api/v1/chat/threads/[threadId]/turns", 
       : Response.json({ error: 'Chat request failed' }, { status: 500 });
   }
 
-  const webDeploymentIds = assistant.mcpGrants
-    .filter((grant) => isWebSearchDeployment(grant.deployment))
-    .map((grant) => grant.deploymentId);
-  const webDeploymentIdSet = new Set(webDeploymentIds);
-  const regularDeploymentIds = assistant.mcpGrants
-    .map((grant) => grant.deploymentId)
-    .filter((deploymentId) => !webDeploymentIdSet.has(deploymentId));
-  let tools: Awaited<ReturnType<typeof buildToolSet>>;
+  let executionError: unknown;
+  let succeeded = false;
+  let output: ChatRunOutput;
   try {
-    const [regularTools, webTools] = await Promise.all([
-      buildToolSet(regularDeploymentIds, thread.workspaceId),
-      input.webSearchEnabled
-        ? buildToolSet(webDeploymentIds, thread.workspaceId)
-        : Promise.resolve({}),
-    ]);
-    tools = {
-      ...regularTools,
-      ...webTools,
-      ...(input.webSearchEnabled ? buildKeylessWebSearchToolSet(req.signal) : {}),
-    };
-  } catch (error) {
-    await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'MCP discovery failed', turn.assistantMessageId);
-    return Response.json({ error: 'MCP discovery failed' }, { status: 503 });
-  }
-
-  let history: UIMessage[];
-  try {
-    const persistedHistory = await getChatHistoryForExecution(user.id, threadId, turn.historyLeafId);
-    history = persistedHistory.map((message) => ({
-      id: message.id,
-      role: message.role,
-      parts: message.parts,
-    })) as UIMessage[];
-  } catch (error) {
-    await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'Chat history failed', turn.assistantMessageId);
-    return Response.json({ error: 'Chat history failed' }, { status: 500 });
-  }
-  let hydratedHistory: UIMessage[];
-  try {
-    hydratedHistory = await hydrateWorkspaceAttachmentMessages(
-      history as unknown as Array<{ role: string; parts: Array<Record<string, unknown>> }>,
-      { workspaceId: thread.workspaceId, scope: { chatThreadId: threadId } },
-    ) as UIMessage[];
-  } catch (error) {
-    await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'Attachment hydration failed', turn.assistantMessageId);
-    return error instanceof AttachmentMessageError
-      ? Response.json({ error: error.message }, { status: error.status })
-      : Response.json({ error: 'Attachment hydration failed' }, { status: 502 });
-  }
-
-  const stream = createUIMessageStream<HermesUIMessage>({
-    generateId: () => turn.assistantMessageId,
-    originalMessages: input.messages as HermesUIMessage[],
-    execute: async ({ writer }) => {
-      writer.write({ type: 'start', messageId: turn.assistantMessageId });
-      const uiStream = createNativeUiStreamBridge(writer, `chat-${turn.id}`);
-      const contextUsage: { current: ContextUsageSnapshot | null } = { current: null };
-      try {
-        await runNativeAgent({
-          provider: assistant.modelProvider!,
-          modelId,
-          systemPrompt: assistant.systemPrompt ?? '',
-          messages: uiMessagesToPi(hydratedHistory),
-          tools,
-          maxSteps: assistant.maxSteps,
-          modelParameters: parseChatAssistantModelParameters(assistant.modelParameters),
-          reasoningEffort: input.reasoningEffort,
-          signal: req.signal,
-          onEvent: uiStream.onEvent,
-          onToolResult: uiStream.onToolResult,
-          onContextUsage: (usage) => { contextUsage.current = usage; },
-        });
-        uiStream.finish();
-        const usage = contextUsage.current;
-        if (usage) {
-          writer.write({
-            type: 'message-metadata',
-            messageMetadata: { usage: { totalTokens: usage.usedTokens } },
+    output = startChatRun({
+      threadId, turnId: turn.id, assistantMessageId: turn.assistantMessageId,
+      workspaceId: thread.workspaceId, userId: user.id,
+    }, (signal) => createUIMessageStream<HermesUIMessage>({
+      generateId: () => turn.assistantMessageId,
+      execute: async ({ writer }) => {
+        writer.write({ type: 'start', messageId: turn.assistantMessageId });
+        const uiStream = createNativeUiStreamBridge(writer, `chat-${turn.id}`);
+        const contextUsage: { current: ContextUsageSnapshot | null } = { current: null };
+        try {
+          const webDeploymentIds = assistant.mcpGrants
+            .filter((grant) => isWebSearchDeployment(grant.deployment))
+            .map((grant) => grant.deploymentId);
+          const webDeploymentIdSet = new Set(webDeploymentIds);
+          const regularDeploymentIds = assistant.mcpGrants
+            .map((grant) => grant.deploymentId)
+            .filter((id) => !webDeploymentIdSet.has(id));
+          const [regularTools, webTools] = await Promise.all([
+            buildToolSet(regularDeploymentIds, thread.workspaceId),
+            input.webSearchEnabled ? buildToolSet(webDeploymentIds, thread.workspaceId) : Promise.resolve({}),
+          ]);
+          const tools = {
+            ...regularTools, ...webTools,
+            ...(input.webSearchEnabled ? buildKeylessWebSearchToolSet(signal) : {}),
+          };
+          const persistedHistory = await getChatHistoryForExecution(user.id, threadId, turn.historyLeafId);
+          const history = persistedHistory.map((message) => ({
+            id: message.id, role: message.role, parts: message.parts,
+          }));
+          const hydratedHistory = await hydrateWorkspaceAttachmentMessages(
+            history as unknown as Array<{ role: string; parts: Array<Record<string, unknown>> }>,
+            { workspaceId: thread.workspaceId, scope: { chatThreadId: threadId } },
+          ) as UIMessage[];
+          signal.throwIfAborted();
+          await runNativeAgent({
+            provider: assistant.modelProvider!, modelId,
+            systemPrompt: assistant.systemPrompt ?? '',
+            messages: uiMessagesToPi(hydratedHistory), tools, maxSteps: assistant.maxSteps,
+            modelParameters: parseChatAssistantModelParameters(assistant.modelParameters),
+            reasoningEffort: input.reasoningEffort, signal,
+            onEvent: uiStream.onEvent, onToolResult: uiStream.onToolResult,
+            onContextUsage: (usage) => { contextUsage.current = usage; },
           });
-          writer.write({ type: 'data-context-usage', data: usage });
+          signal.throwIfAborted();
+          uiStream.finish();
+          const usage = contextUsage.current;
+          if (usage) {
+            writer.write({ type: 'message-metadata', messageMetadata: { usage: { totalTokens: usage.usedTokens } } });
+            writer.write({ type: 'data-context-usage', data: usage });
+          }
+          succeeded = true;
+          writer.write({ type: 'finish' });
+        } catch (error) {
+          executionError = signal.aborted ? signal.reason : error;
+          uiStream.finish();
+          if (signal.aborted && signal.reason?.name === 'AbortError') {
+            writer.write({ type: 'abort' });
+          } else {
+            throw executionError;
+          }
         }
-      } catch (error) {
-        if (req.signal.aborted) {
-          await finishChatTurn(threadId, turn.id, 'cancelled', undefined, turn.assistantMessageId);
-        } else {
-          await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'Chat turn failed', turn.assistantMessageId);
+      },
+      onError: (error) => error instanceof Error ? error.message : 'Chat turn failed',
+      onFinish: async ({ responseMessage, isAborted, outcome }) => {
+        const parts = responseMessage.parts as unknown as Array<Record<string, unknown>>;
+        if (!succeeded || isAborted || signal.aborted || outcome.status === 'failed') {
+          const cancelled = signal.aborted && signal.reason?.name === 'AbortError';
+          const error = executionError ?? (outcome.status === 'failed' ? outcome.error : undefined);
+          await finishChatTurn(threadId, turn.id, cancelled ? 'cancelled' : 'failed',
+            error instanceof Error ? error.message : 'Chat turn failed', turn.assistantMessageId, parts);
+          return;
         }
-        throw error;
-      }
-    },
-    onError: (error) => error instanceof Error ? error.message : 'Chat turn failed',
-    onFinish: async ({ responseMessage, isAborted }) => {
-      if (isAborted || req.signal.aborted) {
-        await finishChatTurn(threadId, turn.id, 'cancelled', undefined, turn.assistantMessageId);
-        return;
-      }
-      await completeChatTurn(
-        threadId,
-        turn.id,
-        turn.assistantMessageId,
-        responseMessage.parts as unknown as Array<Record<string, unknown>>,
-      );
-    },
-  });
-
+        await completeChatTurn(threadId, turn.id, turn.assistantMessageId, parts);
+      },
+    }));
+  } catch (error) {
+    await finishChatTurn(threadId, turn.id, 'failed', error instanceof Error ? error.message : 'Chat start failed', turn.assistantMessageId);
+    throw error;
+  }
   return workspaceAccessResponse(createUIMessageStreamResponse({
-    stream,
-    headers: { 'X-Chat-Turn-Id': turn.id },
+    stream: output.stream, headers: { 'X-Chat-Turn-Id': output.turnId },
   }), thread.workspaceId, user.id, req.signal);
+});
+
+export const DELETE = withRequestLogging('/api/v1/chat/threads/[threadId]/turns', async function DELETE(req: Request, { params }: { params: Promise<{ threadId: string }> }) {
+  const user = await resolveRequestUser(req);
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const { threadId } = await params;
+  const thread = await getChatThreadForExecution(user.id, threadId);
+  if (!thread) return Response.json({ error: 'Chat thread not found' }, { status: 404 });
+  let input: unknown;
+  try { input = await req.json(); } catch { return Response.json({ error: 'Bad request' }, { status: 400 }); }
+  if (!input || typeof input !== 'object' || !('turnId' in input) || typeof input.turnId !== 'string' || !input.turnId) {
+    return Response.json({ error: 'A turn ID is required' }, { status: 400 });
+  }
+  // A delayed stop must never cancel a newer turn.
+  return Response.json({ cancelled: cancelChatRun(threadId, input.turnId) });
 });

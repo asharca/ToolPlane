@@ -1,13 +1,19 @@
 'use client';
 
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Checkbox } from '@/components/motion/checkbox';
+
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
+
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
   useActionState,
   useDeferredValue,
-  useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 import { Brain, Plus, Search, Server, X } from 'lucide-react';
@@ -17,7 +23,6 @@ import {
   type ToolkitBatchActionState,
 } from '@/lib/toolkits/actions';
 import { MAX_TOOLKIT_BATCH_ITEMS } from '@/lib/toolkits/limits';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
 const TOOLKIT_PICKER_RENDER_LIMIT = 100;
 
@@ -74,7 +79,6 @@ export function ToolkitResourcePicker({
   const [status, setStatus] = useState('all');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
-  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const sourceOptions = useMemo(
     () => [...new Set(items.map((item) => item.source))].sort(),
@@ -107,11 +111,6 @@ export function ToolkitResourcePicker({
   const selectingAllWouldExceedLimit =
     activeSelected.size + filteredItems.filter((item) => !activeSelected.has(item.id)).length >
     MAX_TOOLKIT_BATCH_ITEMS;
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
-    }
-  }, [allFilteredSelected, someFilteredSelected]);
 
   const title = kind === 'mcp' ? t('availableMcp') : t('availableSkills');
   const hasFilters = Boolean(query || source !== 'all' || status !== 'all');
@@ -144,7 +143,7 @@ export function ToolkitResourcePicker({
 
   if (items.length === 0) {
     return (
-      <section className="ui-panel overflow-hidden">
+      <section className="rounded-3xl border border-border bg-card overflow-hidden">
         <header className="flex items-center gap-2 border-b border-border bg-muted/25 px-4 py-3">
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
           <span className="text-sm text-muted-foreground">0</span>
@@ -161,7 +160,7 @@ export function ToolkitResourcePicker({
   }
 
   return (
-    <section className="ui-panel overflow-hidden">
+    <section className="rounded-3xl border border-border bg-card overflow-hidden">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
@@ -174,34 +173,26 @@ export function ToolkitResourcePicker({
 
       <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row">
           <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
+            
+            <Input leftIcon={<Search />}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(value) => setQuery(value)}
               placeholder={kind === 'mcp' ? t('searchAvailableMcp') : t('searchAvailableSkills')}
               aria-label={kind === 'mcp' ? t('searchAvailableMcp') : t('searchAvailableSkills')}
-              className="ui-input ui-input-icon h-9 w-full"
+              className="w-full"
             />
           </div>
           <div className="w-full shrink-0 sm:w-40">
-            <NativeSelect value={source} onChange={(event) => setSource(event.target.value)} aria-label={t('filterBySource')} className="ui-input h-9">
-              <option value="all">{t('allSources')}</option>
-              {sourceOptions.map((value) => <option key={value} value={value}>{sourceLabel(value, t)}</option>)}
-            </NativeSelect>
+            <FormSelect value={source} onValueChange={(value) => setSource(value)} label={t('filterBySource')} options={[{ value: "all", label: t('allSources') }, ...sourceOptions.map((value) => ({ value: value, label: sourceLabel(value, t) }))]} />
           </div>
           {kind === 'mcp' ? (
             <div className="w-full shrink-0 sm:w-40">
-              <NativeSelect value={status} onChange={(event) => setStatus(event.target.value)} aria-label={t('filterByStatus')} className="ui-input h-9">
-                <option value="all">{t('allStatuses')}</option>
-                {statusOptions.map((value) => <option key={value} value={value}>{statusLabel(value, t)}</option>)}
-              </NativeSelect>
+              <FormSelect value={status} onValueChange={(value) => setStatus(value)} label={t('filterByStatus')} options={[{ value: "all", label: t('allStatuses') }, ...statusOptions.map((value) => ({ value: value, label: statusLabel(value, t) }))]} />
             </div>
           ) : null}
           {hasFilters ? (
-            <button type="button" onClick={clearFilters} className="ui-button-ghost h-9 shrink-0">
-              <X className="size-4" />
-              {t('clearFilters')}
-            </button>
+            <Button type="button" onClick={clearFilters} variant="ghost" size="sm" className="shrink-0"><X className="size-4" />
+            {t('clearFilters')}</Button>
           ) : null}
       </div>
 
@@ -211,40 +202,26 @@ export function ToolkitResourcePicker({
         {[...activeSelected].map((id) => <input key={id} type="hidden" name="resourceId" value={id} />)}
         <div className="flex flex-wrap items-center justify-between gap-2 border-y border-border bg-muted/35 px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-              <input
-                ref={selectAllRef}
-                type="checkbox"
-                checked={allFilteredSelected}
-                disabled={!allFilteredSelected && selectingAllWouldExceedLimit}
-                onChange={toggleFiltered}
-                className="size-4 accent-brand disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              {t('selectVisible', { count: filteredItems.length })}
-            </label>
+            <Checkbox checked={allFilteredSelected} disabled={!allFilteredSelected && selectingAllWouldExceedLimit} onCheckedChange={toggleFiltered} indeterminate={someFilteredSelected && !allFilteredSelected} label={t('selectVisible', { count: filteredItems.length })} />
             <span className="text-xs text-muted-foreground">
               {t('selectedResources', { count: activeSelected.size })}
             </span>
             {activeSelected.size > 0 ? (
-              <button type="button" onClick={() => setSelected(new Set())} className="text-xs font-medium text-muted-foreground hover:text-foreground">
-                {t('clearSelection')}
-              </button>
+              <Button type="button" onClick={() => setSelected(new Set())} variant="ghost" size="sm">{t('clearSelection')}</Button>
             ) : null}
             {!allFilteredSelected && selectingAllWouldExceedLimit ? (
-              <span className="text-xs text-amber-700 dark:text-amber-300">
+              <span className="text-xs text-(--color-warning) dark:text-(--color-warning)">
                 {t('narrowFiltersToSelectAll', { count: MAX_TOOLKIT_BATCH_ITEMS })}
               </span>
             ) : null}
           </div>
-          <button type="submit" disabled={activeSelected.size === 0 || isPending} className="ui-button-primary ui-button-sm disabled:cursor-not-allowed disabled:opacity-50">
-            <Plus className="size-3.5" />
-            {isPending ? t('addingSelected') : t('addSelected', { count: activeSelected.size })}
-          </button>
+          <Button type="submit" disabled={activeSelected.size === 0 || isPending} variant="primary" size="sm"><Plus className="size-3.5" />
+          {isPending ? t('addingSelected') : t('addSelected', { count: activeSelected.size })}</Button>
         </div>
 
-        {state.error ? <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300" role="alert">{state.error}</p> : null}
+        {state.error ? <p className="text-sm text-destructive" role="alert">{state.error}</p> : null}
         {!state.error && typeof state.added === 'number' ? (
-          <p className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300" role="status">
+          <p className="border-b border-(--color-success) bg-muted/35 px-4 py-2 text-sm text-(--color-success) dark:border-(--color-success) dark:bg-muted/35 dark:text-(--color-success)" role="status">
             {t('addedResources', { count: state.added })}
           </p>
         ) : null}
@@ -253,9 +230,7 @@ export function ToolkitResourcePicker({
       {filteredItems.length === 0 ? (
         <div className="px-4 py-10 text-center">
           <p className="text-sm text-muted-foreground">{t('noResourcesMatchFilters')}</p>
-          <button type="button" onClick={clearFilters} className="ui-button-ghost ui-button-sm mt-2">
-            {t('clearFilters')}
-          </button>
+          <Button type="button" onClick={clearFilters} variant="ghost" size="sm" className="mt-2">{t('clearFilters')}</Button>
         </div>
       ) : (
         <>
@@ -273,14 +248,8 @@ export function ToolkitResourcePicker({
               const Icon = kind === 'mcp' ? Server : Brain;
               return (
                 <li key={item.id}>
-                  <label className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/50 ${isSelected ? 'bg-muted' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleItem(item.id)}
-                      aria-label={t('selectResource', { name: item.name })}
-                      className="mt-1 size-4 shrink-0 accent-brand"
-                    />
+                  <div onClick={(event) => { if (!(event.target as HTMLElement).closest('button, label')) toggleItem(item.id); }} className={`flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/50 ${isSelected ? 'bg-muted' : ''}`}>
+                    <Checkbox checked={isSelected} onCheckedChange={() => toggleItem(item.id)} aria-label={t('selectResource', { name: item.name })} className="shrink-0" />
                     <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
                       <Icon className="size-4 text-muted-foreground" />
                     </span>
@@ -289,16 +258,16 @@ export function ToolkitResourcePicker({
                       {item.description ? <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">{item.description}</span> : null}
                     </span>
                     <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                      <AnimatedBadge status="neutral" size="sm">
                         {sourceLabel(item.source, t)}
-                      </span>
+                      </AnimatedBadge>
                       {item.status ? (
-                        <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        <AnimatedBadge status="neutral" size="sm">
                           {statusLabel(item.status, t)}
-                        </span>
+                        </AnimatedBadge>
                       ) : null}
                     </span>
-                  </label>
+                  </div>
                 </li>
               );
             })}

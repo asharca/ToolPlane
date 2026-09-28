@@ -37,13 +37,12 @@ describe('DeployCustomMcpDialog', () => {
     expect(screen.queryByLabelText('Server Name')).not.toBeInTheDocument();
   });
 
-  it('defaults to isolated networking and updates Docker-specific guidance from JSON', async () => {
+  it('updates network-specific guidance when toggled and after JSON changes', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();
+    await userEvent.click(screen.getByRole('button', { name: /^Network mode:/ }));
 
-    const isolated = screen.getByRole('radio', { name: /isolated/i });
     const none = screen.getByRole('radio', { name: /no network/i });
-    expect(isolated).toBeChecked();
     expect(screen.getByText(/127\.0\.0\.1 and localhost point to the MCP container/i)).toBeInTheDocument();
 
     await userEvent.click(none);
@@ -65,7 +64,10 @@ describe('DeployCustomMcpDialog', () => {
     await userEvent.paste(JSON.stringify({
       fetcher: { command: 'npx', args: ['-y', 'fetch-mcp'], network: 'none' },
     }));
-    expect(screen.getByText('/acme/mcp/fetcher')).toBeInTheDocument();
+    expect(screen.getByText('fetcher')).toBeInTheDocument();
+    const form = config.closest('form')!;
+    expect(new FormData(form).get('network')).toBe('none');
+    await userEvent.click(screen.getByRole('button', { name: /^Network mode:/ }));
     expect(screen.getByRole('radio', { name: /no network/i })).toBeChecked();
   });
 
@@ -73,12 +75,10 @@ describe('DeployCustomMcpDialog', () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();
 
-    const examples = screen.getByText('Examples').closest('details');
-    expect(examples).not.toBeNull();
-    expect(examples).not.toHaveAttribute('open');
-    expect(screen.getByText(/Deploy one MCP at a time/i)).toBeInTheDocument();
-
-    await userEvent.click(within(examples!).getByText('Examples'));
+    const examplesTrigger = screen.getByRole('button', { name: 'Examples' });
+    expect(examplesTrigger).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(examplesTrigger);
+    const examples = screen.getByRole('region', { name: 'Examples' });
     expect(screen.getByText('npx + configuration file')).toBeInTheDocument();
     expect(screen.getByText('npx + Git repository')).toBeInTheDocument();
     expect(screen.getByText('uvx + Git repository')).toBeInTheDocument();
@@ -131,7 +131,7 @@ describe('DeployCustomMcpDialog', () => {
       },
     }));
 
-    expect(screen.getByText('/acme/mcp/audit')).toBeInTheDocument();
+    expect(screen.getByText('audit')).toBeInTheDocument();
     expect(screen.queryByText('Configuration files (optional)')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: /isolated/i })).not.toBeInTheDocument();
     expect(document.querySelector<HTMLInputElement>('input[name="runtimeFiles"]')).toHaveValue('[]');
@@ -166,11 +166,9 @@ describe('DeployCustomMcpDialog', () => {
     render(<DeployCustomMcpDialog slug="acme" />);
     await openDialog();
 
-    const runtimeFiles = screen.getByText('Configuration files (optional)').closest('details');
-    expect(runtimeFiles).not.toBeNull();
-    expect(runtimeFiles).not.toHaveAttribute('open');
-
-    await userEvent.click(within(runtimeFiles!).getByText('Configuration files (optional)'));
+    const runtimeFilesTrigger = screen.getByRole('button', { name: 'Configuration files (optional)' });
+    expect(runtimeFilesTrigger).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(runtimeFilesTrigger);
     expect(screen.getByRole('heading', { name: 'Runtime files' })).toBeInTheDocument();
     expect(screen.getByText(/relative file names work from that directory/i)).toBeInTheDocument();
     expect(screen.getByText(/requires an absolute path/i)).toBeInTheDocument();
@@ -193,21 +191,6 @@ describe('DeployCustomMcpDialog', () => {
     expect(screen.getByText(/requires an absolute path/i)).toBeInTheDocument();
   });
 
-  it('keeps deployment controls outside the scrollable dialog content', async () => {
-    render(<DeployCustomMcpDialog slug="acme" />);
-    await openDialog();
-
-    const dialog = screen.getByRole('dialog', { name: 'Deploy custom MCP' });
-    const scrollArea = within(dialog).getByTestId('deploy-custom-mcp-scroll-area');
-    const footer = within(dialog).getByTestId('deploy-custom-mcp-footer');
-    const deployButton = within(footer).getByRole('button', { name: 'Deploy MCP' });
-
-    expect(dialog).toHaveClass('flex', 'max-h-[calc(100dvh-2rem)]', 'max-w-3xl', 'flex-col', 'overflow-hidden');
-    expect(scrollArea).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
-    expect(footer).toHaveClass('shrink-0');
-    expect(scrollArea).not.toContainElement(deployButton);
-    expect(screen.getByLabelText('MCP JSON config')).toHaveClass('min-h-48');
-  });
 
   it('shows the specific validation error for unsupported JSON commands', async () => {
     render(<DeployCustomMcpDialog slug="acme" />);

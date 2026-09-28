@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { HermesProfilesPanel } from '@/components/dashboard/agents/HermesProfilesPanel';
 
 const actions = vi.hoisted(() => ({
@@ -30,12 +31,18 @@ describe('HermesProfilesPanel', () => {
             provider: 'openrouter',
             model: 'model-a',
             description: '',
+          }, {
+            name: 'research',
+            isDefault: false,
+            provider: 'openrouter',
+            model: 'model-a',
+            description: '',
           }],
           profileChatSupported: true,
         });
       }
       return Response.json({
-        profile: 'default',
+        profile: new URL(url, 'https://toolplane.test').searchParams.get('profile'),
         provider: 'openrouter',
         model: 'model-a',
         providers: [{ id: 'openrouter', name: 'OpenRouter', models: ['model-a', 'model-b'] }],
@@ -44,8 +51,13 @@ describe('HermesProfilesPanel', () => {
 
     render(<HermesProfilesPanel slug="acme" agentId="agent-1" />);
 
-    expect(await screen.findByRole('combobox', { name: 'Hermes profile' })).toHaveValue('default');
-    fireEvent.click(await screen.findByRole('button', { name: /model-a/ }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Hermes profile' })).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: 'Hermes profile' })).toHaveTextContent('default');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Hermes profile' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'research' }));
+    expect(screen.getByRole('combobox', { name: 'Hermes profile' })).toHaveTextContent('research');
+    await waitFor(() => expect(screen.getByRole('button', { name: /model-a/ })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /model-a/ }));
     fireEvent.click(await screen.findByRole('option', { name: 'model-b' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -53,7 +65,7 @@ describe('HermesProfilesPanel', () => {
     const formData = actions.update.mock.calls[0][1] as FormData;
     expect(formData.get('workspace')).toBe('acme');
     expect(formData.get('agentId')).toBe('agent-1');
-    expect(formData.get('profile')).toBe('default');
+    expect(formData.get('profile')).toBe('research');
     expect(formData.get('provider')).toBe('openrouter');
     expect(formData.get('model')).toBe('model-b');
   });

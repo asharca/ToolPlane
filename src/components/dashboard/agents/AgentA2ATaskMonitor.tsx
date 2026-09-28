@@ -1,10 +1,12 @@
 'use client';
+import { Button } from '@/components/motion/button/base';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { A2AToolApprovals } from './A2AToolApprovals';
 import { A2AArtifactParts, type A2AWirePart } from './A2AArtifactParts';
-import { Alert, Badge, Button } from '@asharca/ui';
+
 import type { ConsoleTaskTree } from '@/lib/a2a/console-tasks';
 
 type ResultTask = { id: string; status?: { state?: string; message?: { parts?: Array<{ text?: string }> } };
@@ -88,18 +90,18 @@ export function AgentA2ATaskMonitor({ base, rootTaskId, onRootState, onUnavailab
   return <section className="space-y-3" aria-label={t('taskTree')}>
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="text-sm font-semibold">{t('taskTree')}</h4>
-      <div className="flex gap-2"><Button size="sm" variant="secondary" aria-pressed={automatic} onClick={() => setAutomatic((value) => !value)}>{t(automatic ? 'pauseMonitoring' : 'resumeMonitoring')}</Button>
-        <Button size="sm" variant="secondary" onClick={() => setRefresh((value) => value + 1)}>{t('refreshTasks')}</Button></div>
+      <div className="flex gap-2"><Button aria-pressed={automatic} onClick={() => setAutomatic((value) => !value)} variant={"secondary"} size={"sm"}>{t(automatic ? 'pauseMonitoring' : 'resumeMonitoring')}</Button>
+        <Button onClick={() => setRefresh((value) => value + 1)} variant={"secondary"} size={"sm"}>{t('refreshTasks')}</Button></div>
     </div>
     <p className="text-xs text-muted-foreground">{t('monitoringHint')}</p>
-    {failed ? <Alert tone="warning" role="alert">{t('monitoringFailed')}</Alert> : null}
-    {tree?.restricted ? <Alert tone="warning">{t('restrictedTasks')}</Alert> : null}
+    {failed ? <div role="alert" className="space-y-2 text-sm text-muted-foreground">{t('monitoringFailed')}</div> : null}
+    {tree?.restricted ? <div role="alert" className="space-y-2 text-sm text-muted-foreground">{t('restrictedTasks')}</div> : null}
     {!tree && !failed ? <p role="status">{t('loading')}</p> : null}
     <ul className="space-y-2">{tree?.nodes.map((node) => <li key={node.id} style={{ marginInlineStart: `${depthOf(node.id)}rem` }}>
-      <button type="button" aria-pressed={selectedId === node.id} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedId(node.id); setRefresh((value) => value + 1); }}>
+      <Button type="button" aria-pressed={selectedId === node.id} onClick={() => { setSelectedId(node.id); setRefresh((value) => value + 1); }} variant={selectedId === node.id ? 'secondary' : 'ghost'} className="w-full flex-wrap justify-between text-left">
         <span className="min-w-0"><span className="block text-sm font-medium">{node.name}</span><code className="block break-all text-xs text-muted-foreground">{node.id}</code></span>
-        <span className="flex flex-wrap items-center gap-2 text-xs"><Badge>{node.state}</Badge>{node.pendingApprovals ? <Badge>{t('approvals.pending', { count: node.pendingApprovals })}</Badge> : null}<span>{t(`phase_${node.phase}`)}</span>{node.cancelRequested ? <span>{t('cancellationPending')}</span> : null}</span>
-      </button>
+        <span className="flex flex-wrap items-center gap-2 text-xs"><AnimatedBadge>{node.state}</AnimatedBadge>{node.pendingApprovals ? <AnimatedBadge>{t('approvals.pending', { count: node.pendingApprovals })}</AnimatedBadge> : null}<span>{t(node.executionBackend === 'pi-harness' && node.phase === 'resumable' ? 'phase_recovering' : `phase_${node.phase}`)}</span>{node.cancelRequested ? <span>{t('cancellationPending')}</span> : null}</span>
+      </Button>
     </li>)}</ul>
     {selected ? <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3" role="region" aria-label={t('taskResult')}>
       <code className="block break-all text-xs">{selected.id}</code>

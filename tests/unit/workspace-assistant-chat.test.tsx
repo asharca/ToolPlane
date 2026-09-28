@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
 const mocks = vi.hoisted(() => ({ conversation: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
@@ -15,10 +16,12 @@ vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
     const conversation = props as {
       onBranchChange?: (messageId: string) => void;
       onStartBranch?: (messageId: string) => void;
+      modelPicker?: ReactNode;
     };
     return (
       <div>
         Chat surface
+        {conversation.modelPicker}
         <div id="chat-message-a1">Active message</div>
         <button type="button" onClick={() => conversation.onBranchChange?.('a1')}>Test active branch</button>
         <button type="button" onClick={() => conversation.onStartBranch?.('a1')}>Test new branch</button>
@@ -77,6 +80,13 @@ function renderChat(
   />);
 }
 
+function stubMutationFetch(fetchMock: typeof fetch) {
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).includes('&running=1')
+      ? Promise.resolve(Response.json({ runningThreadIds: [] }))
+      : fetchMock(input, init));
+}
+
 const sidebarAssistants: Parameters<typeof WorkspaceAssistantChat>[0]['assistants'] = [1, 2, 3].map((id) => ({
   id: `assistant-${id}`,
   name: ['Match Alpha', 'Hidden assistant', 'Match Gamma'][id - 1],
@@ -95,33 +105,6 @@ const sidebarAssistants: Parameters<typeof WorkspaceAssistantChat>[0]['assistant
   })),
 }));
 
-function sidebarRow(kind: 'entity' | 'conversation', id: string) {
-  return document.querySelector<HTMLElement>(`[data-sidebar-${kind}-id="${id}"]`)!;
-}
-
-function sidebarOrder(kind: 'entity' | 'conversation', root: ParentNode = document) {
-  return Array.from(root.querySelectorAll(`[data-sidebar-${kind}-id]`), (row) => row.getAttribute(`data-sidebar-${kind}-id`));
-}
-
-function sidebarPreferences() {
-  return JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-groups:workspace-1') ?? '{}');
-}
-
-function dropSidebarRow(source: HTMLElement, target: HTMLElement, edge: 'before' | 'after') {
-  const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-  const rect = vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-    x: 0, y: 100, top: 100, bottom: 132, left: 0, right: 200, width: 200, height: 32, toJSON: () => ({}),
-  });
-  fireEvent.dragStart(source, { dataTransfer });
-  for (const type of ['dragOver', 'drop'] as const) {
-    const event = createEvent[type](target, { dataTransfer });
-    Object.defineProperty(event, 'clientY', { value: edge === 'before' ? 104 : 128 });
-    fireEvent(target, event);
-  }
-  fireEvent.dragEnd(source, { dataTransfer });
-  rect.mockRestore();
-}
-
 describe('WorkspaceAssistantChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -132,368 +115,81 @@ describe('WorkspaceAssistantChat', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it('shows running badges from server state and removes them when execution settles', async () => {
+    const status = vi.fn()
+      .mockResolvedValueOnce(Response.json({ runningThreadIds: ['thread-1'] }))
+      .mockResolvedValueOnce(Response.json({ runningThreadIds: [] }));
+    vi.stubGlobal('fetch', status);
+    renderChat();
+    expect(await screen.findByRole('status', { name: 'Helper: Running' })).toBeVisible();
+    expect(screen.getByRole('status', { name: 'First thread: Running' })).toBeVisible();
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => {
+      expect(screen.queryByRole('status', { name: 'Helper: Running' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('status', { name: 'First thread: Running' })).not.toBeInTheDocument();
+    });
+  });
+
+  it.each(['Close', 'Cancel', 'Escape', 'Dismiss modal'])('keeps assistant configuration mounted through the native exit after %s', async (method) => {
+    renderChat();
+    await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
+    const panel = screen.getByRole('dialog', { name: 'Assistant settings' });
+    await userEvent.clear(within(panel).getByRole('textbox', { name: 'Name' }));
+    await userEvent.type(within(panel).getByRole('textbox', { name: 'Name' }), 'Discarded');
+    if (method === 'Escape') fireEvent.keyDown(window, { key: 'Escape' });
+    else fireEvent.click(screen.getByRole('button', { name: method }));
+
+    expect(panel).toBeInTheDocument();
+    expect(panel.closest('[inert]')).not.toBeNull();
+    await waitFor(() => expect(panel).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Helper');
+  });
+
   it('estimates mixed CJK and Latin system prompt tokens', () => {
     expect(estimatePromptTokens('你好 hello')).toBe(4);
     expect(estimatePromptTokens('   ')).toBe(0);
-  });
-
-  it('uses the agent chat header spacing', () => {
-    renderChat();
-
-    expect(screen.getByRole('button', { name: 'Hide assistants and chats' }).closest('header')).toHaveClass('h-11', 'px-2.5');
-  });
-
-  it('restores the collapsed assistant sidebar after a refresh', async () => {
-    const user = userEvent.setup();
-    const firstRender = renderChat();
-
-    await user.click(screen.getByRole('button', { name: 'Hide assistants and chats' }));
-    expect(window.localStorage.getItem('toolplane:assistant-chat-sidebar:workspace-1')).toBe('false');
-    firstRender.unmount();
-
-    renderChat();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Show assistants and chats', pressed: false }))
-      .toHaveAttribute('aria-pressed', 'false'));
-  });
-
-  it('restores individual assistant conversation disclosures after a refresh', async () => {
-    const user = userEvent.setup();
-    const firstRender = renderChat();
-
-    await user.click(screen.getByRole('button', { name: 'Helper' }));
-    expect(JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-expanded:workspace-1')!)).toEqual({
-      'assistant-1': false,
-    });
-    expect(document.cookie).toContain('toolplane_assistant_chat_expanded_workspace-1=%7B%22assistant-1%22%3Afalse%7D');
-    firstRender.unmount();
-
-    renderChat();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Helper' }))
-      .toHaveAttribute('aria-expanded', 'false'));
-  });
-
-  it('uses server-seeded assistant disclosures on the first render', async () => {
-    renderChat(undefined, false, undefined, null, [], undefined, true, { 'assistant-1': false });
-
-    expect(screen.getByRole('button', { name: 'Helper' })).toHaveAttribute('aria-expanded', 'false');
-    await waitFor(() => expect(document.cookie)
-      .toContain('toolplane_assistant_chat_expanded_workspace-1=%7B%22assistant-1%22%3Afalse%7D'));
-  });
-
-  it('uses the server-seeded collapsed state before hydrating browser preferences', async () => {
-    renderChat(undefined, false, undefined, null, [], undefined, false);
-
-    expect(screen.getByRole('button', { name: 'Show assistants and chats', pressed: false }))
-      .toHaveAttribute('aria-pressed', 'false');
-    await waitFor(() => expect(document.cookie).toContain('toolplane_assistant_chat_sidebar_workspace-1=false'));
   });
 
   it('uses the sidebar header to add assistants and list existing conversations', async () => {
     const user = userEvent.setup();
     renderChat();
 
-    expect(screen.getByRole('button', { name: 'Add assistant' })).toHaveTextContent('Add assistant');
     await user.click(screen.getByRole('button', { name: 'List options' }));
     expect(screen.getByRole('button', { name: 'Expand all' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Choose from assistant market' })).toHaveAttribute(
-      'href',
-      '/app/acme/market/assistants',
-    );
-    await user.click(screen.getByRole('button', { name: 'Collapse all' }));
-    expect(screen.queryByText('First thread')).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole('button', { name: 'List options' }));
     await user.click(screen.getByRole('button', { name: 'Add assistant' }));
     expect(screen.getByRole('dialog', { name: 'Add assistant' })).toBeInTheDocument();
   });
 
-  it('groups assistants, opens the target group after a drop, and persists the workspace preference', async () => {
+  it('selects a thread from the assistant tree', async () => {
     const user = userEvent.setup();
-    renderChat();
-
-    await user.click(screen.getByRole('button', { name: 'List options' }));
-    await user.click(screen.getByRole('button', { name: 'New group' }));
-    await user.type(screen.getByRole('textbox', { name: 'Group name' }), 'Research');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-
-    const group = screen.getByText('Research').closest('[data-sidebar-group-id]') as HTMLElement;
-    await user.click(screen.getByRole('button', { name: 'Hide Research' }));
-    expect(screen.getByRole('button', { name: 'Show Research' })).toHaveAttribute('aria-expanded', 'false');
-
-    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-    fireEvent.dragStart(screen.getByRole('button', { name: 'Move to group' }), { dataTransfer });
-    fireEvent.dragOver(group.firstElementChild!, { dataTransfer });
-    fireEvent.drop(group.firstElementChild!, { dataTransfer });
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Hide Research' })).toHaveAttribute('aria-expanded', 'true');
-      expect(within(group).getByRole('link', { name: 'Helper' })).toBeInTheDocument();
-      expect(JSON.parse(window.localStorage.getItem('toolplane:assistant-chat-groups:workspace-1')!)).toEqual(expect.objectContaining({
-        groups: [expect.objectContaining({ name: 'Research' })],
-        assignments: { 'assistant-1': expect.any(String) },
-      }));
-    });
-  });
-
-  it('uses server-seeded assistant groups before browser preferences load', () => {
-    renderChat(undefined, false, undefined, null, [], undefined, true, {}, {
-      groups: [{ id: 'group-research', name: 'Research' }],
-      assignments: { 'assistant-1': 'group-research' },
-      collapsed: { 'group-research': true },
-    });
-
-    expect(screen.getByRole('button', { name: 'Show Research' })).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  it.each([false, true])('orders assistants by row halves and restores preferences (grouped=%s)', (grouped) => {
-    const preferences: Parameters<typeof WorkspaceAssistantChat>[0]['initialGroupPreferences'] = {
-      groups: grouped ? [{ id: 'research', name: 'Research' }] : [],
-      assignments: grouped ? Object.fromEntries(sidebarAssistants.map(({ id }) => [id, 'research'])) : {},
-      collapsed: grouped ? { research: false } : {},
-    };
-    const mount = () => renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, preferences);
-    const firstRender = mount();
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-3')).getByRole('button', { name: 'Move to group' }),
-      sidebarRow('entity', 'assistant-1'), 'before',
-    );
-    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1', 'assistant-2']);
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
-      sidebarRow('entity', 'assistant-2'), 'after',
-    );
-    const order = ['assistant-3', 'assistant-2', 'assistant-1'];
-    expect(sidebarOrder('entity')).toEqual(order);
-    expect(sidebarPreferences()).toEqual({
-      ...preferences,
-      collapsed: { [grouped ? 'research' : '__ungrouped__']: false },
-      entityOrder: order,
-    });
-    expect(document.cookie).toContain(encodeURIComponent(JSON.stringify(sidebarPreferences())));
-    expect(mocks.push).not.toHaveBeenCalled();
-    firstRender.unmount();
-    mount();
-    expect(sidebarOrder('entity')).toEqual(order);
-  });
-
-  it('adopts the target assistant group, allows cross-group pin moves, and can return to ungrouped', () => {
-    const assistants = sidebarAssistants.map((assistant) => ({ ...assistant, pinned: assistant.id === 'assistant-1' }));
-    renderChat(undefined, false, undefined, null, [], assistants, true, {}, {
-      groups: [{ id: 'research', name: 'Research' }],
-      assignments: { 'assistant-2': 'research' },
-      collapsed: {},
-    });
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
-      sidebarRow('entity', 'assistant-2'), 'after',
-    );
-    const research = document.querySelector('[data-sidebar-group-id="research"]')!;
-    expect(sidebarOrder('entity', research)).toEqual(['assistant-1', 'assistant-2']);
-    expect(sidebarPreferences().assignments).toEqual({ 'assistant-1': 'research', 'assistant-2': 'research' });
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
-      sidebarRow('entity', 'assistant-3'), 'after',
-    );
-    expect(sidebarPreferences().assignments).toEqual({ 'assistant-2': 'research' });
-    expect(sidebarOrder('entity', document.querySelector('[data-sidebar-group-id="__ungrouped__"]')!))
-      .toEqual(['assistant-1', 'assistant-3']);
-  });
-
-  it.each(['header', 'row'] as const)('opens collapsed Ungrouped after an assistant drop onto its %s', (target) => {
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
-      groups: [{ id: 'research', name: 'Research' }],
-      assignments: { 'assistant-1': 'research' },
-      collapsed: { research: false, __ungrouped__: true },
-    });
-    expect(screen.getByRole('button', { name: 'Show Ungrouped' })).toHaveAttribute('aria-expanded', 'false');
-    const group = document.querySelector<HTMLElement>('[data-sidebar-group-id="__ungrouped__"]')!;
-    if (target === 'row') fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
-      target === 'header' ? group.firstElementChild as HTMLElement : sidebarRow('entity', 'assistant-3'),
-      'before',
-    );
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(sidebarPreferences().assignments).toEqual({});
-    expect(sidebarPreferences().collapsed).toEqual({ research: false, __ungrouped__: false });
-    expect(screen.getByRole('button', { name: 'Hide Ungrouped' })).toHaveAttribute('aria-expanded', 'true');
-    expect(within(group).getByRole('link', { name: 'Match Alpha' })).toBeInTheDocument();
-  });
-
-  it('opens a collapsed Ungrouped owner after transferring a chat through search results', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      thread: { id: 'thread-1', assistantId: 'assistant-3' },
-    }), { status: 200, headers: { 'content-type': 'application/json' } })));
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
-      groups: [{ id: 'research', name: 'Research' }],
-      assignments: { 'assistant-1': 'research' },
-      collapsed: { __ungrouped__: true },
-    });
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
-    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('entity', 'assistant-3'), 'after');
-    await waitFor(() => expect(sidebarPreferences().collapsed.__ungrouped__).toBe(false));
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(screen.getByRole('button', { name: 'Hide Ungrouped' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('link', { name: 'Match Gamma' })).toBeInTheDocument();
-    expect(mocks.push).toHaveBeenCalledWith('/app/acme/chat?assistant=assistant-3&thread=thread-1');
-  });
-
-  it('ignores assistant row and keyboard reorders across the same-group pin boundary', () => {
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants.map((assistant) => ({
-      ...assistant, pinned: assistant.id === 'assistant-2',
-    })));
-    const handle = within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' });
-    dropSidebarRow(handle, sidebarRow('entity', 'assistant-2'), 'before');
-    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowUp' });
-    expect(sidebarOrder('entity')).toEqual(['assistant-2', 'assistant-1', 'assistant-3']);
-    expect(sidebarPreferences().entityOrder).toBeUndefined();
-  });
-
-  it('keeps hidden assistants in the full saved order when dragging search results', () => {
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
-      groups: [], assignments: {}, collapsed: {}, entityOrder: ['assistant-3', 'assistant-2', 'assistant-1'],
-    });
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
-    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1']);
-    dropSidebarRow(
-      within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' }),
-      sidebarRow('entity', 'assistant-3'), 'before',
-    );
-    expect(sidebarPreferences().entityOrder).toEqual(['assistant-1', 'assistant-3', 'assistant-2']);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(sidebarOrder('entity')).toEqual(['assistant-1', 'assistant-3', 'assistant-2']);
-  });
-
-  it('orders threads within their assistant, preserves other owners, and restores the order', () => {
-    const preferences = {
-      groups: [], assignments: {}, collapsed: {}, conversationOrder: { 'assistant-2': ['thread-5'] },
-    };
-    const mount = () => renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, preferences);
-    const firstRender = mount();
-    dropSidebarRow(sidebarRow('conversation', 'thread-3'), sidebarRow('conversation', 'thread-1'), 'before');
-    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(['thread-3', 'thread-1', 'thread-2']);
-    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-2'), 'after');
-    const order = ['thread-3', 'thread-2', 'thread-1'];
-    expect(sidebarPreferences().conversationOrder).toEqual({ 'assistant-1': order, 'assistant-2': ['thread-5'] });
-    expect(document.cookie).toContain(encodeURIComponent(JSON.stringify(sidebarPreferences())));
-    expect(mocks.push).not.toHaveBeenCalled();
-    firstRender.unmount();
-    mount();
-    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(order);
-  });
-
-  it('keeps hidden threads in the full saved owner order when dragging search results', () => {
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants, true, {}, {
-      groups: [], assignments: {}, collapsed: {}, conversationOrder: { 'assistant-1': ['thread-3', 'thread-2', 'thread-1'] },
-    });
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Find' } });
-    expect(sidebarOrder('conversation').slice(0, 2)).toEqual(['thread-3', 'thread-1']);
-    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-3'), 'before');
-    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-1', 'thread-3', 'thread-2']);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(sidebarOrder('conversation').slice(0, 3)).toEqual(['thread-1', 'thread-3', 'thread-2']);
-  });
-
-  it('supports Alt+Arrow ordering on handles and focused thread links without navigation', () => {
     renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-    const handle = within(sidebarRow('entity', 'assistant-2')).getByRole('button', { name: 'Move to group' });
-    handle.focus();
-    expect(fireEvent.keyDown(handle, { altKey: true, key: 'ArrowUp' })).toBe(false);
-    expect(handle).toHaveFocus();
-    expect(sidebarPreferences().entityOrder).toEqual(['assistant-2', 'assistant-1', 'assistant-3']);
-    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowDown' });
-    expect(sidebarPreferences().entityOrder).toEqual(['assistant-1', 'assistant-2', 'assistant-3']);
-    const link = screen.getByRole('link', { name: 'Find thread 1' });
-    link.focus();
-    expect(fireEvent.keyDown(link, { altKey: true, key: 'ArrowDown' })).toBe(false);
-    expect(link).toHaveFocus();
-    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-2', 'thread-1', 'thread-3']);
-    fireEvent.keyDown(link, { altKey: true, key: 'ArrowUp' });
-    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-1', 'thread-2', 'thread-3']);
-    expect(mocks.push).not.toHaveBeenCalled();
+    const tree = screen.getByRole('tree', { name: 'Assistants' });
+
+    expect(within(tree).getByRole('treeitem', { name: /Match Alpha/ })).toBeInTheDocument();
+    expect(within(tree).getByRole('treeitem', { name: /Find thread 1/ })).toBeInTheDocument();
+    expect(within(tree).getByRole('treeitem', { name: /Find thread 3/ })).toBeInTheDocument();
+    await user.click(within(tree).getByRole('treeitem', { name: /Find thread 3/ }));
+    expect(mocks.push).toHaveBeenCalledWith('/app/acme/chat?assistant=assistant-1&thread=thread-3');
   });
 
-  it('uses visible keyboard neighbors while preserving hidden assistant and thread order', () => {
+  it('closes the mobile assistant drawer after selecting a thread', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
     renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Match' } });
-    const handle = within(sidebarRow('entity', 'assistant-1')).getByRole('button', { name: 'Move to group' });
-    fireEvent.keyDown(handle, { altKey: true, key: 'ArrowDown' });
-    expect(sidebarOrder('entity')).toEqual(['assistant-3', 'assistant-1']);
-    expect(sidebarPreferences().entityOrder).toEqual(['assistant-2', 'assistant-3', 'assistant-1']);
 
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Find' } });
-    fireEvent.keyDown(screen.getByRole('link', { name: 'Find thread 3' }), { altKey: true, key: 'ArrowUp' });
-    expect(sidebarOrder('conversation', document.getElementById('assistant-chat-threads-assistant-1')!))
-      .toEqual(['thread-3', 'thread-1']);
-    expect(sidebarPreferences().conversationOrder['assistant-1']).toEqual(['thread-3', 'thread-1', 'thread-2']);
+    await user.click(screen.getByRole('button', { name: 'Show assistants and chats' }));
+    await user.click(screen.getByRole('treeitem', { name: /Find thread 3/ }));
 
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
-    expect(sidebarOrder('entity')).toEqual(['assistant-2', 'assistant-3', 'assistant-1']);
-    expect(sidebarOrder('conversation', document.getElementById('assistant-chat-threads-assistant-1')!))
-      .toEqual(['thread-3', 'thread-1', 'thread-2']);
-    expect(mocks.push).not.toHaveBeenCalled();
-  });
-
-  it('ignores wrong-owner thread row drops and external drag payloads', () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-    dropSidebarRow(sidebarRow('conversation', 'thread-1'), sidebarRow('conversation', 'thread-5'), 'before');
-    const dataTransfer = { getData: () => 'thread-1', dropEffect: 'none' };
-    fireEvent.dragOver(sidebarRow('entity', 'assistant-2'), { dataTransfer });
-    fireEvent.drop(sidebarRow('entity', 'assistant-2'), { dataTransfer });
-    expect(sidebarPreferences().conversationOrder).toBeUndefined();
-    expect(sidebarOrder('conversation')).toEqual(['thread-1', 'thread-2', 'thread-3', 'thread-5', 'thread-6']);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocks.push).not.toHaveBeenCalled();
-  });
-
-  it('rejects a stale thread owner when assistant props change during the drag', () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const view = renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-    fireEvent.dragStart(sidebarRow('conversation', 'thread-1'), { dataTransfer });
-    view.rerender(<WorkspaceAssistantChat
-      assistants={sidebarAssistants.map((assistant) => ({
-        ...assistant,
-        threads: assistant.id === 'assistant-1' ? assistant.threads.slice(1)
-          : assistant.id === 'assistant-2' ? [...assistant.threads, sidebarAssistants[0].threads[0]] : assistant.threads,
-      }))}
-      deployments={[]}
-      initialMessages={[]}
-      providers={[]}
-      reasoningAvailable
-      selectedAssistantId="assistant-1"
-      selectedThreadId={null}
-      slug="acme"
-      workspaceId="workspace-1"
-    />);
-    fireEvent.dragOver(sidebarRow('entity', 'assistant-3'), { dataTransfer });
-    fireEvent.drop(sidebarRow('entity', 'assistant-3'), { dataTransfer });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(sidebarPreferences().conversationOrder).toBeUndefined();
-  });
-
-  it.each(['entity', 'conversation'] as const)('clears %s insertion highlights on leave, drag end, and drop', (kind) => {
-    renderChat(undefined, false, undefined, null, [], sidebarAssistants);
-    const source = kind === 'entity'
-      ? within(sidebarRow(kind, 'assistant-1')).getByRole('button', { name: 'Move to group' })
-      : sidebarRow(kind, 'thread-1');
-    const target = sidebarRow(kind, kind === 'entity' ? 'assistant-2' : 'thread-2');
-    const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-    fireEvent.dragStart(source, { dataTransfer });
-    fireEvent.dragOver(target, { dataTransfer });
-    expect(target).toHaveClass('relative', 'before:bg-brand');
-    fireEvent.dragLeave(target, { dataTransfer });
-    expect(target).not.toHaveClass('before:bg-brand');
-    fireEvent.dragOver(target, { dataTransfer });
-    fireEvent.dragEnd(source, { dataTransfer });
-    expect(target).not.toHaveClass('before:bg-brand');
-    fireEvent.dragStart(source, { dataTransfer });
-    fireEvent.dragOver(target, { dataTransfer });
-    fireEvent.drop(target, { dataTransfer });
-    expect(target).not.toHaveClass('before:bg-brand');
+    expect(mocks.push).toHaveBeenCalledWith('/app/acme/chat?assistant=assistant-1&thread=thread-3');
+    expect(screen.getByRole('button', { name: 'Show assistants and chats' })).toBeInTheDocument();
   });
 
   it('uses the API step limit and enables persisted branch regeneration', async () => {
@@ -514,60 +210,51 @@ describe('WorkspaceAssistantChat', () => {
     expect(screen.getByRole('spinbutton', { name: 'Maximum tool-call rounds' })).toHaveAttribute('max', '1000');
   });
 
-  it('shows Edit, Pin, and Delete in order in the assistant actions menu', async () => {
+  it('edits, pins, and confirms deletion from the assistant resource menu', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
       assistant: { id: 'assistant-1' },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const confirmMock = vi.fn().mockReturnValue(false);
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     vi.stubGlobal('confirm', confirmMock);
     renderChat();
 
-    const actionsButton = screen.getByRole('button', { name: 'Actions for Helper' });
-
-    await user.click(actionsButton);
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Pin', 'Delete']);
-
-    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for Helper' }));
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pin' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('dialog', { name: 'Assistant settings' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await user.click(actionsButton);
-    await user.click(screen.getByRole('menuitem', { name: 'Pin' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for Helper' }));
+    await user.click(screen.getByRole('button', { name: 'Pin' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/chat/assistants/assistant-1', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pinned: true }),
     }));
 
-    await user.click(actionsButton);
-    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for Helper' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
     expect(confirmMock).toHaveBeenCalledWith('Delete this assistant and all of its chats?');
   });
 
-  it('shows Unpin and persists false for a pinned assistant', async () => {
+  it('unpins an assistant from its resource menu', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       assistant: { id: 'assistant-1' },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     renderChat(undefined, false, undefined, null, [], [{
-      id: 'assistant-1',
-      name: 'Helper',
-      pinned: true,
-      systemPrompt: null,
-      modelProviderId: 'provider-1',
-      model: 'model-1',
-      maxSteps: 8,
-      providerName: 'Provider',
-      deploymentIds: [],
-      threads: [],
+      id: 'assistant-1', name: 'Helper', pinned: true, systemPrompt: null,
+      modelProviderId: 'provider-1', model: 'model-1', maxSteps: 8, providerName: 'Provider',
+      deploymentIds: [], threads: [],
     }]);
 
     await user.click(screen.getByRole('button', { name: 'Actions for Helper' }));
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit', 'Unpin', 'Delete']);
-    await user.click(screen.getByRole('menuitem', { name: 'Unpin' }));
+    await user.click(screen.getByRole('button', { name: 'Unpin' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/chat/assistants/assistant-1', {
       method: 'PATCH',
@@ -576,62 +263,37 @@ describe('WorkspaceAssistantChat', () => {
     }));
   });
 
-  it('moves a dragged chat to another assistant', async () => {
+  it('offers only deletion in thread actions while preserving drag moves', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       thread: { id: 'thread-1', assistantId: 'assistant-2' },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     renderChat(undefined, false, undefined, null, [], [
       {
-        id: 'assistant-1',
-        name: 'Helper',
-        pinned: false,
-        systemPrompt: null,
-        modelProviderId: 'provider-1',
-        model: 'model-1',
-        maxSteps: 8,
-        providerName: 'Provider',
-        deploymentIds: [],
-        threads: [{
-          id: 'thread-1',
-          title: 'First thread',
-          createdAt: '2026-08-25T00:00:00.000Z',
-          lastMessageAt: null,
-        }],
+        id: 'assistant-1', name: 'Helper', pinned: false, systemPrompt: null,
+        modelProviderId: 'provider-1', model: 'model-1', maxSteps: 8, providerName: 'Provider', deploymentIds: [],
+        threads: [{ id: 'thread-1', title: 'First thread', createdAt: '2026-08-25T00:00:00.000Z', lastMessageAt: null }],
       },
       {
-        id: 'assistant-2',
-        name: 'Writer',
-        pinned: false,
-        systemPrompt: null,
-        modelProviderId: 'provider-1',
-        model: 'model-1',
-        maxSteps: 8,
-        providerName: 'Provider',
-        deploymentIds: [],
-        threads: [],
+        id: 'assistant-2', name: 'Writer', pinned: false, systemPrompt: null,
+        modelProviderId: 'provider-1', model: 'model-1', maxSteps: 8, providerName: 'Provider', deploymentIds: [], threads: [],
       },
     ]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Actions for First thread' }));
+    const menu = document.querySelector('[data-sidebar-resource-menu="thread:thread-1"]') as HTMLElement;
+    expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual(['Delete chat']);
+    await user.keyboard('{Escape}');
+    const source = screen.getByRole('treeitem', { name: /First thread/ });
+    const target = screen.getByRole('treeitem', { name: /Writer/ });
     const dataTransfer = { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn() };
-    const sourceAssistant = screen.getByRole('link', { name: 'Helper' });
-    const targetAssistant = screen.getByRole('link', { name: 'Writer' });
-    const sourceDisclosure = screen.getByRole('button', { name: 'Helper' });
-    const targetDisclosure = screen.getByRole('button', { name: 'Writer' });
-    expect(sourceAssistant.firstElementChild).toHaveClass('size-6');
-    expect(sourceDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
-    expect(targetDisclosure.nextElementSibling).toHaveAttribute('data-toolplane-ui', 'sidebar-action-rail');
-    expect(sourceDisclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(targetDisclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('No conversations yet.')).toBeInTheDocument();
-    fireEvent.click(targetDisclosure);
-    expect(targetDisclosure).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('No conversations yet.')).not.toBeInTheDocument();
-    fireEvent.click(targetDisclosure);
-    const source = screen.getByRole('link', { name: 'First thread' }).closest('li')!;
-    const target = targetAssistant.parentElement!;
-
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 100, top: 100, bottom: 132, left: 0, right: 200, width: 200, height: 32, toJSON: () => ({}),
+    });
     fireEvent.dragStart(source, { dataTransfer });
-    fireEvent.dragOver(target, { dataTransfer });
+    const over = createEvent.dragOver(target, { dataTransfer });
+    Object.defineProperty(over, 'clientY', { value: 116 });
+    fireEvent(target, over);
     fireEvent.drop(target, { dataTransfer });
 
     await waitFor(() => {
@@ -676,7 +338,7 @@ describe('WorkspaceAssistantChat', () => {
         status: 400,
         headers: { 'content-type': 'application/json' },
       }));
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     renderChat();
 
     await userEvent.click(screen.getByRole('button', { name: 'Assistant settings: Helper' }));
@@ -713,7 +375,8 @@ describe('WorkspaceAssistantChat', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Max output tokens' }), { target: { value: '2048' } });
     await userEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Custom parameter name' }), 'top_k');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Custom parameter type' }), 'number');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Custom parameter type' }));
+    await userEvent.click(screen.getByRole('option', { name: 'number' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Value: top_k' }), { target: { value: '40' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -739,67 +402,54 @@ describe('WorkspaceAssistantChat', () => {
   });
 
   it('steps through assistant creation without losing entered values', async () => {
-    renderChat(undefined, true);
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole('button', { name: 'Add assistant' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add assistant' });
 
-    expect(screen.getByRole('navigation', { name: 'Assistant configuration' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
+    expect(within(dialog).getByRole('navigation', { name: 'Assistant configuration' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
 
-    const name = screen.getByRole('textbox', { name: 'Name' });
-    await userEvent.type(name, 'Research helper');
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const name = within(dialog).getByRole('textbox', { name: 'Name' });
+    await user.type(name, 'Research helper');
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
 
-    expect(screen.getByRole('button', { name: 'System prompt' })).toHaveAttribute('aria-current', 'step');
-    const prompt = screen.getByRole('textbox', { name: 'System prompt' });
-    await userEvent.type(prompt, 'Use primary sources.');
-    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(within(dialog).getByRole('button', { name: 'System prompt' })).toHaveAttribute('aria-current', 'step');
+    const prompt = within(dialog).getByRole('textbox', { name: 'System prompt' });
+    await user.type(prompt, 'Use primary sources.');
+    await user.click(within(dialog).getByRole('button', { name: 'Back' }));
 
     expect(name).toHaveValue('Research helper');
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
     expect(prompt).toHaveValue('Use primary sources.');
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
 
-    expect(screen.getByRole('button', { name: 'Model parameters' })).toHaveAttribute('aria-current', 'step');
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(within(dialog).getByRole('button', { name: 'Model parameters' })).toHaveAttribute('aria-current', 'step');
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
 
-    expect(screen.getByRole('button', { name: 'MCP access' })).toHaveAttribute('aria-current', 'step');
-    expect(screen.getByRole('spinbutton', { name: 'Maximum tool-call rounds' })).toHaveValue(100);
-    expect(screen.getByRole('button', { name: 'Create assistant' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'MCP access' })).toHaveAttribute('aria-current', 'step');
+    expect(within(dialog).getByRole('spinbutton', { name: 'Maximum tool-call rounds' })).toHaveValue(100);
+    expect(within(dialog).getByRole('button', { name: 'Create assistant' })).toBeInTheDocument();
   });
 
   it('requires a name and model before advancing assistant creation', async () => {
-    renderChat(undefined, true, []);
+    const user = userEvent.setup();
+    renderChat(undefined, false, []);
+    await user.click(screen.getByRole('button', { name: 'Add assistant' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add assistant' });
 
-    const next = screen.getByRole('button', { name: 'Next' });
+    const next = within(dialog).getByRole('button', { name: 'Next' });
     expect(next).toBeDisabled();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Draft helper');
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Draft helper');
     expect(next).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
+    expect(within(dialog).getByRole('button', { name: 'Basic' })).toHaveAttribute('aria-current', 'step');
   });
 
-  it('prefills a selected market assistant template', async () => {
-    renderChat(undefined, true, undefined, {
-      releaseId: 'release-1',
-      name: 'Market researcher',
-      summary: 'Researches primary sources.',
-      tags: ['research'],
-      systemPrompt: 'Use primary sources.',
-      maxSteps: 12,
-      providerFormat: 'anthropic',
-      model: 'model-2',
-      deploymentIds: [],
-    });
 
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
-    expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Market template selected' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByRole('button', { name: 'Edit system prompt' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Edit system prompt' }));
-    expect(screen.getByRole('textbox', { name: 'System prompt' })).toHaveValue('Use primary sources.');
-  });
 
   it('shows unresolved market template MCP requirements before creation', async () => {
-    renderChat(undefined, true, undefined, {
+    const user = userEvent.setup();
+    const template = {
       releaseId: 'release-1',
       name: 'Market researcher',
       summary: null,
@@ -810,17 +460,22 @@ describe('WorkspaceAssistantChat', () => {
       model: null,
       deploymentIds: [],
       missingMcpNames: ['Search MCP'],
-    });
+    };
+    renderChat(undefined, false, undefined, null, [template]);
+    await user.click(screen.getByRole('button', { name: 'Add assistant' }));
+    let dialog = screen.getByRole('dialog', { name: 'Add assistant' });
+    await user.click(within(dialog).getByRole('button', { name: 'Choose from assistant market' }));
+    await user.click(within(dialog).getByRole('button', { name: /Market researcher/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Add assistant' });
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-
-    expect(screen.getByRole('alert')).toHaveTextContent('Required MCP servers are not installed: Search MCP.');
-    expect(screen.getByRole('link', { name: 'Browse MCP market' })).toHaveAttribute('href', '/app/acme/market/mcp');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Required MCP servers are not installed: Search MCP.');
+    expect(within(dialog).getByRole('link', { name: 'Browse MCP market' })).toHaveAttribute('href', '/app/acme/market/mcp');
   });
 
-  it('selects an assistant market template without leaving the creator', async () => {
+  it('selects a market template and prefills the assistant creator', async () => {
     const user = userEvent.setup();
     const template = {
       releaseId: 'release-1',
@@ -833,14 +488,19 @@ describe('WorkspaceAssistantChat', () => {
       model: 'model-2',
       deploymentIds: [],
     };
-    renderChat(undefined, true, undefined, null, [template]);
+    renderChat(undefined, false, undefined, null, [template]);
+    await user.click(screen.getByRole('button', { name: 'Add assistant' }));
+    let dialog = screen.getByRole('dialog', { name: 'Add assistant' });
+    await user.click(within(dialog).getByRole('button', { name: 'Choose from assistant market' }));
+    await user.click(within(dialog).getByRole('button', { name: /Market researcher/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Add assistant' });
 
-    expect(screen.queryByRole('link', { name: 'Choose from assistant market' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Choose from assistant market' }));
-    await user.click(screen.getByRole('button', { name: /Market researcher/ }));
-
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
-    expect(screen.getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
+    expect(within(dialog).getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Market template selected' })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Edit system prompt' }));
+    expect(within(dialog).getByRole('textbox', { name: 'System prompt' })).toHaveValue('Use primary sources.');
   });
 
   it('switches the active assistant model from the shared picker', async () => {
@@ -848,7 +508,7 @@ describe('WorkspaceAssistantChat', () => {
       status: 400,
       headers: { 'content-type': 'application/json' },
     }));
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     renderChat();
 
     await userEvent.click(screen.getByRole('button', { name: 'Model: model-1' }));
@@ -868,7 +528,7 @@ describe('WorkspaceAssistantChat', () => {
       status: 201,
       headers: { 'content-type': 'application/json' },
     }));
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     renderChat({
       activeMessageId: 'a1',
       branchCount: 1,
@@ -902,7 +562,7 @@ describe('WorkspaceAssistantChat', () => {
   it('locates an active-path node without issuing a branch switch', async () => {
     const fetchMock = vi.fn();
     const scrollIntoView = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    stubMutationFetch(fetchMock);
     Element.prototype.scrollIntoView = scrollIntoView;
     renderChat({
       activeMessageId: 'a1',

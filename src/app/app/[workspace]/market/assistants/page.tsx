@@ -1,3 +1,7 @@
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
@@ -7,7 +11,6 @@ import { listMarketListingCategories, listMarketListings } from '@/lib/market/li
 import { getWorkspaceForUser } from '@/lib/workspace/queries';
 import { DashboardEmptyState, DashboardPage, DashboardPagination } from '@/components/dashboard/DashboardUI';
 import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,17 +86,13 @@ export default async function AssistantMarketPage({
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
         <input type="hidden" name="category" value={category} />
-        <label className="relative min-w-0 flex-1">
-          <span className="sr-only">{t('searchAssistants')}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchAssistants')} className="ui-input ui-input-icon h-10 w-full" />
-        </label>
-        <NativeSelect name="sort" defaultValue={sort} aria-label={t('sortResources')} className="ui-input h-10 sm:w-40">
-          <option value="popular">{t('sortPopular')}</option>
-          <option value="newest">{t('sortNewest')}</option>
-          <option value="name">{t('sortName')}</option>
-        </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{t('applyFilters')}</button>
+        <div className="relative min-w-0 flex-1">
+          
+          
+          <Input label={t('searchAssistants')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchAssistants')} className="w-full" />
+        </div>
+        <FormSelect name="sort" defaultValue={sort} label={t('sortResources')} options={[{ value: "popular", label: t('sortPopular') }, { value: "newest", label: t('sortNewest') }, { value: "name", label: t('sortName') }]} className="sm:w-40" />
+        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{t('applyFilters')}</Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -115,7 +114,7 @@ export default async function AssistantMarketPage({
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
             <span>{t('assistantResultSummary', { count: result.total })}</span>
             {hasFilters ? (
-              <Link href={marketHref(slug, {})} className="font-medium text-foreground hover:underline">{t('clearFilters')}</Link>
+              <ButtonLink href={marketHref(slug, {})} variant="ghost" size="sm">{t('clearFilters')}</ButtonLink>
             ) : null}
           </div>
 
@@ -132,7 +131,7 @@ export default async function AssistantMarketPage({
                 const detailHref = `/app/${encodeURIComponent(slug)}/market/assistants/${encodeURIComponent(assistant.namespace)}/${encodeURIComponent(assistant.slug)}`;
                 const createHref = `/app/${encodeURIComponent(slug)}/chat?newAssistant=1&template=${encodeURIComponent(assistant.latestRelease.id)}`;
                 return (
-                  <article key={assistant.id} className="ui-panel flex min-w-0 flex-col p-4">
+                  <article key={assistant.id} className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
                     <div className="flex min-w-0 items-start gap-3">
                       {assistant.iconUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -152,13 +151,13 @@ export default async function AssistantMarketPage({
                     </p>
                     <div className="mt-3 flex min-h-7 flex-wrap gap-1.5">
                       {assistant.categories.slice(0, 3).map((item) => (
-                        <Link
+                        <ButtonLink
                           key={item.slug}
                           href={marketHref(slug, { q, sort, category: item.slug })}
-                          className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                          variant="ghost" size="sm"
                         >
                           {item.name}
-                        </Link>
+                        </ButtonLink>
                       ))}
                     </div>
                     <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
@@ -166,8 +165,8 @@ export default async function AssistantMarketPage({
                       <span className="inline-flex items-center gap-1"><Copy className="size-3.5" />{assistant.installCount}</span>
                     </div>
                     <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-4">
-                      <Link href={detailHref} className="ui-button-secondary h-9 min-w-0 px-3">{t('viewDetails')}<ArrowRight className="size-4" /></Link>
-                      <Link href={createHref} className="ui-button-primary h-9 min-w-0 px-3"><Plus className="size-4" />{t('createFromTemplate')}</Link>
+                      <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">{t('viewDetails')}<ArrowRight className="size-4" /></ButtonLink>
+                      <ButtonLink href={createHref} variant="primary" size="sm" className="min-w-0"><Plus className="size-4" />{t('createFromTemplate')}</ButtonLink>
                     </div>
                   </article>
                 );

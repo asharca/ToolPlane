@@ -1,3 +1,9 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { Button, ButtonLink } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+import { FormSelect } from '@/components/ui/FormSelect';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -15,7 +21,6 @@ import {
 } from '@/components/dashboard/DashboardUI';
 import { SubmitButton } from '@/components/dashboard/SubmitButton';
 import { MarketCategorySidebar } from '@/components/dashboard/market/MarketCategorySidebar';
-import { NativeSelect } from '@/components/ui/NativeSelect';
 import { formatInTimeZone, resolveUserTimeZone } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -100,24 +105,21 @@ export default async function ToolkitMarketPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-semibold text-foreground">{t('publicToolkits')}</h2>
         <div>
-          <Link href={`/app/${encodeURIComponent(slug)}/toolkits`} className="ui-button-ghost">
+          <ButtonLink href={`/app/${encodeURIComponent(slug)}/toolkits`} variant="ghost" size="md">
             {t('backToToolkits')}
-          </Link>
+          </ButtonLink>
         </div>
       </div>
 
       <form className="flex w-full flex-col gap-2 sm:flex-row">
         <input type="hidden" name="category" value={category} />
-        <label className="relative min-w-0 flex-1">
-          <span className="sr-only">{t('searchPublicToolkits')}</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input name="q" defaultValue={q} placeholder={t('searchPublicToolkits')} className="ui-input ui-input-icon h-10 w-full" />
-        </label>
-        <NativeSelect name="sort" defaultValue={sort} aria-label={marketT('sortResources')} className="ui-input h-10 sm:w-40">
-          <option value="newest">{marketT('sortNewest')}</option>
-          <option value="name">{marketT('sortName')}</option>
-        </NativeSelect>
-        <button className="ui-button-secondary h-10"><SlidersHorizontal className="size-4" />{marketT('applyFilters')}</button>
+        <div className="relative min-w-0 flex-1">
+          
+          
+          <Input label={t('searchPublicToolkits')} leftIcon={<Search />} name="q" defaultValue={q} placeholder={t('searchPublicToolkits')} className="w-full" />
+        </div>
+        <FormSelect name="sort" defaultValue={sort} label={marketT('sortResources')} options={[{ value: "newest", label: marketT('sortNewest') }, { value: "name", label: marketT('sortName') }]} className="sm:w-40" />
+        <Button variant="secondary" size="md" type="submit"><SlidersHorizontal className="size-4" />{marketT('applyFilters')}</Button>
       </form>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-[13.5rem_minmax(0,1fr)]">
@@ -152,7 +154,7 @@ export default async function ToolkitMarketPage({
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
                 {items.map((toolkit) => (
-                  <article key={toolkit.id} className="ui-panel flex min-w-0 flex-col p-4">
+                  <article key={toolkit.id} className="rounded-3xl border border-border bg-card flex min-w-0 flex-col p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -171,21 +173,21 @@ export default async function ToolkitMarketPage({
                           <h3 className="truncate font-semibold text-foreground">{toolkit.name}</h3>
                         )}
                       </div>
-                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                      <AnimatedBadge status="neutral" size="sm">
                         <Wrench className="size-3.5" />{toolkit.toolCount}
-                      </span>
+                      </AnimatedBadge>
                     </div>
 
                     {toolkit.categories.length > 0 ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {toolkit.categories.slice(0, 3).map((item) => (
-                          <Link
+                          <ButtonLink
                             key={item.slug}
                             href={marketHref(slug, { q, sort, category: item.slug })}
-                            className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                            variant="ghost" size="sm"
                           >
                             {item.name}
-                          </Link>
+                          </ButtonLink>
                         ))}
                       </div>
                     ) : null}
@@ -216,7 +218,7 @@ export default async function ToolkitMarketPage({
                       ) : (
                         <input type="hidden" name="toolkitId" value={toolkit.id} />
                       )}
-                      <SubmitButton className="ui-button-primary h-9 w-full" pendingLabel={t('importing')} flash={false}>
+                      <SubmitButton variant="primary" size="sm" className="w-full" pendingLabel={t('importing')} flash={false}>
                         <CopyPlus className="size-4" />{t('import')}
                       </SubmitButton>
                     </form>

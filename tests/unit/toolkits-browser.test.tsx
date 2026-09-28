@@ -30,12 +30,11 @@ const toolkits: ToolkitRow[] = [
 ];
 
 describe('ToolkitsBrowser', () => {
-  it('opens toolkit details from the full identity cell', () => {
+  it('opens toolkit details from the full identity cell', async () => {
     render(<ToolkitsBrowser slug="acme" toolkits={toolkits} />);
 
-    const link = screen.getByRole('link', { name: 'Research stack' });
+    const link = await screen.findByRole('link', { name: 'Research stack' });
     expect(link).toHaveAttribute('href', '/app/acme/toolkits/research-stack');
-    expect(link.parentElement).toHaveClass('p-0');
   });
 
   it('can open the create form from a market handoff', () => {
@@ -83,7 +82,7 @@ describe('ToolkitsBrowser', () => {
     for (const heading of ['Toolkit', 'Status', 'Tools', 'Created', 'Settings']) {
       expect(screen.getByRole('columnheader', { name: heading })).toBeInTheDocument();
     }
-    expect(screen.getByText('Private')).toBeInTheDocument();
+    expect(await screen.findByText('Private')).toBeInTheDocument();
     expect(screen.getByText('Public')).toBeInTheDocument();
     expect(screen.getByText('Enabled')).toBeInTheDocument();
     expect(screen.getByText('Disabled')).toBeInTheDocument();
@@ -93,10 +92,10 @@ describe('ToolkitsBrowser', () => {
     expect(screen.getByText('No toolkits match "missing".')).toBeInTheDocument();
   });
 
-  it('gives workspace managers direct, labelled availability controls', () => {
+  it('gives workspace managers direct, labelled availability controls', async () => {
     render(<ToolkitsBrowser slug="acme" toolkits={toolkits} canManagePublishing />);
 
-    expect(screen.getByRole('button', { name: 'Publish Research stack' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Publish Research stack' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Disable Research stack' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Make Public utilities private' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Enable Public utilities' })).toBeInTheDocument();

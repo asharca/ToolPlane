@@ -16,7 +16,7 @@ export const POST = withRequestLogging("/api/v1/agents/[agentId]/conversations/[
   const body = await req.json().catch(() => null);
   if (!body || typeof body.line !== 'string' || body.line.length > 2000 || Object.keys(body).some((key) => key !== 'line')) return Response.json({ error: 'invalidCommand' }, { status: 400 });
   try {
-    return Response.json(await executeRuntimeCommand({ workspaceId: agent.workspaceId, agentId, conversationId, line: body.line, signal: req.signal }));
+    return Response.json(await executeRuntimeCommand({ workspaceId: agent.workspaceId, agentId, conversationId, actorId: user.id, line: body.line, signal: req.signal }));
   } catch (error) {
     if (error instanceof RuntimeCommandError) return Response.json({ error: error.message }, { status: error.status });
     if (error instanceof ConversationOperationError) return Response.json({ error: error.code }, { status: error.status });

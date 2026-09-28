@@ -516,6 +516,7 @@ model ProviderModel {
   contextWindow   Int?
   maxInputTokens  Int?
   maxOutputTokens Int?
+  cost            Json?
   source          String        @default("remote")
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -1586,6 +1587,8 @@ model A2ATask {
   // Verified identity metadata only. Never a bearer token or provider credential.
   grant             Json
   leaseToken        String?
+  executionBackend  String       @default("legacy")
+  nativeOperationId String?
   cancelRequestedAt DateTime?
   deadlineAt        DateTime
   completedAt       DateTime?

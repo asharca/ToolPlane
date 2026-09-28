@@ -1,9 +1,8 @@
-import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentA2APanel } from '@/components/dashboard/agents/AgentA2APanel';
 import type { A2AConsoleView } from '@/lib/a2a/connection-info';
-vi.mock('@/components/dashboard/agents/AgentA2ARemotes', () => ({ AgentA2ARemotes: () => <div>Remote connections</div> }));
-vi.mock('@/components/dashboard/agents/AgentA2ATaskMonitor', () => ({ AgentA2ATaskMonitor: () => <div>Task tree</div> }));
+vi.mock('@/components/dashboard/agents/AgentA2ARemotes', () => ({ AgentA2ARemotes: () => <h3>Connect an external Agent</h3> }));
 vi.mock('@/components/dashboard/CopyButton', () => ({ CopyButton: ({ text, label }: { text: string; label: string }) => <button type="button" data-copy={text}>{label}</button> }));
 const view: A2AConsoleView = {
   canManage: true, local: { enabled: true, supported: true, ready: true },
@@ -19,33 +18,99 @@ beforeEach(() => {
   fetchMock.mockImplementation((_url, init) => init?.method === 'POST' ? json({ ok: true }) : json(current));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-const show = async () => { const rendered = render(<AgentA2APanel slug="team" agentId="agent" runtimeKind="pi" />); await screen.findByText('Connection details & examples'); return rendered; };
+const show = async (runtimeKind = 'pi') => { const rendered = render(<AgentA2APanel slug="team" agentId="agent" runtimeKind={runtimeKind} />); await screen.findByRole('heading', { name: 'Let external services call this Agent' }); return rendered; };
 const posts = () => fetchMock.mock.calls.filter((call) => call[1]?.method === 'POST');
 
 describe('Agent A2A console panel', () => {
+  it('opens ingress task history without requiring external A2A or submitting work', async () => {
+    current.local.enabled = false;
+    fetchMock.mockImplementation((url) => String(url).includes('/tasks?') ? json({
+      rootTaskId: 'entry-task', restricted: false,
+      nodes: [{ id: 'entry-task', parentTaskId: null, name: 'Pi', state: 'TASK_STATE_COMPLETED', phase: 'completed' }],
+      selectedTask: { id: 'entry-task', history: [{ messageId: 'result', role: 'ROLE_AGENT', parts: [{ text: 'Pi task result' }] }] },
+    }) : json(current));
+    render(<AgentA2APanel slug="team" agentId="agent" runtimeKind="pi" initialTaskId="entry-task" />);
+    expect(await screen.findByText('Pi task result')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Execution records / pending approvals' })).not.toBeInTheDocument();
+    expect(posts()).toHaveLength(0);
+  });
+  it('opens pending approvals from a task deep link without deciding automatically', async () => {
+    fetchMock.mockImplementation((url) => String(url).includes('/approvals?') ? json({
+      approvals: [{ id: 'approval', taskId: 'entry-task', toolName: 'write', input: { path: 'report.txt' }, inputHash: 'hash', status: 'pending', expiresAt: new Date(Date.now() + 60_000).toISOString() }],
+    }) : String(url).includes('/tasks?') ? json({
+      rootTaskId: 'entry-task', restricted: false,
+      nodes: [{ id: 'entry-task', parentTaskId: null, name: 'Pi', state: 'TASK_STATE_WORKING', phase: 'executing', pendingApprovals: 1 }],
+      selectedTask: { id: 'entry-task' },
+    }) : json(current));
+    render(<AgentA2APanel slug="team" agentId="agent" runtimeKind="pi" initialTaskId="entry-task" />);
+    expect(await screen.findByRole('button', { name: 'Deny' })).toBeEnabled();
+    expect(screen.getByRole('region', { name: 'Native tool approvals' })).toBeInTheDocument();
+    expect(posts()).toHaveLength(0);
+  });
   it('only reads settings on mount and keeps credentials out of generated examples', async () => {
     await show(); expect(posts()).toHaveLength(0);
     expect(screen.getAllByText('https://tp.example/local', { selector: 'code' })).toHaveLength(2);
     expect(screen.getAllByText(/TOOLPLANE_ACCOUNT_TOKEN/).length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /External A2A guide/ })).toHaveAttribute('rel', 'noopener noreferrer');
   });
-  it('disables admin controls for members while leaving local task submission available', async () => {
-    current.canManage = false; await show();
-    expect(screen.getByRole('button', { name: 'Disable internal A2A' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Create client & key' })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Task message / additional input'), { target: { value: 'Review' } });
-    expect(screen.getByRole('button', { name: 'Submit new task' })).toBeEnabled();
+  it('keeps internal selection and channel authorization without an execution playground', async () => {
+    current.endpoint = null;
+    current.channels = [{ id: 'channel', name: 'Operations', platform: 'telegram', enabled: true, mine: true }];
+    await show();
+    expect(screen.getByRole('heading', { name: 'Internal collaboration' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connect an external Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Let external services call this Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Configure allowed delegates' })).toHaveAttribute('href', '?settings=subAgents');
+    expect(screen.getByText(/only explicitly authorized targets/)).toBeInTheDocument();
+    expect(screen.getByText(/Never give your account token to third parties/)).toBeInTheDocument();
+    expect(screen.queryByText(/Publish an active isolated Hermes/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Published service' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Task message / additional input' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Execution records / pending approvals' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'External A2A & channel access' })).getByRole('heading', { name: 'Channel execution operator' })).toBeInTheDocument();
   });
-  it('requires explicit confirmation for access changes', async () => {
+  it('allows configuring internal delegates with external access disabled and no enablement prerequisite', async () => {
+    current.local.enabled = false;
+    await show();
+    const internal = screen.getByRole('region', { name: 'Internal collaboration' });
+    expect(within(internal).getByText(/Select sub-agents to allow internal delegation/)).toHaveTextContent('Neither this Agent nor the selected targets need an A2A switch enabled.');
+    expect(within(internal).getByRole('link', { name: 'Configure allowed delegates' })).toHaveAttribute('href', '?settings=subAgents');
+    expect(within(internal).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(internal).queryByText('Disabled')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'External A2A & channel access' })).getByRole('button', { name: 'Enable external & channel access' })).toBeEnabled();
+    expect(posts()).toHaveLength(0);
+  });
+  it('retains Hermes publication and dedicated service credentials', async () => {
+    await show('hermes');
+    expect(screen.getByRole('heading', { name: 'Published service' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disable external A2A' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Create client & key' })).toBeInTheDocument();
+    expect(screen.getByText(/Use a dedicated A2A service key/)).toBeInTheDocument();
+    expect(screen.getByText('https://tp.example/a2a', { selector: 'code' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'External A2A & channel access' }));
+    expect(screen.getByText(/Never give your account token to third parties/)).toBeInTheDocument();
+  });
+  it('disables admin controls for members while keeping integration documentation readable', async () => {
+    current.canManage = false; current.connections = null; await show();
+    expect(screen.getByRole('button', { name: 'Disable external & channel access' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Create client & key' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open API tokens' })).toHaveAttribute('href', '/app/team/settings/account?section=tokens');
+    fireEvent.click(screen.getByRole('button', { name: 'Troubleshooting' }));
+    expect(screen.getByRole('button', { name: 'Troubleshooting' })).toHaveAttribute('aria-expanded', 'true');
+    expect(posts()).toHaveLength(0);
+  });
+  it.each([false, true])('requires confirmation to change external access when enabled=%s', async (enabled) => {
+    current.local.enabled = enabled;
     await show(); vi.mocked(window.confirm).mockReturnValue(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Disable internal A2A' })); expect(posts()).toHaveLength(0);
+    const button = screen.getByRole('button', { name: enabled ? 'Disable external & channel access' : 'Enable external & channel access' });
+    fireEvent.click(button); expect(posts()).toHaveLength(0);
     vi.mocked(window.confirm).mockReturnValue(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Disable internal A2A' }));
+    fireEvent.click(button);
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(JSON.parse(posts()[0][1].body)).toEqual({ action: 'set-local', enabled: false });
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ action: 'set-local', enabled: !enabled });
   });
   it('preserves the one-time credential when a subsequent list refresh fails; no automatic retry', async () => {
-    await show();
+    await show('hermes');
     fetchMock.mockImplementation((_url, init) => init?.method === 'POST' ? json({ ok: true, token: 'tp_agent_ONE_TIME_FIXTURE' }) : json({}, 500));
     fireEvent.change(screen.getByLabelText('Client name'), { target: { value: 'integration' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create client & key' }));
@@ -58,20 +123,23 @@ describe('Agent A2A console panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Saved — hide key' }));
     expect(screen.queryByText('tp_agent_ONE_TIME_FIXTURE')).not.toBeInTheDocument();
   });
-  it('submits native SendMessage explicitly, without embedding an account token', async () => {
-    await show(); fetchMock.mockImplementation((_url, init) => init?.method === 'POST' ? json({ result: { task: { id: 'task-1', contextId: 'context-1', status: { state: 'TASK_STATE_SUBMITTED' } } } }) : json(current));
-    fireEvent.change(screen.getByLabelText('Task message / additional input'), { target: { value: 'Review this change' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit new task' }));
-    await screen.findByText('TASK_STATE_SUBMITTED');
-    const [url, init] = posts()[0]; expect(url).toMatch(/a2a\/console\/rpc$/);
-    expect(init.headers.authorization).toBeUndefined();
-    expect(JSON.parse(init.body)).toMatchObject({ method: 'SendMessage', params: { message: { role: 'ROLE_USER', parts: [{ text: 'Review this change' }] }, configuration: { returnImmediately: true } } });
-    expect(screen.getByText(/Task accepted, not completed/)).toBeInTheDocument();
-  });
-  it('shows protocol errors instead of claiming task completion', async () => {
-    await show(); fetchMock.mockImplementation((_url, init) => init?.method === 'POST' ? json({ error: { code: -32001 } }) : json(current));
-    fireEvent.change(screen.getByLabelText('Task message / additional input'), { target: { value: 'Review' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit new task' }));
-    await screen.findByRole('alert'); expect(screen.queryByText(/Task accepted, not completed/)).not.toBeInTheDocument();
+  it('switches credential documentation and copyable examples without submitting tasks', async () => {
+    await show('hermes');
+    expect(screen.queryByRole('link', { name: 'Open API tokens' })).not.toBeInTheDocument();
+    expect(screen.getByText("export TOOLPLANE_A2A_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Get Agent Card' })).getByText(/curl --fail-with-body/, { selector: 'pre' })).toBeVisible();
+    expect(screen.getByText(/"method": "SendMessage"/, { selector: 'pre' })).toBeVisible();
+    let code = screen.getByText(/"method": "SendMessage"/, { selector: 'pre' }).textContent!;
+    expect(code).toContain('$TOOLPLANE_A2A_TOKEN');
+    expect(code).not.toContain('$TOOLPLANE_ACCOUNT_TOKEN');
+    fireEvent.click(screen.getByRole('button', { name: 'External A2A & channel access' }));
+    expect(screen.getByRole('link', { name: 'Open API tokens' })).toHaveAttribute('target', '_blank');
+    expect(screen.getByText("export TOOLPLANE_ACCOUNT_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).toBeVisible();
+    expect(screen.queryByText("export TOOLPLANE_A2A_TOKEN='REPLACE_WITH_TOKEN'", { selector: 'pre' })).not.toBeInTheDocument();
+    code = screen.getByText(/"method": "SendMessage"/, { selector: 'pre' }).textContent!;
+    expect(code).toContain('$TOOLPLANE_ACCOUNT_TOKEN');
+    expect(code).not.toContain('$TOOLPLANE_A2A_TOKEN');
+    expect(JSON.parse(code.split("  -d '")[1].slice(0, -1))).toMatchObject({ method: 'SendMessage', params: { configuration: { returnImmediately: true } } });
+    expect(posts()).toHaveLength(0);
   });
 });

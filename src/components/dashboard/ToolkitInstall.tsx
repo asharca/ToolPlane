@@ -1,56 +1,24 @@
 'use client';
+import { Button } from '@/components/motion/button';
+
 
 import { useTranslations } from 'next-intl';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { RefreshCw, Link2, ExternalLink } from 'lucide-react';
 import { CopyButton } from './CopyButton';
 import { ToolkitInstallations } from './ToolkitInstallations';
-import {
-  buildDirectSnippet,
-  DIRECT_CLIENTS,
-  directClientLabel,
-  type DirectClient,
-} from '@/lib/plugin/direct-config';
-import {
-  INSTALL_CLIENTS,
-  installClientLabel,
-  type InstallClient,
-} from '@/lib/plugin/clients';
+import { buildDirectSnippet, DIRECT_CLIENTS, directClientLabel, type DirectClient } from '@/lib/plugin/direct-config';
+import { INSTALL_CLIENTS, installClientLabel, type InstallClient } from '@/lib/plugin/clients';
 
 type TabKey = 'auto-sync' | 'direct';
 
 const CLIENTS = DIRECT_CLIENTS.map((key) => ({ key, label: directClientLabel(key) }));
 const INSTALLERS = INSTALL_CLIENTS.map((key) => ({ key, label: installClientLabel(key) }));
 
-const pillBase =
-  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition-colors';
-const pillActive = 'bg-background text-foreground shadow-sm ring-1 ring-border/60';
-const pillIdle =
-  'text-muted-foreground hover:bg-accent/60 hover:text-foreground';
 const pillGroup =
-  'inline-flex items-center gap-1 rounded-full border border-border bg-muted p-1';
+  'flex flex-wrap items-center gap-1';
 const codeBlock =
   'overflow-x-auto whitespace-pre rounded-md border border-border bg-background p-3 font-mono text-xs text-foreground';
-
-function Pill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`${pillBase} ${active ? pillActive : pillIdle}`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export function ToolkitInstall({
   installUrl,
@@ -90,17 +58,17 @@ export function ToolkitInstall({
         : t('claudeAutoSyncDescription');
 
   return (
-    <div className="rounded-lg border border-sky-100 bg-sky-50 p-4 dark:border-sky-500/20 dark:bg-sky-500/10">
+    <div className="rounded-lg border border-border bg-card p-4 border-border bg-card">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className={pillGroup}>
-          <Pill active={tab === 'auto-sync'} onClick={() => setTab('auto-sync')}>
+          <Button onClick={() => setTab('auto-sync')} type="button" variant={tab === 'auto-sync' ? 'primary' : 'ghost'} size="sm">
             <RefreshCw className="size-3.5" />
             {t('autosync')}
-          </Pill>
-          <Pill active={tab === 'direct'} onClick={() => setTab('direct')}>
+          </Button>
+          <Button onClick={() => setTab('direct')} type="button" variant={tab === 'direct' ? 'primary' : 'ghost'} size="sm">
             <Link2 className="size-3.5" />
             {t('directConnection')}
-          </Pill>
+          </Button>
         </div>
         {tab === 'auto-sync' ? (
           <div className="flex items-center gap-2">
@@ -109,13 +77,9 @@ export function ToolkitInstall({
             </span>
             <div className={pillGroup}>
               {INSTALLERS.map((c) => (
-                <Pill
-                  key={c.key}
-                  active={autoClient === c.key}
-                  onClick={() => setAutoClient(c.key)}
-                >
+                <Button key={c.key} onClick={() => setAutoClient(c.key)} type="button" variant={autoClient === c.key ? 'primary' : 'ghost'} size="sm">
                   {c.label}
-                </Pill>
+                </Button>
               ))}
             </div>
           </div>
@@ -126,9 +90,9 @@ export function ToolkitInstall({
             </span>
             <div className={pillGroup}>
               {CLIENTS.map((c) => (
-                <Pill key={c.key} active={client === c.key} onClick={() => setClient(c.key)}>
+                <Button key={c.key} onClick={() => setClient(c.key)} type="button" variant={client === c.key ? 'primary' : 'ghost'} size="sm">
                   {c.label}
-                </Pill>
+                </Button>
               ))}
             </div>
           </div>
@@ -170,7 +134,7 @@ export function ToolkitInstall({
             </p>
             <CopyButton text={directSnippet} label={t('copy')} />
           </div>
-          <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+          <p className="mb-2 text-xs font-medium text-(--color-warning) dark:text-(--color-warning)">
             {t('directConnectionsExposeMcpToolsOnlyUseAutosyncToSyncSkillsToo')}
           </p>
           <pre className={codeBlock}>{directSnippet}</pre>
@@ -182,7 +146,7 @@ export function ToolkitInstall({
       )}
 
       <ToolkitInstallations mcpUrl={mcpUrl} />
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-sky-100 pt-3 dark:border-sky-500/20">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-primary pt-3 dark:border-primary">
         <p className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{t('uninstall')}</span> {t('removesManagedClientConfigLocalSyncedSkillsAndAllInstallKeysForThisToolkit')}
         </p>

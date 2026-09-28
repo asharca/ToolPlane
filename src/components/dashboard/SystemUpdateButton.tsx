@@ -1,10 +1,12 @@
 'use client';
+import { Button } from '@/components/motion/button';
+
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { MarkGithubIcon } from '@primer/octicons-react';
 import { useTranslations } from 'next-intl';
-import { Popover } from 'radix-ui';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/motion/popover';
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH = '/api/v1/admin/system/update?local=1';
 const RESTART_POLL_INTERVAL_MS = 1_500;
@@ -298,32 +300,18 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
   ];
 
   return (
-    <Popover.Root onOpenChange={(open) => {
+    <Popover side="bottom" align="end" onOpenChange={(open) => {
       if (open && !busy) void refresh();
     }}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          aria-label={triggerLabel}
-          title={triggerLabel}
-          className="ui-button-ghost ui-icon-button"
-        >
-          <span className="relative flex size-4">
-            {busy ? <RefreshCw className="size-4 animate-spin" /> : <MarkGithubIcon size={16} className="size-4" />}
-            {hasUpdate ? <span aria-hidden="true" className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-500" /> : null}
-          </span>
-        </button>
-      </Popover.Trigger>
+      <PopoverTrigger>
+        <Button type="button" aria-label={triggerLabel} title={triggerLabel} variant="ghost" size="icon"><span className="relative flex size-4">
+          {busy ? <RefreshCw className="size-4 animate-spin" /> : <MarkGithubIcon size={16} className="size-4" />}
+          {hasUpdate ? <span aria-hidden="true" className="absolute -right-1 -top-1 size-2 rounded-full bg-(--color-warning)" /> : null}
+        </span></Button>
+      </PopoverTrigger>
 
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          align="end"
-          sideOffset={8}
-          collisionPadding={8}
-          aria-label={settingsT('systemUpdate')}
-          className="z-50 w-80 max-w-[calc(100vw-1rem)] space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl outline-none"
-        >
+      
+        <PopoverContent className="w-80 max-w-[calc(100vw-1rem)] space-y-4 p-4">
           <div className="flex items-start gap-3">
             <div aria-live="polite" className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-foreground">{settingsT('systemUpdate')}</p>
@@ -334,16 +322,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
                 </p>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={busy}
-              aria-label={t('checkAndUpdate')}
-              title={t('checkAndUpdate')}
-              className="ui-button-ghost ui-icon-button shrink-0 disabled:cursor-wait disabled:opacity-60"
-            >
-              <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />
-            </button>
+            <Button type="button" onClick={refresh} disabled={busy} aria-label={t('checkAndUpdate')} title={t('checkAndUpdate')} variant="ghost" size="icon" className="shrink-0"><RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} /></Button>
           </div>
 
           {versionDetail ? (
@@ -379,7 +358,7 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
                     active ? 'font-medium text-foreground' : complete ? 'text-foreground' : 'text-muted-foreground'
                   }`}>
                     <span className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
-                      active ? 'bg-brand text-brand-foreground' : complete ? 'bg-brand-soft text-brand' : 'bg-muted text-muted-foreground'
+                      active ? 'bg-primary text-primary-foreground' : complete ? 'bg-muted text-primary' : 'bg-muted text-muted-foreground'
                     }`}>
                       {complete ? <Check className="size-3" /> : active ? <RefreshCw className="size-3 animate-spin" /> : index + 1}
                     </span>
@@ -391,26 +370,19 @@ export function SystemUpdateButton({ canInstall }: { canInstall: boolean }) {
           ) : null}
 
           {showUpdate ? (
-            <button
-              type="button"
-              onClick={runUpdate}
-              disabled={uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'}
-              className="ui-button-primary ui-button-sm w-full disabled:cursor-wait disabled:opacity-70"
-            >
-              {uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'
-                ? <RefreshCw className="size-3.5 animate-spin" />
-                : <Download className="size-3.5" />}
-              {uiState === 'updating'
-                ? t('updating')
-                : uiState === 'applying'
-                  ? t('applying')
-                  : uiState === 'restarting'
-                    ? t('restartingShort')
-                    : t('updateNow')}
-            </button>
+            <Button type="button" onClick={runUpdate} disabled={uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'} variant="primary" size="sm" className="w-full">{uiState === 'updating' || uiState === 'applying' || uiState === 'restarting'
+              ? <RefreshCw className="size-3.5 animate-spin" />
+              : <Download className="size-3.5" />}
+            {uiState === 'updating'
+              ? t('updating')
+              : uiState === 'applying'
+                ? t('applying')
+                : uiState === 'restarting'
+                  ? t('restartingShort')
+                  : t('updateNow')}</Button>
           ) : null}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      
+    </Popover>
   );
 }

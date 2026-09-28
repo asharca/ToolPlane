@@ -1,15 +1,18 @@
 'use client';
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+import { BouncyAccordion } from '@/components/motion/bouncy-accordion';
+
+import { FormSelect } from '@/components/ui/FormSelect';
+
+import { ButtonLink, Button } from '@/components/motion/button';
+
 
 import { useEffect, useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import Link from 'next/link';
+
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Box, Braces, Clock3, KeyRound, Loader2, Play, PlugZap, Power } from 'lucide-react';
-import { NativeSelect } from '@/components/ui/NativeSelect';
-import {
-  connectMcpInspectorAction,
-  runMcpInspectorToolAction,
-} from '@/lib/workspace/inspector-actions';
+import { connectMcpInspectorAction, runMcpInspectorToolAction } from '@/lib/workspace/inspector-actions';
 import { runMcpConsoleToolAction } from '@/lib/workspace/actions';
 import { startSandboxAction } from '@/lib/sandboxes/actions';
 
@@ -252,12 +255,9 @@ export function ToolPlayground({
           <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">{t('connectorCredentialsRequired')}</p>
         </div>
-        <Link
-          href={`/app/${encodeURIComponent(workspace)}/mcp/${encodeURIComponent(deploymentId)}?tab=variables`}
-          className="ui-button-secondary h-9"
-        >
+        <ButtonLink href={`/app/${encodeURIComponent(workspace)}/mcp/${encodeURIComponent(deploymentId)}?tab=variables`} variant="secondary" size="sm">
           {t('configureVariables')}
-        </Link>
+        </ButtonLink>
       </div>
     );
   }
@@ -269,9 +269,9 @@ export function ToolPlayground({
           <Box className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">{t('inspectorRequiresSandbox')}</p>
         </div>
-        <Link href={`/app/${encodeURIComponent(workspace)}/sandboxes`} className="ui-button-secondary h-9">
+        <ButtonLink href={`/app/${encodeURIComponent(workspace)}/sandboxes`} variant="secondary" size="sm">
           {t('createSandbox')}
-        </Link>
+        </ButtonLink>
       </div>
     );
   }
@@ -281,46 +281,21 @@ export function ToolPlayground({
       {!defaultRuntime ? <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-[15rem] flex-1 text-xs font-medium text-muted-foreground">
           {t('inspectorSandbox')}
-          <NativeSelect
-            value={sandboxId}
-            onChange={(event) => onSandboxChange(event.target.value)}
-            className="ui-input h-9 w-full text-foreground"
-            wrapperClassName="mt-1.5"
-          >
-            {sandboxes.map((sandbox) => (
-              <option key={sandbox.id} value={sandbox.id} disabled={!sandbox.networkEnabled}>
-                {sandbox.name} · {sandbox.kind}{sandbox.running ? '' : ` · ${t('sandboxStopped')}`}
-              </option>
-            ))}
-          </NativeSelect>
+          <FormSelect value={sandboxId} onValueChange={(value) => onSandboxChange(value)} label={t('inspectorSandbox')} options={sandboxes.map((sandbox) => ({ value: sandbox.id, label: `${sandbox.name} · ${sandbox.kind}${sandbox.running ? '' : ` · ${t('sandboxStopped')}`}`, disabled: !sandbox.networkEnabled }))} />
         </label>
         {selectedSandbox && !selectedSandbox.running ? (
-          <button
-            type="button"
-            onClick={startSelectedSandbox}
-            disabled={startingSandboxId === selectedSandbox.id}
-            className="ui-button-primary h-9 disabled:opacity-60"
-          >
-            {startingSandboxId === selectedSandbox.id
-              ? <Loader2 className="size-4 animate-spin" />
-              : <Power className="size-4" />}
-            {startingSandboxId === selectedSandbox.id ? t('startingSandbox') : t('startSandbox')}
-          </button>
+          <Button type="button" onClick={startSelectedSandbox} disabled={startingSandboxId === selectedSandbox.id} variant="primary" size="sm">{startingSandboxId === selectedSandbox.id
+            ? <Loader2 className="size-4 animate-spin" />
+            : <Power className="size-4" />}
+          {startingSandboxId === selectedSandbox.id ? t('startingSandbox') : t('startSandbox')}</Button>
         ) : (
-          <button
-            type="button"
-            onClick={connectInspector}
-            disabled={!selectedSandbox?.networkEnabled || connecting}
-            className="ui-button-primary h-9 disabled:opacity-60"
-          >
-            {connecting ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
-            {connecting ? t('connectingInspector') : t('connectInspector')}
-          </button>
+          <Button type="button" onClick={connectInspector} disabled={!selectedSandbox?.networkEnabled || connecting} variant="primary" size="sm">{connecting ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
+          {connecting ? t('connectingInspector') : t('connectInspector')}</Button>
         )}
       </div> : null}
 
       {error && !availableTools.length ? (
-        <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive-text">{error}</pre>
+        <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive">{error}</pre>
       ) : null}
 
       {!defaultRuntime && activeSandboxId !== sandboxId ? (
@@ -332,20 +307,7 @@ export function ToolPlayground({
       <nav aria-label={t('inspectorTools')} className="max-h-[min(24rem,50dvh)] min-w-0 space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:top-4 lg:self-start">
         <p className="mb-2 text-xs font-medium text-muted-foreground">{t('inspectorTools')}</p>
         {availableTools.map((tool) => (
-          <button
-            key={tool.name}
-            type="button"
-            onClick={() => onSelect(tool.name)}
-            aria-pressed={selected === tool.name}
-            title={tool.title ? `${tool.title} (${tool.name})` : tool.name}
-            className={`flex min-h-9 w-full min-w-0 items-center rounded-md px-2.5 py-1.5 text-left font-mono text-xs transition-colors ${
-              selected === tool.name
-                ? 'bg-muted font-semibold text-foreground'
-                : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-            }`}
-          >
-            <span className="truncate">{tool.title ?? tool.name}</span>
-          </button>
+          <Button key={tool.name} type="button" onClick={() => onSelect(tool.name)} aria-pressed={selected === tool.name} title={tool.title ? `${tool.title} (${tool.name})` : tool.name} variant={selected === tool.name ? "secondary" : "ghost"} size="sm"><span className="truncate">{tool.title ?? tool.name}</span></Button>
         ))}
       </nav>
 
@@ -354,12 +316,12 @@ export function ToolPlayground({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="break-all font-mono text-sm font-semibold text-foreground">{current?.name}</h3>
             {current?.annotations?.readOnlyHint ? (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{t('readOnlyTool')}</span>
+              <AnimatedBadge  status="neutral" size="sm" showIcon={false}>{t('readOnlyTool')}</AnimatedBadge>
             ) : null}
             {current?.annotations?.destructiveHint ? (
-              <span className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive-text">
+              <AnimatedBadge  status="danger" size="sm" showIcon={false}>
                 <AlertTriangle className="size-3" />{t('destructiveTool')}
-              </span>
+              </AnimatedBadge>
             ) : null}
           </div>
           {current?.description ? <p className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-6 text-muted-foreground">{current.description}</p> : null}
@@ -386,22 +348,13 @@ export function ToolPlayground({
 
         <div>
           <label htmlFor={argumentsId} className="mb-1.5 block text-xs font-medium text-muted-foreground">{t('argumentsJson')}</label>
-          <textarea
-            id={argumentsId}
-            value={args}
-            onChange={(e) => setArgs(e.target.value)}
-            spellCheck={false}
-            rows={Math.min(12, Math.max(5, args.split('\n').length))}
-            className="ui-input h-auto max-h-[50dvh] resize-y overflow-auto overscroll-contain p-3 font-mono text-xs"
-          />
+          <textarea id={argumentsId} value={args} onChange={(e) => setArgs(e.target.value)} spellCheck={false} rows={Math.min(12, Math.max(5, args.split('\n').length))} className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring max-h-[50dvh]" />
         </div>
 
-        <button type="button" onClick={run} disabled={loading || !selected} className="ui-button-primary disabled:opacity-60">
-          {loading ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-          {t('runTool')}
-        </button>
+        <Button type="button" onClick={run} disabled={loading || !selected} variant="primary" size="md">{loading ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+        {t('runTool')}</Button>
 
-        {error ? <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive-text">{error}</pre> : null}
+        {error ? <pre role="alert" className="overflow-x-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive">{error}</pre> : null}
         {result !== null ? (
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">{t('toolResult')}</p>
@@ -409,11 +362,7 @@ export function ToolPlayground({
           </div>
         ) : null}
         {log ? (
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground">
-              <Clock3 className="size-3.5" />{t('requestLog')} · {log.durationMs} ms
-            </summary>
-            <div className="mt-3 grid min-w-0 gap-4 xl:grid-cols-2">
+          <BouncyAccordion items={[{ id: 'details', title: <><Clock3 className="size-3.5" />{t('requestLog')} · {log.durationMs} ms</>, description: <><div className="mt-3 grid min-w-0 gap-4 xl:grid-cols-2">
               <div className="min-w-0">
                 <p className="mb-1.5 text-xs font-medium text-muted-foreground">{t('request')}</p>
                 <pre className="max-h-72 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">{JSON.stringify(log.request, null, 2)}</pre>
@@ -422,8 +371,7 @@ export function ToolPlayground({
                 <p className="mb-1.5 text-xs font-medium text-muted-foreground">{t('response')}</p>
                 <pre className="max-h-72 overflow-auto rounded-md bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground">{JSON.stringify(log.response, null, 2)}</pre>
               </div>
-            </div>
-          </details>
+            </div></> }]} />
         ) : null}
       </div>
       </div>

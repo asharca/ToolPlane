@@ -60,16 +60,14 @@ ordered with incoming messages for the same chat. `/new` switches subsequent
 messages to a new conversation without deleting the previous history; `/help`
 and `/whoami` do not add model context.
 The channel configuration dialog lists these commands. `/new` is channel-only;
-the Work composer uses the **New task** action instead.
+new Work sessions can be started from the Agent sidebar.
 
-The existing Agent Work header also provides Compact context and New channel
-conversation controls. Normal Work chats retain their own New work control.
-Operations never send console text as a channel message or move the user into
-the assistant interface.
+The Agent sidebar retains its New work control. Operations never send console
+text as a channel message or move the user into the assistant interface.
 
-The Work composer shares one six-item menu between `+` and `/`: attachments,
-saved prompt management, MCP prompts, MCP resources, user-invocable attached
-skills, and New task. Its placeholder explains `/` and `@`. `@` searches files
+The Work composer shares one five-item menu between `+` and `/`: attachments,
+saved prompt management, MCP prompts, MCP resources, and user-invocable attached
+skills. New task is not offered in the menu or pinned toolbar. `@` searches files
 and conversations in the current sandbox, including its channel histories;
 the current conversation is excluded. Reference reads verify workspace, Agent,
 and sandbox ownership. Selected references are removable chips, are persisted

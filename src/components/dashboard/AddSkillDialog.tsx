@@ -1,24 +1,14 @@
 'use client';
+import { Input } from '@/components/motion/input';
+import { Button } from '@/components/motion/button';
+import { CenterMorphModal, CenterMorphModalTrigger, CenterMorphModalContent } from '@/components/motion/center-morph-modal';
+
 
 import { useTranslations } from 'next-intl';
 import { useActionState, useState } from 'react';
-import { Plus, X, FileText, GitBranch, Upload } from 'lucide-react';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog';
+import { Plus, FileText, GitBranch, Upload } from 'lucide-react';
 import { createCustomSkillAction, importSkillFromGithubAction, uploadSkillFolderAction } from '@/lib/skills/actions';
-import {
-  DEFAULT_SKILL_IMPORT_SKILLS,
-  MAX_SKILL_FILE_BYTES,
-  MAX_SKILL_IMPORT_BYTES,
-  MAX_SKILL_IMPORT_FILES,
-} from '@/lib/skills/limits';
+import { DEFAULT_SKILL_IMPORT_SKILLS, MAX_SKILL_FILE_BYTES, MAX_SKILL_IMPORT_BYTES, MAX_SKILL_IMPORT_FILES } from '@/lib/skills/limits';
 
 type Mode = 'menu' | 'create' | 'github' | 'upload';
 type FolderSelection = {
@@ -29,7 +19,6 @@ type FolderSelection = {
   error: string | null;
 };
 
-const field = 'ui-input';
 const emptySelection: FolderSelection = { paths: [], skillRoots: [], count: 0, bytes: 0, error: null };
 const directoryInputProps = {
   directory: '',
@@ -73,11 +62,9 @@ function GithubImportForm({ slug }: { slug: string }) {
   return (
     <form action={formAction} className="space-y-3">
       <input type="hidden" name="workspace" value={slug} />
-      <input name="repo" required placeholder="https://github.com/org/skills" className={`${field} font-mono`} />
-      {state.error ? <p className="text-sm text-red-600 dark:text-red-300" role="alert">{state.error}</p> : null}
-      <button type="submit" disabled={isPending} className="ui-button-primary w-full disabled:cursor-wait disabled:opacity-70">
-        {isPending ? t('importing') : t('import')}
-      </button>
+      <Input label={t('importFromGithub')} name="repo" required placeholder="https://github.com/org/skills" />
+      {state.error ? <p className="text-sm text-destructive dark:text-destructive" role="alert">{state.error}</p> : null}
+      <Button type="submit" disabled={isPending} variant="primary" size="md" className="w-full">{isPending ? t('importing') : t('import')}</Button>
     </form>
   );
 }
@@ -120,43 +107,32 @@ export function AddSkillDialog({
   const displayedSkillRoots = displaySkillRoots(folder.skillRoots);
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
-      <DialogTrigger asChild>
-        <button type="button" className="ui-button-primary">
-          <Plus className="size-4" /> {t('addSkill')}
-        </button>
-      </DialogTrigger>
+    <CenterMorphModal open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : close()}>
+      <CenterMorphModalTrigger>
+        <Button type="button" variant="primary" size="md"><Plus className="size-4" /> {t('addSkill')}</Button>
+      </CenterMorphModalTrigger>
 
-      <DialogPortal>
-        <DialogOverlay className="!bg-black/40" />
-        <DialogContent aria-describedby={undefined} className="ui-panel !block !gap-0 w-full max-w-md !p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <DialogTitle className="text-lg font-semibold text-foreground">{t('addASkill')}</DialogTitle>
-                  <DialogClose asChild>
-                    <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t('close')}><X className="size-5" /></button>
-                  </DialogClose>
+      
+        
+        <CenterMorphModalContent ariaLabel={t('addASkill')} closeButtonLabel={t('close')} className="w-full max-w-xl p-6">
+                <div className="mb-4 flex items-center pr-10">
+                  <h2 className="text-lg font-semibold text-foreground">{t('addASkill')}</h2>
                 </div>
 
                 {mode === 'menu' ? (
                   <div className="space-y-2">
-                    <button type="button" onClick={() => setMode('github')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
-                      <GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span>
-                    </button>
-                    <button type="button" onClick={() => setMode('upload')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
-                      <Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span>
-                    </button>
-                    <button type="button" onClick={() => setMode('create')} className="flex w-full items-center gap-3 rounded-lg border border-border p-3 text-left hover:bg-muted">
-                      <FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span>
-                    </button>
+                    <Button type="button" onClick={() => setMode('github')} variant="secondary" size="lg" className="w-full justify-start text-left"><GitBranch className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('importFromGithub')}</span><span className="block text-xs text-muted-foreground">{t('pullASkillmdFromARepo')}</span></span></Button>
+                    <Button type="button" onClick={() => setMode('upload')} variant="secondary" size="md" className="flex w-full items-center text-left"><Upload className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('uploadAFolder')}</span><span className="block text-xs text-muted-foreground">{t('dragInASkillFolder')}</span></span></Button>
+                    <Button type="button" onClick={() => setMode('create')} variant="secondary" size="md" className="flex w-full items-center text-left"><FileText className="size-5 text-muted-foreground" /><span><span className="block text-sm font-medium">{t('createNew')}</span><span className="block text-xs text-muted-foreground">{t('startFromABlankSkillmd')}</span></span></Button>
                   </div>
                 ) : null}
 
                 {mode === 'create' ? (
                   <form action={createCustomSkillAction} className="space-y-3">
                     <input type="hidden" name="workspace" value={slug} />
-                    <input name="name" required placeholder={t('myAwesomeSkill')} className={field} />
-                    <input name="description" placeholder={t('summarizeThisSkillsPurpose')} className={field} />
-                    <button type="submit" className="ui-button-primary w-full">{t('createSkill')}</button>
+                    <Input label={t('skillName')} name="name" required placeholder={t('myAwesomeSkill')} />
+                    <Input label={t('summarizeThisSkillsPurpose')} name="description" placeholder={t('summarizeThisSkillsPurpose')} />
+                    <Button type="submit" variant="primary" size="md" className="w-full">{t('createSkill')}</Button>
                   </form>
                 ) : null}
 
@@ -168,12 +144,7 @@ export function AddSkillDialog({
                   <form action={uploadSkillFolderAction} encType="multipart/form-data" className="space-y-3">
                     <input type="hidden" name="workspace" value={slug} />
                     <input type="hidden" name="filePaths" value={JSON.stringify(folder.paths)} />
-                    <input
-                      name="name"
-                      disabled={folder.skillRoots.length > 1}
-                      placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')}
-                      className={`${field} disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground`}
-                    />
+                    <Input name="name" disabled={folder.skillRoots.length > 1} placeholder={folder.skillRoots.length > 1 ? t('namesComeFromEachSkillFolder') : t('skillName')} />
                     <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 px-4 py-5 text-center transition-colors hover:bg-muted">
                       <Upload className="size-5 text-muted-foreground" />
                       <span className="text-sm font-medium text-foreground">{t('uploadAFolder')}</span>
@@ -187,7 +158,7 @@ export function AddSkillDialog({
                         className="sr-only"
                       />
                     </label>
-                    <p className={`text-xs ${folder.error ? 'text-red-600 dark:text-red-300' : 'text-muted-foreground'}`}>
+                    <p className={`text-xs ${folder.error ? 'text-destructive dark:text-destructive' : 'text-muted-foreground'}`}>
                       {folder.error ?? `${folder.count} ${t('filesSelected')} · ${formatBytes(folder.bytes)}`}
                     </p>
                     {displayedSkillRoots.length > 0 ? (
@@ -209,11 +180,11 @@ export function AddSkillDialog({
                         ) : null}
                       </div>
                     ) : null}
-                    <button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} className="ui-button-primary w-full disabled:opacity-50">{t('upload')}</button>
+                    <Button type="submit" disabled={folder.count === 0 || Boolean(folder.error)} variant="primary" size="md" className="w-full">{t('upload')}</Button>
                   </form>
                 ) : null}
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+        </CenterMorphModalContent>
+      
+    </CenterMorphModal>
   );
 }

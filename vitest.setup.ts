@@ -3,6 +3,26 @@ import '@testing-library/jest-dom/vitest';
 import { vi } from 'vitest';
 import messages from './messages/en.json';
 
+if (typeof window !== 'undefined') {
+  window.matchMedia ??= (query: string) => ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false });
+  Element.prototype.scrollIntoView ??= function () {};
+  globalThis.ResizeObserver ??= class implements ResizeObserver {
+    private targets = new Set<Element>();
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      this.targets.add(target);
+      queueMicrotask(() => {
+        if (!this.targets.has(target)) return;
+        const rect = target.getBoundingClientRect();
+        const size = { inlineSize: rect.width || (target instanceof HTMLElement ? Number.parseFloat(target.style.width) || 0 : 0), blockSize: rect.height || (target instanceof HTMLElement ? Number.parseFloat(target.style.height) || 0 : 0) };
+        this.callback([{ target, contentRect: rect, borderBoxSize: [size], contentBoxSize: [size], devicePixelContentBoxSize: [size] }], this);
+      });
+    }
+    unobserve(target: Element) { this.targets.delete(target); }
+    disconnect() { this.targets.clear(); }
+  };
+}
+
 function lookupMessage(path: string) {
   return path.split('.').reduce<unknown>((value, segment) => {
     if (!value || typeof value !== 'object') return undefined;

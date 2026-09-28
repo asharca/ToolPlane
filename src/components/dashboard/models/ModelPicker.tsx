@@ -1,28 +1,25 @@
 'use client';
 
+import { Button } from '@/components/motion/button';
+import { Input } from '@/components/motion/input';
+
 import {
   useCallback,
+  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
-  type ReactNode,
+  type ReactElement,
 } from 'react';
 import { useTranslations } from 'next-intl';
-import { Popover } from 'radix-ui';
+import { MorphPopover, MorphPopoverTrigger, MorphPopoverContent } from '@/components/motion/popover-morph';
 import {
-  ArrowUpDown,
-  AudioLines,
-  Boxes,
-  BrainCircuit,
-  Eye,
-  Image as ImageIcon,
+  ChevronDown,
   Loader2,
   Search,
   Settings2,
-  Type,
-  Video,
-  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -36,6 +33,7 @@ export type ModelRecordOption = {
   primaryType: string;
   capabilities?: string[];
   inputModalities?: string[];
+  cost?: unknown;
 };
 
 export type ModelProviderOption = {
@@ -50,20 +48,6 @@ export type ModelSelection = {
   model: string;
 };
 
-function ModelTypeIcon({ type }: { type: ModelPrimaryType }) {
-  if (type === 'image') return <ImageIcon className="size-3" />;
-  if (type === 'embedding') return <Boxes className="size-3" />;
-  if (type === 'rerank') return <ArrowUpDown className="size-3" />;
-  return <Type className="size-3" />;
-}
-
-function ModelTag({ label, className, children }: { label: string; className: string; children: ReactNode }) {
-  return (
-    <span aria-hidden="true" title={label} className={`inline-flex size-5 shrink-0 items-center justify-center rounded ${className}`}>
-      {children}
-    </span>
-  );
-}
 
 export function ModelPicker({
   providers,
@@ -81,7 +65,7 @@ export function ModelPicker({
   providers: ModelProviderOption[];
   value: ModelSelection | null;
   onSelect: (selection: ModelSelection) => void;
-  trigger: ReactNode;
+  trigger: ReactElement;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   pending?: boolean;
@@ -92,10 +76,42 @@ export function ModelPicker({
 }) {
   const t = useTranslations('console.agents');
   const [internalOpen, setInternalOpen] = useState(false);
+  const common = useTranslations('common');
   const [search, setSearch] = useState('');
+  const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(() => new Set());
   const contentRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [placement, setPlacement] = useState<{ side: 'top' | 'bottom'; align: 'start' | 'end'; width: number; height: number }>({ side: 'bottom', align: 'start', width: 320, height: 384 });
   const open = controlledOpen ?? internalOpen;
+  useLayoutEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const above = rect.top - 16;
+      const below = window.innerHeight - rect.bottom - 16;
+      const align = rect.left + rect.width / 2 <= window.innerWidth / 2 ? 'start' : 'end';
+      setPlacement({
+        side: below >= above ? 'bottom' : 'top',
+        align,
+        width: Math.min(320, align === 'start' ? window.innerWidth - rect.left - 8 : rect.right - 8),
+        height: Math.min(384, Math.max(above, below)),
+      });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
   const selected = pending && pendingValue ? pendingValue : value;
   const selectedKey = selected ? `${selected.providerId}\0${selected.model}` : '';
   const typeLabels: Record<ModelPrimaryType, string> = {
@@ -107,7 +123,12 @@ export function ModelPicker({
 
   const setOpen = useCallback((nextOpen: boolean) => {
     if (controlledOpen === undefined) setInternalOpen(nextOpen);
-    if (!nextOpen) setSearch('');
+    if (!nextOpen) {
+      setSearch('');
+      if (contentRef.current?.contains(document.activeElement)) {
+        anchorRef.current?.querySelector<HTMLElement>('[aria-haspopup="dialog"]')?.focus();
+      }
+    }
     onOpenChange?.(nextOpen);
   }, [controlledOpen, onOpenChange]);
 
@@ -132,13 +153,13 @@ export function ModelPicker({
     if (!list) return;
     window.requestAnimationFrame(() => {
       const option = list.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
-      if (option) list.scrollTop = option.offsetTop - list.offsetTop - 28;
+      if (option) list.scrollTop += option.getBoundingClientRect().top - list.getBoundingClientRect().top;
     });
   }, []);
 
   const handleOptionKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp'].includes(event.key)) return;
-    const options = Array.from(contentRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? []);
+    const options = Array.from(contentRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? []).filter((option) => !option.closest('[inert]'));
     if (!options.length) return;
     event.preventDefault();
     const index = options.indexOf(event.currentTarget);
@@ -151,68 +172,71 @@ export function ModelPicker({
   }, []);
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>{trigger}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          ref={contentRef}
-          side="bottom"
-          align="start"
-          sideOffset={4}
-          collisionPadding={12}
-          aria-label={t('modelConfiguration')}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            searchRef.current?.focus();
-          }}
-          className="z-[60] flex h-[440px] max-h-[var(--radix-popover-content-available-height)] w-[400px] max-w-[calc(100vw-1rem)] origin-[var(--radix-popover-content-transform-origin)] flex-col overflow-hidden rounded-lg border-[0.5px] border-border bg-popover pt-1 text-popover-foreground shadow-lg outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
-        >
-          <div className="flex h-9 shrink-0 items-center border-b border-border px-3">
+    <span ref={anchorRef} className="inline-flex max-w-full min-w-0">
+    <MorphPopover open={open} onOpenChange={setOpen} className="max-w-full min-w-0">
+      <MorphPopoverTrigger>{trigger}</MorphPopoverTrigger>
+      <MorphPopoverContent side={placement.side} align={placement.align} className="max-w-[calc(100vw-1rem)]">
+        <div ref={contentRef} style={{ width: placement.width, height: placement.height }} className="flex max-w-full min-w-0 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2.5 py-2">
             <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <Input leftIcon={<Search />}
+                rightIcon={search ? (
+                  <Button type="button" variant="ghost" size="icon" aria-label={t('clearModelSearch')} onMouseDown={(event) => event.preventDefault()} onClick={() => { setSearch(''); searchRef.current?.focus(); }}>
+                    <X className="size-2.5" />
+                  </Button>
+                ) : undefined}
                 ref={searchRef}
                 type="text"
                 value={search}
-                autoFocus
                 spellCheck={false}
                 aria-label={t('searchModels')}
                 placeholder={t('searchModels')}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(value) => setSearch(value)}
                 onKeyDown={(event) => {
                   if (!['ArrowDown', 'PageDown'].includes(event.key)) return;
                   event.preventDefault();
-                  contentRef.current?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)')?.focus();
+                  Array.from(contentRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? []).find((option) => !option.closest('[inert]'))?.focus();
                 }}
-                className="h-7 w-full border-0 bg-transparent py-0 pl-5 pr-6 text-xs leading-7 text-foreground outline-none placeholder:text-muted-foreground"
+                className="w-full"
+                classNames={{ root: 'min-w-0', field: 'h-8 shrink-0 rounded-lg', input: 'min-w-0 text-xs text-left' }}
               />
-              {search ? (
-                <button
-                  type="button"
-                  aria-label={t('clearModelSearch')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    setSearch('');
-                    searchRef.current?.focus();
-                  }}
-                  className="absolute right-0 top-1/2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                >
-                  <X className="size-2.5" />
-                </button>
-              ) : null}
             </div>
+            <Button type="button" variant="ghost" size="icon" aria-label={common('close')} onClick={() => setOpen(false)} className="size-7 shrink-0 rounded-lg text-muted-foreground"><X className="size-3.5" /></Button>
           </div>
 
-          <div ref={setListElement} className="min-h-0 flex-1 overflow-y-auto pb-1" role="listbox" aria-label={t('selectModel')}>
-            {visibleProviders.length ? visibleProviders.map((provider) => (
+          <div role="listbox" aria-label={t('selectModel')} className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-1.5">
+            {visibleProviders.length ? visibleProviders.map((provider) => {
+              const expanded = Boolean(search.trim()) || !collapsedProviders.has(provider.id);
+              return (
               <div key={provider.id} role="group" aria-label={provider.name}>
-                <div className="sticky top-0 z-10 flex h-7 items-center bg-popover px-4 text-[11px] text-muted-foreground">
-                  <span className="truncate">{provider.name}</span>
-                </div>
+                <button type="button" aria-label={provider.name} aria-expanded={expanded}
+                  aria-controls={`model-provider-${encodeURIComponent(provider.id)}`}
+                  onClick={() => setCollapsedProviders((current) => {
+                    const next = new Set(current);
+                    if (next.has(provider.id)) next.delete(provider.id); else next.add(provider.id);
+                    return next;
+                  })}
+                  className="group flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded-md bg-card px-2 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                  <span className="min-w-0 flex-1 truncate" title={provider.name}>{provider.name}</span>
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-background px-1.5 text-[10px] font-normal tabular-nums text-muted-foreground">{provider.models.length}</span>
+                  <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none ${expanded ? '' : '-rotate-90'}`} />
+                </button>
+                <div id={`model-provider-${encodeURIComponent(provider.id)}`}
+                  aria-hidden={!expanded} inert={!expanded}
+                  className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+                <div className="min-h-0 overflow-hidden">
+                <div ref={setListElement} className="relative max-h-40 overflow-y-auto overscroll-contain pt-1">
                 {provider.models.map((model) => {
                   const key = `${provider.id}\0${model}`;
                   const isSelected = selectedKey === key;
                   const record = provider.records.get(model);
+                  const cost = record?.cost;
+                  const price = (field: 'input' | 'output') => {
+                    const rate = cost && typeof cost === 'object' ? (cost as Record<string, unknown>)[field] : null;
+                    return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? String(rate) : null;
+                  };
+                  const inputPrice = price('input');
+                  const outputPrice = price('output');
                   const primaryType = MODEL_PRIMARY_TYPES.includes(record?.primaryType as ModelPrimaryType)
                     ? record?.primaryType as ModelPrimaryType
                     : inferModelPrimaryType(model);
@@ -226,69 +250,61 @@ export function ModelPicker({
                   ];
                   const descriptionId = `model-option-${encodeURIComponent(provider.id)}-${encodeURIComponent(model)}-description`;
                   return (
-                    <div key={key} className="px-1 py-0.5">
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={isSelected}
-                        disabled={pending}
-                        aria-label={model}
-                        aria-describedby={descriptionId}
-                        onClick={() => {
-                          onSelect({ providerId: provider.id, model });
-                          if (closeOnSelect) setOpen(false);
-                        }}
-                        onKeyDown={handleOptionKeyDown}
-                        className={`group relative flex h-8 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors disabled:cursor-wait disabled:opacity-60 ${isSelected ? 'bg-accent/70 text-accent-foreground' : 'text-foreground hover:bg-accent/60 focus:bg-accent/60 focus:outline-none'}`}
-                      >
-                        {isSelected ? <span aria-hidden="true" className="absolute left-0 top-1/2 h-[60%] w-[3px] -translate-y-1/2 rounded-full bg-primary" /> : null}
-                        <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
-                          {provider.name.charAt(0).toUpperCase() || 'M'}
+                    <div key={key} className="px-0.5 py-0.5">
+                      <Button type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      disabled={pending}
+                      aria-label={model}
+                      aria-describedby={descriptionId}
+                      onClick={() => {
+                        onSelect({ providerId: provider.id, model });
+                        if (closeOnSelect) setOpen(false);
+                      }}
+                      onKeyDown={handleOptionKeyDown}
+                      variant={isSelected ? 'secondary' : 'ghost'} size="md" className="h-8 w-full min-w-0 justify-start items-center gap-2 rounded-lg px-2 py-1 text-left">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium" title={`${model} — ${labels.join(', ')}`}>{model}</span>
+                      <span id={descriptionId} className="sr-only">{labels.join(', ')}{inputPrice !== null ? `; ${t('catalogInputPrice')} ${inputPrice} $/M` : ''}{outputPrice !== null ? `; ${t('catalogOutputPrice')} ${outputPrice} $/M` : ''}</span>
+                      {inputPrice !== null || outputPrice !== null ? (
+                        <span aria-hidden="true" title={`${t('catalogInputPrice')} / ${t('catalogOutputPrice')} · $/M`} className="shrink-0 whitespace-nowrap text-[10px] leading-4 text-muted-foreground tabular-nums">
+                          {inputPrice !== null ? `${inputPrice}$↓` : null}
+                          {inputPrice !== null && outputPrice !== null ? <span className="px-0.5 text-muted-foreground/50">/</span> : null}
+                          {outputPrice !== null ? `${outputPrice}$↑` : null}
                         </span>
-                        <span className="min-w-0 flex-1 truncate" title={model}>{model}</span>
-                        <span id={descriptionId} className="sr-only">{labels.join(', ')}</span>
-                        <span className="flex shrink-0 items-center gap-1">
-                          <span aria-hidden="true" title={typeLabels[primaryType]} className="inline-flex h-5 shrink-0 items-center gap-1 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
-                            <ModelTypeIcon type={primaryType} />
-                            {typeLabels[primaryType]}
-                          </span>
-                          {record?.capabilities?.includes('reasoning') ? <ModelTag label={t('capabilityReasoning')} className="bg-amber-500/10 text-amber-700 dark:text-amber-300"><BrainCircuit className="size-3" /></ModelTag> : null}
-                          {record?.capabilities?.includes('function_calling') ? <ModelTag label={t('capabilityTools')} className="bg-blue-500/10 text-blue-700 dark:text-blue-300"><Wrench className="size-3" /></ModelTag> : null}
-                          {record?.inputModalities?.includes('image') ? <ModelTag label={t('modalityVision')} className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"><Eye className="size-3" /></ModelTag> : null}
-                          {record?.inputModalities?.includes('audio') ? <ModelTag label={t('modalityAudio')} className="bg-rose-500/10 text-rose-700 dark:text-rose-300"><AudioLines className="size-3" /></ModelTag> : null}
-                          {record?.inputModalities?.includes('video') ? <ModelTag label={t('modalityVideo')} className="bg-violet-500/10 text-violet-700 dark:text-violet-300"><Video className="size-3" /></ModelTag> : null}
-                        </span>
-                        {pending && pendingValue?.providerId === provider.id && pendingValue.model === model
-                          ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                          : null}
-                      </button>
+                      ) : null}
+                      {pending && pendingValue?.providerId === provider.id && pendingValue.model === model
+                        ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                        : null}</Button>
                     </div>
                   );
                 })}
+                </div>
+                </div>
+                </div>
               </div>
-            )) : (
+              );
+            }) : (
               <div className="flex h-full items-center justify-center px-3 py-4 text-xs text-muted-foreground">
                 {t('noMatchingModels')}
               </div>
             )}
           </div>
 
-          {error ? <p role="alert" className="mx-2 mb-1 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p> : null}
+          {error ? <p role="alert" className="shrink-0 px-4 py-2 text-sm text-destructive">{error}</p> : null}
           {onConfigure ? (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onConfigure();
-              }}
-              className="flex w-full shrink-0 items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-            >
-              <Settings2 className="size-3.5" />
-              <span className="min-w-0 flex-1 truncate">{t('configureModelProviders')}</span>
-            </button>
+            <footer className="shrink-0 border-t border-border/60 p-1.5">
+            <Button type="button"
+            onClick={() => {
+              setOpen(false);
+              onConfigure();
+            }}
+            variant="ghost" size="sm" className="h-8 w-full justify-start gap-1.5 rounded-lg px-2 text-left text-xs text-muted-foreground"><Settings2 className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{t('configureModelProviders')}</span></Button>
+            </footer>
           ) : null}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </div>
+      </MorphPopoverContent>
+    </MorphPopover>
+    </span>
   );
 }

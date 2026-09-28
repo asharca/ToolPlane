@@ -1,9 +1,19 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { Task, Message } from '@a2a-js/sdk';
-import { validateRemoteCard, remoteResult } from '@/lib/a2a/remote-client';
+import { discoverRemoteConnection, validateRemoteCard, remoteResult } from '@/lib/a2a/remote-client';
 import { validateRemoteResponse } from '@/lib/a2a/remote-wire';
-import { REMOTE_RPC, remoteCard, remoteTask } from '../fixtures/a2a-remote';
+import { REMOTE_CARD, REMOTE_RPC, remoteCard, remoteTask } from '../fixtures/a2a-remote';
+import type * as RemoteNetwork from '@/lib/a2a/remote-network';
+const network = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock('@/lib/a2a/remote-network', async (original) => ({
+  ...await original<typeof RemoteNetwork>(), fetchRemoteJson: network.fetch,
+}));
+beforeEach(() => {
+  vi.clearAllMocks(); vi.stubEnv('TOOLPLANE_A2A_REMOTE_ORIGINS', JSON.stringify(['https://agent.example']));
+  network.fetch.mockImplementation(async () => Response.json(remoteCard()));
+});
+afterEach(() => vi.unstubAllEnvs());
 const request = { jsonrpc: '2.0', id: 'request', method: 'SendMessage' };
 const response = (result: unknown) => ({ jsonrpc: '2.0', id: 'request', result });
 describe('strict A2A 1.0 remote profile', () => {
@@ -43,5 +53,49 @@ describe('strict A2A 1.0 remote profile', () => {
   it('enforces total output size after standard decoding', () => {
     const task = remoteTask('TASK_STATE_COMPLETED'); task.artifacts[0].parts[0].text = 'x'.repeat(65_537);
     expect(() => remoteResult(Task.fromJSON(task))).toThrow();
+  });
+});
+describe('remote connection discovery', () => {
+  it('discovers a single approved interface and forwards only the explicit peer credential', async () => {
+    const signal = new AbortController().signal;
+    const result = await discoverRemoteConnection(REMOTE_CARD, 'peer-key', signal);
+    expect(result).toMatchObject({ cardUrl: REMOTE_CARD, rpcUrl: REMOTE_RPC, card: { name: 'Remote reviewer' } });
+    expect(network.fetch).toHaveBeenCalledWith(REMOTE_CARD, 'GET', undefined, 'peer-key', signal);
+  });
+  it('supports unauthenticated cards without requiring a token', async () => {
+    network.fetch.mockResolvedValueOnce(Response.json({ ...remoteCard(), securityRequirements: [] }));
+    expect((await discoverRemoteConnection(REMOTE_CARD)).rpcUrl).toBe(REMOTE_RPC);
+  });
+  it('requires an explicit declared RPC URL when compatible endpoints are ambiguous', async () => {
+    const card = remoteCard(), second = 'https://agent.example/advanced';
+    card.supportedInterfaces.push({ url: second, protocolBinding: 'JSONRPC', protocolVersion: '1.0' });
+    network.fetch.mockImplementation(async () => Response.json(card));
+    await expect(discoverRemoteConnection(REMOTE_CARD, 'key')).rejects.toThrow(/advanced RPC URL/);
+    const selected = await discoverRemoteConnection(REMOTE_CARD, 'key', undefined, second);
+    expect(selected.rpcUrl).toBe(second);
+    expect(selected.card.supportedInterfaces.map(({ url }) => url)).toEqual([second]);
+    await expect(discoverRemoteConnection(REMOTE_CARD, 'key', undefined, 'https://agent.example/undeclared')).rejects.toThrow();
+  });
+  it.each([
+    { url: 'https://other.example/rpc', protocolBinding: 'JSONRPC', protocolVersion: '1.0' },
+    { url: REMOTE_RPC, protocolBinding: 'JSONRPC', protocolVersion: '0.3' },
+    { url: REMOTE_RPC, protocolBinding: 'HTTP+JSON', protocolVersion: '1.0' },
+    { url: `${REMOTE_RPC}?secret=1`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' },
+  ])('rejects an unsafe or unsupported sole interface: $url $protocolVersion $protocolBinding', async (endpoint) => {
+    network.fetch.mockResolvedValueOnce(Response.json({ ...remoteCard(), supportedInterfaces: [endpoint] }));
+    await expect(discoverRemoteConnection(REMOTE_CARD, 'key')).rejects.toThrow();
+  });
+  it('ignores incompatible or cross-origin alternatives rather than selecting them', async () => {
+    const card = remoteCard();
+    card.supportedInterfaces.push({ url: 'https://other.example/rpc', protocolBinding: 'JSONRPC', protocolVersion: '1.0' });
+    network.fetch.mockResolvedValueOnce(Response.json(card));
+    expect((await discoverRemoteConnection(REMOTE_CARD, 'key')).rpcUrl).toBe(REMOTE_RPC);
+  });
+  it('rejects missing authentication, disallowed origins and cross-origin advanced overrides', async () => {
+    await expect(discoverRemoteConnection(REMOTE_CARD)).rejects.toThrow(/authentication/);
+    network.fetch.mockClear();
+    await expect(discoverRemoteConnection('https://other.example/card', 'key')).rejects.toThrow();
+    await expect(discoverRemoteConnection(REMOTE_CARD, 'key', undefined, 'https://other.example/rpc')).rejects.toThrow();
+    expect(network.fetch).not.toHaveBeenCalled();
   });
 });

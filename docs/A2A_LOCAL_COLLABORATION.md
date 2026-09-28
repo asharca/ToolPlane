@@ -35,8 +35,10 @@ Configure models, connected Docker sandboxes and tools for the caller and target
 Use the caller's existing Sub-agent settings to select allowed directed targets.
 An edge does not authorize access to the entire workspace.
 
-Both caller and targets default to disabled. A workspace owner or administrator must
-enable each one using an account-level Bearer credential:
+For internal delegation from authenticated chat, Work or control, selecting the
+target sub-agents is sufficient: neither caller nor target needs the A2A switch.
+The account-token root API below remains separately opt-in. A workspace owner or
+administrator enables each Agent they want to expose through that entry:
 
 ```bash
 curl -X PUT "$TOOLPLANE_URL/api/v1/workspaces/$WORKSPACE/agents/$AGENT_ID/a2a/local" \
@@ -71,7 +73,7 @@ native A2A core, not another task database or a nonstandard A2A wire binding.
 
 | Tool | Purpose |
 | --- | --- |
-| a2a_list_agents | Discover linked, enabled and configured targets by ID and name |
+| a2a_list_agents | Discover linked and configured targets by ID and name; no internal switch is required |
 | a2a_send_message | Send agentId plus a standard A2A SendMessageRequest; return the accepted Task immediately |
 | a2a_get_task | Read a direct child Task, including its question and artifacts |
 | a2a_cancel_task | Request cancellation of a child and its descendants |

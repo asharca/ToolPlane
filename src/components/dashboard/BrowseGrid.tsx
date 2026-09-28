@@ -1,3 +1,7 @@
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
+
+import { ButtonLink } from '@/components/motion/button';
 import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { CheckCircle2, ChevronRight } from 'lucide-react';
@@ -59,7 +63,7 @@ export async function BrowseGrid({
         return (
         <article
           key={it.id}
-          className="ui-panel flex min-w-0 flex-col p-4"
+          className="rounded-xl border border-border bg-card flex min-w-0 flex-col p-4"
         >
           <div className="flex min-w-0 items-start gap-3">
             {it.iconUrl ? (
@@ -116,22 +120,19 @@ export async function BrowseGrid({
           ) : null}
 
           <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-4">
-            <Link
-              href={detailHref}
-              className="ui-button-secondary h-9 min-w-0 px-3"
-            >
+            <ButtonLink href={detailHref} variant="secondary" size="sm" className="min-w-0">
               {market('viewDetails')}
               <ChevronRight className="size-3.5" aria-hidden="true" />
-            </Link>
+            </ButtonLink>
             {installedIds.has(it.id) ? (
-              <span className="ui-button-secondary h-9 min-w-0 text-emerald-700 dark:text-emerald-400">
+              <AnimatedBadge  status="success" size="sm" showIcon={false}>
                 <CheckCircle2 className="size-3.5" aria-hidden="true" />
                 {installedLabel}
-              </span>
+              </AnimatedBadge>
             ) : it.deployable === false ? (
-              <span className="inline-flex h-9 min-w-0 items-center justify-center rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground">
+              <AnimatedBadge  status="neutral" size="sm" showIcon={false}>
                 {common('demoOnly')}
-              </span>
+              </AnimatedBadge>
             ) : (
               <form action={it.marketListing ? installMarketResourceAction : action} className="min-w-0">
                 <input type="hidden" name="workspace" value={slug} />
@@ -140,11 +141,7 @@ export async function BrowseGrid({
                 ) : (
                   <input type="hidden" name={idField} value={it.id} />
                 )}
-                <SubmitButton
-                  flash={false}
-                  pendingLabel={pendingLabel}
-                  className="ui-button-primary h-9 w-full min-w-0 px-3"
-                >
+                <SubmitButton flash={false} pendingLabel={pendingLabel} variant="primary" size="sm" className="w-full min-w-0">
                   {actionLabel}
                 </SubmitButton>
               </form>

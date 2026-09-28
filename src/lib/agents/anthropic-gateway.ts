@@ -196,7 +196,7 @@ function assistantHistory(
       type: 'toolCall',
       id,
       name,
-      arguments: objectValue(block.input) ?? {},
+      arguments: (objectValue(block.input) ?? {}) as ToolCall['arguments'],
     });
   }
   if (!content.length) return null;

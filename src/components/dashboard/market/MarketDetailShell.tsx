@@ -1,5 +1,8 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import type { ReactNode } from 'react';
-import Link from 'next/link';
+
+import { AnimatedBadge } from '@/components/motion/animated-badge';
 import { ArrowLeft, PackageCheck } from 'lucide-react';
 
 type DetailTag = {
@@ -32,12 +35,12 @@ export function MarketDetailHeader({
 }) {
   return (
     <header>
-      <Link
+      <ButtonLink
         href={backHref}
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+        variant="ghost" size="sm"
       >
         <ArrowLeft className="size-3.5" /> {backLabel}
-      </Link>
+      </ButtonLink>
       <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
         {iconUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -48,9 +51,7 @@ export function MarketDetailHeader({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <span className="inline-flex rounded-md bg-brand-soft px-2 py-1 text-xs font-semibold text-accent-foreground">
-            {type}
-          </span>
+          <AnimatedBadge status="info" size="sm">{type}</AnimatedBadge>
           <h1 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">{title}</h1>
           {publisher ? <p className="mt-1.5 text-xs text-muted-foreground">{publisher}</p> : null}
           {summary ? <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{summary}</p> : null}
@@ -65,17 +66,17 @@ export function MarketDetailHeader({
           {tags.length ? (
             <div className="mt-4 flex flex-wrap gap-2">
               {tags.map((tag) => tag.href ? (
-                <Link
+                <ButtonLink
                   key={`${tag.href}:${tag.label}`}
                   href={tag.href}
-                  className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  variant="ghost" size="sm"
                 >
                   {tag.label}
-                </Link>
+                </ButtonLink>
               ) : (
-                <span key={tag.label} className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                <AnimatedBadge key={tag.label} status="neutral" size="sm">
                   {tag.label}
-                </span>
+                </AnimatedBadge>
               ))}
             </div>
           ) : null}

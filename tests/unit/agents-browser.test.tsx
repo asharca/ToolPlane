@@ -66,6 +66,26 @@ describe('AgentsBrowser', () => {
     expect(screen.getByText('Add a model provider before expecting replies')).toBeInTheDocument();
   });
 
+  it('defaults to the first compatible model so naming alone enables the next step', async () => {
+    const user = userEvent.setup();
+    navigation.search = 'create=1';
+    render(
+      <AgentsBrowser
+        slug="acme"
+        agents={[]}
+        createOptions={{
+          providers: [{ id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] }],
+          deployments: [], skills: [], toolkits: [],
+        }}
+      />,
+    );
+
+    await user.type(screen.getByLabelText('Name'), 'Research assistant');
+
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Model: gpt-4.1/ })).toBeInTheDocument();
+  });
+
   it('shows and installs agent market data inside the creator', async () => {
     const user = userEvent.setup();
     navigation.search = 'create=1&returnTo=%2Fapp%2Facme%2Fwork';
@@ -150,7 +170,7 @@ describe('AgentsBrowser', () => {
     );
   });
 
-  it('defaults to Claude Code and requires a configured model before advancing', async () => {
+  it('offers only Pi for new agents and requires a configured model before advancing', async () => {
     const user = userEvent.setup();
     render(
       <AgentsBrowser
@@ -161,10 +181,8 @@ describe('AgentsBrowser', () => {
     );
 
     await openBlankCreate(user);
-    expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /DeepSeek Harness/ })).toBeEnabled();
-    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeEnabled();
-    expect(screen.getByRole('radio', { name: /Hermes managed runtime/ })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeChecked();
+    expect(screen.queryByRole('radio', { name: /Claude Code|DeepSeek Harness|Hermes/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create draft agent' })).not.toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
@@ -199,21 +217,13 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     await user.type(screen.getByLabelText('Name'), 'Harness agent');
     await user.click(screen.getByRole('button', { name: 'Model: gpt-4.1' }));
-    const picker = screen.getByRole('listbox', { name: 'Select model' });
+    const picker = await screen.findByRole('listbox', { name: 'Select model' });
     expect(within(picker).getByRole('group', { name: 'Anthropic' })).toBeInTheDocument();
     expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
     expect(within(picker).getByRole('group', { name: 'Responses' })).toBeInTheDocument();
     expect(within(picker).queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('input[name="sandboxId"]')).toHaveLength(0);
 
-    await user.click(screen.getByRole('radio', { name: /DeepSeek Harness/ }));
-    await user.click(screen.getByRole('button', { name: 'Model: gpt-4.1' }));
-    expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: /^Pi/ }));
-    await user.click(screen.getByRole('button', { name: 'Model: gpt-4.1' }));
-    expect(screen.getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'Pi native' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByLabelText('System prompt')).toBeVisible();
@@ -273,7 +283,7 @@ describe('AgentsBrowser', () => {
     await openBlankCreate(user);
     const basicStep = screen.getByRole('button', { name: /Basic/ });
     expect(basicStep).toHaveAttribute('aria-current', 'step');
-    expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /^Pi/ })).toBeChecked();
     await user.type(screen.getByLabelText('Name'), 'Research agent');
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -315,71 +325,7 @@ describe('AgentsBrowser', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Created' })).toBeEnabled());
   });
 
-  it('offers multiple providers and no model picker for a Hermes agent', async () => {
-    render(
-      <AgentsBrowser
-        slug="acme"
-        agents={[]}
-        createOptions={{
-          providers: [
-            { id: 'provider-1', name: 'OpenAI', format: 'openai', models: ['gpt-4.1'] },
-            { id: 'provider-2', name: 'Anthropic', format: 'anthropic', models: ['claude-sonnet'] },
-          ],
-          deployments: [],
-          skills: [],
-          toolkits: [],
-        }}
-      />,
-    );
 
-    await openBlankCreate(userEvent.setup());
-    await userEvent.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Select OpenAI' }));
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Select Anthropic' }));
-
-    expect(document.querySelectorAll('input[name="providerId"]')).toHaveLength(2);
-    expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
-  });
-
-  it('lets a Hermes deployment choose an official version or a custom image', async () => {
-    const user = userEvent.setup();
-    actions.createAgentAction.mockClear();
-    render(
-      <AgentsBrowser
-        slug="acme"
-        agents={[]}
-        hermesImages={[
-          'nousresearch/hermes-agent:latest',
-          'nousresearch/hermes-agent:v2026.7.20',
-        ]}
-        createOptions={configuredCreateOptions}
-      />,
-    );
-
-    await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
-    const version = screen.getByLabelText('Hermes version');
-    expect(version).toHaveValue('nousresearch/hermes-agent:latest');
-    expect(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' })).toBeInTheDocument();
-
-    await user.selectOptions(version, 'nousresearch/hermes-agent:v2026.7.20');
-    expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
-      'nousresearch/hermes-agent:v2026.7.20',
-    );
-
-    await user.selectOptions(version, '__custom__');
-    const customImage = screen.getByLabelText('Custom image / version');
-    await user.type(customImage, 'registry.example/hermes:v2026.8.1');
-    expect(document.querySelector<HTMLInputElement>('input[name="hermesImage"]')).toHaveValue(
-      'registry.example/hermes:v2026.8.1',
-    );
-    await user.type(screen.getByLabelText('Name'), 'Custom Hermes');
-    await advanceToCreate(user);
-    await user.click(screen.getByRole('button', { name: 'Create agent' }));
-    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
-    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.get('hermesImage')).toBe('registry.example/hermes:v2026.8.1');
-  });
 
   it('lets the backend provision a sandbox when creating a Pi agent', async () => {
     const user = userEvent.setup();
@@ -403,26 +349,6 @@ describe('AgentsBrowser', () => {
     expect(formData.getAll('sandboxId')).toEqual([]);
   });
 
-  it('creates Hermes RPC with a selected ordinary sandbox without using managed Hermes settings', async () => {
-    const user = userEvent.setup();
-    render(<AgentsBrowser slug="acme" agents={[]} createOptions={{ ...configuredCreateOptions,
-      sandboxes: [{ id: 'sandbox-available', label: 'Selected Linux sandbox' }],
-      deployments: [{ id: 'mcp-1', label: 'Selected MCP' }], skills: [{ id: 'skill-1', label: 'Selected Skill' }],
-    }} />);
-    await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /Hermes RPC/ }));
-    await user.type(screen.getByLabelText('Name'), 'Native Hermes');
-    await user.selectOptions(screen.getByRole('combobox', { name: /Runtime sandbox/ }), 'sandbox-available');
-    await advanceToCreate(user);
-    await user.click(screen.getByRole('button', { name: 'Create agent' }));
-    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
-    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.get('runtime')).toBe('hermes-rpc');
-    expect(formData.getAll('sandboxId')).toEqual(['sandbox-available']);
-    expect(formData.get('providerId')).toBe('provider-1');
-    expect(formData.get('model')).toBe('gpt-4.1');
-    expect(formData.has('hermesImage')).toBe(false);
-  });
 
   it('includes an optional system prompt for a Pi agent', async () => {
     const user = userEvent.setup();
@@ -447,35 +373,6 @@ describe('AgentsBrowser', () => {
     expect(formData.get('systemPrompt')).toBe('Use sources carefully.');
   });
 
-  it('submits the selected pinned Hermes version when creating an agent', async () => {
-    const user = userEvent.setup();
-    actions.createAgentAction.mockClear();
-    render(
-      <AgentsBrowser
-        slug="acme"
-        agents={[]}
-        hermesImages={[
-          'nousresearch/hermes-agent:latest',
-          'nousresearch/hermes-agent:v2026.7.20',
-        ]}
-        createOptions={configuredCreateOptions}
-      />,
-    );
-
-    await openBlankCreate(user);
-    await user.click(screen.getByRole('radio', { name: /Hermes managed runtime/ }));
-    await user.type(screen.getByLabelText('Name'), 'Pinned Hermes');
-    await user.selectOptions(
-      screen.getByLabelText('Hermes version'),
-      'nousresearch/hermes-agent:v2026.7.20',
-    );
-    await advanceToCreate(user);
-    await user.click(screen.getByRole('button', { name: 'Create agent' }));
-
-    await waitFor(() => expect(actions.createAgentAction).toHaveBeenCalledOnce());
-    const formData = actions.createAgentAction.mock.calls[0][0] as FormData;
-    expect(formData.get('hermesImage')).toBe('nousresearch/hermes-agent:v2026.7.20');
-  });
 
   it('requires both a provider and model before marking an agent ready', () => {
     render(
@@ -603,7 +500,6 @@ describe('AgentsBrowser', () => {
       'title',
       'Create a new agent and select an unassigned sandbox',
     );
-    expect(deleteButton).toHaveAttribute('title', 'Delete agent');
 
     await user.click(deleteButton);
     expect(screen.getByText('Delete this agent, its sandboxes, and all its conversations?')).toBeInTheDocument();

@@ -1,4 +1,6 @@
-import Link from 'next/link';
+
+import { ButtonLink } from '@/components/motion/button';
+
 import { notFound, redirect } from 'next/navigation';
 import { getLocale, getTranslations } from 'next-intl/server';
 import {
@@ -76,7 +78,7 @@ export default async function SkillMarketDetailPage({
           <section className="rounded-lg bg-muted/35 p-5">
             <div className="flex items-start gap-2.5">
               {skill.installId ? (
-                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+                <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-(--color-success)" />
               ) : (
                 <ShieldCheck className="mt-0.5 size-5 shrink-0 text-foreground" />
               )}
@@ -88,14 +90,14 @@ export default async function SkillMarketDetailPage({
               </div>
             </div>
             {skill.installId ? (
-              <Link href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} className="ui-button-primary mt-5 h-10 w-full">
+              <ButtonLink href={`/app/${encodeURIComponent(slug)}/skills/${encodeURIComponent(skill.installId)}`} variant="primary" size="md" className="mt-5 w-full">
                 {t('manageSkill')} <ArrowRight className="size-4" />
-              </Link>
+              </ButtonLink>
             ) : (
               <form action={installSkillAction} className="mt-5">
                 <input type="hidden" name="workspace" value={slug} />
                 <input type="hidden" name="skillId" value={skill.id} />
-                <SubmitButton pendingLabel={t('installing')} flash={false} className="ui-button-primary h-10 w-full">
+                <SubmitButton pendingLabel={t('installing')} flash={false} variant="primary" size="md" className="w-full">
                   {t('installToWorkspace')} <ArrowRight className="size-4" />
                 </SubmitButton>
               </form>

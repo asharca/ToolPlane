@@ -1,3 +1,5 @@
+
+import { ButtonLink } from '@/components/motion/button';
 import { getLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -39,12 +41,12 @@ export default async function AdminUserDetailPage({ params, searchParams }: { pa
         backHref={backHref}
         backLabel={t('users1')}
         actions={<>
-          <Link href={adminHref('/admin/logs', { domain: 'all', actorId: id, returnTo: selfHref })} className="ui-button-secondary"><Activity className="size-4" />{ops('activity')}</Link>
-          <Link href={adminHref('/admin/logs', { tab: 'audit', targetType: 'user', targetId: id, returnTo: selfHref })} className="ui-button-secondary"><ShieldCheck className="size-4" />{ops('audit')}</Link>
+          <ButtonLink href={adminHref('/admin/logs', { domain: 'all', actorId: id, returnTo: selfHref })} variant="secondary" size="md"><Activity className="size-4" />{ops('activity')}</ButtonLink>
+          <ButtonLink href={adminHref('/admin/logs', { tab: 'audit', targetType: 'user', targetId: id, returnTo: selfHref })} variant="secondary" size="md"><ShieldCheck className="size-4" />{ops('audit')}</ButtonLink>
         </>}
         meta={(
           <span className="inline-flex flex-wrap items-center gap-1.5">
-            <AdminBadge tone={u.role === 'admin' ? 'brand' : 'neutral'}>
+            <AdminBadge tone={u.role === 'admin' ? 'info' : 'neutral'}>
               {u.role === 'admin' ? t('admin2') : t('user')}
             </AdminBadge>
             <AdminBadge tone={u.status === 'suspended' ? 'warning' : 'success'} dot>
