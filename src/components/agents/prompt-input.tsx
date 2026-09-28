@@ -155,7 +155,8 @@ export function PromptInput({
       event.defaultPrevented ||
       event.key !== "Enter" ||
       event.shiftKey ||
-      event.nativeEvent.isComposing
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229
     ) {
       return;
     }

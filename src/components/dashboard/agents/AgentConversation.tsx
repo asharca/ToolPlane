@@ -389,7 +389,7 @@ function ConversationTools({
     const input = toolsButtonRef.current?.closest('[data-ui="chat.composer"]')?.querySelector('textarea');
     if (!input) return;
     const keyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.isComposing || event.keyCode === 229 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === 'Escape') { event.preventDefault(); setDismissedSlash(composerText); return; }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -412,6 +412,7 @@ function ConversationTools({
           <ComposerToolsButton ref={toolsButtonRef} open={toolsOpen || slashOpen} disabled={disabled} aria-label={agentsT('openComposerTools')} title={agentsT('openComposerTools')} />
         </MorphPopoverTrigger>
         <MorphPopoverContent side="top" align="start" sideOffset={8} radius={12} className="w-56 p-1.5">
+          <div role="menu" aria-label={agentsT('tools')}>
             {(slashOpen ? slashItems : menuItems).map((action, index) => {
               const Icon = action.icon;
               const previousGroup = menuItems[index - 1]?.group;
@@ -432,6 +433,7 @@ function ConversationTools({
                 </div>
               );
             })}
+          </div>
         </MorphPopoverContent>
       </MorphPopover>
       <input id={attachmentInputId} type="file" multiple hidden onChange={(event) => void addAttachments(event)} />

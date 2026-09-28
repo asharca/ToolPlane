@@ -37,6 +37,6 @@ export function FormCheckbox({ name, value = 'on', checked, defaultChecked = fal
   return <span className={className}>
     <input ref={native} type="checkbox" name={name} value={value} checked={current} disabled={disabled} required={required} aria-hidden="true" tabIndex={-1} className="sr-only"
       onChange={(event) => update(event.target.checked)} onFocus={() => document.getElementById(controlId)?.focus()} onInvalid={() => document.getElementById(controlId)?.focus()} />
-    <Checkbox id={controlId} checked={current} onCheckedChange={update} disabled={disabled} label={label} />
+    <Checkbox id={controlId} checked={current} onCheckedChange={update} disabled={disabled} label={label} aria-required={required || undefined} />
   </span>;
 }

@@ -43,14 +43,14 @@ describe('TimeZoneSettings', () => {
   it('shows a persisted manual timezone as the selected option', () => {
     render(<TimeZoneSettings timeZoneOverride="America/New_York" />);
 
-    expect(screen.getByRole('button', { name: /^Your timezone:/ }))
+    expect(screen.getByRole('combobox', { name: 'Your timezone' }))
       .toHaveTextContent('America/New_York');
   });
 
   it('submits automatic mode with the current browser detection', async () => {
     render(<TimeZoneSettings timeZoneOverride="America/New_York" />);
 
-    const select = screen.getByRole('button', { name: /^Your timezone:/ });
+    const select = screen.getByRole('combobox', { name: 'Your timezone' });
     await userEvent.click(select);
     await userEvent.click(screen.getByRole('option', { name: 'Automatic (Asia/Taipei)' }));
     fireEvent.submit(select.closest('form')!);
@@ -65,7 +65,7 @@ describe('TimeZoneSettings', () => {
   it('lets the user choose and submit a custom timezone', async () => {
     render(<TimeZoneSettings timeZoneOverride={null} />);
 
-    const select = screen.getByRole('button', { name: /^Your timezone:/ });
+    const select = screen.getByRole('combobox', { name: 'Your timezone' });
     await userEvent.click(select);
     await userEvent.click(screen.getByRole('option', { name: 'America/New_York' }));
     fireEvent.submit(select.closest('form')!);

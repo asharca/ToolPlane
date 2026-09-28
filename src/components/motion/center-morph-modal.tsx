@@ -160,7 +160,7 @@ export interface CenterMorphModalContentProps {
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
-  "input:not([disabled])",
+  'input:not([disabled]):not([type="hidden"])',
   "select:not([disabled])",
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
@@ -183,7 +183,7 @@ function getFocusableElements(root: HTMLElement | null) {
   if (!root) return [];
   return Array.from(
     root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-  ).filter((element) => element.tabIndex >= 0);
+  ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden], [inert], [aria-hidden="true"]'));
 }
 
 export function CenterMorphModalContent({
@@ -215,12 +215,9 @@ export function CenterMorphModalContent({
   useEffect(() => {
     if (!mounted || !context.open) return;
     setBackgroundScrollLocked(true);
-    const focusFrame = requestAnimationFrame(() => {
-      const [firstFocusable] = getFocusableElements(panelRef.current);
-      (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
-    });
+    const [firstFocusable] = getFocusableElements(panelRef.current);
+    (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
     return () => {
-      cancelAnimationFrame(focusFrame);
       document.getElementById(context.triggerId)?.focus({ preventScroll: true });
     };
   }, [mounted, context.open, context.triggerId]);

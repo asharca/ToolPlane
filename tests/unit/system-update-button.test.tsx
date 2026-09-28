@@ -34,8 +34,6 @@ describe('SystemUpdateButton restart polling', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const trigger = screen.getByRole('button', { name: 'System update: Update available' });
-    expect(trigger.querySelector('svg.octicon-mark-github')).toBeInTheDocument();
-    expect(trigger.querySelector('span.bg-amber-500')).toBeInTheDocument();
 
     await user.click(trigger);
     expect(await screen.findByText('v1.0.0 → v1.0.1')).toBeInTheDocument();

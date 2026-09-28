@@ -54,7 +54,7 @@ describe('ToolkitResourcePicker', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /^Filter by source:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by source' }));
     await user.click(screen.getByRole('option', { name: 'GitHub' }));
     expect(screen.getByText('RouterOS Firewall')).toBeInTheDocument();
     expect(screen.getByText('RouterOS Scripts')).toBeInTheDocument();
@@ -92,9 +92,9 @@ describe('ToolkitResourcePicker', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /^Filter by source:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by source' }));
     await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('button', { name: /^Filter by status:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Filter by status' }));
     await user.click(screen.getByRole('option', { name: 'Running' }));
 
     expect(screen.getByText('Custom Running')).toBeInTheDocument();

@@ -18,6 +18,8 @@ ToolPlane 用 `release-please` 自动计算语义化版本，但发布准备由�
 
 普通 PR 和手动 CI 运行会执行 lint、测试、应用构建、runtime 产物校验，以及 Linux、macOS、Windows 上的 Connector 检查。Linux 还执行 Docker runtime helper 检查。
 
+CI 在一次性的 `toolplane_test` PostgreSQL 数据库上运行完整测试。本地全量验证应使用名称包含 `test` 或 `disposable` 的独立本地数据库，启用 pgvector 并应用当前 Prisma schema，再运行 `pnpm test`。不要把这些测试指向正在使用的应用数据库。
+
 同仓库中以 `release-please--branches--` 开头的分支使用发布元数据校验，不重复执行完整测试套件。该校验要求变更文件恰好为 `.release-please-manifest.json`、`CHANGELOG.md` 和 `package.json`，通过后提供对应的 Connector 校验结果。release PR 若混入其他文件变更，会在此校验失败。
 
 普通功能合并不会重复运行完整 CI，也不会发布镜像。推送到 `main` 会触发独立的发布工作流，但只有 release-please 创建了 release 才执行发布步骤。推送 `vX.Y.Z` tag 也是一条显式发布路径。

@@ -23,6 +23,7 @@ export interface PresenceGateRenderProps {
    */
   gate: {
     inert: boolean;
+    "aria-hidden": boolean;
     style: { pointerEvents: "auto" | "none" };
   };
 }
@@ -46,6 +47,7 @@ export function PresenceGate({ children }: PresenceGateProps) {
     isPresent,
     gate: {
       inert: !isPresent,
+      "aria-hidden": !isPresent,
       style: { pointerEvents: isPresent ? "auto" : "none" },
     },
   });

@@ -476,7 +476,7 @@ describe('Hermes runtime control actions', () => {
 
 describe('createAgentAction', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: 'user-1' });
     mocks.getWorkspaceForUser.mockResolvedValue({ id: 'workspace-1', ownerId: 'user-1' });
     mocks.getProvider.mockResolvedValue({ id: 'provider-1', models: ['model-1'] });
@@ -487,103 +487,89 @@ describe('createAgentAction', () => {
     mocks.syncHermesRuntime.mockResolvedValue({ status: 'provisioning' });
   });
 
-  it.each(['pi', 'claude-code', 'dsh', 'hermes-rpc'] as const)(
-    'starts the automatically provisioned sandbox for a newly created %s agent',
-    async (runtime) => {
-      const form = new FormData();
-      form.set('workspace', 'acme');
-      form.set('name', 'Harness');
-      form.set('runtime', runtime);
-      form.set('providerId', 'provider-1');
-      form.set('model', 'model-1');
-      form.set('returnTo', '/app/acme/work');
-      mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent(runtime));
-
-      await createAgentAction(form);
-
-      expect(mocks.createConfiguredAgent).toHaveBeenCalledWith(
-        'workspace-1',
-        {
-          name: 'Harness',
-          description: null,
-          systemPrompt: null,
-          providerId: 'provider-1',
-          providerIds: ['provider-1'],
-          model: 'model-1',
-          disabledBuiltinTools: [],
-          maxSteps: 100,
-        },
-        {
-          deploymentIds: [],
-          installedSkillIds: [],
-          toolkitIds: [],
-          sandboxIds: [],
-        },
-        { runtime, hermesImage: '' },
-      );
-      expect(mocks.agentFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-        where: { id: 'agent-1', workspaceId: 'workspace-1' },
-      }));
-      expect(mocks.startProcess).toHaveBeenCalledWith(
-        'sandbox-deployment-1',
-        { kind: 'sandbox' },
-        { awaitReady: false, workspaceId: 'workspace-1' },
-      );
-      expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
-      expect(mocks.redirect).toHaveBeenCalledWith(
-        '/app/acme/work?agent=agent-1',
-      );
-      expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
-    },
-  );
-
-  it('syncs a configured Hermes runtime without using the generic sandbox starter', async () => {
+  it('starts the automatically provisioned sandbox for a newly created Pi agent', async () => {
     const form = new FormData();
     form.set('workspace', 'acme');
-    form.set('name', 'Hermes');
-    form.set('runtime', 'hermes');
+    form.set('name', 'Harness');
+    form.set('runtime', 'pi');
     form.set('providerId', 'provider-1');
-    mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent('hermes', false));
+    form.set('model', 'model-1');
 
     await createAgentAction(form);
 
-    expect(mocks.syncHermesRuntime).toHaveBeenCalledWith('workspace-1', 'agent-1');
-    expect(mocks.startProcess).not.toHaveBeenCalled();
-  });
-
-  it('keeps the created Hermes agent when runtime startup fails', async () => {
-    const form = new FormData();
-    form.set('workspace', 'acme');
-    form.set('name', 'Hermes');
-    form.set('runtime', 'hermes');
-    form.set('providerId', 'provider-1');
-    mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent('hermes', false));
-    mocks.syncHermesRuntime.mockRejectedValueOnce(new Error('Docker unavailable'));
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    await expect(createAgentAction(form)).resolves.toBeUndefined();
-
-    expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-1');
-    consoleError.mockRestore();
-  });
-
-  it('records a Hermes runtime startup error returned by the sync', async () => {
-    const form = new FormData();
-    form.set('workspace', 'acme');
-    form.set('name', 'Hermes');
-    form.set('runtime', 'hermes');
-    form.set('providerId', 'provider-1');
-    mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent('hermes', false));
-    mocks.syncHermesRuntime.mockResolvedValueOnce({ status: 'error', error: 'Docker unavailable' });
-
-    await expect(createAgentAction(form)).resolves.toBeUndefined();
-
-    expect(mocks.systemLog).toHaveBeenCalledWith(
-      'error',
-      'Failed to start runtime sandbox for Agent agent-1.',
-      expect.objectContaining({ message: 'Docker unavailable' }),
+    expect(mocks.createConfiguredAgent).toHaveBeenCalledWith(
+      'workspace-1',
+      {
+        name: 'Harness',
+        description: null,
+        systemPrompt: null,
+        providerId: 'provider-1',
+        providerIds: ['provider-1'],
+        model: 'model-1',
+        disabledBuiltinTools: [],
+        maxSteps: 100,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [], sandboxIds: [] },
+      { runtime: 'pi', hermesImage: '' },
     );
+    expect(mocks.agentFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'agent-1', workspaceId: 'workspace-1' },
+    }));
+    expect(mocks.startProcess).toHaveBeenCalledWith(
+      'sandbox-deployment-1',
+      { kind: 'sandbox' },
+      { awaitReady: false, workspaceId: 'workspace-1' },
+    );
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-1');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/app/acme/work');
+  });
+
+  it.each(['claude-code', 'dsh', 'hermes-rpc', 'hermes', 'toolloop'])('rejects new %s agents before provisioning', async (runtime) => {
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('name', 'Harness');
+    form.set('runtime', runtime);
+    form.set('providerId', 'provider-1');
+    form.set('model', 'model-1');
+
+    await expect(createAgentAction(form)).rejects.toThrow('Only the Pi runtime is available for new agents.');
+
+    expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.syncHermesRuntime).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it('propagates Pi provisioning failure without starting or opening an agent', async () => {
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('runtime', 'pi');
+    form.set('providerId', 'provider-1');
+    form.set('model', 'model-1');
+    mocks.createConfiguredAgent.mockRejectedValueOnce(new Error('Sandbox provisioning failed'));
+
+    await expect(createAgentAction(form)).rejects.toThrow('Sandbox provisioning failed');
+
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it.each(['signed out', 'outside workspace'])('does not provision when %s', async (access) => {
+    const form = new FormData();
+    form.set('workspace', 'acme');
+    form.set('runtime', 'pi');
+    form.set('providerId', 'provider-1');
+    form.set('model', 'model-1');
+    if (access === 'signed out') mocks.getCurrentUser.mockResolvedValueOnce(null);
+    else mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
+
+    await createAgentAction(form);
+
+    expect(mocks.getProvider).not.toHaveBeenCalled();
+    expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
+    expect(mocks.startProcess).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
   it('does not create an agent without a runnable model configuration', async () => {
@@ -616,7 +602,6 @@ describe('createAgentAction', () => {
     form.set('providerId', 'provider-1');
     form.set('model', 'model-1');
     mocks.startProcess.mockRejectedValueOnce(new Error('Docker unavailable'));
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(createAgentAction(form)).resolves.toBeUndefined();
 
@@ -625,7 +610,11 @@ describe('createAgentAction', () => {
       data: { status: 'error' },
     });
     expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-1');
-    consoleError.mockRestore();
+    expect(mocks.systemLog).toHaveBeenCalledWith(
+      'error',
+      'Failed to start runtime sandbox for Agent agent-1.',
+      expect.objectContaining({ message: 'Docker unavailable' }),
+    );
   });
 
   it('keeps the created agent when its runtime sandbox cannot be loaded', async () => {
@@ -636,13 +625,17 @@ describe('createAgentAction', () => {
     form.set('providerId', 'provider-1');
     form.set('model', 'model-1');
     mocks.agentFindFirst.mockResolvedValueOnce(createdRuntimeAgent('pi', false));
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(createAgentAction(form)).resolves.toBeUndefined();
 
     expect(mocks.startProcess).not.toHaveBeenCalled();
     expect(mocks.redirect).toHaveBeenCalledWith('/app/acme/work?agent=agent-1');
-    consoleError.mockRestore();
+    expect(mocks.deploymentUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.systemLog).toHaveBeenCalledWith(
+      'error',
+      'Failed to start runtime sandbox for Agent agent-1.',
+      expect.objectContaining({ message: 'The Agent runtime sandbox was not created.' }),
+    );
   });
 
   it.each([undefined, 'unknown'])(
@@ -653,7 +646,7 @@ describe('createAgentAction', () => {
       form.set('name', 'Harness');
       if (runtime) form.set('runtime', runtime);
 
-      await expect(createAgentAction(form)).rejects.toThrow('Choose an available Agent runtime.');
+      await expect(createAgentAction(form)).rejects.toThrow('Only the Pi runtime is available for new agents.');
       expect(mocks.createConfiguredAgent).not.toHaveBeenCalled();
     },
   );

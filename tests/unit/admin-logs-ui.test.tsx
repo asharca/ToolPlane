@@ -81,7 +81,7 @@ describe('admin log presentation', () => {
   it('shows whole-window metrics alongside named resources and the current page count', async () => {
     render(await AdminLogsPage({ searchParams: Promise.resolve({ workspaceId: 'workspace-1', outcome: 'error' }) }));
     expect(screen.getByText('20.0%')).toBeInTheDocument();
-    expect(screen.getByText('Engineering')).toBeInTheDocument();
+    expect(await screen.findByText('Engineering')).toBeInTheDocument();
     expect(mocks.aggregateLogs).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'workspace-1', outcome: 'error', domain: 'http' }));
     expect(mocks.workspaces).toHaveBeenCalledWith({ where: { id: { in: ['workspace-1'] } }, select: { id: true, name: true } });
     expect(screen.getByRole('link', { name: 'Older events' })).toHaveAttribute('href', expect.stringContaining('cursor=next-page'));

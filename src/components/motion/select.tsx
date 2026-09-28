@@ -199,9 +199,11 @@ export function Select({
 export interface SelectTriggerProps {
   className?: string;
   children: ReactNode;
+  "aria-label"?: string;
+  "aria-required"?: boolean;
 }
 
-export function SelectTrigger({ className, children }: SelectTriggerProps) {
+export function SelectTrigger({ className, children, ...ariaProps }: SelectTriggerProps) {
   const ctx = useSelectContext("SelectTrigger");
   const isTop = ctx.placement === "top";
   // edge facing the panel flattens then rounds; the far edge stays rounded.
@@ -216,6 +218,8 @@ export function SelectTrigger({ className, children }: SelectTriggerProps) {
     <motion.button
       type="button"
       id={ctx.triggerId}
+      role="combobox"
+      {...ariaProps}
       disabled={ctx.disabled}
       aria-haspopup="listbox"
       aria-expanded={ctx.open}

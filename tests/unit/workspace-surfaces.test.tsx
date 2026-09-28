@@ -279,10 +279,10 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     };
     rerender(<WorkspaceWork {...props} sessions={[session]} selectedWorkSessionId={session.id} />);
     input = screen.getByRole('combobox', { name: 'What should the Agent accomplish?' });
-    await user.clear(input);
-    await user.type(input, '/');
+    expect(input).toBeDisabled();
+    fireEvent.change(input, { target: { value: '/compact' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-    await user.type(input, 'compact{Enter}');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -471,7 +471,9 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(Object.fromEntries(pinForm)).toEqual({ agentId: 'agent-1', pinned: 'true', workspace: 'acme' });
     expect(surfaceMocks.routerRefresh).toHaveBeenCalledOnce();
     await user.click(screen.getByRole('button', { name: 'Actions for Hermes researcher' }));
-    await user.click(screen.getByRole('button', { name: 'Delete agent' }));
+    const hermesMenu = document.querySelector<HTMLElement>('[data-sidebar-resource-menu="agent:agent-hermes"]');
+    expect(hermesMenu).not.toBeNull();
+    await user.click(within(hermesMenu!).getByRole('button', { name: 'Delete agent' }));
     const deleteDialog = screen.getByRole('dialog', { name: 'Delete agent' });
     expect(deleteDialog).toHaveTextContent('Delete this agent, its sandboxes, and all its conversations?');
     expect(deleteDialog.querySelector('input[name="returnTo"]')).toHaveValue('/app/acme/work');
@@ -557,7 +559,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     ]);
   });
 
-  it('shows Cherry-style thinking effort control for Hermes Work', async () => {
+  it('selects thinking effort for Hermes Work', async () => {
     render(<WorkspaceWork
       slug="acme"
       workspaceId="workspace-1"
@@ -576,7 +578,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
       selectedWorkSessionId={null}
     />);
 
-    const effort = screen.getByRole('button', { name: /Thinking effort/ });
+    const effort = screen.getByRole('combobox', { name: /Thinking effort/ });
     expect(effort).toHaveTextContent('Default');
     await userEvent.click(effort);
     await userEvent.click(screen.getByRole('option', { name: 'Extra high' }));
@@ -747,7 +749,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     expect(reply?.querySelector('[data-ui="assistant-reply-model"]')).toHaveTextContent('gpt-test');
     const replyTime = reply?.querySelector('time[data-ui="work-message-time"]');
     expect(replyTime).toHaveAttribute('dateTime', '2026-09-03T01:02:04.000Z');
-    expect(screen.getByRole('meter', { name: 'Context usage 64%' })).toHaveAttribute('aria-valuenow', '64');
+    expect(screen.getByRole('meter', { name: 'Context usage' })).toHaveAttribute('aria-valuenow', '64');
   });
 
   it('renders Work deltas before loading the final persisted reply', async () => {
@@ -802,7 +804,7 @@ describe('Chat, Work, and Knowledge surfaces', () => {
     act(() => WorkEventSource.latest?.emit('done', {}));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getAllByText('Hello')).toHaveLength(1));
-    expect(screen.getByRole('treeitem', { name: 'Streaming response test' })).toBeInTheDocument();
+    expect(await screen.findByRole('treeitem', { name: 'Streaming response test' })).toBeInTheDocument();
     expect(screen.queryByRole('treeitem', { name: 'Stream reply' })).not.toBeInTheDocument();
     const completedProcess = document.querySelector('[data-ui="work-process"]');
     expect(completedProcess).not.toBeNull();

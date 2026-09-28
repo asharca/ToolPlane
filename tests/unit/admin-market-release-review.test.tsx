@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { assistantReleaseChecksum } from '@/lib/market/assistant-manifest';
 import { skillReleaseChecksum } from '@/lib/market/skill-manifest';
 
@@ -105,9 +106,16 @@ describe('admin market release review', () => {
       .toHaveTextContent('"schemaVersion": 1');
     expect(screen.getByText('marketReleaseScanResult').parentElement)
       .toHaveTextContent('"status": "clean"');
-    expect(screen.getByRole('checkbox', {
+    const acknowledgement = screen.getByRole('checkbox', {
       name: /I inspected the complete checksum-covered artifact/,
-    })).toBeRequired();
+    });
+    expect(acknowledgement).toBeRequired();
+    const form = acknowledgement.closest('form')!;
+    expect(form.checkValidity()).toBe(false);
+    expect(new FormData(form).has('reviewConfirmed')).toBe(false);
+    await userEvent.click(acknowledgement);
+    expect(form.checkValidity()).toBe(true);
+    expect(new FormData(form).get('reviewConfirmed')).toBe('yes');
   });
 
   it('shows assistant instructions, model requirements, and MCP identities', async () => {

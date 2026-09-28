@@ -335,7 +335,7 @@ function MobileSidebar({
   }, [context.openMobile]);
 
   useEffect(() => {
-    if (!context.openMobile) return;
+    if (!mounted || !context.openMobile) return;
 
     const body = document.body;
     const scrollY = window.scrollY;
@@ -353,14 +353,11 @@ function MobileSidebar({
     body.style.right = "0";
     body.style.overflow = "hidden";
 
-    const focusFrame = requestAnimationFrame(() => {
-      const firstFocusable =
-        panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-      (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
-    });
+    const firstFocusable =
+      panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
 
     return () => {
-      cancelAnimationFrame(focusFrame);
       body.style.position = previousBodyStyles.position;
       body.style.top = previousBodyStyles.top;
       body.style.left = previousBodyStyles.left;
@@ -369,7 +366,7 @@ function MobileSidebar({
       window.scrollTo(0, scrollY);
       context.triggerRef.current?.focus({ preventScroll: true });
     };
-  }, [context.openMobile, context.triggerRef]);
+  }, [mounted, context.openMobile, context.triggerRef]);
 
   if (!mounted) return null;
 
@@ -380,6 +377,8 @@ function MobileSidebar({
   // transparent edge-spanning one. See tests/fixed-overlay-edge-sampling.test.tsx.
   return createPortal(
     <div
+      aria-hidden={!context.openMobile}
+      inert={!context.openMobile}
       className={cn(
         "pointer-events-none fixed left-0 top-0 z-50 size-0 md:hidden",
         hidden && !context.openMobile ? "invisible" : "visible",

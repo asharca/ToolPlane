@@ -40,7 +40,6 @@ describe('AISidebar action isolation', () => {
     const row = screen.getByRole('treeitem', { name: /^Agent/ });
     await user.click(within(row).getByRole('button', { name: 'Actions for Agent' }));
     const action = await screen.findByRole('button', { name: 'Pin agent' });
-    await user.tab();
     expect(action).toHaveFocus();
     await user.keyboard(key);
 

@@ -11,6 +11,11 @@
 * configure provider pricing with Pi's native base rates and optional `tiers[]`: add/remove multiple tiers, edit input thresholds and all four token rates, and preserve tier data when settings collapse; clarify that cached input counts toward strict thresholds and the highest matching tier prices the entire request
 
 ### Bug Fixes
+* upgrade React and React DOM to 19.3.0 so animated form controls keep pending submissions disabled until the action settles
+* hide closed and exiting overlays from assistive technology, focus visible controls when dialogs open, and expose required custom form controls correctly
+* render initial virtualized table rows before client measurement and preserve keyboard input during IME composition
+* keep toolkit sync scripts compatible with macOS Bash by moving the embedded Node heredoc outside command substitution
+* use a disposable PostgreSQL test database in CI and align regression coverage with Pi-only creation, native protocol catalog references, and current chat controls
 * synchronize chat sidebar state after rendering to keep responsive resizing compatible with React ref rules
 * center the provider model test icon alongside edit and remove actions by using the stateful button's icon slot instead of its animated text slot
 * keep the theme bootstrap executable during SSR but inert on client mounts, avoiding React script warnings while preserving theme persistence and switching

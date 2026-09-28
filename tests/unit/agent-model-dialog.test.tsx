@@ -125,9 +125,10 @@ describe('AgentModelDialog', () => {
     );
 
     const dialog = screen.getByRole('dialog', { name: 'Model configuration' });
-    expect(await within(dialog).findByRole('combobox', { name: 'Hermes profile' })).toBeEnabled();
+    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Hermes profile' })).toBeEnabled());
     fireEvent.click(within(dialog).getByRole('checkbox', { name: /Use profile default model/ }));
-    fireEvent.click(await within(dialog).findByRole('button', { name: /model-a/ }));
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: /model-a/ })).toBeEnabled());
+    fireEvent.click(within(dialog).getByRole('button', { name: /model-a/ }));
     fireEvent.click(await screen.findByRole('option', { name: 'model-b' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
@@ -171,7 +172,7 @@ describe('AgentModelDialog', () => {
     );
     const { rerender } = render(view('conversation-1', saved));
 
-    expect(await screen.findByRole('combobox', { name: 'Hermes profile' })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Hermes profile' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
 

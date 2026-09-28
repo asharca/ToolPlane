@@ -1078,7 +1078,6 @@ export function WorkspaceWork({
       if (input.length > 2000) { setError(commandsT('invalidCommand')); return; }
       {
         if (!selected) {
-          if (canSend) return createWork();
           setError(commandsT('needsConversation')); return;
         }
         setBusy('command'); setError(null);

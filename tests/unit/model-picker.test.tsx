@@ -56,26 +56,37 @@ describe('ModelPicker', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Choose typed model' }));
 
-    expect(screen.getByText('Image')).toBeInTheDocument();
-    expect(screen.getByTitle('Embedding')).toBeInTheDocument();
-    expect(screen.getByTitle('Reasoning')).toBeInTheDocument();
-    expect(screen.getByTitle('Tools')).toBeInTheDocument();
-    expect(screen.getByTitle('Vision')).toBeInTheDocument();
-    expect(screen.getByTitle('Audio')).toBeInTheDocument();
-    expect(screen.getByTitle('Video')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'plain-model' })).toHaveAccessibleDescription(
+      'Image, Reasoning, Tools, Vision, Audio, Video',
+    );
+    expect(screen.getByRole('option', { name: 'text-embedding-3-small' })).toHaveAccessibleDescription('Embedding');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Search models...' }), 'plain-model');
+    expect(screen.queryByRole('option', { name: 'text-embedding-3-small' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'plain-model' })).toHaveAccessibleDescription(
+      'Image, Reasoning, Tools, Vision, Audio, Video',
+    );
   });
 
   it('shows prices without treating missing rates as free and searches collapsed providers', async () => {
     render(<ModelPicker
-      providers={[{ id: 'provider', name: 'Provider', models: ['priced', 'unknown'], modelRecords: [
+      providers={[{ id: 'provider', name: 'Provider', models: ['priced', 'unknown', 'output-only'], modelRecords: [
         { modelId: 'priced', primaryType: 'text', cost: { input: 0, output: 0.125 } },
+        { modelId: 'output-only', primaryType: 'text', cost: { output: 0 } },
       ] }]}
       value={null} onSelect={vi.fn()} trigger={<button>Choose prices</button>}
     />);
     await userEvent.click(screen.getByRole('button', { name: 'Choose prices' }));
-    expect(within(screen.getByRole('option', { name: 'priced' })).getByText('Input 0 $/M')).toBeInTheDocument();
-    expect(within(screen.getByRole('option', { name: 'priced' })).getByText('Output 0.125 $/M')).toBeInTheDocument();
-    expect(within(screen.getByRole('option', { name: 'unknown' })).getByText('Input — $/M')).toBeInTheDocument();
+    const priced = screen.getByRole('option', { name: 'priced' });
+    expect(priced).toHaveAccessibleDescription('Text; Input 0 $/M; Output 0.125 $/M');
+    expect(priced).toHaveTextContent('0$↓');
+    expect(priced).toHaveTextContent('0.125$↑');
+    const unknown = screen.getByRole('option', { name: 'unknown' });
+    expect(unknown).toHaveAccessibleDescription('Text');
+    expect(unknown).not.toHaveTextContent('$');
+    const outputOnly = screen.getByRole('option', { name: 'output-only' });
+    expect(outputOnly).toHaveAccessibleDescription('Text; Output 0 $/M');
+    expect(outputOnly).toHaveTextContent('0$↑');
+    expect(outputOnly).not.toHaveTextContent('↓');
     await userEvent.click(screen.getByRole('button', { name: 'Provider' }));
     expect(screen.queryByRole('option', { name: 'priced' })).not.toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Search models...' }), 'priced');

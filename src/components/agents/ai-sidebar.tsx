@@ -643,16 +643,13 @@ export function AISidebar({
 
   useEffect(() => {
     if (!menuOpenId) return;
-    const frame = requestAnimationFrame(() => {
-      const menus = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-sidebar-resource-menu]"),
-      );
-      menus
-        .find((menu) => menu.dataset.sidebarResourceMenu === menuOpenId)
-        ?.querySelector<HTMLElement>("button, a[href]")
-        ?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
+    const menus = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-sidebar-resource-menu]"),
+    );
+    menus
+      .find((menu) => menu.dataset.sidebarResourceMenu === menuOpenId)
+      ?.querySelector<HTMLElement>("button:not([disabled]), a[href]")
+      ?.focus();
   }, [menuOpenId]);
 
   const updateItems = useCallback(

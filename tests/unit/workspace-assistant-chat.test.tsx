@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { estimatePromptTokens, WorkspaceAssistantChat } from '@/components/dashboard/chat/WorkspaceAssistantChat';
 
 const mocks = vi.hoisted(() => ({ conversation: vi.fn(), push: vi.fn(), refresh: vi.fn() }));
@@ -15,10 +16,12 @@ vi.mock('@/components/dashboard/agents/AgentConversation', () => ({
     const conversation = props as {
       onBranchChange?: (messageId: string) => void;
       onStartBranch?: (messageId: string) => void;
+      modelPicker?: ReactNode;
     };
     return (
       <div>
         Chat surface
+        {conversation.modelPicker}
         <div id="chat-message-a1">Active message</div>
         <button type="button" onClick={() => conversation.onBranchChange?.('a1')}>Test active branch</button>
         <button type="button" onClick={() => conversation.onStartBranch?.('a1')}>Test new branch</button>
@@ -372,7 +375,8 @@ describe('WorkspaceAssistantChat', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Max output tokens' }), { target: { value: '2048' } });
     await userEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Custom parameter name' }), 'top_k');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Custom parameter type' }), 'number');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Custom parameter type' }));
+    await userEvent.click(screen.getByRole('option', { name: 'number', exact: true }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Value: top_k' }), { target: { value: '40' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -459,9 +463,10 @@ describe('WorkspaceAssistantChat', () => {
     };
     renderChat(undefined, false, undefined, null, [template]);
     await user.click(screen.getByRole('button', { name: 'Add assistant' }));
-    const dialog = screen.getByRole('dialog', { name: 'Add assistant' });
+    let dialog = screen.getByRole('dialog', { name: 'Add assistant' });
     await user.click(within(dialog).getByRole('button', { name: 'Choose from assistant market' }));
     await user.click(within(dialog).getByRole('button', { name: /Market researcher/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Add assistant' });
     await user.click(within(dialog).getByRole('button', { name: 'Next' }));
     await user.click(within(dialog).getByRole('button', { name: 'Next' }));
     await user.click(within(dialog).getByRole('button', { name: 'Next' }));
@@ -485,9 +490,10 @@ describe('WorkspaceAssistantChat', () => {
     };
     renderChat(undefined, false, undefined, null, [template]);
     await user.click(screen.getByRole('button', { name: 'Add assistant' }));
-    const dialog = screen.getByRole('dialog', { name: 'Add assistant' });
+    let dialog = screen.getByRole('dialog', { name: 'Add assistant' });
     await user.click(within(dialog).getByRole('button', { name: 'Choose from assistant market' }));
     await user.click(within(dialog).getByRole('button', { name: /Market researcher/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Add assistant' });
 
     expect(within(dialog).getByRole('textbox', { name: 'Name' })).toHaveValue('Market researcher');
     expect(within(dialog).getByRole('button', { name: 'Model: model-2' })).toBeInTheDocument();

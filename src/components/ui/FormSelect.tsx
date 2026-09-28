@@ -41,7 +41,7 @@ export function FormSelect({ name, label, options, value, defaultValue, onValueC
       {options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </select>
     <Select value={current} onValueChange={update} disabled={disabled}>
-      <SelectTrigger><span className="sr-only">{label}: </span><SelectValue placeholder={label} /></SelectTrigger>
+      <SelectTrigger aria-label={label} aria-required={required}><SelectValue placeholder={label} /></SelectTrigger>
       <SelectContent>
         <div className="max-h-[min(15rem,40dvh)] overflow-y-auto overscroll-contain">
           {options.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}

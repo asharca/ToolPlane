@@ -79,9 +79,9 @@ describe('AgentResourceSelect', () => {
     const user = userEvent.setup();
     render(<ResourceSelectHarness />);
 
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
     await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
     await user.click(screen.getByRole('option', { name: 'Running' }));
     await user.type(screen.getByLabelText('Search MCP...'), 'observability');
 
@@ -99,9 +99,9 @@ describe('AgentResourceSelect', () => {
       <ResourceSelectHarness initialSelectedIds={['catalog-running']} />,
     );
 
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
     await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
     await user.click(screen.getByRole('option', { name: 'Running' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select all matching (1)' }));
 
@@ -138,9 +138,9 @@ describe('AgentResourceSelect', () => {
 
     const search = screen.getByLabelText('Search MCP...');
     await user.type(search, 'router');
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by source:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by source' }));
     await user.click(screen.getByRole('option', { name: 'Custom' }));
-    await user.click(screen.getByRole('button', { name: /^MCP: Filter by status:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'MCP: Filter by status' }));
     await user.click(screen.getByRole('option', { name: 'Stopped' }));
     await user.type(search, '{enter}');
 

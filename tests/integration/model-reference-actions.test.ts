@@ -65,11 +65,12 @@ describe('Pi model reference lookup', () => {
     }
   });
 
-  it('rejects ambiguous custom sources and uses the configured host instead of another vendor’s rates', async () => {
+  it('uses native protocol references for proxies and prioritizes a configured provider host', async () => {
     auth.getCurrentUser.mockResolvedValue({ id: ownerId });
     await db.modelProvider.update({ where: { id: providerId }, data: { format: 'openai', baseUrl: 'https://unknown.test/v1' } });
     try {
-      expect(await lookupProviderModelReferencesAction(slug, providerId, ['gpt-5'])).toEqual({ matches: [] });
+      expect((await lookupProviderModelReferencesAction(slug, providerId, ['gpt-5'])).matches)
+        .toMatchObject([{ providerId: 'openai', modelId: 'gpt-5', cost: { input: 1.25, output: 10 } }]);
       await db.modelProvider.update({ where: { id: providerId }, data: { baseUrl: 'https://api.openai.com/v1' } });
       const result = await lookupProviderModelReferencesAction(slug, providerId, ['gpt-5']);
       expect(result.matches).toMatchObject([{ providerId: 'openai', modelId: 'gpt-5', cost: { input: 1.25, output: 10 } }]);

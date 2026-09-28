@@ -17,7 +17,7 @@ describe('beUI form participation', () => {
     </form>);
     await userEvent.click(screen.getByRole('button', { name: 'Publish' }));
     expect(action).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /^Runtime:/ }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Runtime' }));
     await userEvent.click(screen.getByRole('option', { name: 'Hermes' }));
     await userEvent.click(screen.getByRole('button', { name: 'Publish' }));
     expect(action).not.toHaveBeenCalled();
@@ -36,7 +36,7 @@ describe('beUI form participation', () => {
       <button type="reset">Reset choices</button>
     </form>);
     const form = container.querySelector('form')!;
-    await userEvent.click(screen.getByRole('button', { name: /^Runtime:/ }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Runtime' }));
     await userEvent.click(screen.getByRole('option', { name: 'Hermes' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Enabled' }));
     cancelReset = true;

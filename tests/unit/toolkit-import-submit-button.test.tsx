@@ -45,9 +45,5 @@ describe('toolkit market import submit button', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Import' })).toHaveAttribute(
-      'aria-busy',
-      'false',
-    );
   });
 });

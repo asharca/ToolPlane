@@ -65,7 +65,7 @@ describe('DashboardChrome', () => {
 
   it.each([true, false])('projects admin navigation only for administrators (admin=%s)', async (isAdmin) => {
     render(chrome(isAdmin));
-    await userEvent.click(screen.getByRole('button', { name: /Personal settings: smoke@example\.com/ }));
+    await userEvent.click(screen.getByRole('button', { name: '账户菜单' }));
     if (isAdmin) expect(await screen.findByRole('link', { name: 'Admin console' })).toHaveAttribute('href', '/admin');
     else expect(screen.queryByRole('link', { name: 'Admin console' })).not.toBeInTheDocument();
   });

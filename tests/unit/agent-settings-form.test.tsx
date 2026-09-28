@@ -268,7 +268,7 @@ describe('AgentSettingsForm', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
-    await userEvent.click(screen.getByRole('button', { name: /^Hermes version:/ }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Hermes version' }));
     await userEvent.click(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.7.20' }));
     await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
     expect(actions.updateAgentAction).not.toHaveBeenCalled();

@@ -664,6 +664,7 @@ export function PopoverContent({ children, className }: PopoverContentProps) {
         <div
           ref={clipRef}
           inert={!open}
+          aria-hidden={!open}
           className="absolute inset-0"
           style={{
             clipPath: clipForProgress(geo, progress.get(), false),

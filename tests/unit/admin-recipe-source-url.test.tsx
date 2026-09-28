@@ -43,7 +43,7 @@ describe('RecipeEditor source URL', () => {
     expect(screen.getByRole('textbox', { name: 'Source URL' })).toHaveValue(
       'https://github.com/acme/catalog-mcp',
     );
-    fireEvent.click(screen.getByRole('button', { name: /^Authentication:/ }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Authentication' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Bearer token' }));
     expect(screen.queryByRole('textbox', { name: 'Header to environment key mappings (Header-Name=ENV_KEY per line)' })).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: 'Bearer token environment key' }), { target: { value: 'API_SECRET' } });

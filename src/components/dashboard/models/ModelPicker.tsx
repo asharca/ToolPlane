@@ -204,7 +204,7 @@ export function ModelPicker({
             <Button type="button" variant="ghost" size="icon" aria-label={common('close')} onClick={() => setOpen(false)} className="size-7 shrink-0 rounded-lg text-muted-foreground"><X className="size-3.5" /></Button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-1.5">
+          <div role="listbox" aria-label={t('selectModel')} className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-1.5">
             {visibleProviders.length ? visibleProviders.map((provider) => {
               const expanded = Boolean(search.trim()) || !collapsedProviders.has(provider.id);
               return (
@@ -225,7 +225,7 @@ export function ModelPicker({
                   aria-hidden={!expanded} inert={!expanded}
                   className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                 <div className="min-h-0 overflow-hidden">
-                <div ref={setListElement} role="listbox" aria-label={provider.name} className="relative max-h-40 overflow-y-auto overscroll-contain pt-1">
+                <div ref={setListElement} className="relative max-h-40 overflow-y-auto overscroll-contain pt-1">
                 {provider.models.map((model) => {
                   const key = `${provider.id}\0${model}`;
                   const isSelected = selectedKey === key;

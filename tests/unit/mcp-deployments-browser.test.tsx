@@ -91,12 +91,12 @@ describe('McpDeploymentsBrowser', () => {
     expect(screen.queryByText('Filesystem')).not.toBeInTheDocument();
     expect(screen.getAllByText('Private API')).toHaveLength(2);
 
-    await user.click(screen.getByRole('button', { name: /Status:.*All/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
     await user.click(screen.getByRole('option', { name: /^error \(1\)$/i }));
     expect(screen.getAllByText('Private API')).toHaveLength(2);
 
     await user.clear(screen.getByPlaceholderText('Search MCP...'));
-    await user.click(screen.getByRole('button', { name: /Status:.*Error/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
     await user.click(screen.getByRole('option', { name: /^all \(2\)$/i }));
     expect(screen.getByText('Servers deployed to this workspace: 2.')).toBeInTheDocument();
   });

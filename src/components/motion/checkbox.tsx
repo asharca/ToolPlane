@@ -18,6 +18,7 @@ export interface CheckboxProps {
   className?: string;
   id?: string;
   "aria-label"?: string;
+  "aria-required"?: boolean;
   /** Associates an external message (e.g. a form error) with the control. */
   "aria-describedby"?: string;
 }
@@ -31,6 +32,7 @@ export function Checkbox({
   className,
   id: idProp,
   "aria-label": ariaLabel,
+  "aria-required": ariaRequired,
   "aria-describedby": ariaDescribedBy,
 }: CheckboxProps) {
   const autoId = useId();
@@ -54,6 +56,7 @@ export function Checkbox({
         role="checkbox"
         aria-checked={indeterminate ? "mixed" : checked}
         aria-label={ariaLabel}
+        aria-required={ariaRequired}
         aria-describedby={ariaDescribedBy}
         disabled={disabled}
         onClick={() => !disabled && onCheckedChange(!checked)}

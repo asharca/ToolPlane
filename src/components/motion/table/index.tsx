@@ -151,6 +151,7 @@ export function Table<T>({
     count: sortedRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => rowHeight,
+    initialRect: { width: 0, height },
     overscan,
   });
 

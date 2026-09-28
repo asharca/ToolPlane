@@ -89,7 +89,7 @@ describe('SandboxCreateForm', () => {
 
     await user.click(screen.getByRole('button', { name: 'New sandbox' }));
     await user.click(screen.getByRole('button', { name: /Import .hermes archive/ }));
-    await user.click(screen.getByRole('button', { name: /^Hermes version:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Hermes version' }));
     await user.click(screen.getByRole('option', { name: 'nousresearch/hermes-agent:v2026.8.3' }));
     const archive = new File(['zip'], 'backup.zip', { type: 'application/zip' });
     await user.upload(screen.getByLabelText('Hermes archive'), archive);

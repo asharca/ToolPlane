@@ -63,7 +63,7 @@ describe('ProvidersPanel', () => {
     expect(baseUrl).toHaveAttribute('placeholder', 'https://generativelanguage.googleapis.com/v1beta');
     expect(screen.getByText('Leave blank to use the built-in endpoint: https://generativelanguage.googleapis.com/v1beta')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /^Format:/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Format' }));
     await user.click(screen.getByRole('option', { name: 'OpenAI-compatible' }));
     expect(baseUrl).toBeRequired();
 

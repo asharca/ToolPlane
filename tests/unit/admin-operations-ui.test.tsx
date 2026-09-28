@@ -27,7 +27,7 @@ describe('practical admin navigation and forms', () => {
     fireEvent.click(button);
     const dialog = await screen.findByRole('dialog');
     expect(new FormData(dialog.querySelector('form')!).get('categoryId')).toBe('c1');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(dialog.querySelector('form')!).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
