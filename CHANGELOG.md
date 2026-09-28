@@ -12,6 +12,7 @@
 
 ### Bug Fixes
 * upgrade React and React DOM to 19.3.0 so animated form controls keep pending submissions disabled until the action settles
+* align Shiki with the Streamdown code plugin so clean installs share compatible highlighting types
 * hide closed and exiting overlays from assistive technology, focus visible controls when dialogs open, and expose required custom form controls correctly
 * render initial virtualized table rows before client measurement and preserve keyboard input during IME composition
 * keep toolkit sync scripts compatible with macOS Bash by moving the embedded Node heredoc outside command substitution

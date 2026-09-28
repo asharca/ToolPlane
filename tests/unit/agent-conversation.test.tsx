@@ -661,7 +661,7 @@ describe('AgentConversation', () => {
     const effort = screen.getByRole('combobox', { name: 'Thinking effort' });
     expect(effort).toHaveTextContent('Medium');
     await userEvent.click(effort);
-    await userEvent.click(screen.getByRole('option', { name: 'High', exact: true }));
+    await userEvent.click(screen.getByRole('option', { name: 'High' }));
     expect(effort).toHaveTextContent('High');
     await userEvent.type(screen.getByPlaceholderText('Message this agent'), 'Think carefully');
     await userEvent.click(screen.getByRole('button', { name: 'Send prompt' }));

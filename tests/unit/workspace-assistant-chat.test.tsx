@@ -376,7 +376,7 @@ describe('WorkspaceAssistantChat', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Custom parameter name' }), 'top_k');
     await userEvent.click(screen.getByRole('combobox', { name: 'Custom parameter type' }));
-    await userEvent.click(screen.getByRole('option', { name: 'number', exact: true }));
+    await userEvent.click(screen.getByRole('option', { name: 'number' }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Value: top_k' }), { target: { value: '40' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
