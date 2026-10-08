@@ -100,6 +100,10 @@ browsers without a PDF viewer offer download instead. Empty files, read failures
 unsupported formats have explicit states. HTML is shown as source, never an executable
 document. Attachment loads accept only same-origin attachment endpoints or base64 data,
 reject redirects, and preserve existing server-side authorization.
+Sandbox RPC failures preserve both HTTP string errors and JSON-RPC error messages.
+`runtime_not_ready` is a server ownership/recovery failure, not an unsupported file;
+follow [runtime recovery](./RUNTIME_OPERATIONS.md#one-runtime-owner) and verify readiness
+before testing previews. Do not bypass the ownership guard or silently retry mutations.
 
 MCP and Skill marketplaces use compact resource rows with actions that wrap on
 narrow screens. Skill source/install/sort filters stay mounted in a collapsed
