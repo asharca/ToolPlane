@@ -39,6 +39,7 @@ export default async function WorkspaceLayout({
     <NextIntlClientProvider
       messages={{
         common: messages.common,
+        filePreview: messages.filePreview,
         console: messages.console,
         auth: messages.auth,
         agentMarket: messages.agentMarket,

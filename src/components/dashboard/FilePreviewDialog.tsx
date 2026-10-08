@@ -169,7 +169,7 @@ function PreviewContent({ name, mimeType, size, load, onDownload, actions, error
           {/* eslint-disable-next-line @next/next/no-img-element -- private Blob URLs need no optimizer. */}
           <img ref={image} src={file.url} alt={name.split(/[\\/]/).pop() || name} className={zoom === null ? 'max-h-full max-w-full object-contain' : 'mx-auto max-w-none'} style={zoom === null ? undefined : { width: naturalWidth * zoom }} onLoad={(event) => setNaturalWidth(event.currentTarget.naturalWidth)} onError={() => setLoadError(unavailable)} />
         </div>
-        : file.kind === 'pdf' && file.url ? <object data={file.url} type="application/pdf" aria-label={name} className="h-full min-h-96 w-full"><p className="p-6 text-sm text-muted-foreground">{t('pdfFallback')}</p></object>
+        : file.kind === 'pdf' && file.url ? (navigator.pdfViewerEnabled ? <iframe src={file.url} title={name} referrerPolicy="no-referrer" className="h-full min-h-96 w-full border-0" /> : <p className="p-6 text-sm text-muted-foreground">{t('pdfFallback')}</p>)
         : code ? <div className="p-4"><CodeBlock code={file.text ?? ''} language={codeLanguage} filename={name.split(/[\\/]/).pop()} wrap={wrap} maxHeight={640} /></div>
         : <div className="mx-auto max-w-4xl break-words p-4 text-sm leading-7 sm:p-8"><AssistantMarkdown text={file.text ?? ''} /></div>}
     </div>
