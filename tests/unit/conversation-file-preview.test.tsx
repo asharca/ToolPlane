@@ -79,6 +79,24 @@ describe('ConversationFilePreview', () => {
     expect(blob).not.toHaveBeenCalled();
   });
 
+  it('rejects an HTML body mislabeled as PDF rather than embedding it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(['<script>bad()</script>'], { type: 'application/pdf' }) })));
+    render(<ConversationFilePreview name="document.pdf" url="/api/v1/attachments/document" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Preview document.pdf' }));
+    expect(await screen.findByText(messages.filePreview.unavailable)).toBeInTheDocument();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('offers download instead of rendering binary bytes mislabeled as text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(['binary\0bytes'], { type: 'text/plain' }) })));
+    render(<ConversationFilePreview name="data.txt" url="/api/v1/attachments/data" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Preview data.txt' }));
+    expect(await screen.findByText(messages.filePreview.unsupported)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: messages.filePreview.download })).toBeEnabled();
+    expect(screen.queryByText('binary\0bytes')).not.toBeInTheDocument();
+  });
+
   it('revokes thumbnail URLs when the local file changes and on unmount', async () => {
     const first = new File(['first'], 'first.png', { type: 'image/png' });
     const second = new File(['second'], 'second.png', { type: 'image/png' });

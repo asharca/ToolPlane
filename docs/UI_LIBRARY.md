@@ -80,13 +80,26 @@ ownership and catalog read-only guards.
 File browsing uses the Registry [File Tree](https://asharca.github.io/ui/components/motion/file-tree)
 without component overrides. Sandbox and Agent panels retain lazy directory loading,
 upload targets, preview, download, and confirmed deletion. Skill bundles/import previews,
-runtime files/drafts, knowledge documents, chat file attachments, failed imports, and
-admin Skill/Pi package reviews share its keyboard navigation and selection. Image
-attachments keep their thumbnails. `FilePathTree` adapts artifact paths without changing
+runtime files/drafts, knowledge documents, failed imports, and admin Skill/Pi package
+reviews share its keyboard navigation and selection. Chat attachments use compact
+preview cards with image thumbnails. `FilePathTree` adapts artifact paths without changing
 file identities; selected details and actions sit outside tree rows. Runtime-file selection
 shows metadata only: credentials still require the explicit Reveal & edit action.
 Draft navigation never discards unsaved file content. Package review links retain the
 release and return-path query parameters; encoded/binary content is not executed.
+
+`FilePreviewDialog` separates reading from file navigation for Sandbox/Agent files,
+Skill bundles/review artifacts, and local or persisted chat attachments. Desktop uses
+the Registry `CenterMorphModal`; mobile uses a native full-screen dialog. Headers keep
+download/close available while content scrolls. Escape restores focus without resetting
+the tree. Closing aborts pending reads; object URLs are revoked after exit.
+Markdown defaults to the existing safe renderer with a source toggle; text/code uses
+Registry `CodeBlock` with line numbers, copy, and optional wrapping. Images support zoom
+and fit. PDFs use the browser viewer in a Blob iframe, compatible with the existing CSP;
+browsers without a PDF viewer offer download instead. Empty files, read failures, and
+unsupported formats have explicit states. HTML is shown as source, never an executable
+document. Attachment loads accept only same-origin attachment endpoints or base64 data,
+reject redirects, and preserve existing server-side authorization.
 
 MCP and Skill marketplaces use compact resource rows with actions that wrap on
 narrow screens. Skill source/install/sort filters stay mounted in a collapsed
